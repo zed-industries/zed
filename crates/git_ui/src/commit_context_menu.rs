@@ -1,5 +1,5 @@
 use crate::commit_view::CommitView;
-use git::{Oid, repository::LogSource};
+use git::Oid;
 use gpui::{Action, ClipboardItem, Entity, FocusHandle, SharedString, WeakEntity, Window, actions};
 use project::{GIT_COMMAND_TASK_TAG, git_store::Repository};
 
@@ -130,27 +130,13 @@ pub(crate) fn commit_context_menu(
                 })
             })
             .when(source == CommitContextMenuSource::GitPanel, |menu| {
-                let repository = repository.clone();
-                let workspace = workspace.clone();
-                menu.entry("Reveal in Git Graph", None, move |window, cx| {
-                    let Some(repository) = repository.as_ref().and_then(WeakEntity::upgrade) else {
-                        return;
-                    };
-                    let repo_id = repository.read(cx).id;
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            let git_store = workspace.project().read(cx).git_store().clone();
-                            crate::git_graph::open_or_reuse_graph(
-                                workspace,
-                                repo_id,
-                                git_store,
-                                LogSource::All,
-                                Some(sha.to_string()),
-                                window,
-                                cx,
-                            );
-                        })
-                        .ok();
+                menu.entry("Show in Git Graph", None, move |window, cx| {
+                    window.dispatch_action(
+                        Box::new(crate::git_graph::OpenAtCommit {
+                            sha: sha.to_string(),
+                        }),
+                        cx,
+                    );
                 })
             })
             .map(|mut menu| {
