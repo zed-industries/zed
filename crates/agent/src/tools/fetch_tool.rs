@@ -23,6 +23,12 @@ enum ContentType {
     Json,
 }
 
+const DEFAULT_MAX_LENGTH: usize = 5000;
+
+fn default_max_length() -> usize {
+    DEFAULT_MAX_LENGTH
+}
+
 /// Fetches a URL and returns the content as Markdown.
 ///
 /// This tool is not run inside the terminal OS sandbox, but it still refuses to
@@ -36,10 +42,39 @@ enum ContentType {
 pub struct FetchToolInput {
     /// The URL to fetch.
     url: String,
+    /// Maximum number of characters to return. Defaults to 5000. Increase this
+    /// to read more of a large page in one call, keeping in mind that the
+    /// content counts against the context window.
+    #[serde(default = "default_max_length")]
+    max_length: usize,
+    /// Character index to start returning content from. Defaults to 0. Use this
+    /// together with `max_length` to page through content that was truncated by
+    /// a previous call.
+    #[serde(default)]
+    start_index: usize,
 }
 
 pub struct FetchTool {
     http_client: Arc<HttpClientWithUrl>,
+}
+
+/// Returns the `max_length`-character window of `content` starting at
+/// `start_index`. When more content follows the window, a note is appended
+/// telling the caller how to fetch the rest.
+fn window_content(content: &str, start_index: usize, max_length: usize) -> String {
+    let total = content.chars().count();
+    let start = start_index.min(total);
+    let window: String = content.chars().skip(start).take(max_length).collect();
+    let end = start + window.chars().count();
+
+    if end < total {
+        format!(
+            "{window}\n\n[Showing characters {start}-{end} of {total}. \
+             Call fetch again with start_index={end} to read more.]"
+        )
+    } else {
+        window
+    }
 }
 
 impl FetchTool {
@@ -47,7 +82,12 @@ impl FetchTool {
         Self { http_client }
     }
 
-    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
+    async fn build_message(
+        http_client: Arc<HttpClientWithUrl>,
+        url: &str,
+        start_index: usize,
+        max_length: usize,
+    ) -> Result<String> {
         let url = if !url.starts_with("https://") && !url.starts_with("http://") {
             Cow::Owned(format!("https://{url}"))
         } else {
@@ -86,7 +126,7 @@ impl FetchTool {
             ContentType::Html
         };
 
-        match content_type {
+        let content = match content_type {
             ContentType::Html => {
                 let mut handlers: Vec<TagHandler> = vec![
                     Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
@@ -119,7 +159,9 @@ impl FetchTool {
                     serde_json::to_string_pretty(&json)?
                 ))
             }
-        }
+        }?;
+
+        Ok(window_content(&content, start_index, max_length))
     }
 }
 
@@ -232,7 +274,9 @@ impl AgentTool for FetchTool {
             let fetch_task = cx.background_spawn({
                 let http_client = http_client.clone();
                 let url = input.url.clone();
-                async move { Self::build_message(http_client, &url).await }
+                let start_index = input.start_index;
+                let max_length = input.max_length;
+                async move { Self::build_message(http_client, &url, start_index, max_length).await }
             });
 
             let text = futures::select! {
@@ -246,5 +290,53 @@ impl AgentTool for FetchTool {
             }
             Ok(text)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_content_is_returned_unchanged() {
+        assert_eq!(window_content("hello", 0, 5000), "hello");
+    }
+
+    #[test]
+    fn long_content_is_truncated_with_a_note() {
+        let content = "abcdefghij";
+        assert_eq!(
+            window_content(content, 0, 4),
+            "abcd\n\n[Showing characters 0-4 of 10. \
+             Call fetch again with start_index=4 to read more.]"
+        );
+    }
+
+    #[test]
+    fn start_index_pages_through_content() {
+        let content = "abcdefghij";
+        assert_eq!(
+            window_content(content, 4, 4),
+            "efgh\n\n[Showing characters 4-8 of 10. \
+             Call fetch again with start_index=8 to read more.]"
+        );
+        // Reaching the end drops the note.
+        assert_eq!(window_content(content, 8, 4), "ij");
+    }
+
+    #[test]
+    fn start_index_past_the_end_yields_nothing() {
+        assert_eq!(window_content("abc", 10, 4), "");
+    }
+
+    #[test]
+    fn truncation_respects_character_boundaries() {
+        // Three 4-byte emoji; a byte-based slice would panic or split them.
+        let content = "😀😁😂";
+        assert_eq!(
+            window_content(content, 0, 2),
+            "😀😁\n\n[Showing characters 0-2 of 3. \
+             Call fetch again with start_index=2 to read more.]"
+        );
     }
 }
