@@ -807,15 +807,8 @@ impl Fs for RealFs {
         // its target and leave the link behind.
         let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("trash file or dir".to_string())
-            .spawn(|| tx.send(trash::delete_with_info(path)))
-            .expect("The os can spawn threads");
-
-        Ok(rx
+        Ok(smol::unblock(move || trash::delete_with_info(path))
             .await
-            .context("Tx dropped or fs.restore panicked")?
             .context("Could not trash file or dir")?
             .into())
     }
@@ -1098,7 +1091,11 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
+            // Skipped for poll watchers: PollWatcher::watch() recursively scans
+            // at registration, blocking on large virtual filesystem mounts
+            if let Some(parent) = target.parent()
+                && !fs_watcher::requires_poll_watcher(parent)
+            {
                 watcher.add(parent).log_err();
             }
         }
@@ -2404,7 +2401,18 @@ impl FakeFs {
         self.state
             .lock()
             .remove_dir_errors
-            .insert(normalize_path(path.as_ref()), message);
+            .insert(Self::remove_dir_error_key(path.as_ref()), message);
+    }
+
+    /// Entry resolution in `try_entry` ignores drive prefixes, so the error
+    /// injection map must too.
+    /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
+    /// lookup for `\workspace\dir`.
+    fn remove_dir_error_key(path: &Path) -> PathBuf {
+        normalize_path(path)
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)))
+            .collect()
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
@@ -2549,7 +2557,12 @@ impl FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        if let Some(message) = self.state.lock().remove_dir_errors.get(&path) {
+        if let Some(message) = self
+            .state
+            .lock()
+            .remove_dir_errors
+            .get(&Self::remove_dir_error_key(&path))
+        {
             anyhow::bail!("{message}");
         }
         let parent_path = path.parent().context("cannot remove the root")?;

@@ -30,12 +30,13 @@ fn main() {
 mod imp {
     use std::io::{Read as _, Write as _};
     use std::net::TcpStream;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::time::Duration;
 
     use anyhow::{Context as _, Result, bail};
     use sandbox::{
-        CommandAndArgs, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+        CommandAndArgs, HostFilesystemLocation, Sandbox, SandboxError, SandboxFsPolicy,
+        SandboxNetPolicy, SandboxPolicy,
     };
     use serde::Deserialize;
 
@@ -111,6 +112,9 @@ mod imp {
         network_access: NetMode,
         #[serde(default)]
         allowed_domains: Vec<String>,
+        /// Paths to protect from writes even if they fall under a writable path.
+        #[serde(default)]
+        protected_paths: Vec<String>,
 
         // ---- operation (exactly one) ----
         /// Read this host path from inside the sandbox.
@@ -169,12 +173,30 @@ mod imp {
         checks.finish()
     }
 
-    fn policy_of(check: &Check) -> SandboxPolicy {
+    fn policy_of(check: &Check) -> Result<SandboxPolicy> {
         let fs = match check.fs {
-            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted,
-            FsMode::Restricted => SandboxFsPolicy::Restricted {
-                writable_paths: check.writable_paths.iter().map(PathBuf::from).collect(),
+            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted {
+                protected_paths: capture_protected_paths(&check.protected_paths),
             },
+            FsMode::Restricted => {
+                let mut writable_paths = Vec::new();
+                for path in &check.writable_paths {
+                    // Mirror production (`acp_thread::SandboxWrap::to_policy`):
+                    // the directory must exist before its inode can be pinned, so
+                    // create it up front, then capture it.
+                    std::fs::create_dir_all(path)
+                        .with_context(|| format!("failed to create writable path {path}"))?;
+                    writable_paths.push(
+                        HostFilesystemLocation::new(path)
+                            .with_context(|| format!("failed to capture writable path {path}"))?,
+                    );
+                }
+                let protected_paths = capture_protected_paths(&check.protected_paths);
+                SandboxFsPolicy::Restricted {
+                    writable_paths,
+                    protected_paths,
+                }
+            }
         };
         let network = match check.network_access {
             NetMode::Unrestricted => SandboxNetPolicy::Unrestricted,
@@ -183,18 +205,34 @@ mod imp {
                 allowed_domains: check.allowed_domains.clone(),
             },
         };
-        SandboxPolicy {
-            fs,
-            network,
-            git: sandbox::GitSandboxPolicy::default(),
-        }
+        Ok(SandboxPolicy { fs, network })
+    }
+
+    /// Capture each already-existing protected path, mirroring production's
+    /// fail-closed `filter_map(HostFilesystemLocation::new(..).ok())`: a path
+    /// that does not yet exist can't be pinned and is simply skipped. Unlike
+    /// writable paths, these are never created here — whether one exists is
+    /// exactly what several checks turn on.
+    fn capture_protected_paths(paths: &[String]) -> Vec<HostFilesystemLocation> {
+        paths
+            .iter()
+            .filter_map(|path| HostFilesystemLocation::new(path).ok())
+            .collect()
     }
 
     fn describe(check: &Check) -> String {
         if let Some(name) = &check.name {
             return name.clone();
         }
-        let policy = format!("fs={:?},net={:?}", check.fs, check.network_access);
+        let protected = if check.protected_paths.is_empty() {
+            String::new()
+        } else {
+            format!(",protected_paths={:?}", check.protected_paths)
+        };
+        let policy = format!(
+            "fs={:?},net={:?}{protected}",
+            check.fs, check.network_access
+        );
         let op = if let Some(path) = &check.read {
             format!("read {path}")
         } else if let Some(path) = &check.write {
@@ -211,10 +249,10 @@ mod imp {
 
     fn run_check(check: &Check, echo_port: &str, checks: &mut Checks) -> Result<()> {
         let label = describe(check);
-        let policy = policy_of(check);
 
         if let Some(expect_can_create) = check.can_create {
-            let outcome = Sandbox::can_create(&policy, None);
+            let policy = policy_of(check)?;
+            let outcome = Sandbox::can_create(&policy);
             let passed = match (&outcome, expect_can_create) {
                 (Ok(()), true) => true,
                 (Ok(()), false) => false,
@@ -234,11 +272,11 @@ mod imp {
             .with_context(|| format!("check {label:?} has an operation but no `succeeds`"))?;
 
         let actual = if let Some(path) = &check.read {
-            run_read(&policy, path)?
+            run_read(check, path)?
         } else if let Some(path) = &check.write {
-            run_write(&policy, path)?
+            run_write(check, path)?
         } else if let Some(host) = &check.network {
-            run_network(&policy, host, echo_port)?
+            run_network(check, host, echo_port)?
         } else {
             bail!("check {label:?} has no operation");
         };
@@ -250,7 +288,7 @@ mod imp {
     /// Seed a host file, then `cat` it from inside the sandbox. Reads are always
     /// granted (root is bound read-only), so this proves the sandbox doesn't
     /// *block* reads of existing host files.
-    fn run_read(policy: &SandboxPolicy, path: &str) -> Result<bool> {
+    fn run_read(check: &Check, path: &str) -> Result<bool> {
         let path = Path::new(path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -259,7 +297,10 @@ mod imp {
         std::fs::write(path, b"sandbox-test\n")
             .with_context(|| format!("failed to seed readable file {}", path.display()))?;
 
-        let mut sandbox = Sandbox::new(policy.clone()).map_err(sandbox_err)?;
+        // Build the policy only after the fixtures exist: capturing a
+        // `HostFilesystemLocation` pins the inode, so the path must be present.
+        let policy = policy_of(check)?;
+        let mut sandbox = Sandbox::new(policy).map_err(sandbox_err)?;
         run_command(
             &mut sandbox,
             "sh",
@@ -271,18 +312,22 @@ mod imp {
     /// the command exited 0 *and* the bytes actually landed on the host file —
     /// a write that only hits the sandbox's ephemeral tmpfs counts as blocked,
     /// since it never escaped the sandbox.
-    fn run_write(policy: &SandboxPolicy, path: &str) -> Result<bool> {
+    fn run_write(check: &Check, path: &str) -> Result<bool> {
         let path = Path::new(path);
         if let Some(parent) = path.parent() {
             // Create the parent on the host so the only thing under test is the
-            // sandbox's write permission, not a missing directory.
+            // sandbox's write permission, not a missing directory. This also
+            // makes a protected parent exist before the policy captures it.
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create parent of {}", path.display()))?;
         }
         // Start from a clean slate so `exists()` afterwards is meaningful.
         let _ = std::fs::remove_file(path);
 
-        let mut sandbox = Sandbox::new(policy.clone()).map_err(sandbox_err)?;
+        // Build the policy only after the fixtures exist: capturing a
+        // `HostFilesystemLocation` pins the inode, so the path must be present.
+        let policy = policy_of(check)?;
+        let mut sandbox = Sandbox::new(policy).map_err(sandbox_err)?;
         let command_ok = run_command(
             &mut sandbox,
             "sh",
@@ -297,14 +342,15 @@ mod imp {
     /// Connect to `host` (`hostname` or `hostname:port`) from inside the
     /// sandbox via the `__echo_check` subcommand, which honors `HTTP_PROXY` for
     /// the restricted-network case.
-    fn run_network(policy: &SandboxPolicy, host: &str, echo_port: &str) -> Result<bool> {
+    fn run_network(check: &Check, host: &str, echo_port: &str) -> Result<bool> {
         let target = if host.contains(':') {
             host.to_string()
         } else {
             format!("{host}:{echo_port}")
         };
         let exe = current_exe_str()?;
-        let mut sandbox = Sandbox::new(policy.clone()).map_err(sandbox_err)?;
+        let policy = policy_of(check)?;
+        let mut sandbox = Sandbox::new(policy).map_err(sandbox_err)?;
         run_command(&mut sandbox, &exe, &[SUBCOMMAND_ECHO_CHECK, &target])
     }
 

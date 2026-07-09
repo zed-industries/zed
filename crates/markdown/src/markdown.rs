@@ -2,6 +2,7 @@ pub mod html;
 mod mermaid;
 pub mod parser;
 mod path_range;
+mod selection;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
@@ -175,8 +176,12 @@ impl MarkdownStyle {
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
-            MarkdownFont::Editor | MarkdownFont::Preview => (
+            MarkdownFont::Editor => (
                 theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+            MarkdownFont::Preview => (
+                theme_settings.markdown_preview_font_size(cx),
                 theme_settings.ui_font_size(cx),
             ),
         };
@@ -199,7 +204,11 @@ impl MarkdownStyle {
             font_family: Some(body_font_family),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(ui_font_size.into()),
+            font_size: Some(if is_preview {
+                rems(1.0).into()
+            } else {
+                ui_font_size.into()
+            }),
             line_height: Some(line_height.into()),
             color: Some(colors.text),
             ..Default::default()
@@ -306,14 +315,14 @@ impl MarkdownStyle {
         };
 
         if is_preview {
-            style.with_preview_overrides(ui_font_size, colors)
+            style.with_preview_overrides(colors)
         } else {
             style
         }
     }
 
-    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
-        let body_font_size = ui_font_size * 0.92;
+    fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = rems(0.92);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
@@ -391,7 +400,8 @@ pub struct Markdown {
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
-    context_menu_selected_text: Option<String>,
+    context_menu_selected_text: Option<SharedString>,
+    context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
 }
@@ -584,6 +594,7 @@ impl Markdown {
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
+            context_menu_selected_markdown: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };
@@ -798,12 +809,15 @@ impl Markdown {
         output.into()
     }
 
-    pub fn selected_text(&self) -> Option<String> {
+    pub fn has_selection(&self) -> bool {
+        self.selection.end > self.selection.start
+    }
+
+    pub fn selected_source(&self) -> Option<&str> {
         if self.selection.end <= self.selection.start {
-            None
-        } else {
-            Some(self.source[self.selection.start..self.selection.end].to_string())
+            return None;
         }
+        self.source.get(self.selection.start..self.selection.end)
     }
 
     pub fn set_search_highlights(
@@ -856,19 +870,38 @@ impl Markdown {
     }
 
     fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = self.context_menu_selected_text.take() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        if let Some(text) = self.context_menu_selected_markdown.take() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
             return;
         }
         if self.selection.end <= self.selection.start {
             return;
         }
-        let text = self.source[self.selection.start..self.selection.end].to_string();
+        let text = self
+            .parsed_markdown
+            .rebalanced_markdown_for_selection(self.selection.start..self.selection.end);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn capture_for_context_menu(&mut self, link: Option<SharedString>) {
-        self.context_menu_selected_text = self.selected_text();
+    fn capture_for_context_menu(
+        &mut self,
+        link: Option<SharedString>,
+        rendered_text: Option<&RenderedText>,
+    ) {
+        let range = self.selection.start..self.selection.end;
+        if range.end > range.start {
+            self.context_menu_selected_markdown = Some(SharedString::new(
+                self.parsed_markdown
+                    .rebalanced_markdown_for_selection(range.clone()),
+            ));
+            self.context_menu_selected_text = rendered_text
+                .map(|text| text.text_for_range(range))
+                .map(SharedString::new)
+                .or_else(|| self.context_menu_selected_markdown.clone());
+        } else {
+            self.context_menu_selected_markdown = None;
+            self.context_menu_selected_text = None;
+        }
         self.context_menu_link = link;
     }
 
@@ -877,6 +910,19 @@ impl Markdown {
     /// views to include a "Copy Link" item in their context menus.
     pub fn context_menu_link(&self) -> Option<&SharedString> {
         self.context_menu_link.as_ref()
+    }
+
+    /// Returns the rendered (plain) text that was selected when the most recent
+    /// context menu invocation happened.
+    pub fn context_menu_selected_text(&self) -> Option<&SharedString> {
+        self.context_menu_selected_text.as_ref()
+    }
+
+    /// Returns the markdown that was selected when the most recent context
+    /// menu invocation happened, rebalanced via
+    /// [`ParsedMarkdown::rebalanced_markdown_for_selection`].
+    pub fn context_menu_selected_markdown(&self) -> Option<&SharedString> {
+        self.context_menu_selected_markdown.as_ref()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -1170,6 +1216,21 @@ impl ParsedMarkdown {
 
         Some(partition.saturating_sub(1))
     }
+
+    /// Extracts the markdown source for a selection, rebalancing inline
+    /// delimiters (`**`, backticks, link syntax, etc.) so partial selections of
+    /// styled spans stay well-formed.
+    ///
+    /// With an exception of a single inline code span, which is returned as plain
+    /// text, since copying a command or identifier is the dominant use case there.
+    pub fn rebalanced_markdown_for_selection(&self, selection: Range<usize>) -> String {
+        selection::rebalanced_markdown_for_selection(
+            &self.source,
+            &self.events,
+            &self.root_block_starts,
+            selection,
+        )
+    }
 }
 
 pub enum AutoscrollBehavior {
@@ -1184,7 +1245,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1243,7 +1304,7 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_url_click = Some(Rc::new(handler));
         self
     }
 
@@ -1341,18 +1402,58 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let image_element = div().min_w_0().child(
-            img(source)
-                .id(("markdown-image", range.start))
-                .min_w_0()
-                .max_w_full()
-                .rounded_md()
-                .mr_1()
-                .mb_1()
-                .when_some(height, |this, height| this.h(height))
-                .when_some(width, |this, width| this.w(width))
-                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
-        );
+        let enclosing_link_url = (builder.link_depth > 0)
+            .then(|| builder.rendered_links.last())
+            .flatten()
+            .map(|link| link.destination_url.clone());
+        let fallback_opens_image_url = enclosing_link_url.is_none();
+
+        let image_element = {
+            let wrapper = div().id(("markdown-image-link", range.start)).min_w_0();
+            let wrapper = if !self.style.prevent_mouse_interaction
+                && let Some(url) = enclosing_link_url
+            {
+                let click_url = url.clone();
+                let markdown = self.markdown.clone();
+                let url_click = self.on_url_click.clone();
+                wrapper
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        if let Some(ref on_url_click) = url_click {
+                            on_url_click(click_url.clone(), window, cx);
+                        } else {
+                            cx.open_url(&click_url);
+                        }
+                    })
+                    .capture_any_mouse_down(move |event, _window, cx| {
+                        if event.button == MouseButton::Right {
+                            markdown.update(cx, |md, _| {
+                                md.capture_for_context_menu(Some(url.clone()), None)
+                            });
+                        }
+                    })
+            } else {
+                wrapper
+            };
+            wrapper.child(
+                img(source)
+                    .id(("markdown-image", range.start))
+                    .min_w_0()
+                    .max_w_full()
+                    .rounded_md()
+                    .mr_1()
+                    .mb_1()
+                    .when_some(height, |this, height| this.h(height))
+                    .when_some(width, |this, width| this.w(width))
+                    .with_fallback(move || {
+                        image_fallback_element(
+                            dest_url.clone(),
+                            alt_text.clone(),
+                            fallback_opens_image_url,
+                        )
+                    }),
+            )
+        };
 
         builder.push_image_child(image_element);
     }
@@ -1722,7 +1823,7 @@ impl MarkdownElement {
                         .ok()
                         .and_then(|ix| rendered_text.link_for_source_index(ix))
                         .map(|link| link.destination_url.clone());
-                    markdown.capture_for_context_menu(link);
+                    markdown.capture_for_context_menu(link, Some(&rendered_text));
                 }
             }
         });
@@ -2596,6 +2697,9 @@ impl Element for MarkdownElement {
                         cx,
                     );
                 }
+                MarkdownEvent::SubstitutedCode(text) => {
+                    self.push_markdown_code_span(&mut builder, text, range.clone(), cx);
+                }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
                     if html.starts_with("<!--") {
@@ -2755,7 +2859,11 @@ fn collect_image_alt_text(
     }
 }
 
-fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
+fn image_fallback_element(
+    dest_url: SharedString,
+    alt_text: Option<SharedString>,
+    open_image_url_on_click: bool,
+) -> AnyElement {
     let link_label = alt_text
         .filter(|alt| !alt.is_empty())
         .unwrap_or_else(|| dest_url.clone());
@@ -2764,13 +2872,15 @@ fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>
 
     div()
         .id("image-fallback")
-        .cursor_pointer()
         .min_w_0()
         .child(Label::new(label).color(Color::Warning).underline())
         .tooltip(Tooltip::text(
             "Image failed to load. Open `zed: log` for more details.",
         ))
-        .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        .when(open_image_url_on_click, |this| {
+            this.cursor_pointer()
+                .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        })
         .into_any_element()
 }
 
@@ -3966,7 +4076,7 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{RenderImage, TestAppContext, size};
+    use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::{
         Arc,
@@ -4704,6 +4814,33 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_escaped_pipes_in_inline_code_inside_tables(cx: &mut TestAppContext) {
+        let markdown = "\
+| Pattern | What it does |
+| --- | --- |
+| `^echo(\\s\\|$)` | command pattern |
+| `a\\|b` | alternation |
+| `(a\\|b)` | grouped alternation |
+| `a\\|\\|b` | empty middle alternative |";
+        let rendered = render_markdown(markdown, cx);
+        let text = rendered.text_for_range(0..markdown.len());
+
+        assert_eq!(
+            text,
+            "Pattern\n\
+             What it does\n\
+             ^echo(\\s|$)\n\
+             command pattern\n\
+             a|b\n\
+             alternation\n\
+             (a|b)\n\
+             grouped alternation\n\
+             a||b\n\
+             empty middle alternative"
+        );
+    }
+
     #[test]
     fn test_source_range_for_rendered_handles_split_chunks() {
         let mappings = vec![
@@ -5080,6 +5217,21 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_span_link_receives_decoded_inline_code(cx: &mut TestAppContext) {
+        let source = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/a-or-b");
+    }
+
+    #[gpui::test]
     fn test_code_span_link_ignores_code_when_mouse_interaction_is_prevented(
         cx: &mut TestAppContext,
     ) {
@@ -5141,31 +5293,162 @@ mod tests {
     fn test_capture_for_context_menu(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown = cx.new(|cx| Markdown::new("text".into(), None, None, cx));
+        let markdown = cx.new(|cx| Markdown::new("some text".into(), None, None, cx));
         cx.run_until_parked();
 
-        // Simulates right-clicking on a link
+        // Simulates right-clicking on a link, with "text" selected
         let url: SharedString = "https://example.com".into();
         markdown.update(cx, |md, _cx| {
-            md.capture_for_context_menu(Some(url.clone()));
+            md.selection.start = 5;
+            md.selection.end = 9;
+            md.capture_for_context_menu(Some(url.clone()), None);
         });
         cx.update(|_window, cx| {
+            let markdown = markdown.read(cx);
+            assert_eq!(
+                markdown.context_menu_link().map(SharedString::as_ref),
+                Some("https://example.com")
+            );
             assert_eq!(
                 markdown
-                    .read(cx)
-                    .context_menu_link()
+                    .context_menu_selected_markdown()
                     .map(SharedString::as_ref),
-                Some("https://example.com")
+                Some("text")
+            );
+            assert_eq!(
+                markdown
+                    .context_menu_selected_text()
+                    .map(SharedString::as_ref),
+                Some("text")
             );
         });
 
-        // Simulates right-clicking on plain text — link is cleared
+        // Simulates right-clicking on plain text with no selection — everything is cleared
         markdown.update(cx, |md, _cx| {
-            md.capture_for_context_menu(None);
+            md.selection.start = 0;
+            md.selection.end = 0;
+            md.capture_for_context_menu(None, None);
         });
         cx.update(|_window, cx| {
-            assert!(markdown.read(cx).context_menu_link().is_none());
+            let markdown = markdown.read(cx);
+            assert!(markdown.context_menu_link().is_none());
+            assert!(markdown.context_menu_selected_markdown().is_none());
+            assert!(markdown.context_menu_selected_text().is_none());
         });
+    }
+
+    #[gpui::test]
+    fn test_preview_body_font_size_is_rem_based(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            assert!(
+                matches!(style.base_text_style.font_size, AbsoluteLength::Rems(_)),
+                "preview body font size must be rem-based, got {:?}",
+                style.base_text_style.font_size
+            );
+            assert!(
+                matches!(
+                    style.container_style.text.font_size,
+                    Some(AbsoluteLength::Rems(_))
+                ),
+                "preview container font size must be rem-based, got {:?}",
+                style.container_style.text.font_size
+            );
+        });
+    }
+
+    fn failing_image_source() -> ImageSource {
+        ImageSource::Custom(Arc::new(|_, _| {
+            Some(Err(gpui::ImageCacheError::Asset(
+                "failed to load image".into(),
+            )))
+        }))
+    }
+
+    fn loaded_image_source() -> ImageSource {
+        let buffer = image::ImageBuffer::from_pixel(16, 16, image::Rgba([0, 0, 0, 255]));
+        ImageSource::Render(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(
+            image::Frame::new(buffer),
+            1,
+        ))))
+    }
+
+    fn open_markdown_image_test_window<'a>(
+        source: &str,
+        image_source: ImageSource,
+        cx: &'a mut TestAppContext,
+    ) -> &'a mut gpui::VisualTestContext {
+        struct ImageTestView {
+            markdown: Entity<Markdown>,
+            image_source: ImageSource,
+        }
+
+        impl Render for ImageTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let image_source = self.image_source.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .image_resolver(move |_| Some(image_source.clone())),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let source = source.to_string();
+        let (_, cx) = cx.add_window_view(|_, cx| ImageTestView {
+            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
+            image_source,
+        });
+        cx.run_until_parked();
+        cx
+    }
+
+    #[gpui::test]
+    fn test_clicking_image_fallback_opens_image_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "![alt text](https://example.com/image.png)",
+            failing_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/image.png".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn test_clicking_image_fallback_inside_link_opens_link_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "[![alt text](https://example.com/image.png)](https://example.com/link)",
+            failing_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/link".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn test_clicking_loaded_image_inside_link_opens_link_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "[![alt text](https://example.com/image.png)](https://example.com/link)",
+            loaded_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/link".to_string())
+        );
     }
 
     #[track_caller]
@@ -5275,5 +5558,69 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn test_ui_zoom_does_not_affect_markdown_preview(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_size = Some(16.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let before = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+            assert_eq!(before, px(16.0));
+
+            theme_settings::adjust_ui_font_size(cx, |size| size + px(3.0));
+
+            assert_eq!(ThemeSettings::get_global(cx).ui_font_size(cx), px(19.0));
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                before
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_markdown_preview_follows_ui_font_size_setting_when_unset(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_size = Some(20.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(20.0)
+            );
+        });
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_size = Some(24.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(24.0)
+            );
+        });
     }
 }

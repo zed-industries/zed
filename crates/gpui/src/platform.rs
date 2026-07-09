@@ -6,6 +6,9 @@ mod keystroke;
 #[expect(missing_docs)]
 pub mod layer_shell;
 
+/// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
+pub mod popup;
+
 #[cfg(any(test, feature = "bench"))]
 mod bench_dispatcher;
 
@@ -188,6 +191,7 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -701,6 +705,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
+    fn set_input_region(&self, _region: Option<&[Bounds<Pixels>]>) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }
@@ -1494,7 +1499,12 @@ pub struct WindowOptions {
     /// The kind of window to create
     pub kind: WindowKind,
 
-    /// Whether the window should be movable by the user
+    /// Whether the window should be movable by the user.
+    ///
+    /// On macOS 27, custom titlebar windows that implement their own drag behavior
+    /// with [`Window::start_window_move`] should set this to `false`; otherwise
+    /// AppKit can treat the titlebar region as system-owned and delay clicks
+    /// while disambiguating titlebar double-clicks.
     pub is_movable: bool,
 
     /// Whether the window should be resizable by the user
@@ -1576,7 +1586,11 @@ pub struct WindowParams {
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
 
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub app_id: Option<String>,
+
     pub window_min_size: Option<Size<Pixels>>,
+
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
 }
@@ -1665,6 +1679,14 @@ pub enum WindowKind {
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
+
+    /// A parent-anchored, platform-native popup window for menus, comboboxes, context menus and
+    /// tooltips. Unlike [`WindowKind::PopUp`], it is positioned relative to a parent window.
+    ///
+    /// The popup's size comes from [`WindowOptions::window_bounds`], whose origin is ignored.
+    /// See [`popup::PopupOptions`] for the placement options. Platforms without a native
+    /// implementation reject it with [`popup::PopupNotSupportedError`].
+    AnchoredPopup(popup::PopupOptions),
 
     /// A floating window that appears on top of its parent window
     Floating,

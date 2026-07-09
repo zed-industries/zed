@@ -88,53 +88,37 @@ pub fn strip_diff_metadata(diff: &str) -> String {
     result
 }
 
-/// Marker used to encode cursor position in patch comment lines.
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Extract cursor offset from a patch and return `(clean_patch, cursor_offset)`.
-///
-/// Cursor position is encoded as a comment line (starting with `#`) containing
-/// `[CURSOR_POSITION]`. A `^` in the line indicates the cursor column; a `<`
-/// indicates column 0. The offset is computed relative to addition (`+`) and
-/// context (` `) lines accumulated so far in the hunk, which represent the
-/// cursor position within the new text contributed by the hunk.
 pub fn extract_cursor_from_patch(patch: &str) -> (String, Option<usize>) {
     let mut clean_patch = String::new();
-    let mut cursor_offset: Option<usize> = None;
+    let mut cursor_offset = None;
     let mut line_start_offset = 0usize;
-    let mut prev_line_start_offset = 0usize;
 
     for line in patch.lines() {
-        let diff_line = DiffLine::parse(line);
+        if !clean_patch.is_empty() {
+            clean_patch.push('\n');
+        }
 
-        match &diff_line {
-            DiffLine::Garbage(content)
-                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER) =>
-            {
-                let caret_column = if let Some(caret_pos) = content.find('^') {
-                    caret_pos
-                } else if content.find('<').is_some() {
-                    0
-                } else {
-                    continue;
-                };
-                let cursor_column = caret_column.saturating_sub('#'.len_utf8());
-                cursor_offset = Some(prev_line_start_offset + cursor_column);
-            }
-            _ => {
-                if !clean_patch.is_empty() {
-                    clean_patch.push('\n');
+        match DiffLine::parse(line) {
+            DiffLine::Addition(content) => {
+                let clean_content = content.replace(INLINE_CURSOR_MARKER, "");
+                if cursor_offset.is_none()
+                    && let Some(marker_offset) = content.find(INLINE_CURSOR_MARKER)
+                {
+                    cursor_offset = Some(line_start_offset + marker_offset);
                 }
+                clean_patch.push('+');
+                clean_patch.push_str(&clean_content);
+                line_start_offset += clean_content.len() + 1;
+            }
+            DiffLine::Context(content) => {
                 clean_patch.push_str(line);
-
-                match diff_line {
-                    DiffLine::Addition(content) | DiffLine::Context(content) => {
-                        prev_line_start_offset = line_start_offset;
-                        line_start_offset += content.len() + 1;
-                    }
-                    _ => {}
-                }
+                line_start_offset += content.len() + 1;
             }
+            _ => clean_patch.push_str(line),
         }
     }
 
@@ -356,40 +340,33 @@ pub fn encode_cursor_in_patch(patch: &str, cursor_offset: Option<usize>) -> Stri
     let mut line_start_offset = 0usize;
 
     for line in patch.lines() {
-        if matches!(
-            DiffLine::parse(line),
-            DiffLine::Garbage(content)
-                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER)
-        ) {
-            continue;
-        }
-
         if !result.is_empty() {
             result.push('\n');
         }
-        result.push_str(line);
 
         match DiffLine::parse(line) {
             DiffLine::Addition(content) => {
+                let content = content.replace(INLINE_CURSOR_MARKER, "");
                 let line_end_offset = line_start_offset + content.len();
-
-                if cursor_offset >= line_start_offset && cursor_offset <= line_end_offset {
-                    let cursor_column = cursor_offset - line_start_offset;
-
-                    result.push('\n');
-                    result.push('#');
-                    for _ in 0..cursor_column {
-                        result.push(' ');
-                    }
-                    write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
+                result.push('+');
+                if cursor_offset >= line_start_offset
+                    && cursor_offset <= line_end_offset
+                    && let Some(before) = content.get(..cursor_offset - line_start_offset)
+                    && let Some(after) = content.get(cursor_offset - line_start_offset..)
+                {
+                    result.push_str(before);
+                    result.push_str(INLINE_CURSOR_MARKER);
+                    result.push_str(after);
+                } else {
+                    result.push_str(&content);
                 }
-
                 line_start_offset = line_end_offset + 1;
             }
             DiffLine::Context(content) => {
+                result.push_str(line);
                 line_start_offset += content.len() + 1;
             }
-            _ => {}
+            _ => result.push_str(line),
         }
     }
 
