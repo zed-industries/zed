@@ -6153,8 +6153,8 @@ impl GitPanel {
                                                             tag_names
                                                                 .iter()
                                                                 .take(MAX_HISTORY_TAG_CHIPS)
-                                                                .cloned()
                                                                 .map(|tag_name| {
+                                                                    let tag_name = tag_name.clone();
                                                                     Chip::new(tag_name.clone())
                                                                         .truncate()
                                                                         .when(
