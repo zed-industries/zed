@@ -5,7 +5,7 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -14,7 +14,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use settings::{SeedQuerySetting, Settings as _};
+use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
 use workspace::{
@@ -26,6 +26,7 @@ mod delegate;
 mod render;
 use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
+use zed_actions::text_finder::SeedQuery;
 
 use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
 
@@ -130,9 +131,9 @@ impl TextFinder {
         _: &mut Context<Workspace>,
     ) {
         pub use zed_actions::text_finder::Toggle;
-        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+        workspace.register_action(|workspace, toggle: &Toggle, window, cx| {
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
-                let seed_query = Self::seed_query(workspace, window, cx);
+                let seed_query = Self::seed_query(workspace, window, cx, &toggle.seed);
                 Self::open(seed_query, window, cx).detach();
                 return;
             };
@@ -321,22 +322,25 @@ impl TextFinder {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        seed: &SeedQuery,
     ) -> Option<SearchSeed> {
-        if EditorSettings::get_global(cx)
-            .search
-            .restore_last_text_finder_query
-        {
-            let last_search = load_last_search(workspace.database_id(), cx);
-            let options = last_search.as_ref().and_then(|seed| seed.options);
-            let query = Self::active_item_query(workspace, window, cx, SeedQuerySetting::Selection)
-                .or_else(|| last_search.map(|seed| seed.query))?;
-            Some(SearchSeed { query, options })
-        } else {
-            let query = Self::active_item_query(workspace, window, cx, SeedQuerySetting::Always)?;
-            Some(SearchSeed {
-                query,
-                options: None,
-            })
+        match seed {
+            SeedQuery::LastQuery => {
+                let last_search = load_last_search(workspace.database_id(), cx);
+                let options = last_search.as_ref().and_then(|seed| seed.options);
+                let query =
+                    Self::active_item_query(workspace, window, cx, SeedQuerySetting::Selection)
+                        .or_else(|| last_search.map(|seed| seed.query))?;
+                Some(SearchSeed { query, options })
+            }
+            SeedQuery::UnderCursor => {
+                let query =
+                    Self::active_item_query(workspace, window, cx, SeedQuerySetting::Always)?;
+                Some(SearchSeed {
+                    query,
+                    options: None,
+                })
+            }
         }
     }
 
@@ -346,8 +350,6 @@ impl TextFinder {
     /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
     /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
     /// selection (e.g. a double-click) is a clear signal to search for that text.
-    ///
-    /// Last query can be disabled by the user in the settings, see: `Restore Last Text Finder Query`.
     fn active_item_query(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -463,16 +465,12 @@ impl ModalView for TextFinder {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
-        if EditorSettings::get_global(cx)
-            .search
-            .restore_last_text_finder_query
-        {
-            let picker = self.picker.read(cx);
-            let query = picker.query(cx);
-            if !query.is_empty() {
-                let options = picker.delegate.search_options;
-                store_last_search(self.workspace_id, query, options, cx);
-            }
+        // Always store the last search query in the database in case the user wants to restore it later
+        let picker = self.picker.read(cx);
+        let query = picker.query(cx);
+        if !query.is_empty() {
+            let options = picker.delegate.search_options;
+            store_last_search(self.workspace_id, query, options, cx);
         }
         DismissDecision::Dismiss(true)
     }

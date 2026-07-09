@@ -3417,7 +3417,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 }
 
 fn search_and_files_page() -> SettingsPage {
-    fn search_section() -> [SettingsPageItem; 10] {
+    fn search_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3572,31 +3572,6 @@ fn search_and_files_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.seed_search_query_from_cursor = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Restore Last Text Finder Query",
-                description: "Restore the last search when reopening the text finder. When disabled, use the word under the cursor.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("search.restore_last_text_finder_query"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .search
-                            .as_ref()?
-                            .restore_last_text_finder_query
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .editor
-                            .search
-                            .get_or_insert_default()
-                            .restore_last_text_finder_query = value;
                     },
                 }),
                 metadata: None,
