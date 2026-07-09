@@ -194,8 +194,6 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        // No GPT-5.5 Mini exists yet; per the OpenAI Codex docs, gpt-5.4-mini
-        // is the recommended fast/cheap default alongside gpt-5.5.
         Some(self.create_language_model(ChatGptModel::Gpt56Luna))
     }
 
