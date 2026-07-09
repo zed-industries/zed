@@ -3,16 +3,19 @@ use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    Role, StopReason, TokenUsage,
+    LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestToolInput,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
+    TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    ContextManagement, Request as ResponseRequest, ResponseCompactionItem, ResponseError,
+    ContextManagement, Request as ResponseRequest, ResponseCompactionItem,
+    ResponseCustomToolCallItem, ResponseCustomToolCallOutputItem, ResponseError,
     ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
     ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
     ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
@@ -52,7 +55,17 @@ pub fn into_open_ai(
     max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
-) -> crate::Request {
+) -> Result<crate::Request> {
+    if request
+        .tools
+        .iter()
+        .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+    {
+        return Err(anyhow!(
+            "OpenAI Chat Completions does not support custom tools; use Responses API instead"
+        ));
+    }
+
     let stream = !model_id.starts_with("o1-");
     let service_tier = service_tier_for(request.speed);
 
@@ -103,13 +116,18 @@ pub fn into_open_ai(
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let LanguageModelToolUseInput::Json(input) = &tool_use.input else {
+                        return Err(anyhow!(
+                            "OpenAI Chat Completions cannot replay custom tool call `{}`",
+                            tool_use.name
+                        ));
+                    };
                     let tool_call = ToolCall {
                         id: tool_use.id.to_string(),
                         content: ToolCallContent::Function {
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -152,7 +170,7 @@ pub fn into_open_ai(
         }
     }
 
-    crate::Request {
+    Ok(crate::Request {
         model: model_id.into(),
         messages,
         stream,
@@ -184,14 +202,21 @@ pub fn into_open_ai(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| crate::ToolDefinition::Function {
-                function: FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| match tool.input {
+                LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                    Ok(crate::ToolDefinition::Function {
+                        function: FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
+                }
+                LanguageModelRequestToolInput::Custom { .. } => Err(anyhow!(
+                    "OpenAI Chat Completions does not support custom tools; use Responses API instead"
+                )),
             })
-            .collect(),
+            .collect::<Result<_>>()?,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => crate::ToolChoice::Auto,
             LanguageModelToolChoice::Any => crate::ToolChoice::Required,
@@ -199,7 +224,7 @@ pub fn into_open_ai(
         }),
         reasoning_effort,
         service_tier,
-    }
+    })
 }
 
 pub fn into_open_ai_response(
@@ -232,22 +257,39 @@ pub fn into_open_ai_response(
 
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
+    let mut tool_use_kinds_by_id = HashMap::default();
     for (index, message) in messages.into_iter().enumerate() {
         append_message_to_response_items(
             message,
             index,
             &mut replayed_reasoning_item_indexes,
+            &mut tool_use_kinds_by_id,
             &mut input_items,
         );
     }
 
     let tools: Vec<_> = tools
         .into_iter()
-        .map(|tool| crate::responses::ToolDefinition::Function {
-            name: tool.name,
-            description: Some(tool.description),
-            parameters: Some(tool.input_schema),
-            strict: None,
+        .map(|tool| match tool.input {
+            LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                crate::responses::ToolDefinition::Function {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(input_schema),
+                    strict: None,
+                }
+            }
+            LanguageModelRequestToolInput::Custom { format } => {
+                crate::responses::ToolDefinition::Custom {
+                    name: tool.name,
+                    description: if tool.description.is_empty() {
+                        None
+                    } else {
+                        Some(tool.description)
+                    },
+                    format: format.map(custom_tool_format_into_open_ai),
+                }
+            }
         })
         .collect();
 
@@ -323,6 +365,7 @@ fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
+    tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
@@ -386,11 +429,29 @@ fn append_message_to_response_items(
                     input_items,
                 );
                 let call_id = tool_use.id.to_string();
-                input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
-                    call_id,
-                    name: tool_use.name.to_string(),
-                    arguments: tool_use.raw_input,
-                }));
+                match tool_use.input {
+                    LanguageModelToolUseInput::Json(_) => {
+                        tool_use_kinds_by_id.insert(tool_use.id, ReplayToolKind::Function);
+                        input_items.push(ResponseInputItem::FunctionCall(
+                            ResponseFunctionCallItem {
+                                call_id,
+                                name: tool_use.name.to_string(),
+                                arguments: tool_use.raw_input,
+                            },
+                        ));
+                    }
+                    LanguageModelToolUseInput::Text(_) => {
+                        tool_use_kinds_by_id.insert(tool_use.id, ReplayToolKind::Custom);
+                        input_items.push(ResponseInputItem::CustomToolCall(
+                            ResponseCustomToolCallItem {
+                                id: None,
+                                call_id,
+                                name: tool_use.name.to_string(),
+                                input: tool_use.raw_input,
+                            },
+                        ));
+                    }
+                }
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(
@@ -424,12 +485,24 @@ fn append_message_to_response_items(
                         ResponseFunctionCallOutputContent::List(parts)
                     }
                 };
-                input_items.push(ResponseInputItem::FunctionCallOutput(
-                    ResponseFunctionCallOutputItem {
-                        call_id: tool_result.tool_use_id.to_string(),
-                        output,
-                    },
-                ));
+                match tool_use_kinds_by_id.get(&tool_result.tool_use_id) {
+                    Some(ReplayToolKind::Custom) => {
+                        input_items.push(ResponseInputItem::CustomToolCallOutput(
+                            ResponseCustomToolCallOutputItem {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                            },
+                        ));
+                    }
+                    Some(ReplayToolKind::Function) | None => {
+                        input_items.push(ResponseInputItem::FunctionCallOutput(
+                            ResponseFunctionCallOutputItem {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                            },
+                        ));
+                    }
+                }
             }
         }
     }
@@ -441,6 +514,33 @@ fn append_message_to_response_items(
         &mut content_parts,
         input_items,
     );
+}
+
+#[derive(Clone, Copy)]
+enum ReplayToolKind {
+    Function,
+    Custom,
+}
+
+fn custom_tool_format_into_open_ai(
+    format: LanguageModelCustomToolFormat,
+) -> crate::responses::CustomToolFormat {
+    match format {
+        LanguageModelCustomToolFormat::Text => crate::responses::CustomToolFormat::Text,
+        LanguageModelCustomToolFormat::Grammar { syntax, definition } => {
+            crate::responses::CustomToolFormat::Grammar {
+                syntax: match syntax {
+                    LanguageModelCustomToolGrammarSyntax::Lark => {
+                        crate::responses::CustomToolGrammarSyntax::Lark
+                    }
+                    LanguageModelCustomToolGrammarSyntax::Regex => {
+                        crate::responses::CustomToolGrammarSyntax::Regex
+                    }
+                },
+                definition,
+            }
+        }
+    }
 }
 
 fn append_reasoning_details_to_response_items(
@@ -665,7 +765,7 @@ impl OpenAiEventMapper {
                                     id: entry.id.clone().into(),
                                     name: entry.name.as_str().into(),
                                     is_input_complete: false,
-                                    input,
+                                    input: LanguageModelToolUseInput::Json(input),
                                     raw_input: entry.arguments.clone(),
                                     thought_signature: None,
                                 },
@@ -688,7 +788,7 @@ impl OpenAiEventMapper {
                                 id: tool_call.id.clone().into(),
                                 name: tool_call.name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -736,6 +836,7 @@ struct RawToolCall {
 
 pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
+    custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
@@ -748,10 +849,17 @@ struct PendingResponseFunctionCall {
     arguments: String,
 }
 
+struct PendingResponseCustomToolCall {
+    call_id: String,
+    name: Arc<str>,
+    input: String,
+}
+
 impl OpenAiResponseEventMapper {
     pub fn new() -> Self {
         Self {
             function_calls_by_item: HashMap::default(),
+            custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
             current_message_phase: None,
             pending_stop_reason: None,
@@ -805,6 +913,23 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
+                    ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                        if let Some(item_id) = custom_tool_call.id.clone() {
+                            let call_id = custom_tool_call
+                                .call_id
+                                .clone()
+                                .or_else(|| custom_tool_call.id.clone())
+                                .unwrap_or_else(|| item_id.clone());
+                            let entry = PendingResponseCustomToolCall {
+                                call_id,
+                                name: Arc::<str>::from(
+                                    custom_tool_call.name.clone().unwrap_or_default(),
+                                ),
+                                input: custom_tool_call.input.clone(),
+                            };
+                            self.custom_tool_calls_by_item.insert(item_id, entry);
+                        }
+                    }
                     ResponseOutputItem::Compaction(_) => {
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
                             CompactionContent::Pending,
@@ -848,7 +973,7 @@ impl OpenAiResponseEventMapper {
                                 id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                 name: entry.name.clone(),
                                 is_input_complete: false,
-                                input,
+                                input: LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -873,7 +998,7 @@ impl OpenAiResponseEventMapper {
                                     id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                     name: entry.name.clone(),
                                     is_input_complete: true,
-                                    input,
+                                    input: LanguageModelToolUseInput::Json(input),
                                     raw_input,
                                     thought_signature: None,
                                 },
@@ -891,6 +1016,30 @@ impl OpenAiResponseEventMapper {
                 } else {
                     Vec::new()
                 }
+            }
+            ResponsesStreamEvent::CustomToolCallInputDelta { item_id, delta, .. } => {
+                if let Some(entry) = self.custom_tool_calls_by_item.get_mut(&item_id) {
+                    entry.input.push_str(&delta);
+                    return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                        LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(entry.call_id.clone()),
+                            name: entry.name.clone(),
+                            is_input_complete: false,
+                            input: LanguageModelToolUseInput::Text(entry.input.clone()),
+                            raw_input: entry.input.clone(),
+                            thought_signature: None,
+                        },
+                    ))];
+                }
+                Vec::new()
+            }
+            ResponsesStreamEvent::CustomToolCallInputDone { item_id, input, .. } => {
+                if let Some(entry) = self.custom_tool_calls_by_item.get_mut(&item_id)
+                    && !input.is_empty()
+                {
+                    entry.input = input;
+                }
+                self.finish_pending_custom_tool_call(&item_id, None)
             }
             ResponsesStreamEvent::Completed { response } => {
                 self.handle_completion(response, StopReason::EndTurn)
@@ -959,6 +1108,13 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                    if let Some(item_id) = custom_tool_call.id.as_ref() {
+                        self.finish_pending_custom_tool_call(item_id, Some(&custom_tool_call))
+                    } else {
+                        Vec::new()
+                    }
+                }
                 ResponseOutputItem::Compaction(compaction) => {
                     vec![Ok(LanguageModelCompletionEvent::Compaction(
                         CompactionContent::Encrypted {
@@ -1015,46 +1171,107 @@ impl OpenAiResponseEventMapper {
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
         for item in output {
-            if let ResponseOutputItem::FunctionCall(function_call) = item {
-                let Some(call_id) = function_call
-                    .call_id
-                    .clone()
-                    .or_else(|| function_call.id.clone())
-                else {
-                    log::error!(
-                        "Function call item missing both call_id and id: {:?}",
-                        function_call
-                    );
-                    continue;
-                };
-                let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
-                let arguments = &function_call.arguments;
-                self.pending_stop_reason = Some(StopReason::ToolUse);
-                match parse_tool_arguments(arguments) {
-                    Ok(input) => {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
+            match item {
+                ResponseOutputItem::FunctionCall(function_call) => {
+                    let Some(call_id) = function_call
+                        .call_id
+                        .clone()
+                        .or_else(|| function_call.id.clone())
+                    else {
+                        log::error!(
+                            "Function call item missing both call_id and id: {:?}",
+                            function_call
+                        );
+                        continue;
+                    };
+                    let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                    let arguments = &function_call.arguments;
+                    self.pending_stop_reason = Some(StopReason::ToolUse);
+                    match parse_tool_arguments(arguments) {
+                        Ok(input) => {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: LanguageModelToolUseId::from(call_id.clone()),
+                                    name: name.clone(),
+                                    is_input_complete: true,
+                                    input: LanguageModelToolUseInput::Json(input),
+                                    raw_input: arguments.clone(),
+                                    thought_signature: None,
+                                },
+                            )));
+                        }
+                        Err(error) => {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: LanguageModelToolUseId::from(call_id.clone()),
-                                name: name.clone(),
-                                is_input_complete: true,
-                                input,
-                                raw_input: arguments.clone(),
-                                thought_signature: None,
-                            },
-                        )));
-                    }
-                    Err(error) => {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: LanguageModelToolUseId::from(call_id.clone()),
-                            tool_name: name.clone(),
-                            raw_input: Arc::<str>::from(arguments.clone()),
-                            json_parse_error: error.to_string(),
-                        }));
+                                tool_name: name.clone(),
+                                raw_input: Arc::<str>::from(arguments.clone()),
+                                json_parse_error: error.to_string(),
+                            }));
+                        }
                     }
                 }
+                ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                    events.extend(self.emit_custom_tool_call(custom_tool_call));
+                }
+                _ => {}
             }
         }
         events
+    }
+
+    fn emit_custom_tool_call(
+        &mut self,
+        custom_tool_call: &crate::responses::ResponseCustomToolCall,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(call_id) = custom_tool_call
+            .call_id
+            .clone()
+            .or_else(|| custom_tool_call.id.clone())
+        else {
+            log::error!(
+                "Custom tool call item missing both call_id and id: {:?}",
+                custom_tool_call
+            );
+            return Vec::new();
+        };
+        self.pending_stop_reason = Some(StopReason::ToolUse);
+        let input = custom_tool_call.input.clone();
+        vec![Ok(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: LanguageModelToolUseId::from(call_id),
+                name: Arc::from(custom_tool_call.name.clone().unwrap_or_default()),
+                is_input_complete: true,
+                input: LanguageModelToolUseInput::Text(input.clone()),
+                raw_input: input,
+                thought_signature: None,
+            },
+        ))]
+    }
+
+    fn finish_pending_custom_tool_call(
+        &mut self,
+        item_id: &str,
+        fallback: Option<&crate::responses::ResponseCustomToolCall>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(mut entry) = self.custom_tool_calls_by_item.remove(item_id) else {
+            return Vec::new();
+        };
+        if let Some(fallback) = fallback
+            && !fallback.input.is_empty()
+        {
+            entry.input = fallback.input.clone();
+        }
+        self.pending_stop_reason = Some(StopReason::ToolUse);
+        vec![Ok(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: LanguageModelToolUseId::from(entry.call_id),
+                name: entry.name,
+                is_input_complete: true,
+                input: LanguageModelToolUseInput::Text(entry.input.clone()),
+                raw_input: entry.input,
+                thought_signature: None,
+            },
+        ))]
     }
 
     fn capture_reasoning_items_from_output(
@@ -1245,15 +1462,17 @@ fn response_reasoning_input_item_from_output(
 #[cfg(test)]
 mod tests {
     use crate::responses::{
-        ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
-        ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
-        ResponseReasoningItem, ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseCustomToolCall, ResponseError, ResponseFunctionToolCall,
+        ResponseIncompleteDetails, ResponseInputItem, ResponseInputTokensDetails,
+        ResponseOutputItem, ResponseOutputMessage, ResponseReasoningItem, ResponseSummary,
+        ResponseUsage, StreamEvent as ResponsesStreamEvent, ToolDefinition,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
-        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
+        LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, SharedString, Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1303,6 +1522,16 @@ mod tests {
             name: Some("get_weather".to_string()),
             call_id: Some("call_123".to_string()),
             arguments: args.map(|s| s.to_string()).unwrap_or_default(),
+        })
+    }
+
+    fn response_item_custom_tool_call(id: &str, input: &str) -> ResponseOutputItem {
+        ResponseOutputItem::CustomToolCall(ResponseCustomToolCall {
+            id: Some(id.to_string()),
+            status: Some("in_progress".to_string()),
+            name: Some("apply_patch".to_string()),
+            call_id: Some("call_abc".to_string()),
+            input: input.to_string(),
         })
     }
 
@@ -1418,6 +1647,97 @@ mod tests {
     }
 
     #[test]
+    fn responses_custom_tool_wire_types_round_trip() -> Result<()> {
+        let tool_json = json!({
+            "type": "custom",
+            "name": "apply_patch",
+            "description": "Apply a patch",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: /.+/"
+            }
+        });
+        let tool: ToolDefinition = serde_json::from_value(tool_json.clone())?;
+        assert_eq!(serde_json::to_value(tool)?, tool_json);
+
+        let text_tool_json = json!({
+            "type": "custom",
+            "name": "write_text",
+            "format": { "type": "text" }
+        });
+        let text_tool: ToolDefinition = serde_json::from_value(text_tool_json.clone())?;
+        assert_eq!(serde_json::to_value(text_tool)?, text_tool_json);
+
+        let input_json = json!({
+            "type": "custom_tool_call",
+            "id": "ctc_1",
+            "call_id": "call_abc",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch"
+        });
+        let input: ResponseInputItem = serde_json::from_value(input_json.clone())?;
+        assert_eq!(serde_json::to_value(input)?, input_json);
+
+        let output_json = json!({
+            "type": "custom_tool_call_output",
+            "call_id": "call_abc",
+            "output": "ok"
+        });
+        let output: ResponseInputItem = serde_json::from_value(output_json.clone())?;
+        assert_eq!(serde_json::to_value(output)?, output_json);
+
+        let output_item_json = json!({
+            "id": "ctc_1",
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "call_abc",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch"
+        });
+        let output_item: ResponseOutputItem = serde_json::from_value(output_item_json.clone())?;
+        assert_eq!(serde_json::to_value(output_item)?, output_item_json);
+
+        let delta_json = json!({
+            "type": "response.custom_tool_call_input.delta",
+            "output_index": 0,
+            "item_id": "ctc_1",
+            "sequence_number": 5,
+            "delta": "chunk"
+        });
+        let delta: ResponsesStreamEvent = serde_json::from_value(delta_json)?;
+        assert!(matches!(
+            delta,
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                output_index: 0,
+                sequence_number: Some(5),
+                ref item_id,
+                ref delta,
+            } if item_id == "ctc_1" && delta == "chunk"
+        ));
+
+        let done_json = json!({
+            "type": "response.custom_tool_call_input.done",
+            "output_index": 0,
+            "item_id": "ctc_1",
+            "sequence_number": 6,
+            "input": "full text"
+        });
+        let done: ResponsesStreamEvent = serde_json::from_value(done_json)?;
+        assert!(matches!(
+            done,
+            ResponsesStreamEvent::CustomToolCallInputDone {
+                output_index: 0,
+                sequence_number: Some(6),
+                ref item_id,
+                ref input,
+            } if item_id == "ctc_1" && input == "full text"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
     fn into_open_ai_response_builds_complete_payload() {
         let tool_call_id = LanguageModelToolUseId::from("call-42");
         let tool_input = json!({ "city": "Boston" });
@@ -1426,7 +1746,7 @@ mod tests {
             id: tool_call_id.clone(),
             name: Arc::from("get_weather"),
             raw_input: tool_arguments.clone(),
-            input: tool_input,
+            input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -1478,12 +1798,12 @@ mod tests {
                     reasoning_details: None,
                 },
             ],
-            tools: vec![LanguageModelRequestTool {
-                name: "get_weather".into(),
-                description: "Fetches the weather".into(),
-                input_schema: json!({ "type": "object" }),
-                use_input_streaming: false,
-            }],
+            tools: vec![LanguageModelRequestTool::function(
+                "get_weather".into(),
+                "Fetches the weather".into(),
+                json!({ "type": "object" }),
+                false,
+            )],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
@@ -1563,6 +1883,166 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_maps_custom_tool_input() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_custom_tool_call("ctc_1", ""),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                delta: "*** Begin".into(),
+                sequence_number: Some(1),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                delta: " Patch".into(),
+                sequence_number: Some(2),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDone {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                input: "*** Begin Patch".into(),
+                sequence_number: Some(3),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_custom_tool_call("ctc_1", "*** Begin Patch"),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        assert_eq!(
+            mapped,
+            vec![
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin".into()),
+                    is_input_complete: false,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin Patch".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin Patch".into()),
+                    is_input_complete: false,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin Patch".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin Patch".into()),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
+            ]
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_custom_tool_calls() {
+        let tool_call_id = LanguageModelToolUseId::from("call_abc");
+        let raw_input = "*** Begin Patch\n*** End Patch".to_string();
+        let tool_use = LanguageModelToolUse {
+            id: tool_call_id.clone(),
+            name: Arc::from("apply_patch"),
+            raw_input: raw_input.clone(),
+            input: LanguageModelToolUseInput::Text(raw_input.clone()),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_call_id,
+            tool_name: Arc::from("apply_patch"),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("ok"))],
+            output: None,
+        };
+
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::ToolUse(tool_use),
+                    MessageContent::ToolResult(tool_result),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: vec![LanguageModelRequestTool {
+                name: "apply_patch".into(),
+                description: "Apply a patch".into(),
+                input: LanguageModelRequestToolInput::Custom {
+                    format: Some(LanguageModelCustomToolFormat::Grammar {
+                        syntax: LanguageModelCustomToolGrammarSyntax::Lark,
+                        definition: "start: /.+/".into(),
+                    }),
+                },
+            }],
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let response =
+            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let serialized = serde_json::to_value(response).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "model": "custom-model",
+                "input": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call_abc",
+                        "name": "apply_patch",
+                        "input": raw_input
+                    },
+                    {
+                        "type": "custom_tool_call_output",
+                        "call_id": "call_abc",
+                        "output": "ok"
+                    }
+                ],
+                "store": false,
+                "stream": true,
+                "parallel_tool_calls": false,
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "description": "Apply a patch",
+                        "format": {
+                            "type": "grammar",
+                            "syntax": "lark",
+                            "definition": "start: /.+/"
+                        }
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_replays_encrypted_reasoning_details() {
         let tool_call_id = LanguageModelToolUseId::from("call-42");
         let tool_arguments = "{\"city\":\"Boston\"}".to_string();
@@ -1570,7 +2050,7 @@ mod tests {
             id: tool_call_id,
             name: Arc::from("get_weather"),
             raw_input: tool_arguments.clone(),
-            input: json!({ "city": "Boston" }),
+            input: LanguageModelToolUseInput::Json(json!({ "city": "Boston" })),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -1850,7 +2330,7 @@ mod tests {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
                 false,
-            );
+            )?;
 
             let serialized = serde_json::to_value(&chat)?;
             assert_eq!(
@@ -1895,7 +2375,7 @@ mod tests {
             ChatCompletionMaxTokensParameter::MaxTokens,
             None,
             false,
-        );
+        )?;
 
         let serialized = serde_json::to_value(&chat)?;
         assert_eq!(serialized.get("max_completion_tokens"), None);
@@ -2700,8 +3180,7 @@ mod tests {
             }) if id.to_string() == "call_123"
                 && name.as_ref() == "get_weather"
                 && raw_input == ""
-                && input.is_object()
-                && input.as_object().unwrap().is_empty()
+                && matches!(input, LanguageModelToolUseInput::Json(value) if value.as_object().is_some_and(|object| object.is_empty()))
         ));
         assert!(matches!(
             mapped[1],
@@ -3198,7 +3677,7 @@ mod tests {
             id: tool_use_id.clone(),
             name: Arc::from("search"),
             raw_input: tool_arguments.clone(),
-            input: tool_input,
+            input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -3259,7 +3738,8 @@ mod tests {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             true,
-        );
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3283,7 +3763,8 @@ mod tests {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             false,
-        );
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
