@@ -2,7 +2,7 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol::schema::v1 as acp;
-use agent_servers::AgentServer;
+use agent_servers::{AgentServer, CODEX_ID};
 
 use collections::HashSet;
 use fs::Fs;
@@ -16,7 +16,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{AgentConfigOptionValue, SettingsStore};
 use ui::{
     ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Switch,
-    SwitchLabelPosition, ToggleState, Tooltip, prelude::*,
+    SwitchLabelPosition, ToggleState, Tooltip, prelude::*, utils::capitalize,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
@@ -175,7 +175,11 @@ impl ConfigOptionsView {
 
         match &option.kind {
             acp::SessionConfigKind::Select(_) => {
-                let mut options = extract_options(&self.config_options, config_id);
+                let mut options = extract_options(
+                    &self.config_options,
+                    config_id,
+                    agent_server_is_codex(self.agent_server.as_ref()),
+                );
                 if options.is_empty() {
                     return None;
                 }
@@ -289,6 +293,7 @@ struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     config_id: acp::SessionConfigId,
     agent_server: Rc<dyn AgentServer>,
+    is_codex_agent_server: bool,
     fs: Arc<dyn Fs>,
     picker_handle: Option<PopoverMenuHandle<Picker<ConfigOptionPickerDelegate>>>,
     picker: Option<Entity<Picker<ConfigOptionPickerDelegate>>>,
@@ -317,6 +322,7 @@ impl ConfigOptionSelector {
             .is_some_and(|option| matches!(&option.kind, acp::SessionConfigKind::Select(_)));
 
         let is_searchable = option_count >= PICKER_THRESHOLD;
+        let is_codex_agent_server = agent_server_is_codex(agent_server.as_ref());
 
         let (picker_handle, picker) = if is_select {
             let config_options = config_options.clone();
@@ -350,6 +356,7 @@ impl ConfigOptionSelector {
             config_options,
             config_id,
             agent_server,
+            is_codex_agent_server,
             fs,
             picker_handle,
             picker,
@@ -383,10 +390,13 @@ impl ConfigOptionSelector {
         };
 
         match &option.kind {
-            acp::SessionConfigKind::Select(select) => {
-                find_option_name(&select.options, &select.current_value)
-                    .unwrap_or_else(|| "Unknown".to_string())
-            }
+            acp::SessionConfigKind::Select(select) => find_option_name(
+                &select.options,
+                &select.current_value,
+                option.category.as_ref(),
+                self.is_codex_agent_server,
+            )
+            .unwrap_or_else(|| "Unknown".to_string()),
             _ => "Unknown".to_string(),
         }
     }
@@ -650,7 +660,11 @@ impl ConfigOptionPickerDelegate {
     ) -> Self {
         let favorites = agent_server.favorite_config_option_value_ids(&config_id, cx);
 
-        let all_options = extract_options(&config_options, &config_id);
+        let all_options = extract_options(
+            &config_options,
+            &config_id,
+            agent_server_is_codex(agent_server.as_ref()),
+        );
         let filtered_entries = options_to_picker_entries(&all_options, &favorites);
 
         let current_value = get_current_select_value(&config_options, &config_id);
@@ -916,6 +930,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 fn extract_options(
     config_options: &Rc<dyn AgentSessionConfigOptions>,
     config_id: &acp::SessionConfigId,
+    is_codex_agent_server: bool,
 ) -> Vec<ConfigOptionValue> {
     let Some(option) = config_options
         .config_options()
@@ -931,7 +946,11 @@ fn extract_options(
                 .iter()
                 .map(|opt| ConfigOptionValue {
                     value: opt.value.clone(),
-                    name: opt.name.clone(),
+                    name: display_name_for_config_option_value(
+                        option.category.as_ref(),
+                        &opt.name,
+                        is_codex_agent_server,
+                    ),
                     description: opt.description.clone(),
                     group: None,
                 })
@@ -941,7 +960,11 @@ fn extract_options(
                 .flat_map(|group| {
                     group.options.iter().map(|opt| ConfigOptionValue {
                         value: opt.value.clone(),
-                        name: opt.name.clone(),
+                        name: display_name_for_config_option_value(
+                            option.category.as_ref(),
+                            &opt.name,
+                            is_codex_agent_server,
+                        ),
                         description: opt.description.clone(),
                         group: Some(group.name.clone()),
                     })
@@ -1062,21 +1085,47 @@ async fn fuzzy_search_options(
 fn find_option_name(
     options: &acp::SessionConfigSelectOptions,
     value_id: &acp::SessionConfigValueId,
+    category: Option<&acp::SessionConfigOptionCategory>,
+    is_codex_agent_server: bool,
 ) -> Option<String> {
     match options {
-        acp::SessionConfigSelectOptions::Ungrouped(opts) => opts
-            .iter()
-            .find(|o| &o.value == value_id)
-            .map(|o| o.name.clone()),
+        acp::SessionConfigSelectOptions::Ungrouped(opts) => {
+            opts.iter().find(|o| &o.value == value_id).map(|o| {
+                display_name_for_config_option_value(category, &o.name, is_codex_agent_server)
+            })
+        }
         acp::SessionConfigSelectOptions::Grouped(groups) => groups.iter().find_map(|group| {
             group
                 .options
                 .iter()
                 .find(|o| &o.value == value_id)
-                .map(|o| o.name.clone())
+                .map(|o| {
+                    display_name_for_config_option_value(category, &o.name, is_codex_agent_server)
+                })
         }),
         _ => None,
     }
+}
+
+fn agent_server_is_codex(agent_server: &dyn AgentServer) -> bool {
+    agent_server.agent_id().as_ref() == CODEX_ID
+}
+
+fn display_name_for_config_option_value(
+    category: Option<&acp::SessionConfigOptionCategory>,
+    name: &str,
+    is_codex_agent_server: bool,
+) -> String {
+    if !is_codex_agent_server
+        || !matches!(
+            category,
+            Some(acp::SessionConfigOptionCategory::ThoughtLevel)
+        )
+    {
+        return name.to_string();
+    }
+
+    capitalize(name)
 }
 
 fn count_config_options(option: &acp::SessionConfigOption) -> usize {
@@ -1273,6 +1322,98 @@ mod tests {
         });
 
         assert!(!handled);
+    }
+
+    #[test]
+    fn codex_thought_level_config_option_names_are_capitalized() {
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "thinking_effort",
+                "Thinking Effort",
+                "high",
+                vec![
+                    acp::SessionConfigSelectOption::new("low", "low"),
+                    acp::SessionConfigSelectOption::new("medium", "medium"),
+                    acp::SessionConfigSelectOption::new("high", "high"),
+                    acp::SessionConfigSelectOption::new("xhigh", "xhigh"),
+                    acp::SessionConfigSelectOption::new("ultra", "ultra"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+        ]));
+        let config_options: Rc<dyn AgentSessionConfigOptions> = config_options;
+        let config_id = acp::SessionConfigId::new("thinking_effort");
+
+        let options = extract_options(&config_options, &config_id, true);
+        let names = options
+            .iter()
+            .map(|option| option.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Low", "Medium", "High", "Xhigh", "Ultra"]);
+
+        let option = config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.id == config_id)
+            .expect("expected thinking effort option");
+        let acp::SessionConfigKind::Select(select) = option.kind else {
+            panic!("expected select option");
+        };
+        assert_eq!(
+            find_option_name(
+                &select.options,
+                &acp::SessionConfigValueId::new("high"),
+                option.category.as_ref(),
+                true,
+            ),
+            Some("High".to_string())
+        );
+    }
+
+    #[test]
+    fn non_codex_thought_level_config_option_names_are_unchanged() {
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "thinking_effort",
+                "Thinking Effort",
+                "high",
+                vec![
+                    acp::SessionConfigSelectOption::new("low", "low"),
+                    acp::SessionConfigSelectOption::new("medium", "medium"),
+                    acp::SessionConfigSelectOption::new("high", "high"),
+                    acp::SessionConfigSelectOption::new("xhigh", "xhigh"),
+                    acp::SessionConfigSelectOption::new("ultra", "ultra"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+        ]));
+        let config_options: Rc<dyn AgentSessionConfigOptions> = config_options;
+        let config_id = acp::SessionConfigId::new("thinking_effort");
+
+        let options = extract_options(&config_options, &config_id, false);
+        let names = options
+            .iter()
+            .map(|option| option.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["low", "medium", "high", "xhigh", "ultra"]);
+
+        let option = config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.id == config_id)
+            .expect("expected thinking effort option");
+        let acp::SessionConfigKind::Select(select) = option.kind else {
+            panic!("expected select option");
+        };
+        assert_eq!(
+            find_option_name(
+                &select.options,
+                &acp::SessionConfigValueId::new("high"),
+                option.category.as_ref(),
+                false,
+            ),
+            Some("high".to_string())
+        );
     }
 
     #[derive(Default)]
