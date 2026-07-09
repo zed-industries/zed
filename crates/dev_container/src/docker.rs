@@ -752,6 +752,82 @@ mod test {
     }
 
     #[test]
+    fn is_podman_binary_detects_podman_variants() {
+        use super::is_podman_binary;
+
+        assert!(is_podman_binary("podman"), "bare 'podman' should be detected");
+        assert!(
+            is_podman_binary("podman-remote"),
+            "'podman-remote' should be detected"
+        );
+        assert!(
+            is_podman_binary("/usr/bin/podman"),
+            "full path to 'podman' should be detected"
+        );
+        assert!(
+            is_podman_binary("/usr/bin/podman-remote"),
+            "full path to 'podman-remote' should be detected"
+        );
+        assert!(
+            !is_podman_binary("docker"),
+            "'docker' should not be detected as podman"
+        );
+        assert!(
+            !is_podman_binary("/usr/bin/docker"),
+            "full path to 'docker' should not be detected as podman"
+        );
+    }
+
+    #[test]
+    fn podman_remote_is_treated_as_podman_for_buildkit() {
+        // podman-remote, like podman, must never use BuildKit.
+        let podman_remote =
+            futures::executor::block_on(Docker::new("podman-remote", Some(true)));
+        assert!(
+            !podman_remote.supports_compose_buildkit(),
+            "podman-remote must not use BuildKit even when use_buildkit=true"
+        );
+        assert!(
+            podman_remote.is_podman(),
+            "podman-remote must be recognized as podman"
+        );
+    }
+
+    #[test]
+    fn resolved_docker_cli_logic() {
+        // Mirrors the three branches of DevContainerContext::resolved_docker_cli.
+        // container_binary takes priority.
+        assert_eq!(
+            resolve_docker_cli(Some("podman-remote"), false),
+            "podman-remote"
+        );
+        // Full-path override also works.
+        assert_eq!(
+            resolve_docker_cli(Some("/usr/bin/podman-remote"), false),
+            "/usr/bin/podman-remote"
+        );
+        // Explicit binary wins even over use_podman.
+        assert_eq!(
+            resolve_docker_cli(Some("custom-docker"), true),
+            "custom-docker"
+        );
+        // No override + use_podman → "podman".
+        assert_eq!(resolve_docker_cli(None, true), "podman");
+        // No override + no use_podman → "docker".
+        assert_eq!(resolve_docker_cli(None, false), "docker");
+    }
+
+    fn resolve_docker_cli(container_binary: Option<&str>, use_podman: bool) -> &str {
+        if let Some(binary) = container_binary {
+            binary
+        } else if use_podman {
+            "podman"
+        } else {
+            "docker"
+        }
+    }
+
+    #[test]
     fn should_parse_simple_env_var() {
         let config = super::DockerInspectConfig {
             labels: super::DockerConfigLabels { metadata: None },
