@@ -174,7 +174,7 @@
       "cmd->": "agent::AddSelectionToThread",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
-      "alt-cmd-f": "project_search::OpenTextFinder",
+      "alt-cmd-f": "text_finder::Toggle",
     },
   },
   {
@@ -466,7 +466,7 @@
       "cmd-f": "search::FocusSearch",
       "cmd-alt-l": "search::ToggleSelection",
       "cmd-shift-o": "outline::Toggle",
-      "alt-cmd-f": "project_search::OpenTextFinder",
+      "alt-cmd-f": "text_finder::Toggle",
     },
   },
   {
@@ -575,7 +575,6 @@
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-x": "search::ToggleRegex",
       "cmd-k shift-enter": "pane::TogglePinTab",
-      "alt-cmd-f": "project_search::OpenTextFinder",
     },
   },
   // Bindings from VS Code
