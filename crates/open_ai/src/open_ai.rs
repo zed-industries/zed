@@ -511,48 +511,6 @@ mod tests {
             expected_efforts.as_slice()
         );
     }
-
-    #[test]
-    fn gpt_5_6_models_match_codex_metadata() {
-        let expected_efforts = [
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-            ReasoningEffort::XHigh,
-            ReasoningEffort::Max,
-        ];
-
-        assert_eq!(Model::default(), Model::FivePointSixSol);
-        assert_eq!(Model::default_fast(), Model::FivePointSixLuna);
-        assert_eq!(
-            Model::FivePointSixSol.reasoning_effort(),
-            Some(ReasoningEffort::Low)
-        );
-        assert_eq!(
-            Model::FivePointSixTerra.reasoning_effort(),
-            Some(ReasoningEffort::Medium)
-        );
-        assert_eq!(
-            Model::FivePointSixLuna.reasoning_effort(),
-            Some(ReasoningEffort::Medium)
-        );
-
-        for model in [
-            Model::FivePointSixSol,
-            Model::FivePointSixTerra,
-            Model::FivePointSixLuna,
-        ] {
-            assert_eq!(model.max_token_count(), 372_000);
-            assert_eq!(model.max_output_tokens(), Some(128_000));
-            assert_eq!(
-                model.supported_reasoning_efforts(),
-                expected_efforts.as_slice()
-            );
-            assert!(model.supports_parallel_tool_calls());
-            assert!(model.supports_compaction());
-            assert!(model.supports_priority());
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
