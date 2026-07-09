@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
-    Subscription, UniformListScrollHandle, uniform_list,
+    DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment,
+    ListSizingBehavior, ListState, Subscription, list,
 };
 use ui::{
     Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
@@ -26,9 +26,12 @@ struct CsvFilterMenu {
     /// Kept stable so selections don't jump around while the menu is open.
     stable_order: Vec<Option<SharedString>>,
     /// Filtered entries for the current search query, recomputed each render.
-    /// Stored on self so the uniform_list processor closure can index into it.
+    /// Stored on self so the list processor closure can index into it.
     entries: Vec<(FilterEntry, bool, Vec<usize>)>,
-    scroll_handle: UniformListScrollHandle,
+    list_state: ListState,
+    /// Entry count as of the last `list_state` reset, used to detect when the
+    /// search query has changed the filtered set and the list needs resetting.
+    list_entry_count: usize,
     _editor_subscription: Subscription,
 }
 
@@ -94,7 +97,8 @@ impl CsvFilterMenu {
             editor,
             stable_order,
             entries: Vec::new(),
-            scroll_handle: UniformListScrollHandle::new(),
+            list_state: ListState::new(0, ListAlignment::Top, px(1000.)),
+            list_entry_count: 0,
             _editor_subscription: subscription,
         }
     }
@@ -171,6 +175,14 @@ impl Render for CsvFilterMenu {
             .collect();
 
         let entry_count = self.entries.len();
+        // Entries can wrap to multiple lines, so `list`/`ListState` (variable item
+        // height) is used instead of `uniform_list`. Reset only when the filtered
+        // set actually changes size, so typing doesn't drop scroll position/cache
+        // on every render.
+        if entry_count != self.list_entry_count {
+            self.list_state.reset(entry_count);
+            self.list_entry_count = entry_count;
+        }
         // Cap like the command palette picker: grow to fit content, up to a
         // fraction of the window, then scroll. Avoids hand-computing row height.
         let max_list_height = window.viewport_size().height * 0.6;
@@ -216,124 +228,100 @@ impl Render for CsvFilterMenu {
                     .max_h(max_list_height)
                     .overflow_hidden()
                     .child(
-                        uniform_list(
-                            ElementId::Name(format!("csv-filter-list-{}", col.get()).into()),
-                            entry_count,
-                            cx.processor(
-                                move |this, range: std::ops::Range<usize>, _window, cx| {
-                                    let hover_bg = cx.theme().colors().element_hover;
-                                    range
-                                        .map(|ix| {
-                                            let (entry, is_applied, positions) = &this.entries[ix];
-                                            let entry_value = entry.content.clone();
-                                            let value_text: SharedString = match &entry.content {
-                                                Some(s) => s.clone(),
-                                                None => "<null>".into(),
-                                            };
-                                            let count_text = SharedString::from(
-                                                entry.occurred_times().to_string(),
-                                            );
-                                            let is_applied = *is_applied;
-                                            let positions = positions.clone();
-                                            let view = this.view.clone();
+                        list(
+                            self.list_state.clone(),
+                            cx.processor(move |this, ix: usize, _window, cx| {
+                                let hover_bg = cx.theme().colors().element_hover;
+                                let (entry, is_applied, positions) = &this.entries[ix];
+                                let entry_value = entry.content.clone();
+                                let value_text: SharedString = match &entry.content {
+                                    Some(s) => s.clone(),
+                                    None => "<null>".into(),
+                                };
+                                let count_text =
+                                    SharedString::from(entry.occurred_times().to_string());
+                                let is_applied = *is_applied;
+                                let positions = positions.clone();
+                                let view = this.view.clone();
 
-                                            h_flex()
-                                                .id(ElementId::NamedInteger(
-                                                    format!("csv-filter-entry-{}", col.get())
-                                                        .into(),
-                                                    ix as u64,
-                                                ))
-                                                .w_full()
-                                                .px_2()
-                                                .py_1()
-                                                .gap_2()
-                                                .items_center()
-                                                .justify_between()
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(hover_bg))
-                                                // Left: check icon + value text
-                                                .child(
-                                                    h_flex()
-                                                        .gap_2()
-                                                        .items_center()
-                                                        .min_w_0()
-                                                        .flex_1()
-                                                        .child(
-                                                            h_flex()
-                                                                .flex_none()
-                                                                .when(!is_applied, |el| {
-                                                                    el.invisible()
-                                                                })
-                                                                .child(
-                                                                    Icon::new(IconName::Check)
-                                                                        .size(IconSize::Small)
-                                                                        .color(Color::Accent),
-                                                                ),
-                                                        )
-                                                        .child(
+                                h_flex()
+                                    .id(ElementId::NamedInteger(
+                                        format!("csv-filter-entry-{}", col.get()).into(),
+                                        ix as u64,
+                                    ))
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .gap_2()
+                                    .items_center()
+                                    .justify_between()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(hover_bg))
+                                    // Left: check icon + value text
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .child(
+                                                h_flex()
+                                                    .flex_none()
+                                                    .when(!is_applied, |el| el.invisible())
+                                                    .child(
+                                                        Icon::new(IconName::Check)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Accent),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(ElementId::NamedInteger(
+                                                        format!("csv-filter-value-{}", col.get())
+                                                            .into(),
+                                                        ix as u64,
+                                                    ))
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .tooltip(Tooltip::element({
+                                                        let value_text = value_text.clone();
+                                                        move |_window, cx| {
                                                             div()
-                                                                .id(ElementId::NamedInteger(
-                                                                    format!(
-                                                                        "csv-filter-value-{}",
-                                                                        col.get()
-                                                                    )
-                                                                    .into(),
-                                                                    ix as u64,
-                                                                ))
-                                                                .min_w_0()
-                                                                .overflow_hidden()
-                                                                .tooltip(Tooltip::element({
-                                                                    let value_text =
-                                                                        value_text.clone();
-                                                                    move |_window, cx| {
-                                                                        div()
-                                                                            .font_buffer(cx)
-                                                                            .child(
-                                                                                value_text.clone(),
-                                                                            )
-                                                                            .into_any_element()
-                                                                    }
-                                                                }))
-                                                                .child(
-                                                                    HighlightedLabel::new(
-                                                                        value_text, positions,
-                                                                    )
-                                                                    .size(LabelSize::Small)
-                                                                    .single_line()
-                                                                    .truncate(),
-                                                                ),
-                                                        ),
-                                                )
-                                                // Right: occurrence count
-                                                .child(
-                                                    Label::new(count_text)
+                                                                .font_buffer(cx)
+                                                                .child(value_text.clone())
+                                                                .into_any_element()
+                                                        }
+                                                    }))
+                                                    .child(
+                                                        HighlightedLabel::new(
+                                                            value_text, positions,
+                                                        )
                                                         .size(LabelSize::Small)
-                                                        .mr_2()
-                                                        .color(Color::Muted),
-                                                )
-                                                .on_click(move |_, _window, cx| {
-                                                    view.update(
-                                                        cx,
-                                                        |this: &mut CsvPreviewView, cx| {
-                                                            this.toggle_filter(
-                                                                col,
-                                                                entry_value.clone(),
-                                                                cx,
-                                                            );
-                                                        },
-                                                    );
-                                                })
-                                        })
-                                        .collect()
-                                },
-                            ),
+                                                        .single_line()
+                                                        .truncate(),
+                                                    ),
+                                            ),
+                                    )
+                                    // Right: occurrence count
+                                    .child(
+                                        Label::new(count_text)
+                                            .size(LabelSize::Small)
+                                            .mr_2()
+                                            .color(Color::Muted),
+                                    )
+                                    .on_click(move |_, _window, cx| {
+                                        view.update(cx, |this: &mut CsvPreviewView, cx| {
+                                            this.toggle_filter(col, entry_value.clone(), cx);
+                                        });
+                                    })
+                                    .into_any_element()
+                            }),
                         )
                         .w_full()
                         .flex_grow_1()
-                        .track_scroll(&self.scroll_handle)
                         .with_sizing_behavior(ListSizingBehavior::Infer),
                     )
-                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                    .vertical_scrollbar_for(&self.list_state, window, cx),
             )
             // Footer: row count + clear all — shown as soon as any filter is selected
             .when(has_active_filters, |this| {
