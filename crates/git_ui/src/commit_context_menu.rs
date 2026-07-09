@@ -1,5 +1,5 @@
 use crate::commit_view::CommitView;
-use git::Oid;
+use git::{Oid, repository::LogSource};
 use gpui::{Action, ClipboardItem, Entity, FocusHandle, SharedString, WeakEntity, Window, actions};
 use project::{GIT_COMMAND_TASK_TAG, git_store::Repository};
 
@@ -27,8 +27,15 @@ pub(crate) struct CommitContextMenuData {
     pub(crate) tag_names: Vec<SharedString>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommitContextMenuSource {
+    GitGraph,
+    GitPanel,
+}
+
 pub(crate) fn commit_context_menu(
     commit: CommitContextMenuData,
+    source: CommitContextMenuSource,
     ref_name: Option<SharedString>,
     focus_handle: FocusHandle,
     repository: Option<WeakEntity<Repository>>,
@@ -120,6 +127,30 @@ pub(crate) fn commit_context_menu(
                             menu
                         }),
                     }
+                })
+            })
+            .when(source == CommitContextMenuSource::GitPanel, |menu| {
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                menu.entry("Reveal in Git Graph", None, move |window, cx| {
+                    let Some(repository) = repository.as_ref().and_then(WeakEntity::upgrade) else {
+                        return;
+                    };
+                    let repo_id = repository.read(cx).id;
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            let git_store = workspace.project().read(cx).git_store().clone();
+                            crate::git_graph::open_or_reuse_graph(
+                                workspace,
+                                repo_id,
+                                git_store,
+                                LogSource::All,
+                                Some(sha.to_string()),
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
                 })
             })
             .map(|mut menu| {

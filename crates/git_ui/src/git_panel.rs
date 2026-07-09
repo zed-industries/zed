@@ -1,5 +1,7 @@
 use crate::askpass_modal::AskPassModal;
-use crate::commit_context_menu::{CommitContextMenuData, commit_context_menu};
+use crate::commit_context_menu::{
+    CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
+};
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
@@ -5839,6 +5841,7 @@ impl GitPanel {
                 sha: commit.sha,
                 tag_names: commit.tag_names,
             },
+            CommitContextMenuSource::GitPanel,
             None,
             self.focus_handle.clone(),
             Some(repository.downgrade()),
