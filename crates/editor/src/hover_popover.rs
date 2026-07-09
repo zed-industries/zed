@@ -1,6 +1,6 @@
 use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    GlobalDiagnosticRenderer, HighlightKey, Hover,
+    GlobalDiagnosticRenderer, HighlightKey, Hover, code_lens,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
@@ -12,14 +12,14 @@ use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
-    TextStyleRefinement, Window, canvas, div, px,
+    TextStyleRefinement, WeakEntity, Window, canvas, div, px,
 };
 use itertools::Itertools;
-use language::{DiagnosticEntry, Language, LanguageRegistry};
-use lsp::DiagnosticSeverity;
+use language::{Buffer, DiagnosticEntry, Language, LanguageRegistry};
+use lsp::{CodeActionKind, DiagnosticSeverity};
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{CodeAction, HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -28,9 +28,12 @@ use std::{
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme_settings::ThemeSettings;
-use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{
+    Color, CopyButton, Label, LabelSize, Scrollbars, WithScrollbar, prelude::*,
+    theme_is_transparent,
+};
 use url::Url;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -353,6 +356,7 @@ fn show_hover(
                     .min_by_key(|(_, entry)| entry.range.end - entry.range.start)
             };
 
+            let mut diagnostic_quick_fixes_task = None;
             let diagnostic_popover = if let Some((buffer_id, local_diagnostic)) = local_diagnostic {
                 let group = snapshot
                     .buffer_snapshot()
@@ -416,6 +420,35 @@ fn show_hover(
                             .buffer_snapshot()
                             .anchor_after(local_diagnostic.range.end),
                 };
+                let diagnostic_group_id = local_diagnostic.diagnostic.group_id;
+
+                diagnostic_quick_fixes_task = this
+                    .update(cx, |editor, cx| {
+                        let project = editor.project()?.clone();
+                        let multi_buffer = editor.buffer().read(cx);
+                        let (start_buffer, start) = multi_buffer
+                            .text_anchor_for_position(local_diagnostic.range.start, cx)?;
+                        let (end_buffer, end) = multi_buffer
+                            .text_anchor_for_position(local_diagnostic.range.end, cx)?;
+                        if start_buffer != end_buffer {
+                            return None;
+                        }
+
+                        Some((
+                            diagnostic_group_id,
+                            start_buffer.clone(),
+                            project.update(cx, |project, cx| {
+                                project.code_actions(
+                                    &start_buffer,
+                                    start..end,
+                                    Some(vec![CodeActionKind::QUICKFIX]),
+                                    cx,
+                                )
+                            }),
+                        ))
+                    })
+                    .ok()
+                    .flatten();
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -427,6 +460,8 @@ fn show_hover(
                     background_color,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor,
+                    quick_fixes: Vec::new(),
+                    quick_fix_bounds: Rc::new(RefCell::new(Vec::new())),
                     last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
                 })
@@ -606,6 +641,42 @@ fn show_hover(
                 cx.notify();
                 window.refresh();
             })?;
+
+            if let Some((diagnostic_group_id, buffer, quick_fixes_task)) =
+                diagnostic_quick_fixes_task
+            {
+                let quick_fixes = quick_fixes_task
+                    .await
+                    .log_err()
+                    .flatten()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|action| {
+                        action
+                            .lsp_action
+                            .action_kind()
+                            .is_none_or(|kind| kind == CodeActionKind::QUICKFIX)
+                    })
+                    .map(|action| DiagnosticQuickFix {
+                        action,
+                        buffer: buffer.clone(),
+                    })
+                    .collect::<Vec<_>>();
+
+                if !quick_fixes.is_empty() {
+                    this.update(cx, |editor, cx| {
+                        if let Some(diagnostic_popover) =
+                            editor.hover_state.diagnostic_popover.as_mut()
+                            && diagnostic_popover.anchor == anchor
+                            && diagnostic_popover.local_diagnostic.diagnostic.group_id
+                                == diagnostic_group_id
+                        {
+                            diagnostic_popover.quick_fixes = quick_fixes;
+                            cx.notify();
+                        }
+                    })?;
+                }
+            }
 
             anyhow::Ok(())
         }
@@ -1146,11 +1217,68 @@ impl InfoPopover {
     }
 }
 
+#[derive(Clone)]
+struct DiagnosticQuickFix {
+    action: CodeAction,
+    buffer: Entity<Buffer>,
+}
+
+fn apply_diagnostic_quick_fix(
+    quick_fix: DiagnosticQuickFix,
+    editor_handle: WeakEntity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let title = quick_fix.action.lsp_action.title().replace('\n', "");
+
+    editor_handle
+        .update(cx, |editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
+            let Some(workspace) = editor.workspace() else {
+                return;
+            };
+
+            if code_lens::try_handle_client_command(
+                &quick_fix.action,
+                editor,
+                &workspace,
+                window,
+                cx,
+            ) {
+                return;
+            }
+
+            let project = workspace.read(cx).project().clone();
+            let apply_code_action = project.update(cx, |project, cx| {
+                project.apply_code_action(
+                    quick_fix.buffer.clone(),
+                    quick_fix.action.clone(),
+                    true,
+                    cx,
+                )
+            });
+            let workspace = workspace.downgrade();
+
+            cx.spawn_in(window, async move |editor, cx| {
+                let project_transaction = apply_code_action.await?;
+                Editor::open_project_transaction(&editor, workspace, project_transaction, title, cx)
+                    .await
+            })
+            .detach_and_log_err(cx);
+        })
+        .ok();
+}
+
 pub struct DiagnosticPopover {
     pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
     markdown: Entity<Markdown>,
     border_color: Hsla,
     background_color: Hsla,
+    quick_fixes: Vec<DiagnosticQuickFix>,
+    quick_fix_bounds: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Anchor,
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -1166,7 +1294,7 @@ impl DiagnosticPopover {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
-        let this = cx.entity().downgrade();
+        let editor_handle = cx.entity().downgrade();
         let bounds_cell = self.last_bounds.clone();
         div()
             .id("diagnostic")
@@ -1192,22 +1320,48 @@ impl DiagnosticPopover {
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move({
-                let this = this.clone();
+                let editor_handle = editor_handle.clone();
                 move |_, _, cx: &mut App| {
-                    this.update(cx, |editor, _| {
-                        editor.hover_state.closest_mouse_distance = Some(px(0.0));
-                        editor.hover_state.hiding_delay_task = None;
-                    })
-                    .ok();
+                    editor_handle
+                        .update(cx, |editor, _| {
+                            editor.hover_state.closest_mouse_distance = Some(px(0.0));
+                            editor.hover_state.hiding_delay_task = None;
+                        })
+                        .ok();
                     cx.stop_propagation()
                 }
             })
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let mut keyboard_grace = keyboard_grace.borrow_mut();
-                *keyboard_grace = false;
-                cx.stop_propagation();
+            .on_mouse_down(MouseButton::Left, {
+                let editor_handle = editor_handle.clone();
+                let quick_fixes = self.quick_fixes.clone();
+                let quick_fix_bounds = self.quick_fix_bounds.clone();
+                move |event, window, cx| {
+                    if let Some((index, _)) =
+                        quick_fix_bounds
+                            .borrow()
+                            .iter()
+                            .enumerate()
+                            .find(|(_, bounds)| {
+                                bounds.is_some_and(|bounds| bounds.contains(&event.position))
+                            })
+                        && let Some(quick_fix) = quick_fixes.get(index)
+                    {
+                        cx.stop_propagation();
+                        apply_diagnostic_quick_fix(
+                            quick_fix.clone(),
+                            editor_handle.clone(),
+                            window,
+                            cx,
+                        );
+                        return;
+                    }
+
+                    let mut keyboard_grace = keyboard_grace.borrow_mut();
+                    *keyboard_grace = false;
+                    cx.stop_propagation();
+                }
             })
             .child(
                 div()
@@ -1219,36 +1373,7 @@ impl DiagnosticPopover {
                     .border_1()
                     .border_color(self.border_color)
                     .rounded_lg()
-                    .child(
-                        div()
-                            .id("diagnostic-content-container")
-                            .max_w(max_size.width)
-                            .max_h(max_size.height)
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
-                            .child(
-                                MarkdownElement::new(
-                                    self.markdown.clone(),
-                                    diagnostics_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
-                                    border: false,
-                                })
-                                .on_url_click(
-                                    move |link, window, cx| {
-                                        if let Some(renderer) = GlobalDiagnosticRenderer::global(cx)
-                                        {
-                                            this.update(cx, |this, cx| {
-                                                renderer.as_ref().open_link(this, link, window, cx);
-                                            })
-                                            .ok();
-                                        }
-                                    },
-                                ),
-                            ),
-                    )
+                    .child(self.render_content(max_size, window, cx))
                     .child(div().absolute().top_1().right_1().child({
                         let message = self.local_diagnostic.diagnostic.message.clone();
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
@@ -1260,6 +1385,105 @@ impl DiagnosticPopover {
                         cx,
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_content(
+        &self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> AnyElement {
+        let editor_handle = cx.entity().downgrade();
+        self.quick_fix_bounds
+            .borrow_mut()
+            .resize(self.quick_fixes.len(), None);
+
+        div()
+            .id("diagnostic-content-container")
+            .flex()
+            .flex_col()
+            .max_w(max_size.width)
+            .max_h(max_size.height)
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .child(
+                MarkdownElement::new(
+                    self.markdown.clone(),
+                    diagnostics_markdown_style(window, cx),
+                )
+                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                    copy_button_visibility: CopyButtonVisibility::Hidden,
+                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
+                    border: false,
+                })
+                .on_url_click({
+                    let editor_handle = editor_handle.clone();
+                    move |link, window, cx| {
+                        if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {
+                            editor_handle
+                                .update(cx, |this, cx| {
+                                    renderer.as_ref().open_link(this, link, window, cx);
+                                })
+                                .ok();
+                        }
+                    }
+                }),
+            )
+            .when(!self.quick_fixes.is_empty(), |this| {
+                this.child(
+                    div()
+                        .mt_1()
+                        .pt_1()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            Label::new("Quick fixes")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .children(self.quick_fixes.iter().enumerate().map(|(ix, quick_fix)| {
+                            let label = quick_fix.action.lsp_action.title().replace('\n', "");
+                            let quick_fix_bounds = self.quick_fix_bounds.clone();
+
+                            h_flex()
+                                .id(("diagnostic-quick-fix", ix))
+                                .relative()
+                                .w_full()
+                                .min_w_0()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                                .child(
+                                    canvas(
+                                        move |bounds, _, _| {
+                                            if let Some(slot) =
+                                                quick_fix_bounds.borrow_mut().get_mut(ix)
+                                            {
+                                                *slot = Some(bounds);
+                                            }
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .child(
+                                    div().min_w_0().flex_1().child(
+                                        Label::new(label.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Default)
+                                            .truncate(),
+                                    ),
+                                )
+                        })),
+                )
+            })
             .into_any_element()
     }
 }
