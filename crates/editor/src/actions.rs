@@ -669,10 +669,14 @@ actions!(
         MoveToEnd,
         /// Moves cursor to the end of the paragraph.
         MoveToEndOfParagraph,
+        /// Moves cursor to the start of the next comment paragraph.
+        MoveToNextCommentParagraph,
         /// Moves cursor to the end of the next subword.
         MoveToNextSubwordEnd,
         /// Moves cursor to the end of the next word.
         MoveToNextWordEnd,
+        /// Moves cursor to the start of the previous comment paragraph.
+        MoveToPreviousCommentParagraph,
         /// Moves cursor to the start of the previous subword.
         MoveToPreviousSubwordStart,
         /// Moves cursor to the start of the previous word.
