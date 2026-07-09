@@ -4503,45 +4503,731 @@ async fn test_drag_worktree_root_reorders_worktrees(cx: &mut gpui::TestAppContex
     );
 }
 
+// Marked worktree roots reorder together as a group, preserving their
+// relative order, with direction (before vs after destination) chosen from
+// the active source's original position.
+#[gpui::test]
+async fn test_drag_multiple_marked_worktree_roots_reorder_as_group(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "d.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Non-contiguous group [r1, r3], active=r1, drop onto r4. Active is before
+    // dest, so the group lands AFTER r4 with relative order (r1, r3) intact.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r3 = worktrees[2].read(cx);
+        let r4 = worktrees[3].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r3_entry = SelectedEntry {
+            worktree_id: r3.id(),
+            entry_id: r3.root_entry().unwrap().id,
+        };
+        let target = r4.root_entry().unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r3_entry]),
+        };
+        panel.drag_onto(&drag, target, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root4",
+            "      d.txt",
+            "v root1",
+            "      a.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "marked roots r1 and r3 should land after r4 in their original relative order"
+    );
+
+    // After the previous move, the order is [r2, r4, r1, r3]; the selected
+    // group is [r1, r3], active=r1, drop onto r2. Active is after dest, so
+    // the group lands BEFORE r2 with relative order (r1, r3) intact.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        // After the previous move, order is [r2, r4, r1, r3].
+        let r2 = worktrees[0].read(cx);
+        let r1 = worktrees[2].read(cx);
+        let r3 = worktrees[3].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r3_entry = SelectedEntry {
+            worktree_id: r3.id(),
+            entry_id: r3.root_entry().unwrap().id,
+        };
+        let target = r2.root_entry().unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r3_entry]),
+        };
+        panel.drag_onto(&drag, target, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root3",
+            "      c.txt",
+            "v root2",
+            "      b.txt",
+            "v root4",
+            "      d.txt",
+        ],
+        "marked roots should land before r2 in their original relative order"
+    );
+}
+
+// Dropping a worktree root onto a file or subdirectory inside another worktree
+// previously triggered an implicit reorder relative to the target's worktree.
+// Reorder should only happen on an explicit drop onto a worktree root.
+#[gpui::test]
+async fn test_drag_worktree_root_onto_nested_entry_is_rejected(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "sub": { "b.txt": "" } }))
+        .await;
+
+    let project =
+        Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root2/sub", cx);
+
+    // Drop root1 onto root2/sub/b.txt — should NOT reorder.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let nested_file_id = r2.entry_for_path(rel_path("sub/b.txt")).unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: r1_root,
+            marked_selections: Arc::new([r1_root]),
+        };
+        panel.drag_onto(&drag, nested_file_id, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "    v sub  <== selected",
+            "          b.txt",
+        ],
+        "dropping a worktree root onto a nested file should not reorder worktrees"
+    );
+
+    // Drop root1 onto root2/sub (a subdirectory) — should also NOT reorder.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let sub_dir_id = r2.entry_for_path(rel_path("sub")).unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: r1_root,
+            marked_selections: Arc::new([r1_root]),
+        };
+        panel.drag_onto(&drag, sub_dir_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "    v sub  <== selected",
+            "          b.txt",
+        ],
+        "dropping a worktree root onto a subdirectory should not reorder worktrees"
+    );
+}
+
+// Dropping a pure-root selection that includes the last worktree onto the
+// blank area below the panel should send the group to the end of the
+// worktree list, preserving relative order. Without the special-case
+// blank-area handling, the destination resolves to the last worktree's
+// root, which is one of the dragged roots, and `move_worktrees`'s
+// self-drop guard would silently no-op the gesture.
+#[gpui::test]
+async fn test_drag_root_group_with_last_worktree_to_blank_area(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "d.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (r1_id, r2_id, r3_id, r4_id) = panel.update_in(cx, |panel, _, cx| {
+        let worktrees = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+            worktrees[3].read(cx).id(),
+        )
+    });
+
+    // Drag [r1, r4] onto the blank area: route via the panel's blank-area
+    // helper since the drag includes the last worktree.
+    panel.update_in(cx, |panel, _, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r4 = worktrees[3].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r4_entry = SelectedEntry {
+            worktree_id: r4.id(),
+            entry_id: r4.root_entry().unwrap().id,
+        };
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r4_entry]),
+        };
+        assert!(
+            panel.drag_includes_last_worktree(&drag, cx),
+            "the drag should be flagged as containing the last worktree"
+        );
+        panel.reorder_worktree_roots_to_end(&drag, cx);
+    });
+    cx.run_until_parked();
+
+    let order = panel.update_in(cx, |panel, _, cx| {
+        panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        order,
+        vec![r2_id, r3_id, r1_id, r4_id],
+        "marked roots [r1, r4] should land at the end with their original relative order"
+    );
+}
+
+// Holding the copy modifier and dropping a pure-root drag onto the blank
+// area below the panel should be a no-op rather than reordering — copy
+// can't operate on worktree roots.
+#[gpui::test]
+async fn test_copy_drag_root_onto_blank_area_is_no_op(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        alt: true,
+        control: true,
+        ..Default::default()
+    });
+
+    // Drag root1 onto root3's root (the blank-area handler resolves to
+    // `last_worktree_root_id`); copy mode should make this a no-op.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r3 = worktrees[2].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry]),
+        };
+        panel.drag_onto(&drag, r3.root_entry().unwrap().id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "copy-drag of a worktree root should not reorder worktrees"
+    );
+}
+
+// Dropping a multi-root selection onto one of its own members has no
+// well-defined intent, so it should leave the order untouched rather than
+// reorder the remaining roots around the destination.
+#[gpui::test]
+async fn test_drag_multiple_marked_worktree_roots_onto_self_is_no_op(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r2_entry = SelectedEntry {
+            worktree_id: r2.id(),
+            entry_id: r2.root_entry().unwrap().id,
+        };
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r2_entry]),
+        };
+        // Drop the [r1, r2] selection onto r2, one of its own members.
+        panel.drag_onto(&drag, r2_entry.entry_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "self-drop of a multi-root selection should leave the order untouched"
+    );
+}
+
+// When a worktree root and one of its descendants are both marked, the
+// descendant must survive `disjoint_entries`. The root's empty path would
+// otherwise classify every other entry in the same worktree as nested
+// inside a "selected directory" and silently drop it before the move/copy
+// branches see it.
+#[gpui::test]
+async fn test_drag_marked_root_with_nested_file_keeps_both(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "sub": { "a.txt": "" } }))
+        .await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (r1_id, r2_id, r3_id) = panel.update_in(cx, |panel, _, cx| {
+        let worktrees = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+        )
+    });
+
+    select_path_with_mark(&panel, "root1", cx);
+    select_path_with_mark(&panel, "root1/sub/a.txt", cx);
+
+    drag_selection_to(&panel, "root3", false, cx);
+
+    // root1 reorders past root3. The active drag is the file in root1, so
+    // `active_source` resolves to root1's worktree id — which is in `sources`,
+    // so the filter passes through and direction follows root1's own position
+    // (idx 0 < dest idx 2 → group lands after root3).
+    let order = panel.update_in(cx, |panel, _, cx| {
+        panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(order, vec![r2_id, r3_id, r1_id]);
+
+    // The marked file moves to root3 instead of being silently dropped.
+    assert!(
+        find_project_entry(&panel, "root3/a.txt", cx).is_some(),
+        "a.txt should land in root3"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root1/sub/a.txt", cx),
+        None,
+        "a.txt should be removed from root1/sub"
+    );
+}
+
+// Mixed selection: marked worktree root + non-root entry, with the non-root
+// as the active drag. The root reorders, the file moves, both in one gesture.
+//
+// This test is positioned to exercise the `active_source.filter(|id|
+// sources.contains(id))` fallback in `move_worktrees`: the active drag is a
+// file in `root4` (idx 3), which lies AFTER the destination `root3` (idx 2).
+// Without the filter, direction would follow root4's position and land the
+// group before the destination; with the filter, `active_source` is treated
+// as None and we fall back to the first source `root1` (idx 0), landing the
+// group AFTER the destination.
+#[gpui::test]
+async fn test_drag_mixed_root_and_file_with_non_root_active(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "sub": { "d.txt": "" } }))
+        .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (r1_id, r2_id, r3_id, r4_id) = panel.update_in(cx, |panel, _, cx| {
+        let worktrees = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+            worktrees[3].read(cx).id(),
+        )
+    });
+
+    // Mark root1's root and root4/sub/d.txt; the file is the active selection.
+    select_path_with_mark(&panel, "root1", cx);
+    select_path_with_mark(&panel, "root4/sub/d.txt", cx);
+
+    drag_selection_to(&panel, "root3", false, cx);
+
+    // root1 reorders. The active drag's worktree (root4 at idx 3) isn't in
+    // the root sources [root1]; the filter discards it and direction falls
+    // back to root1's position (idx 0 < dest idx 2 → group lands after root3).
+    let worktree_order = panel.update_in(cx, |panel, _, cx| {
+        panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(worktree_order, vec![r2_id, r3_id, r1_id, r4_id]);
+
+    // d.txt should have moved from root4/sub to root3's root.
+    assert!(
+        find_project_entry(&panel, "root3/d.txt", cx).is_some(),
+        "d.txt should land in root3"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root4/sub/d.txt", cx),
+        None,
+        "d.txt should be removed from root4/sub"
+    );
+    // a.txt stays in root1.
+    assert!(
+        find_project_entry(&panel, "root1/a.txt", cx).is_some(),
+        "a.txt should remain in root1"
+    );
+}
+
+// Copying a worktree root has no meaning (`create_paste_path` returns None for
+// it). Without filtering, the whole copy aborts via `?` and any sibling files
+// in the same drag get silently dropped. Verify mixed selections still copy.
+#[gpui::test]
+async fn test_copy_drag_mixed_worktree_root_and_file_still_copies_file(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "hello" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "world" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Hold the platform-appropriate copy modifier.
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        alt: true,
+        control: true,
+        ..Default::default()
+    });
+
+    // Mark r1's root + r2's b.txt (in distinct worktrees so `disjoint_entries`
+    // doesn't filter the file out as nested under the root). Active = b.txt.
+    // Drag-copy onto r3's root.
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r3 = worktrees[2].read(cx);
+        let r1_root_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r2_file_entry = SelectedEntry {
+            worktree_id: r2.id(),
+            entry_id: r2.entry_for_path(rel_path("b.txt")).unwrap().id,
+        };
+        let target_entry_id = r3.root_entry().unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: r2_file_entry,
+            marked_selections: Arc::new([r1_root_entry, r2_file_entry]),
+        };
+        panel.drag_onto(&drag, target_entry_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      b.txt  <== selected",
+            "      c.txt",
+        ],
+        "b.txt should be copied into root3 even though r1's root was also marked"
+    );
+}
+
 #[gpui::test]
 async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppContext) {
     let (panel, mut cx) = setup_three_worktree_panel(cx).await;
     let cx = &mut cx;
 
-    // Drag {root1, root2/b.txt} onto root3's root entry: only the worktree
-    // reorder should happen and b.txt must stay in root2.
+    // Drop a mixed {root, file} selection onto another worktree's root, with
+    // the root as the active drag. A drag started from a worktree root is a
+    // reorder gesture, so root1 reorders to root3's position and the marked
+    // file is left in place (not moved into root3).
     drag_entries_onto(&panel, &["root1", "root2/b.txt"], "root3", false, cx);
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root2",
-            "      b.txt",
-            "v root3",
-            "      c.txt",
-            "v root1",
-            "      a.txt",
-        ],
-        "dropping a mixed selection on a root should only reorder worktrees"
+        find_project_entry(&panel, "root2/b.txt", cx).is_some(),
+        true,
+        "b.txt should stay in root2 when the drag is a root reorder"
     );
-
-    // Drag {root2, root3/c.txt} onto root1/a.txt (a non-root entry): the root
-    // still reorders to root1's position and c.txt must stay in root3.
-    drag_entries_onto(&panel, &["root2", "root3/c.txt"], "root1/a.txt", true, cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
+            "v root2",
+            "      b.txt",
             "v root3",
             "      c.txt",
             "v root1",
             "      a.txt",
-            "v root2",
-            "      b.txt",
         ],
-        "dropping a mixed selection on a non-root entry should only reorder worktrees"
+        "dropping a mixed selection on a root reorders the root and leaves the file in place"
     );
 
-    // With the copy modifier held, a selection containing a root should still
-    // only reorder worktrees and copy nothing.
+    // Drop a mixed selection (root active) onto a nested (non-root) entry.
+    // It's a reorder gesture, but root drops are only accepted onto another
+    // worktree's root, so the reorder is rejected and — being a reorder
+    // gesture — the file is not moved either. Nothing changes.
+    drag_entries_onto(&panel, &["root2", "root3/c.txt"], "root1/a.txt", true, cx);
+    assert_eq!(
+        find_project_entry(&panel, "root3/c.txt", cx).is_some(),
+        true,
+        "c.txt should stay in root3 when the root reorder is rejected"
+    );
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dropping a root onto a nested entry is rejected, so the order is unchanged"
+    );
+
+    // With the copy modifier held, worktree roots are filtered out (they can't
+    // be copied) but the non-root entry still copies. Here a.txt is copied into
+    // root2 and the worktree order is unchanged.
     cx.simulate_modifiers_change(gpui::Modifiers {
         alt: true,
         control: true,
@@ -4552,14 +5238,15 @@ async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppC
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "v root1",
-            "      a.txt",
             "v root2",
+            "      a.txt  <== selected",
             "      b.txt",
             "v root3",
             "      c.txt",
+            "v root1",
+            "      a.txt",
         ],
-        "copy-dragging a mixed selection should only reorder worktrees and copy nothing"
+        "copy-dragging a mixed selection copies the non-root entry and leaves the order unchanged"
     );
 }
 
@@ -9169,7 +9856,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             }]),
         };
         let result =
-            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(result, None, "Should not highlight parent of dragged item");
 
         // Test 2: Single item drag, don't highlight sibling files
@@ -9177,13 +9864,14 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             sibling_file,
             worktree,
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(result, None, "Should not highlight sibling files");
 
         // Test 3: Single item drag, highlight unrelated directory
         let result =
-            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(other_dir.id),
@@ -9192,7 +9880,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 4: Single item drag, highlight sibling directory
         let result =
-            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(child_dir.id),
@@ -9217,7 +9905,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             ]),
         };
         let result =
-            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(parent_dir.id),
@@ -9226,7 +9914,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 6: Target is file in different directory, highlight parent
         let result =
-            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(other_dir.id),
@@ -9235,7 +9923,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 7: Target is directory, always highlight
         let result =
-            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(child_dir.id),
@@ -9312,6 +10000,7 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
             src_dir_from_b,
             worktree_b.read(cx),
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(
@@ -9325,12 +10014,169 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
             main_rs_from_b,
             worktree_b.read(cx),
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(
             result,
             Some(src_dir_from_b.id),
             "Should highlight parent of target file from different worktree"
+        );
+    });
+}
+
+// For a multi-root drag, hovering any worktree that is part of the drag
+// (active OR just marked) is a no-op in `move_worktrees`, so the highlight
+// must not advertise it as a valid drop target.
+#[gpui::test]
+async fn test_highlight_entry_for_multi_root_drag_excludes_marked_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "d.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r3 = worktrees[2].read(cx);
+        let r4 = worktrees[3].read(cx);
+
+        let r1_root = r1.root_entry().unwrap();
+        let r2_root = r2.root_entry().unwrap();
+        let r3_root = r3.root_entry().unwrap();
+        let r4_root = r4.root_entry().unwrap();
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            },
+            marked_selections: Arc::new([
+                SelectedEntry {
+                    worktree_id: r1.id(),
+                    entry_id: r1_root.id,
+                },
+                SelectedEntry {
+                    worktree_id: r3.id(),
+                    entry_id: r3_root.id,
+                },
+            ]),
+        };
+
+        // Hovering r2 (not in the drag): highlight allowed.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, false, cx),
+            Some(r2_root.id),
+            "non-dragged worktree root should highlight"
+        );
+
+        // Hovering r4 (not in the drag): highlight allowed.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r4_root, r4, &drag, false, cx),
+            Some(r4_root.id),
+            "non-dragged worktree root should highlight"
+        );
+
+        // Hovering r1 (active source): no-op, no highlight.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, false, cx),
+            None,
+            "active source's worktree should not highlight"
+        );
+
+        // Hovering r3 (marked but not active): no-op, no highlight.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r3_root, r3, &drag, false, cx),
+            None,
+            "marked source's worktree should not highlight"
+        );
+    });
+}
+
+// In copy mode, a pure worktree-root drag is a guaranteed no-op (the copy
+// branch in `drag_onto` filters worktree roots out). The highlight should
+// reflect this by suppressing every target instead of advertising root
+// rows as valid drops.
+#[gpui::test]
+async fn test_highlight_entry_for_root_drag_suppressed_in_copy_mode(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+
+    let project =
+        Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root = r1.root_entry().unwrap();
+        let r2_root = r2.root_entry().unwrap();
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            }]),
+        };
+
+        // Sanity: without the copy modifier, hovering r2's root highlights it.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, false, cx),
+            Some(r2_root.id),
+            "non-copy root drag should highlight a different worktree's root"
+        );
+
+        // With the copy modifier, no target highlights — copy can't act on roots.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, true, cx),
+            None,
+            "copy-mode root drag should suppress highlights on other roots"
+        );
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, true, cx),
+            None,
+            "copy-mode root drag should suppress highlights on its own worktree"
         );
     });
 }
@@ -9413,6 +10259,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &multiple_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(result, "Should highlight background for multiple entries");
@@ -9432,6 +10279,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &nested_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(result, "Should highlight background for nested file");
@@ -9451,6 +10299,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &root_file_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(
@@ -9462,6 +10311,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &root_file_dragged_selection,
             root2_entry.id,
+            false,
             cx,
         );
         assert!(
@@ -9484,11 +10334,118 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &child_file_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(
             result,
             "Should highlight background for file with non-empty parent path"
+        );
+    });
+}
+
+// In copy mode, a pure worktree-root drag is a no-op, so the blank area
+// below the panel should not light up as a valid drop target.
+#[gpui::test]
+async fn test_should_highlight_background_suppressed_for_root_drag_in_copy_mode(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+
+    let project =
+        Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root_id = r1.root_entry().unwrap().id;
+        let r2_root_id = r2.root_entry().unwrap().id;
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root_id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root_id,
+            }]),
+        };
+
+        // Sanity: in non-copy mode, the background highlights for a cross-
+        // worktree root drag (so the user can drop at the end).
+        assert!(
+            panel.should_highlight_background_for_selection_drag(
+                &drag,
+                r2_root_id,
+                false,
+                cx,
+            ),
+            "non-copy root drag should highlight background"
+        );
+
+        // In copy mode, the same drag is a no-op → no background highlight.
+        assert!(
+            !panel.should_highlight_background_for_selection_drag(
+                &drag,
+                r2_root_id,
+                true,
+                cx,
+            ),
+            "copy-mode root drag should suppress background highlight"
+        );
+    });
+}
+
+// Toggling the copy modifier while the cursor stays still must invalidate
+// the cached drag target so the next drag-move event recomputes the
+// highlight under the new mode (otherwise the row stays in its old
+// highlight state until the pointer leaves and re-enters).
+#[gpui::test]
+async fn test_modifier_change_clears_drag_target_entry(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.drag_target_entry = Some(DragTarget::Background);
+        panel.handle_drag_modifiers_changed(
+            &gpui::Modifiers {
+                alt: true,
+                control: true,
+                ..Default::default()
+            },
+            window,
+            cx,
+        );
+        assert!(
+            panel.drag_target_entry.is_none(),
+            "modifier change should clear drag_target_entry so the next \
+             drag-move can recompute highlights under the new mode"
         );
     });
 }
