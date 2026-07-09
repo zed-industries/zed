@@ -3973,7 +3973,17 @@ impl ProjectPanel {
     }
 
     fn disjoint_effective_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
-        self.disjoint_entries(self.effective_entries(), cx)
+        // Worktree roots are filtered out here (rather than in `disjoint_entries`)
+        // so that cut/copy/delete actions still exclude them, while drag-and-drop
+        // reordering — which goes through `disjoint_entries` directly — can still
+        // see roots and reorder worktrees.
+        let project = self.project.read(cx);
+        let entries = self
+            .effective_entries()
+            .into_iter()
+            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+            .collect();
+        self.disjoint_entries(entries, cx)
     }
 
     fn disjoint_entries(
@@ -3989,7 +3999,6 @@ impl ProjectPanel {
         let project = self.project.read(cx);
         let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
             .into_iter()
-            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
             .fold(HashMap::default(), |mut map, entry| {
                 map.entry(entry.worktree_id).or_default().push(entry);
                 map
@@ -4736,6 +4745,19 @@ impl ProjectPanel {
         let entries = self.disjoint_entries(resolved_selections, cx);
 
         if Self::is_copy_modifier_set(&window.modifiers()) {
+            // Worktree roots can't be copied — leaving them in would make
+            // `create_paste_path` return None and abort the whole copy via `?`,
+            // silently cancelling any non-root entries in the same drag.
+            let entries: BTreeSet<SelectedEntry> = {
+                let project = self.project.read(cx);
+                entries
+                    .into_iter()
+                    .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+                    .collect()
+            };
+            if entries.is_empty() {
+                return;
+            }
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
