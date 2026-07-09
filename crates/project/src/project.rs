@@ -249,6 +249,7 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
+    agent_content_focus: Option<AgentContentFocus>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
 }
@@ -264,6 +265,14 @@ struct DownloadingFile {
 pub struct AgentLocation {
     pub buffer: WeakEntity<Buffer>,
     pub position: Anchor,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentContentFocus {
+    pub buffer: WeakEntity<Buffer>,
+    pub range: Range<Anchor>,
+    pub pointer: Anchor,
+    pub pointer_range: Option<Range<Anchor>>,
 }
 
 #[derive(Default)]
@@ -410,12 +419,14 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    AgentContentFocusChanged,
     BufferEdited {
         source: BufferEditSource,
     },
 }
 
 pub struct AgentLocationChanged;
+pub struct AgentContentFocusChanged;
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -1370,6 +1381,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
+                agent_content_focus: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             }
@@ -1612,6 +1624,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
+                agent_content_focus: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
@@ -1900,6 +1913,7 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
+                agent_content_focus: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
             };
@@ -6327,6 +6341,19 @@ impl Project {
 
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
+    }
+
+    pub fn set_agent_content_focus(
+        &mut self,
+        new_focus: Option<AgentContentFocus>,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_content_focus = new_focus;
+        cx.emit(Event::AgentContentFocusChanged);
+    }
+
+    pub fn agent_content_focus(&self) -> Option<AgentContentFocus> {
+        self.agent_content_focus.clone()
     }
 
     pub fn path_style(&self, cx: &App) -> PathStyle {

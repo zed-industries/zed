@@ -1,7 +1,7 @@
 use crate::{
     ActiveDebugLine, Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent,
     EditorSettings, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SelectionEffects, ToPoint as _,
+    ReportEditorEvent, RowHighlightOptions, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{EditorDb, SerializedEditor},
@@ -14,8 +14,9 @@ use fs::MTime;
 use futures::{channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
-    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font, FontWeight,
+    HighlightStyle, Hsla, IntoElement, ParentElement, Pixels, SharedString, Styled, Task,
+    UnderlineStyle, WeakEntity, Window, point, px,
 };
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
@@ -26,8 +27,8 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    AgentContentFocus, File, Project, ProjectItem as _, ProjectPath, git_store::GitStore,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery,
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
@@ -42,6 +43,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
+use theme::ActiveTheme as _;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
@@ -64,6 +66,30 @@ use zed_actions::preview::{
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
+
+struct AgentContentFocusHighlight;
+
+fn agent_content_focus_background(cx: &App) -> Hsla {
+    cx.theme()
+        .colors()
+        .editor_background
+        .blend(cx.theme().players().agent().cursor.opacity(0.16))
+}
+
+fn agent_content_pointer_background(cx: &App) -> Hsla {
+    cx.theme()
+        .colors()
+        .editor_background
+        .blend(cx.theme().players().agent().cursor.opacity(0.32))
+}
+
+fn agent_content_focus_border(cx: &App) -> Hsla {
+    cx.theme().players().agent().cursor.opacity(0.65)
+}
+
+fn agent_content_pointer_color(cx: &App) -> Hsla {
+    cx.theme().players().agent().cursor
+}
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -373,6 +399,83 @@ impl FollowableItem for Editor {
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
         self.request_autoscroll_remotely(Autoscroll::focused(), cx);
+    }
+
+    fn update_agent_content_focus(
+        &mut self,
+        focus: Option<AgentContentFocus>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_row_highlights::<AgentContentFocusHighlight>();
+        self.clear_highlights(HighlightKey::AgentContentFocus, cx);
+        cx.notify();
+
+        let Some(focus) = focus else {
+            return;
+        };
+
+        let (focus_ranges, pointer_ranges) = {
+            let buffer = self.buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
+            (
+                snapshot
+                    .buffer_range_to_excerpt_ranges(focus.range.clone())
+                    .collect::<Vec<_>>(),
+                focus
+                    .pointer_range
+                    .clone()
+                    .into_iter()
+                    .flat_map(|range| snapshot.buffer_range_to_excerpt_ranges(range))
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        if focus_ranges.is_empty() {
+            return;
+        }
+
+        let scroll_anchor = pointer_ranges
+            .first()
+            .map(|range| range.start)
+            .or_else(|| focus_ranges.first().map(|range| range.start));
+
+        for range in focus_ranges {
+            self.highlight_rows::<AgentContentFocusHighlight>(
+                range,
+                agent_content_focus_background,
+                RowHighlightOptions {
+                    border: Some(agent_content_focus_border),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+
+        if !pointer_ranges.is_empty() {
+            self.highlight_text(
+                HighlightKey::AgentContentFocus,
+                pointer_ranges,
+                HighlightStyle {
+                    color: Some(agent_content_pointer_color(cx)),
+                    font_weight: Some(FontWeight::BOLD),
+                    background_color: Some(agent_content_pointer_background(cx)),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(2.),
+                        color: Some(agent_content_pointer_color(cx)),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+
+        self.update_agent_location(focus.pointer, window, cx);
+        if let Some(scroll_anchor) = scroll_anchor {
+            self.request_autoscroll(Autoscroll::center().for_anchor(scroll_anchor), cx);
+        }
+        cx.notify();
     }
 }
 

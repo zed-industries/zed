@@ -1616,6 +1616,10 @@ impl Workspace {
                     this.handle_agent_location_changed(window, cx)
                 }
 
+                project::Event::AgentContentFocusChanged => {
+                    this.handle_agent_content_focus_changed(window, cx)
+                }
+
                 _ => {}
             }
             cx.notify()
@@ -6593,6 +6597,89 @@ impl Workspace {
         }
 
         self.leader_updated(CollaboratorId::Agent, window, cx);
+    }
+
+    fn handle_agent_content_focus_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for item in self.followable_items(cx) {
+            item.update_agent_content_focus(None, window, cx);
+        }
+
+        let Some(focus) = self.project.read(cx).agent_content_focus() else {
+            return;
+        };
+
+        self.activate_agent_content_focus_item(&focus, window, cx);
+
+        for item in self.followable_items(cx) {
+            item.update_agent_content_focus(Some(focus.clone()), window, cx);
+        }
+    }
+
+    fn followable_items(&self, cx: &App) -> Vec<Box<dyn FollowableItemHandle>> {
+        self.panes
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.to_followable_item_handle(cx))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn activate_agent_content_focus_item(
+        &mut self,
+        focus: &project::AgentContentFocus,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let buffer_entity_id = focus.buffer.entity_id();
+        let view_id = ViewId {
+            creator: CollaboratorId::Agent,
+            id: buffer_entity_id.as_u64(),
+        };
+
+        if let Some((pane, item)) = self.panes.iter().find_map(|pane| {
+            let item = pane.read(cx).items().find_map(|item| {
+                let item = item.to_followable_item_handle(cx)?;
+                if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                    && item.project_item_model_ids(cx).as_slice() == [buffer_entity_id]
+                {
+                    Some(item)
+                } else {
+                    None
+                }
+            })?;
+            Some((pane.clone(), item))
+        }) {
+            let item_id = item.item_id();
+            let should_activate_pane = pane != self.active_pane;
+            pane.update(cx, |pane, cx| {
+                let index = pane.items().position(|item| item.item_id() == item_id);
+                if let Some(index) = index {
+                    pane.activate_item(index, false, false, window, cx);
+                }
+            });
+            if should_activate_pane {
+                self.set_active_pane(&pane, window, cx);
+            }
+            return Some(());
+        }
+
+        let item = self
+            .follower_states
+            .get(&CollaboratorId::Agent)
+            .and_then(|follower_state| follower_state.items_by_leader_view_id.get(&view_id))
+            .map(|item| item.view.boxed_clone())
+            .or_else(|| {
+                let buffer = focus.buffer.upgrade()?;
+                cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
+                    registry.build_item(buffer, self.project.clone(), None, window, cx)
+                })
+            })?;
+
+        self.add_item_to_active_pane(item, None, false, window, cx);
+        Some(())
     }
 
     pub fn update_active_view_for_followers(&mut self, window: &mut Window, cx: &mut App) {

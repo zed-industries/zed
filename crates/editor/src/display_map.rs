@@ -164,6 +164,7 @@ pub enum HighlightKey {
     ColorizeBracket(usize),
     SemanticToken,
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
+    AgentContentFocus,
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
     DebugStackFrameLine,

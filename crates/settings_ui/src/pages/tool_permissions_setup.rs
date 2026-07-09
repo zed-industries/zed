@@ -1407,6 +1407,7 @@ mod tests {
             "diagnostics",
             "find_path",
             "find_references",
+            "focus_content",
             "get_code_actions",
             "go_to_definition",
             "grep",

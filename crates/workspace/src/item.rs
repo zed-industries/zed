@@ -17,7 +17,7 @@ use gpui::{
 };
 use language::Capability;
 pub use language::HighlightedText;
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{AgentContentFocus, Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
     ShowDiagnostics,
@@ -1302,6 +1302,13 @@ pub trait FollowableItem: Item {
         _cx: &mut Context<Self>,
     ) {
     }
+    fn update_agent_content_focus(
+        &mut self,
+        _focus: Option<AgentContentFocus>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -1337,6 +1344,12 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut App,
     ) -> Option<Dedup>;
     fn update_agent_location(&self, location: language::Anchor, window: &mut Window, cx: &mut App);
+    fn update_agent_content_focus(
+        &self,
+        focus: Option<AgentContentFocus>,
+        window: &mut Window,
+        cx: &mut App,
+    );
 }
 
 impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
@@ -1410,6 +1423,17 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
     fn update_agent_location(&self, location: language::Anchor, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| {
             this.update_agent_location(location, window, cx)
+        })
+    }
+
+    fn update_agent_content_focus(
+        &self,
+        focus: Option<AgentContentFocus>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.update(cx, |this, cx| {
+            this.update_agent_content_focus(focus, window, cx)
         })
     }
 }

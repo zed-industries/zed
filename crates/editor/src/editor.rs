@@ -1476,6 +1476,7 @@ impl SelectionHistory {
 pub struct RowHighlightOptions {
     pub autoscroll: bool,
     pub include_gutter: bool,
+    pub border: Option<fn(&App) -> Hsla>,
 }
 
 impl Default for RowHighlightOptions {
@@ -1483,6 +1484,7 @@ impl Default for RowHighlightOptions {
         Self {
             autoscroll: Default::default(),
             include_gutter: true,
+            border: None,
         }
     }
 }
@@ -8944,7 +8946,7 @@ impl Editor {
                                 DisplayRow(row),
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
-                                    border: None,
+                                    border: highlight.options.border.map(|border| border(cx)),
                                     background: (highlight.color)(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
