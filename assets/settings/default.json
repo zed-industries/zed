@@ -1458,7 +1458,13 @@
   // The EditorConfig `end_of_line` property overrides this setting and behaves
   // like `enforce_lf` or `enforce_crlf`.
   "line_ending": "detect",
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving:
+  //   "on" — format the whole buffer
+  //   "off" — do not format
+  //   "modifications" — format only lines with unstaged changes; skips formatting
+  //     when no git diff is available or the language server lacks range formatting
+  //   "modifications_if_available" — same, but falls back to formatting the whole
+  //     buffer when range formatting cannot be used
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "off",
   // How to perform a buffer format. This setting can take multiple values:
