@@ -918,8 +918,9 @@ impl Markdown {
         self.context_menu_selected_text.as_ref()
     }
 
-    /// Returns the rebalanced markdown that was selected when the most recent
-    /// context menu invocation happened.
+    /// Returns the markdown that was selected when the most recent context
+    /// menu invocation happened, rebalanced via
+    /// [`ParsedMarkdown::rebalanced_markdown_for_selection`].
     pub fn context_menu_selected_markdown(&self) -> Option<&SharedString> {
         self.context_menu_selected_markdown.as_ref()
     }
@@ -1216,7 +1217,7 @@ impl ParsedMarkdown {
         Some(partition.saturating_sub(1))
     }
 
-    /// Extracts the markdown source for a selection, re-balancing inline
+    /// Extracts the markdown source for a selection, rebalancing inline
     /// delimiters (`**`, backticks, link syntax, etc.) so partial selections of
     /// styled spans stay well-formed.
     ///
