@@ -1010,14 +1010,14 @@ impl ContextServerStore {
         for worktree in worktree_store.read(cx).visible_worktrees(cx) {
             let worktree_id = worktree.read(cx).id();
             let location = settings::SettingsLocation {
-                worktree_id: worktree_id.clone(),
+                worktree_id,
                 path: RelPath::empty(),
             };
             for (id, settings) in &ProjectSettings::get(Some(location), cx).context_servers {
                 merged
                     .entry(id.clone())
                     .or_insert_with(|| ContextServerSettingsEntry {
-                        worktree_id: Some(worktree_id.clone()),
+                        worktree_id: Some(worktree_id),
                         settings: settings.clone(),
                     });
             }
@@ -1062,7 +1062,7 @@ impl ContextServerStore {
             .context_server_settings
             .get(&id.0)
             .as_ref()
-            .and_then(|entry| entry.worktree_id.clone());
+            .and_then(|entry| entry.worktree_id);
 
         ProjectSettings::get(
             worktree_id.map(|id| SettingsLocation {
