@@ -315,6 +315,7 @@ impl Model {
                 ReasoningEffort::XHigh,
             ],
             Self::FivePointSixSol | Self::FivePointSixTerra | Self::FivePointSixLuna => &[
+                ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
