@@ -424,7 +424,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
         if self.model.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &self.model);
-            let request = into_open_ai(
+            let request = match into_open_ai(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -433,7 +433,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 chat_completion_max_tokens_parameter(&self.model),
                 reasoning_effort,
                 self.model.capabilities.interleaved_reasoning,
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
@@ -688,7 +691,8 @@ mod tests {
             chat_completion_max_tokens_parameter(&model),
             reasoning_effort,
             model.capabilities.interleaved_reasoning,
-        );
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized["reasoning_effort"], json!("high"));
