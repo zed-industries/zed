@@ -1,4 +1,5 @@
 use crate::askpass_modal::AskPassModal;
+use crate::commit_context_menu::{CommitContextMenuData, commit_context_menu};
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
@@ -5820,6 +5821,36 @@ impl GitPanel {
         );
     }
 
+    fn deploy_history_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.commit_history_entries().get(index).cloned() else {
+            return;
+        };
+        let Some(repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let context_menu = commit_context_menu(
+            CommitContextMenuData {
+                sha: commit.sha,
+                tag_names: commit.tag_names,
+            },
+            None,
+            self.focus_handle.clone(),
+            Some(repository.downgrade()),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+        self.focused_history_entry = Some(index);
+        self.history_keyboard_nav = false;
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn activate_changes_tab(
         &mut self,
         _: &ActivateChangesTab,
@@ -5980,6 +6011,7 @@ impl GitPanel {
         let focused_history_entry = self.focused_history_entry;
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
+        let has_context_menu = self.context_menu.is_some();
 
         let ahead_count = active_repository
             .read(cx)
@@ -6122,9 +6154,16 @@ impl GitPanel {
                                                                 .map(|tag_name| {
                                                                     Chip::new(tag_name.clone())
                                                                         .truncate()
-                                                                        .tooltip(Tooltip::text(
-                                                                            tag_name,
-                                                                        ))
+                                                                        .when(
+                                                                            !has_context_menu,
+                                                                            |chip| {
+                                                                                chip.tooltip(
+                                                                                    Tooltip::text(
+                                                                                        tag_name,
+                                                                                    ),
+                                                                                )
+                                                                            },
+                                                                        )
                                                                 }),
                                                         )
                                                         .when(hidden_tag_count > 0, |this| {
@@ -6135,9 +6174,11 @@ impl GitPanel {
                                                                 Chip::new(format!(
                                                                     "+{hidden_tag_count}"
                                                                 ))
-                                                                .tooltip(Tooltip::text(
-                                                                    hidden_tag_names,
-                                                                )),
+                                                                .when(!has_context_menu, |chip| {
+                                                                    chip.tooltip(Tooltip::text(
+                                                                        hidden_tag_names,
+                                                                    ))
+                                                                }),
                                                             )
                                                         })
                                                 }))
@@ -6174,13 +6215,15 @@ impl GitPanel {
                                                         .color(Color::Muted),
                                                 ),
                                         )
-                                        .tooltip(move |_, cx| {
-                                            Tooltip::with_meta(
-                                                "View Commit",
-                                                None,
-                                                short_sha.clone(),
-                                                cx,
-                                            )
+                                        .when(!has_context_menu, |this| {
+                                            this.tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "View Commit",
+                                                    None,
+                                                    short_sha.clone(),
+                                                    cx,
+                                                )
+                                            })
                                         })
                                         .on_mouse_down(gpui::MouseButton::Left, {
                                             let git_panel = git_panel.clone();
@@ -6192,6 +6235,22 @@ impl GitPanel {
                                                         cx.notify();
                                                     })
                                                     .ok();
+                                            }
+                                        })
+                                        .on_mouse_down(MouseButton::Right, {
+                                            let git_panel = git_panel.clone();
+                                            move |event, window, cx| {
+                                                git_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.deploy_history_context_menu(
+                                                            event.position,
+                                                            index,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                                cx.stop_propagation();
                                             }
                                         })
                                         .on_click(move |_, window, cx| {
