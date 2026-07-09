@@ -1114,42 +1114,163 @@ impl WorktreeStore {
         destination: WorktreeId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if source == destination {
+        self.move_worktrees(&[source], destination, Some(source), cx)
+    }
+
+    /// Moves multiple worktrees as a group to `destination`'s position,
+    /// preserving their relative order. The `active_source` (if provided and
+    /// in `sources`) decides whether the group lands before or after the
+    /// destination, mirroring the single-source semantics: a source originally
+    /// before destination ends up after it, and vice versa. When no usable
+    /// active source is supplied, the earliest source in the current worktree
+    /// order is used as the direction reference.
+    pub fn move_worktrees(
+        &mut self,
+        sources: &[WorktreeId],
+        destination: WorktreeId,
+        active_source: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if sources.is_empty() {
             return Ok(());
         }
 
-        let mut source_index = None;
-        let mut destination_index = None;
-        for (i, worktree) in self.worktrees.iter().enumerate() {
-            if let Some(worktree) = worktree.upgrade() {
-                let worktree_id = worktree.read(cx).id();
-                if worktree_id == source {
-                    source_index = Some(i);
-                    if destination_index.is_some() {
-                        break;
-                    }
-                } else if worktree_id == destination {
-                    destination_index = Some(i);
-                    if source_index.is_some() {
-                        break;
-                    }
-                }
+        // Validate every id up front (matching the single-source `move_worktree`
+        // contract) before handling the self-drop no-op, so an invalid id is
+        // never masked by a coincidental self-drop.
+        let destination_index = self
+            .worktrees
+            .iter()
+            .position(|wt| {
+                wt.upgrade()
+                    .is_some_and(|wt| wt.read(cx).id() == destination)
+            })
+            .with_context(|| format!("Missing worktree for id {destination}"))?;
+
+        for &source in sources {
+            if !self
+                .worktrees
+                .iter()
+                .any(|wt| wt.upgrade().is_some_and(|wt| wt.read(cx).id() == source))
+            {
+                anyhow::bail!("Missing worktree for id {source}");
             }
         }
 
-        let source_index =
-            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
-        let destination_index =
-            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
-
-        if source_index == destination_index {
+        // Self-drop of any selection member is a no-op: the user dropping a
+        // multi-selection onto one of its own roots has no well-defined
+        // intent.
+        if sources.contains(&destination) {
             return Ok(());
         }
 
-        let worktree_to_move = self.worktrees.remove(source_index);
-        self.worktrees.insert(destination_index, worktree_to_move);
+        let source_indices: Vec<usize> = self
+            .worktrees
+            .iter()
+            .enumerate()
+            .filter_map(|(i, wt)| {
+                let id = wt.upgrade()?.read(cx).id();
+                sources.contains(&id).then_some(i)
+            })
+            .collect();
+
+        if source_indices.is_empty() {
+            return Ok(());
+        }
+
+        let direction_index = active_source
+            .filter(|id| sources.contains(id))
+            .and_then(|id| {
+                self.worktrees
+                    .iter()
+                    .position(|wt| wt.upgrade().is_some_and(|wt| wt.read(cx).id() == id))
+            })
+            .unwrap_or(source_indices[0]);
+        let insert_after_destination = direction_index < destination_index;
+
+        let mut to_insert = Vec::with_capacity(source_indices.len());
+        for &i in source_indices.iter().rev() {
+            to_insert.push(self.worktrees.remove(i));
+        }
+        to_insert.reverse();
+
+        let removed_before_destination = source_indices
+            .iter()
+            .filter(|&&i| i < destination_index)
+            .count();
+        let new_destination_index = destination_index - removed_before_destination;
+        let insert_at = if insert_after_destination {
+            new_destination_index + 1
+        } else {
+            new_destination_index
+        };
+
+        for (offset, handle) in to_insert.into_iter().enumerate() {
+            self.worktrees.insert(insert_at + offset, handle);
+        }
+
         cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
         cx.notify();
+        self.send_project_updates(cx);
+        Ok(())
+    }
+
+    /// Removes every source from the worktree list and appends them to the
+    /// end in their original relative order. Returns early when the sources
+    /// already form a contiguous suffix.
+    pub fn move_worktrees_to_end(
+        &mut self,
+        sources: &[WorktreeId],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        for &source in sources {
+            if !self
+                .worktrees
+                .iter()
+                .any(|wt| wt.upgrade().is_some_and(|wt| wt.read(cx).id() == source))
+            {
+                anyhow::bail!("Missing worktree for id {source}");
+            }
+        }
+
+        let source_indices: Vec<usize> = self
+            .worktrees
+            .iter()
+            .enumerate()
+            .filter_map(|(i, wt)| {
+                let id = wt.upgrade()?.read(cx).id();
+                sources.contains(&id).then_some(i)
+            })
+            .collect();
+
+        if source_indices.is_empty() {
+            return Ok(());
+        }
+
+        // Already a contiguous suffix → nothing to do.
+        let len = self.worktrees.len();
+        let already_at_end = source_indices
+            .iter()
+            .enumerate()
+            .all(|(offset, &i)| i == len - source_indices.len() + offset);
+        if already_at_end {
+            return Ok(());
+        }
+
+        let mut to_append = Vec::with_capacity(source_indices.len());
+        for &i in source_indices.iter().rev() {
+            to_append.push(self.worktrees.remove(i));
+        }
+        to_append.reverse();
+        self.worktrees.extend(to_append);
+
+        cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
+        cx.notify();
+        self.send_project_updates(cx);
         Ok(())
     }
 
