@@ -1,4 +1,5 @@
 mod components;
+mod extension_lsp_settings_modal;
 mod extension_suggest;
 mod extension_version_selector;
 
@@ -287,6 +288,25 @@ pub fn init(cx: &mut App) {
             }
         })
         .detach();
+
+        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
+            cx.subscribe_in(&extension_events, window, {
+                move |workspace, _, event, window, cx| {
+                    if let extension::Event::ConfigureExtensionRequested(manifest) = event
+                        && !manifest.language_servers.is_empty()
+                    {
+                        extension_lsp_settings_modal::ExtensionLspSettingsModal::show(
+                            manifest.clone(),
+                            cx.weak_entity(),
+                            window,
+                            cx,
+                        );
+                        let _ = workspace;
+                    }
+                }
+            })
+            .detach();
+        }
     })
     .detach();
 }
@@ -1143,7 +1163,11 @@ impl ExtensionsPage {
         let is_configurable = extension
             .manifest
             .provides
-            .contains(&ExtensionProvides::ContextServers);
+            .contains(&ExtensionProvides::ContextServers)
+            || extension
+                .manifest
+                .provides
+                .contains(&ExtensionProvides::LanguageServers);
 
         match status.clone() {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
