@@ -4733,22 +4733,6 @@ impl GitPanel {
         }
     }
 
-    fn diff_stat_for_entry_in_section(
-        entry: &GitStatusEntry,
-        section: Option<Section>,
-        repo: &Repository,
-    ) -> Option<DiffStat> {
-        match section {
-            Some(Section::Staged) => repo
-                .staged_diff_stat_for_path(&entry.repo_path)
-                .or(entry.diff_stat),
-            Some(Section::Unstaged) => repo
-                .unstaged_diff_stat_for_path(&entry.repo_path)
-                .or(entry.diff_stat),
-            _ => entry.diff_stat,
-        }
-    }
-
     fn staging_action_button(
         id: ElementId,
         icon: IconName,
@@ -7031,7 +7015,6 @@ impl GitPanel {
             && section == Some(Section::Conflict)
             && status.is_conflicted();
         let staging_action = self.staging_action_for_entry_index(ix);
-        let diff_stat = Self::diff_stat_for_entry_in_section(entry, section, repo);
         let mut is_staged: ToggleState = match stage_status {
             StageStatus::Staged => ToggleState::Selected,
             StageStatus::Unstaged => ToggleState::Unselected,
@@ -7129,7 +7112,7 @@ impl GitPanel {
             .active(|s| s.bg(active_bg))
             .child(name_row)
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
-                el.when_some(diff_stat, move |this, stat| {
+                el.when_some(entry.diff_stat, move |this, stat| {
                     let id = format!("diff-stat-{}", id_for_diff_stat);
                     this.child(ui::DiffStat::new(
                         id,
@@ -9568,130 +9551,6 @@ mod tests {
             assert_eq!(panel.total_staged_count(), panel.entry_count);
             assert!(panel.has_unstaged_changes());
             assert!(panel.primary_changes_action_stages());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_group_by_staging_uses_section_diff_stats_for_partial_rows(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "partial.rs": "worktree\nline 2\nline 3\n",
-            }),
-        )
-        .await;
-        fs.set_head_and_index_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("partial.rs", "head\n".to_string())],
-        );
-        fs.set_index_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("partial.rs", "index\nline 2\n".to_string())],
-        );
-
-        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
-        let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window_handle
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
-
-        cx.update(|_window, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().group_by =
-                        Some(GitPanelGroupBy::Staging);
-                })
-            });
-        });
-
-        cx.read(|cx| {
-            project
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .unwrap()
-                .read(cx)
-                .as_local()
-                .unwrap()
-                .scan_complete()
-        })
-        .await;
-
-        cx.executor().run_until_parked();
-
-        let panel = workspace.update_in(&mut cx, GitPanel::new);
-        await_git_panel_entries(&panel, &mut cx).await;
-
-        panel.read_with(&mut cx, |panel, cx| {
-            let repo = panel.active_repository.as_ref().unwrap().read(cx);
-            let partial_path = repo_path("partial.rs");
-            let projections = panel
-                .projected_entries_by_path
-                .get(&partial_path)
-                .expect("partially staged entry should have projections");
-            let staged_projection = projections
-                .iter()
-                .find(|projection| projection.section == Section::Staged)
-                .expect("partial file should have a staged projection");
-            let unstaged_projection = projections
-                .iter()
-                .find(|projection| projection.section == Section::Unstaged)
-                .expect("partial file should have an unstaged projection");
-
-            let staged_entry = panel
-                .entries
-                .get(staged_projection.index)
-                .and_then(GitListEntry::status_entry)
-                .expect("staged projection should be a status entry");
-            let unstaged_entry = panel
-                .entries
-                .get(unstaged_projection.index)
-                .and_then(GitListEntry::status_entry)
-                .expect("unstaged projection should be a status entry");
-
-            assert_eq!(
-                staged_entry.diff_stat,
-                Some(DiffStat {
-                    added: 3,
-                    deleted: 1,
-                })
-            );
-            assert_eq!(
-                panel.diff_stat_total,
-                DiffStat {
-                    added: 3,
-                    deleted: 1,
-                }
-            );
-            assert_eq!(
-                GitPanel::diff_stat_for_entry_in_section(
-                    staged_entry,
-                    Some(Section::Staged),
-                    repo,
-                ),
-                Some(DiffStat {
-                    added: 2,
-                    deleted: 1,
-                })
-            );
-            assert_eq!(
-                GitPanel::diff_stat_for_entry_in_section(
-                    unstaged_entry,
-                    Some(Section::Unstaged),
-                    repo,
-                ),
-                Some(DiffStat {
-                    added: 3,
-                    deleted: 2,
-                })
-            );
         });
     }
 

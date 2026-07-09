@@ -35,11 +35,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions,
-        FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
-        delete_branch_flag,
+        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, FileHistoryChangedFileSets,
+        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
+        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -322,11 +321,7 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
-    fn to_proto(
-        &self,
-        staged_diff_stat: Option<DiffStat>,
-        unstaged_diff_stat: Option<DiffStat>,
-    ) -> proto::StatusEntry {
+    fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
             FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
             FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
@@ -346,33 +341,7 @@ impl StatusEntry {
             status: Some(status_to_proto(self.status)),
             diff_stat_added: self.diff_stat.map(|ds| ds.added),
             diff_stat_deleted: self.diff_stat.map(|ds| ds.deleted),
-            staged_diff_stat_added: staged_diff_stat.map(|ds| ds.added),
-            staged_diff_stat_deleted: staged_diff_stat.map(|ds| ds.deleted),
-            unstaged_diff_stat_added: unstaged_diff_stat.map(|ds| ds.added),
-            unstaged_diff_stat_deleted: unstaged_diff_stat.map(|ds| ds.deleted),
         }
-    }
-
-    fn diff_stat_from_proto(added: Option<u32>, deleted: Option<u32>) -> Option<DiffStat> {
-        match (added, deleted) {
-            (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
-            _ => None,
-        }
-    }
-
-    fn section_diff_stats_from_proto(
-        value: &proto::StatusEntry,
-    ) -> (Option<DiffStat>, Option<DiffStat>) {
-        (
-            Self::diff_stat_from_proto(
-                value.staged_diff_stat_added,
-                value.staged_diff_stat_deleted,
-            ),
-            Self::diff_stat_from_proto(
-                value.unstaged_diff_stat_added,
-                value.unstaged_diff_stat_deleted,
-            ),
-        )
     }
 }
 
@@ -382,8 +351,10 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
-        let diff_stat =
-            StatusEntry::diff_stat_from_proto(value.diff_stat_added, value.diff_stat_deleted);
+        let diff_stat = match (value.diff_stat_added, value.diff_stat_deleted) {
+            (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
+            _ => None,
+        };
         Ok(Self {
             repo_path,
             status,
@@ -430,8 +401,6 @@ pub enum CommitDataState {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
-    staged_diff_stats_by_path: HashMap<RepoPath, DiffStat>,
-    unstaged_diff_stats_by_path: HashMap<RepoPath, DiffStat>,
     pub work_directory_abs_path: Arc<Path>,
     pub dot_git_abs_path: Arc<Path>,
     /// Absolute path to the directory holding this worktree's Git state.
@@ -5103,8 +5072,6 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
-            staged_diff_stats_by_path: Default::default(),
-            unstaged_diff_stats_by_path: Default::default(),
             repository_dir_abs_path,
             dot_git_abs_path,
             common_dir_abs_path,
@@ -5135,16 +5102,7 @@ impl RepositorySnapshot {
             updated_statuses: self
                 .statuses_by_path
                 .iter()
-                .map(|entry| {
-                    entry.to_proto(
-                        self.staged_diff_stats_by_path
-                            .get(&entry.repo_path)
-                            .copied(),
-                        self.unstaged_diff_stats_by_path
-                            .get(&entry.repo_path)
-                            .copied(),
-                    )
-                })
+                .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
             current_merge_conflicts: self
@@ -5194,44 +5152,14 @@ impl RepositorySnapshot {
                 (Some(new_entry), Some(old_entry)) => {
                     match new_entry.repo_path.cmp(&old_entry.repo_path) {
                         Ordering::Less => {
-                            updated_statuses.push(
-                                new_entry.to_proto(
-                                    self.staged_diff_stats_by_path
-                                        .get(&new_entry.repo_path)
-                                        .copied(),
-                                    self.unstaged_diff_stats_by_path
-                                        .get(&new_entry.repo_path)
-                                        .copied(),
-                                ),
-                            );
+                            updated_statuses.push(new_entry.to_proto());
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            let new_staged_diff_stat = self
-                                .staged_diff_stats_by_path
-                                .get(&new_entry.repo_path)
-                                .copied();
-                            let new_unstaged_diff_stat = self
-                                .unstaged_diff_stats_by_path
-                                .get(&new_entry.repo_path)
-                                .copied();
                             if new_entry.status != old_entry.status
                                 || new_entry.diff_stat != old_entry.diff_stat
-                                || new_staged_diff_stat
-                                    != old
-                                        .staged_diff_stats_by_path
-                                        .get(&old_entry.repo_path)
-                                        .copied()
-                                || new_unstaged_diff_stat
-                                    != old
-                                        .unstaged_diff_stats_by_path
-                                        .get(&old_entry.repo_path)
-                                        .copied()
                             {
-                                updated_statuses.push(
-                                    new_entry
-                                        .to_proto(new_staged_diff_stat, new_unstaged_diff_stat),
-                                );
+                                updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
                             current_new_entry = new_statuses.next();
@@ -5247,16 +5175,7 @@ impl RepositorySnapshot {
                     current_old_entry = old_statuses.next();
                 }
                 (Some(new_entry), None) => {
-                    updated_statuses.push(
-                        new_entry.to_proto(
-                            self.staged_diff_stats_by_path
-                                .get(&new_entry.repo_path)
-                                .copied(),
-                            self.unstaged_diff_stats_by_path
-                                .get(&new_entry.repo_path)
-                                .copied(),
-                        ),
-                    );
+                    updated_statuses.push(new_entry.to_proto());
                     current_new_entry = new_statuses.next();
                 }
                 (None, None) => break,
@@ -5364,14 +5283,6 @@ impl RepositorySnapshot {
         self.statuses_by_path
             .get(&PathKey(path.as_ref().clone()), ())
             .and_then(|entry| entry.diff_stat)
-    }
-
-    pub fn staged_diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
-        self.staged_diff_stats_by_path.get(path).copied()
-    }
-
-    pub fn unstaged_diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
-        self.unstaged_diff_stats_by_path.get(path).copied()
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
@@ -5981,14 +5892,6 @@ impl Repository {
 
     pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
         self.snapshot.diff_stat_for_path(path)
-    }
-
-    pub fn staged_diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
-        self.snapshot.staged_diff_stat_for_path(path)
-    }
-
-    pub fn unstaged_diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
-        self.snapshot.unstaged_diff_stat_for_path(path)
     }
 
     pub fn cached_stash(&self) -> GitStash {
@@ -8826,41 +8729,23 @@ impl Repository {
         self.snapshot.remote_upstream_url = update.remote_upstream_url;
         self.snapshot.remote_origin_url = update.remote_origin_url;
 
-        let mut edits = Vec::new();
-        for path in update.removed_statuses {
-            let Some(repo_path) = RepoPath::from_proto(&path).log_err() else {
-                continue;
-            };
-            self.snapshot.staged_diff_stats_by_path.remove(&repo_path);
-            self.snapshot.unstaged_diff_stats_by_path.remove(&repo_path);
-            edits.push(sum_tree::Edit::Remove(PathKey(repo_path.as_ref().clone())));
-        }
-        for updated_status in update.updated_statuses {
-            let (staged_diff_stat, unstaged_diff_stat) =
-                StatusEntry::section_diff_stats_from_proto(&updated_status);
-            let Some(updated_status) = StatusEntry::try_from(updated_status).log_err() else {
-                continue;
-            };
-            if let Some(staged_diff_stat) = staged_diff_stat {
-                self.snapshot
-                    .staged_diff_stats_by_path
-                    .insert(updated_status.repo_path.clone(), staged_diff_stat);
-            } else {
-                self.snapshot
-                    .staged_diff_stats_by_path
-                    .remove(&updated_status.repo_path);
-            }
-            if let Some(unstaged_diff_stat) = unstaged_diff_stat {
-                self.snapshot
-                    .unstaged_diff_stats_by_path
-                    .insert(updated_status.repo_path.clone(), unstaged_diff_stat);
-            } else {
-                self.snapshot
-                    .unstaged_diff_stats_by_path
-                    .remove(&updated_status.repo_path);
-            }
-            edits.push(sum_tree::Edit::Insert(updated_status));
-        }
+        let edits = update
+            .removed_statuses
+            .into_iter()
+            .filter_map(|path| {
+                Some(sum_tree::Edit::Remove(PathKey(
+                    RelPath::from_proto(&path).log_err()?,
+                )))
+            })
+            .chain(
+                update
+                    .updated_statuses
+                    .into_iter()
+                    .filter_map(|updated_status| {
+                        Some(sum_tree::Edit::Insert(updated_status.try_into().log_err()?))
+                    }),
+            )
+            .collect::<Vec<_>>();
         if conflicts_changed || !edits.is_empty() {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
@@ -9234,7 +9119,7 @@ impl Repository {
 
                 let has_head = prev_snapshot.head_commit.is_some();
 
-                let (changed_path_statuses, changed_paths, staged_diff_stats, unstaged_diff_stats) = cx
+                let changed_path_statuses = cx
                     .background_spawn(async move {
                         let changed_paths = GitStore::coalesce_repo_paths(
                             changed_paths
@@ -9248,23 +9133,7 @@ impl Repository {
 
                         let status_task = backend.status(&changed_paths_vec);
                         let diff_stat_future = if has_head {
-                            backend.diff_stat(DiffStatType::HeadToWorktree, &changed_paths_vec)
-                        } else {
-                            future::ready(Ok(status::GitDiffStat {
-                                entries: Arc::default(),
-                            }))
-                            .boxed()
-                        };
-                        let staged_diff_stat_future = if has_head {
-                            backend.diff_stat(DiffStatType::HeadToIndex, &changed_paths_vec)
-                        } else {
-                            future::ready(Ok(status::GitDiffStat {
-                                entries: Arc::default(),
-                            }))
-                            .boxed()
-                        };
-                        let unstaged_diff_stat_future = if has_head {
-                            backend.diff_stat(DiffStatType::IndexToWorktree, &changed_paths_vec)
+                            backend.diff_stat(&changed_paths_vec)
                         } else {
                             future::ready(Ok(status::GitDiffStat {
                                 entries: Arc::default(),
@@ -9272,26 +9141,14 @@ impl Repository {
                             .boxed()
                         };
 
-                        let (statuses, diff_stats, staged_diff_stats, unstaged_diff_stats) =
-                            futures::try_join!(
-                                status_task,
-                                diff_stat_future,
-                                staged_diff_stat_future,
-                                unstaged_diff_stat_future
-                            )?;
+                        let (statuses, diff_stats) =
+                            futures::future::try_join(status_task, diff_stat_future).await?;
 
                         let diff_stats: HashMap<RepoPath, DiffStat> =
                             HashMap::from_iter(diff_stats.entries.into_iter().cloned());
-                        let staged_diff_stats: HashMap<RepoPath, DiffStat> =
-                            HashMap::from_iter(staged_diff_stats.entries.into_iter().cloned());
-                        let unstaged_diff_stats: HashMap<RepoPath, DiffStat> =
-                            HashMap::from_iter(unstaged_diff_stats.entries.into_iter().cloned());
 
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
-                        let prev_staged_diff_stats = prev_snapshot.staged_diff_stats_by_path.clone();
-                        let prev_unstaged_diff_stats =
-                            prev_snapshot.unstaged_diff_stats_by_path.clone();
                         let current_status_paths = statuses
                             .entries
                             .iter()
@@ -9319,19 +9176,10 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             let current_diff_stat = diff_stats.get(repo_path).copied();
-                            let current_staged_diff_stat =
-                                staged_diff_stats.get(repo_path).copied();
-                            let current_unstaged_diff_stat =
-                                unstaged_diff_stats.get(repo_path).copied();
 
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
-                                    entry.status == *status
-                                        && entry.diff_stat == current_diff_stat
-                                        && prev_staged_diff_stats.get(repo_path).copied()
-                                            == current_staged_diff_stat
-                                        && prev_unstaged_diff_stats.get(repo_path).copied()
-                                            == current_unstaged_diff_stat
+                                    entry.status == *status && entry.diff_stat == current_diff_stat
                                 })
                             {
                                 continue;
@@ -9343,32 +9191,13 @@ impl Repository {
                                 diff_stat: current_diff_stat,
                             }));
                         }
-                        anyhow::Ok((
-                            changed_path_statuses,
-                            changed_paths,
-                            staged_diff_stats,
-                            unstaged_diff_stats,
-                        ))
+                        anyhow::Ok(changed_path_statuses)
                     })
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
                     if !changed_path_statuses.is_empty() {
                         cx.emit(RepositoryEvent::StatusesChanged);
-                        for path in &changed_paths {
-                            this.snapshot
-                                .staged_diff_stats_by_path
-                                .retain(|repo_path, _| !repo_path.starts_with(path));
-                            this.snapshot
-                                .unstaged_diff_stats_by_path
-                                .retain(|repo_path, _| !repo_path.starts_with(path));
-                        }
-                        this.snapshot
-                            .staged_diff_stats_by_path
-                            .extend(staged_diff_stats);
-                        this.snapshot
-                            .unstaged_diff_stats_by_path
-                            .extend(unstaged_diff_stats);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
@@ -10699,17 +10528,7 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move {
             if snapshot.head_commit.is_some() {
-                let diff_stats = backend.diff_stat(DiffStatType::HeadToWorktree, &[]);
-                let staged_diff_stats = backend.diff_stat(DiffStatType::HeadToIndex, &[]);
-                let unstaged_diff_stats = backend.diff_stat(DiffStatType::IndexToWorktree, &[]);
-                let (diff_stats, staged_diff_stats, unstaged_diff_stats) =
-                    futures::future::join3(diff_stats, staged_diff_stats, unstaged_diff_stats)
-                        .await;
-                (
-                    diff_stats.log_err().unwrap_or_default(),
-                    staged_diff_stats.log_err().unwrap_or_default(),
-                    unstaged_diff_stats.log_err().unwrap_or_default(),
-                )
+                backend.diff_stat(&[]).await.log_err().unwrap_or_default()
             } else {
                 Default::default()
             }
@@ -10720,22 +10539,12 @@ async fn compute_snapshot(
         async move { backend.stash_entries().await.log_err().unwrap_or_default() }
     };
 
-    let (statuses, (diff_stats, staged_diff_stats, unstaged_diff_stats), stash_entries) =
+    let (statuses, diff_stats, stash_entries) =
         futures::future::join3(statuses_future, diff_stat_future, stash_entries_future).await;
     log::debug!("fetched statuses, diff stats, stash entries");
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
-    let staged_diff_stats_by_path: HashMap<RepoPath, DiffStat> = staged_diff_stats
-        .entries
-        .iter()
-        .map(|(path, stat)| (path.clone(), *stat))
-        .collect();
-    let unstaged_diff_stats_by_path: HashMap<RepoPath, DiffStat> = unstaged_diff_stats
-        .entries
-        .iter()
-        .map(|(path, stat)| (path.clone(), *stat))
-        .collect();
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
         statuses.entries.iter().map(|(repo_path, status)| {
@@ -10764,11 +10573,7 @@ async fn compute_snapshot(
     log::debug!("new merge details: {merge_details:?}");
 
     this.update(cx, |this, cx| {
-        if conflicts_changed
-            || statuses_by_path != this.snapshot.statuses_by_path
-            || staged_diff_stats_by_path != this.snapshot.staged_diff_stats_by_path
-            || unstaged_diff_stats_by_path != this.snapshot.unstaged_diff_stats_by_path
-        {
+        if conflicts_changed || statuses_by_path != this.snapshot.statuses_by_path {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
         if stash_entries != this.snapshot.stash_entries {
@@ -10778,8 +10583,6 @@ async fn compute_snapshot(
         this.snapshot.scan_id += 1;
         this.snapshot.merge = merge_details;
         this.snapshot.statuses_by_path = statuses_by_path;
-        this.snapshot.staged_diff_stats_by_path = staged_diff_stats_by_path;
-        this.snapshot.unstaged_diff_stats_by_path = unstaged_diff_stats_by_path;
         this.snapshot.stash_entries = stash_entries;
 
         this.snapshot.clone()
