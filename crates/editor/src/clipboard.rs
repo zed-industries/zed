@@ -139,7 +139,7 @@ impl Editor {
                                         &snapshot,
                                         range,
                                         to_insert,
-                                        url::Url::parse(to_insert).ok(),
+                                        is_standalone_url(to_insert),
                                     )
                                 } else {
                                     (range, Cow::Borrowed(to_insert))
@@ -169,7 +169,7 @@ impl Editor {
                     .all::<MultiBufferOffset>(&this.display_snapshot(cx));
                 this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             } else {
-                let url = url::Url::parse(&clipboard_text).ok();
+                let clipboard_is_url = is_standalone_url(&clipboard_text);
 
                 let auto_indent_mode = if !clipboard_text.is_empty() {
                     Some(AutoindentMode::Block {
@@ -213,7 +213,12 @@ impl Editor {
                         let (edit_range, edit_text) = if let Some(language) = language
                             && language.name() == "Markdown"
                         {
-                            edit_for_markdown_paste(&snapshot, range, text_for_cursor, url.clone())
+                            edit_for_markdown_paste(
+                                &snapshot,
+                                range,
+                                text_for_cursor,
+                                clipboard_is_url,
+                            )
                         } else {
                             (range, Cow::Borrowed(text_for_cursor))
                         };
@@ -349,6 +354,22 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let selection_count = self.selections.count();
+        let first_selection = self.selections.first_anchor();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let first_selection_is_empty = first_selection.start == first_selection.end;
+        let selection_start_point = first_selection.start.to_point(&snapshot);
+        let selection_start_row = selection_start_point.row;
+        let selection_start_column = selection_start_point.column;
+        let Some((_, text_anchor)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(first_selection.start, cx)
+        else {
+            return;
+        };
+        let buffer_id = text_anchor.buffer_id;
+
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |snapshot, sel| {
                 if sel.is_empty() {
@@ -360,7 +381,56 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
+
+        let Some(item_text) = item.text() else {
+            return;
+        };
+
+        let entry_metadata = item.entries().first().and_then(|entry| match entry {
+            ClipboardEntry::String(entry) => entry.metadata_json::<Vec<ClipboardSelection>>(),
+            _ => None,
+        });
+
+        let can_append = selection_count == 1 && first_selection_is_empty;
+        let item = if can_append
+            && let Some(previous_ring) = cx.try_global::<KillRing>()
+            && previous_ring.can_append
+            && previous_ring.buffer_id == buffer_id
+            && previous_ring.row == selection_start_row
+            && previous_ring.column == selection_start_column
+        {
+            let mut entries = previous_ring
+                .metadata
+                .as_ref()
+                .map_or_else(Vec::new, Clone::clone);
+            if let Some(metadata) = entry_metadata.as_ref() {
+                entries.extend_from_slice(metadata);
+            }
+
+            let mut text = previous_ring.text.clone();
+            text.push_str(&item_text);
+            let text_len = text.len();
+
+            KillRing {
+                text,
+                metadata: kill_ring_metadata_for_text(entries, text_len),
+                row: previous_ring.row,
+                column: previous_ring.column,
+                buffer_id: previous_ring.buffer_id,
+                can_append,
+            }
+        } else {
+            KillRing {
+                text: item_text,
+                metadata: entry_metadata,
+                row: selection_start_row,
+                column: selection_start_column,
+                buffer_id,
+                can_append,
+            }
+        };
+
+        cx.set_global(item)
     }
 
     pub(super) fn kill_ring_yank(
@@ -369,15 +439,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
+        if !cx.has_global::<KillRing>() {
             return;
-        };
+        }
+
+        let (text, metadata) = cx.update_global::<KillRing, _>(|kill_ring, _| {
+            kill_ring.can_append = false;
+            (kill_ring.text.clone(), kill_ring.metadata.clone())
+        });
+
         self.do_paste(&text, metadata, false, window, cx);
     }
 
@@ -531,25 +601,64 @@ impl Editor {
     }
 }
 
-struct KillRing(ClipboardItem);
+struct KillRing {
+    text: String,
+    metadata: Option<Vec<ClipboardSelection>>,
+    row: u32,
+    column: u32,
+    buffer_id: BufferId,
+    can_append: bool,
+}
 impl Global for KillRing {}
+
+fn kill_ring_metadata_for_text(
+    mut metadata: Vec<ClipboardSelection>,
+    text_len: usize,
+) -> Option<Vec<ClipboardSelection>> {
+    match metadata.len() {
+        0 => None,
+        1 => Some(metadata),
+        _ => {
+            let first_selection = metadata.remove(0);
+            Some(vec![ClipboardSelection {
+                len: text_len,
+                is_entire_line: false,
+                first_line_indent: first_selection.first_line_indent,
+                file_path: None,
+                line_range: None,
+            }])
+        }
+    }
+}
 
 fn edit_for_markdown_paste<'a>(
     buffer: &MultiBufferSnapshot,
     range: Range<MultiBufferOffset>,
     to_insert: &'a str,
-    url: Option<url::Url>,
+    to_insert_is_url: bool,
 ) -> (Range<MultiBufferOffset>, Cow<'a, str>) {
-    if url.is_none() {
+    if !to_insert_is_url {
         return (range, Cow::Borrowed(to_insert));
     };
 
     let old_text = buffer.text_for_range(range.clone()).collect::<String>();
 
-    let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
+    let new_text = if range.is_empty() || is_standalone_url(&old_text) {
         Cow::Borrowed(to_insert)
     } else {
         Cow::Owned(format!("[{old_text}]({to_insert})"))
     };
     (range, new_text)
+}
+
+/// Whether `text` consists solely of a single URL, as opposed to merely
+/// starting with a scheme-like prefix (e.g. a commit message like
+/// `editor: Fix ...`, which `url::Url::parse` would accept).
+fn is_standalone_url(text: &str) -> bool {
+    let mut finder = linkify::LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]);
+    finder
+        .links(text)
+        .next()
+        .is_some_and(|link| link.start() == 0 && link.end() == text.len())
 }

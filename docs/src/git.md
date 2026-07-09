@@ -142,6 +142,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
+
 <!-- Add media -->
 
 ## Committing
@@ -291,7 +293,7 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
-To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+To add custom commit instructions for the model, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
@@ -303,7 +305,7 @@ To add custom instructions that apply only to commit message generation, use the
 }
 ```
 
-These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
 > See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.

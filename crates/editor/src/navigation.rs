@@ -608,6 +608,68 @@ impl Editor {
         })
     }
 
+    pub fn move_to_next_comment_paragraph(
+        &mut self,
+        _: &MoveToNextCommentParagraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+        // Keep the destination paragraph near the top of the viewport so the
+        // whole paragraph below the caret stays visible after a jump.
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(5.0)),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    selection.collapse_to(
+                        movement::comment_paragraph(
+                            map,
+                            selection.head(),
+                            workspace::searchable::Direction::Next,
+                        ),
+                        SelectionGoal::None,
+                    )
+                });
+            },
+        )
+    }
+
+    pub fn move_to_previous_comment_paragraph(
+        &mut self,
+        _: &MoveToPreviousCommentParagraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+        // Keep the destination paragraph near the top of the viewport so the
+        // whole paragraph below the caret stays visible after a jump.
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(5.0)),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    selection.collapse_to(
+                        movement::comment_paragraph(
+                            map,
+                            selection.head(),
+                            workspace::searchable::Direction::Prev,
+                        ),
+                        SelectionGoal::None,
+                    )
+                });
+            },
+        )
+    }
+
     pub fn select_to_start_of_paragraph(
         &mut self,
         _: &SelectToStartOfParagraph,
@@ -1313,12 +1375,12 @@ impl Editor {
                 return anyhow::Ok(Navigated::No);
             }
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
             }
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 num_locations += ranges.len();
             }
@@ -1553,7 +1615,7 @@ impl Editor {
     pub(super) fn go_to_line<T: 'static>(
         &mut self,
         position: Anchor,
-        highlight_color: Option<Hsla>,
+        highlight_color: fn(&App) -> Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1566,13 +1628,7 @@ impl Editor {
         let start = snapshot.buffer_snapshot().anchor_before(start);
         let end = snapshot.buffer_snapshot().anchor_before(end);
 
-        self.highlight_rows::<T>(
-            start..end,
-            highlight_color
-                .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
-            Default::default(),
-            cx,
-        );
+        self.highlight_rows::<T>(start..end, highlight_color, Default::default(), cx);
 
         if self.buffer.read(cx).is_singleton() {
             self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
@@ -1631,7 +1687,7 @@ impl Editor {
             })?;
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 // Merge overlapping or contained ranges. After sorting by
                 // (start, Reverse(end)), we can merge in a single pass:

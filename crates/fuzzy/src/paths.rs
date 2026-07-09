@@ -116,11 +116,7 @@ pub fn match_fixed_path_set(
 
             (worktree_root_name, path_prefix_chars, lowercase_pfx)
         }
-        None => (
-            RelPath::empty().into(),
-            Default::default(),
-            Default::default(),
-        ),
+        None => (RelPath::empty_arc(), Default::default(), Default::default()),
     };
 
     matcher.match_candidates(
