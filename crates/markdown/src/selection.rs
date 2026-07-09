@@ -107,7 +107,7 @@ pub(crate) fn rebalanced_markdown_for_selection(
     root_block_starts: &[usize],
     selection: Range<usize>,
 ) -> String {
-    let Some(selection) = clamp_to_char_boundaries(source, selection) else {
+    let Some(selection) = snap_to_char_boundaries(source, selection) else {
         return String::new();
     };
 
@@ -176,16 +176,19 @@ fn root_block_events<'a>(
     events.get(start..end).unwrap_or(events)
 }
 
-fn clamp_to_char_boundaries(source: &str, selection: Range<usize>) -> Option<Range<usize>> {
+fn snap_to_char_boundaries(source: &str, selection: Range<usize>) -> Option<Range<usize>> {
     let mut start = selection.start.min(source.len());
     let mut end = selection.end.min(source.len());
-    while start < end && !source.is_char_boundary(start) {
-        start += 1;
+    if start >= end {
+        return None;
     }
-    while end > start && !source.is_char_boundary(end) {
-        end -= 1;
+    while start > 0 && !source.is_char_boundary(start) {
+        start -= 1;
     }
-    (start < end).then(|| start..end)
+    while end < source.len() && !source.is_char_boundary(end) {
+        end += 1;
+    }
+    Some(start..end)
 }
 
 /// Shrinks selection boundaries that fall inside delimiter syntax (`**`,
@@ -373,6 +376,52 @@ mod tests {
             Some("**`«code»`**"),
             "an end inside bold's closing `**` first snaps to code's closing \
              backtick, so it must cascade into the code content",
+        );
+    }
+
+    #[test]
+    fn test_snap_to_char_boundaries() {
+        // `√` occupies bytes 1..4.
+        let source = "a√b";
+        assert_eq!(
+            snap_to_char_boundaries(source, 0..5),
+            Some(0..5),
+            "boundaries already on char boundaries must be untouched"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 0..2),
+            Some(0..4),
+            "an end mid-character must expand forward to keep the character"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 2..5),
+            Some(1..5),
+            "a start mid-character must expand backward to keep the character"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 2..3),
+            Some(1..4),
+            "a selection entirely inside a character must cover the whole character"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 2..10),
+            Some(1..5),
+            "an end past the source must clamp to its length"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 2..2),
+            None,
+            "an empty selection must collapse, even mid-character"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 5..10),
+            None,
+            "a selection entirely past the source must collapse"
+        );
+        assert_eq!(
+            snap_to_char_boundaries(source, 4..2),
+            None,
+            "a reversed selection must collapse"
         );
     }
 
