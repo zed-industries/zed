@@ -3,7 +3,11 @@ use futures::{FutureExt, StreamExt as _, channel::mpsc, future::Shared};
 use language::Buffer;
 use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
-use std::{collections::VecDeque, path::Path, sync::Arc};
+use std::{
+    collections::VecDeque,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 use task::{Shell, shell_to_proto};
 use util::{ResultExt, command::new_command};
 use worktree::Worktree;
@@ -320,6 +324,8 @@ async fn load_directory_shell_environment(
         return Ok(HashMap::default());
     }
 
+    let _permit = shell_environment_capture_semaphore().acquire().await;
+
     let meta = smol::fs::metadata(&abs_path).await.with_context(|| {
         tx.unbounded_send(format!("Failed to open {}", abs_path.display()))
             .ok();
@@ -385,6 +391,11 @@ async fn load_directory_shell_environment(
     }
 
     Ok(envs)
+}
+
+fn shell_environment_capture_semaphore() -> &'static smol::lock::Semaphore {
+    static SEMAPHORE: OnceLock<smol::lock::Semaphore> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| smol::lock::Semaphore::new(8))
 }
 
 async fn load_direnv_environment(
