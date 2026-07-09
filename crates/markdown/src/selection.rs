@@ -419,7 +419,7 @@ mod tests {
             "a selection entirely past the source must collapse"
         );
         assert_eq!(
-            snap_to_char_boundaries(source, 4..2),
+            snap_to_char_boundaries(source, Range { start: 4, end: 2 }),
             None,
             "a reversed selection must collapse"
         );
