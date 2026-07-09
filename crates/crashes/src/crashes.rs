@@ -285,27 +285,56 @@ fn abort_message_address() -> Option<u64> {
 
 /// Read the crashed process's abort diagnostic. `__abort_msg` points to a
 /// `struct abort_msg_s { unsigned int size; char msg[]; }` that glibc allocates
-/// with mmap so that it stays intact even when the heap is corrupt.
+/// with mmap so that it stays intact even when the heap is corrupt. `size` is
+/// the total byte size of that mapping (header included, rounded up to whole
+/// pages), not the message length; the message itself is NUL-terminated.
 #[cfg(target_os = "linux")]
 fn read_abort_message(location: AbortMessageLocation) -> Option<String> {
-    const MAX_MESSAGE_LEN: u32 = 4096;
-
-    let pointer_bytes = read_process_memory(location.pid, location.address, size_of::<u64>())?;
-    let message_address = u64::from_ne_bytes(pointer_bytes.try_into().ok()?);
+    let pointer_bytes = read_process_memory(location.pid, location.address, size_of::<usize>())?;
+    let message_address = usize::from_ne_bytes(pointer_bytes.try_into().ok()?) as u64;
     if message_address == 0 {
         return None;
     }
     let size_bytes = read_process_memory(location.pid, message_address, size_of::<u32>())?;
-    let size = u32::from_ne_bytes(size_bytes.try_into().ok()?).min(MAX_MESSAGE_LEN);
-    if size == 0 {
-        return None;
-    }
+    let size = u32::from_ne_bytes(size_bytes.try_into().ok()?);
     let message_bytes = read_process_memory(
         location.pid,
         message_address + size_of::<u32>() as u64,
-        size as usize,
+        abort_message_read_len(size)?,
     )?;
-    let message = String::from_utf8_lossy(&message_bytes).trim().to_string();
+    parse_abort_message(&message_bytes)
+}
+
+/// How many message bytes to read given the `size` field of glibc's
+/// `abort_msg_s`. `size` holds the total size of the mmap'd allocation, so a
+/// value that isn't a whole number of pages means the layout has changed and
+/// we shouldn't trust it. Reading is capped at (one page minus the header),
+/// which both bounds the work and ensures the read never extends past the end
+/// of the mapping.
+#[cfg(any(target_os = "linux", test))]
+fn abort_message_read_len(size: u32) -> Option<usize> {
+    // Every Linux page size (4 KiB, 16 KiB, 64 KiB, ...) is a multiple of 4 KiB.
+    const PAGE_MULTIPLE: usize = 4096;
+    const MAX_READ: usize = 4096;
+
+    let size = size as usize;
+    if size == 0 || !size.is_multiple_of(PAGE_MULTIPLE) {
+        log::warn!("__abort_msg size field {size} is not page-rounded; layout may have changed");
+        return None;
+    }
+    Some(size.min(MAX_READ) - size_of::<u32>())
+}
+
+/// The message is NUL-terminated inside a zero-filled mapping, so truncate at
+/// the first NUL; `trim` alone would keep the padding, since NUL is not
+/// whitespace.
+#[cfg(any(target_os = "linux", test))]
+fn parse_abort_message(bytes: &[u8]) -> Option<String> {
+    let len = bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(bytes.len());
+    let message = String::from_utf8_lossy(&bytes[..len]).trim().to_string();
     (!message.is_empty()).then_some(message)
 }
 
@@ -322,7 +351,20 @@ fn read_process_memory(pid: u32, address: u64, len: usize) -> Option<Vec<u8>> {
     };
     let bytes_read =
         unsafe { libc::process_vm_readv(pid as libc::pid_t, &local, 1, &remote, 1, 0) };
-    (bytes_read == len as isize).then_some(buffer)
+    if bytes_read < 0 {
+        log::warn!(
+            "process_vm_readv of {len} bytes at {address:#x} in pid {pid} failed: {}",
+            io::Error::last_os_error()
+        );
+        return None;
+    }
+    if bytes_read as usize != len {
+        log::warn!(
+            "process_vm_readv short read at {address:#x} in pid {pid}: {bytes_read} of {len} bytes"
+        );
+        return None;
+    }
+    Some(buffer)
 }
 
 impl minidumper::ServerHandler for CrashServer {
@@ -634,4 +676,100 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
             Some(CRASH_HANDLER_PING_TIMEOUT),
         )
         .expect("failed to run server");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn abort_message_read_len_requires_page_rounded_total() {
+        assert_eq!(abort_message_read_len(0), None);
+        // A message length rather than a mapping total means the glibc layout
+        // has changed out from under us.
+        assert_eq!(abort_message_read_len(23), None);
+        assert_eq!(abort_message_read_len(4097), None);
+        // The read must stay within the mapping: one page minus the header.
+        assert_eq!(abort_message_read_len(4096), Some(4092));
+        // Larger totals (long messages, larger page sizes) are clamped.
+        assert_eq!(abort_message_read_len(8192), Some(4092));
+        assert_eq!(abort_message_read_len(65536), Some(4092));
+    }
+
+    #[test]
+    fn parse_abort_message_truncates_at_nul() {
+        let mut buffer = b"free(): invalid pointer\n\0".to_vec();
+        buffer.resize(4092, 0);
+        assert_eq!(
+            parse_abort_message(&buffer),
+            Some("free(): invalid pointer".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_abort_message_handles_missing_nul() {
+        assert_eq!(
+            parse_abort_message(b"double free or corruption (out)"),
+            Some("double free or corruption (out)".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_abort_message_rejects_empty() {
+        assert_eq!(parse_abort_message(&[]), None);
+        assert_eq!(parse_abort_message(&[0; 16]), None);
+        assert_eq!(parse_abort_message(b"\n \0garbage after nul"), None);
+    }
+
+    /// End-to-end check of `read_abort_message` against a synthetic
+    /// `abort_msg_s` in this very process (`process_vm_readv` may always read
+    /// one's own memory). The message page is followed by a `PROT_NONE` guard
+    /// page so the test fails if the read ever extends past the mapping glibc
+    /// would have allocated.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_abort_message_reads_glibc_layout_from_a_live_process() {
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        unsafe {
+            let mapping = libc::mmap(
+                std::ptr::null_mut(),
+                2 * page_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANON | libc::MAP_PRIVATE,
+                -1,
+                0,
+            );
+            assert_ne!(mapping, libc::MAP_FAILED);
+            assert_eq!(
+                libc::mprotect(
+                    mapping.cast::<u8>().add(page_size).cast(),
+                    page_size,
+                    libc::PROT_NONE
+                ),
+                0
+            );
+
+            mapping.cast::<u32>().write(page_size as u32);
+            let message = b"free(): invalid pointer\n\0";
+            std::ptr::copy_nonoverlapping(
+                message.as_ptr(),
+                mapping.cast::<u8>().add(size_of::<u32>()),
+                message.len(),
+            );
+
+            // Stands in for the `__abort_msg` global: a pointer variable whose
+            // address we hand to the reader.
+            let abort_msg: *mut libc::c_void = mapping;
+            let location = AbortMessageLocation {
+                pid: process::id(),
+                address: (&raw const abort_msg) as u64,
+            };
+            assert_eq!(
+                read_abort_message(location),
+                Some("free(): invalid pointer".to_string())
+            );
+
+            libc::munmap(mapping, 2 * page_size);
+        }
+    }
 }
