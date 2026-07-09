@@ -190,7 +190,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(ChatGptModel::Gpt55))
+        Some(self.create_language_model(ChatGptModel::Gpt56Sol))
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -321,7 +321,14 @@ enum ChatGptModel {
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
-        vec![Self::Gpt56Sol, Self::Gpt56Terra, Self::Gpt56Luna, Self::Gpt55, Self::Gpt54, Self::Gpt54Mini]
+        vec![
+            Self::Gpt56Sol,
+            Self::Gpt56Terra,
+            Self::Gpt56Luna,
+            Self::Gpt55,
+            Self::Gpt54,
+            Self::Gpt54Mini,
+        ]
     }
 
     fn id(&self) -> &str {
@@ -338,7 +345,7 @@ impl ChatGptModel {
     fn display_name(&self) -> &str {
         match self {
             Self::Gpt56Sol => "GPT-5.6 Sol",
-            Self::Gpt56Terra => "gGPT-5.6 Terra",
+            Self::Gpt56Terra => "GPT-5.6 Terra",
             Self::Gpt56Luna => "GPT-5.6 Luna",
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
@@ -347,10 +354,10 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-      match self {
-        Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
-        Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
-      }
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+        }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
@@ -365,28 +372,29 @@ impl ChatGptModel {
 
     fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
         match self {
-            Self::Gpt56Sol  => Some(ReasoningEffort::Low),
-            Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => Some(ReasoningEffort::Medium),
+            Self::Gpt56Sol => Some(ReasoningEffort::Low),
+            Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
+                Some(ReasoningEffort::Medium)
+            }
         }
     }
 
     fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
-      match self {
-          Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna  => &[
-              ReasoningEffort::Low,
-              ReasoningEffort::Medium,
-              ReasoningEffort::High,
-              ReasoningEffort::XHigh,
-              ReasoningEffort::Max,
-          ],
-          Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => &[
-              ReasoningEffort::Low,
-              ReasoningEffort::Medium,
-              ReasoningEffort::High,
-              ReasoningEffort::XHigh,
-          ],
-      }
-
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+        }
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -468,7 +476,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
+                    ReasoningEffort::Max => ("Max", "max"),
                 };
 
                 Some(LanguageModelEffortLevel {
