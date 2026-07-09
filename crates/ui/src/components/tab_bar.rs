@@ -102,12 +102,14 @@ impl RenderOnce for TabBar {
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
+                        .id("tab_bar_start_children")
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
                         .border_b_1()
                         .border_r_1()
                         .border_color(cx.theme().colors().border)
+                        .debug_selector(|| "tab_bar_start_children".into())
                         .children(self.start_children),
                 )
             })
@@ -140,12 +142,14 @@ impl RenderOnce for TabBar {
             .when(!self.end_children.is_empty(), |this| {
                 this.child(
                     h_flex()
+                        .id("tab_bar_end_children")
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
                         .border_color(cx.theme().colors().border)
                         .border_b_1()
                         .border_l_1()
+                        .debug_selector(|| "tab_bar_end_children".into())
                         .children(self.end_children),
                 )
             })

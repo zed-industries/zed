@@ -129,15 +129,18 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
-                if !pane.has_focus(window, cx)
+                let should_hide = !pane.has_focus(window, cx)
                     && !pane.context_menu_focused(window, cx)
-                    && !has_focused_rename_editor
-                {
-                    return (None, None);
-                }
+                    && !has_focused_rename_editor;
+                // Render buttons as invisible (rather than omitting) when unfocused so
+                // the tab bar's scroll area width stays stable across focus changes —
+                // otherwise a click on a partially-visible tab gets cancelled when
+                // focus-in shifts the layout between mouse-down and mouse-up.
+                // See https://github.com/zed-industries/zed/issues/60367
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
+                    .when(should_hide, |this| this.invisible())
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
