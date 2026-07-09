@@ -6,8 +6,6 @@ on:
 
 permissions:
   contents: read
-  # For the issue reaction used to dedupe notifications.
-  issues: write
 
 env:
   PRIORITY_LABELS: '["priority:P0", "priority:P1"]'
@@ -19,6 +17,10 @@ jobs:
   notify-slack:
     if: github.repository_owner == 'zed-industries' && github.event.issue.state == 'open'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions:
+      contents: read
+      # For the issue reaction used to dedupe notifications.
+      issues: write
     # Serialize per issue so the reaction claim below can't race.
     concurrency:
       group: slack-notify-first-responders-${{ github.event.issue.number }}
