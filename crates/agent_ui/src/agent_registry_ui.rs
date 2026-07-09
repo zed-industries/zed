@@ -10,7 +10,7 @@ use gpui::{
     uniform_list,
 };
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
-use project::{AgentRegistryStore, RegistryAgent};
+use project::{AgentRegistryStore, DisableAiSettings, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme_settings::ThemeSettings;
 use ui::{
@@ -286,12 +286,15 @@ impl AgentRegistryPage {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
         let has_search = self.search_query(cx).is_some();
         let registry_store = self.registry_store.read(cx);
         let is_fetching = registry_store.is_fetching();
         let fetch_error = registry_store.fetch_error();
 
-        let message = if is_fetching {
+        let message = if disable_ai {
+            "AI features are disabled. Enable them in your settings to browse the ACP registry."
+        } else if is_fetching {
             "Loading registry..."
         } else if fetch_error.is_some() {
             "Failed to load the agent registry. Please check your connection and try again."

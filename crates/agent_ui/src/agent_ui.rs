@@ -825,15 +825,20 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.hide_action_types(&edit_prediction_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+            // `AcpRegistry` lives in the `zed` namespace, so hiding the `agent`
+            // namespace above doesn't cover it; hide it explicitly.
+            filter.hide_action_types(&[TypeId::of::<zed_actions::AcpRegistry>()]);
         } else {
             if agent_enabled {
                 filter.show_namespace("agent");
                 filter.show_namespace("agents");
                 filter.show_namespace("assistant");
+                filter.show_action_types(&[TypeId::of::<zed_actions::AcpRegistry>()]);
             } else {
                 filter.hide_namespace("agent");
                 filter.hide_namespace("agents");
                 filter.hide_namespace("assistant");
+                filter.hide_action_types(&[TypeId::of::<zed_actions::AcpRegistry>()]);
             }
 
             match edit_prediction_provider {
@@ -1047,6 +1052,10 @@ mod tests {
                 !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
                 "OpenProjectAgentsMdRules should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&zed_actions::AcpRegistry),
+                "AcpRegistry should be visible by default"
+            );
         });
 
         // Disable agent
@@ -1077,6 +1086,10 @@ mod tests {
             assert!(
                 filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
                 "OpenProjectAgentsMdRules should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::AcpRegistry),
+                "AcpRegistry should be hidden when agent is disabled"
             );
         });
 
@@ -1122,6 +1135,42 @@ mod tests {
             assert!(
                 filter.is_hidden(&AcceptEditPrediction),
                 "EditPrediction should be hidden when provider is None"
+            );
+        });
+
+        // Re-enable the agent, then disable AI entirely. The ACP registry
+        // command must disappear from the palette; otherwise opening it lands
+        // on an empty page because the registry never fetches under
+        // `disable_ai` (see #60576).
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&zed_actions::AcpRegistry),
+                "AcpRegistry should be hidden when AI is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewThread),
+                "NewThread should be hidden when AI is disabled"
+            );
+        });
+
+        // Re-enabling AI restores the registry command.
+        cx.update(|cx| {
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&zed_actions::AcpRegistry),
+                "AcpRegistry should be visible again once AI is re-enabled"
             );
         });
     }
