@@ -49,6 +49,7 @@ pub struct DockerConnectionOptions {
     pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
+    pub container_binary: Option<String>,
     pub remote_env: BTreeMap<String, String>,
 }
 
@@ -120,7 +121,9 @@ impl DockerExecConnection {
     }
 
     fn docker_cli(&self) -> &str {
-        if self.connection_options.use_podman {
+        if let Some(binary) = &self.connection_options.container_binary {
+            binary.as_str()
+        } else if self.connection_options.use_podman {
             "podman"
         } else {
             "docker"

@@ -193,7 +193,7 @@ impl DockerInspect {
 
 impl Docker {
     pub(crate) async fn new(docker_cli: &str, use_buildkit: Option<bool>) -> Self {
-        let has_buildx = if docker_cli == "podman" {
+        let has_buildx = if is_podman_binary(docker_cli) {
             false
         } else if let Some(use_buildkit) = use_buildkit {
             // Honor the explicit `dev_container_use_buildkit` setting. Setting it
@@ -211,7 +211,7 @@ impl Docker {
                 .await;
             output.map(|o| o.status.success()).unwrap_or(false)
         };
-        if !has_buildx && docker_cli != "podman" {
+        if !has_buildx && !is_podman_binary(docker_cli) {
             log::info!(
                 "Using the classic Docker builder for dev container builds (BuildKit unavailable or disabled)"
             );
@@ -223,7 +223,7 @@ impl Docker {
     }
 
     fn is_podman(&self) -> bool {
-        self.docker_cli == "podman"
+        is_podman_binary(&self.docker_cli)
     }
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
@@ -438,6 +438,18 @@ impl DockerClient for Docker {
     fn supports_compose_buildkit(&self) -> bool {
         self.has_buildx
     }
+
+    fn is_podman(&self) -> bool {
+        is_podman_binary(&self.docker_cli)
+    }
+}
+
+fn is_podman_binary(cli: &str) -> bool {
+    std::path::Path::new(cli)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| name.starts_with("podman"))
+        .unwrap_or(false)
 }
 
 /// Parses output of `docker ps -a --format={{ json . }}`. When a single
@@ -494,6 +506,7 @@ pub(crate) trait DockerClient {
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
+    fn is_podman(&self) -> bool;
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;

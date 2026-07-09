@@ -99,6 +99,7 @@ pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub use_podman: bool,
     pub use_buildkit: Option<bool>,
+    pub container_binary: Option<String>,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub environment: WeakEntity<ProjectEnvironment>,
@@ -110,6 +111,7 @@ impl DevContainerContext {
         let settings = DevContainerSettings::get_global(cx);
         let use_podman = settings.use_podman;
         let use_buildkit = settings.use_buildkit;
+        let container_binary = settings.container_binary.clone();
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
@@ -117,10 +119,22 @@ impl DevContainerContext {
             project_directory,
             use_podman,
             use_buildkit,
+            container_binary,
             fs,
             http_client,
             environment,
         })
+    }
+
+    /// Returns the container CLI binary to use, respecting the `container_binary` override.
+    pub fn resolved_docker_cli(&self) -> &str {
+        if let Some(binary) = &self.container_binary {
+            binary.as_str()
+        } else if self.use_podman {
+            "podman"
+        } else {
+            "docker"
+        }
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
@@ -139,6 +153,7 @@ impl DevContainerContext {
 struct DevContainerSettings {
     use_podman: bool,
     use_buildkit: Option<bool>,
+    container_binary: Option<String>,
 }
 
 pub fn use_podman(cx: &App) -> bool {
@@ -150,6 +165,7 @@ impl Settings for DevContainerSettings {
         Self {
             use_podman: content.remote.use_podman.unwrap_or(false),
             use_buildkit: content.remote.dev_container_use_buildkit,
+            container_binary: content.remote.container_binary.clone(),
         }
     }
 }
