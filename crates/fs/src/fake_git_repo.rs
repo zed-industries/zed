@@ -1145,6 +1145,7 @@ impl GitRepository for FakeGitRepository {
 
     fn diff_stat(
         &self,
+        diff_stat_type: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1168,46 +1169,24 @@ impl GitRepository for FakeGitRepository {
             })
         }
 
-        let path_prefixes = path_prefixes.to_vec();
-
-        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-        let worktree_files: HashMap<RepoPath, String> = self
-            .fs
-            .files()
-            .iter()
-            .filter_map(|path| {
-                let repo_path = path.strip_prefix(&workdir_path).ok()?;
-                if repo_path.starts_with(".git") {
-                    return None;
-                }
-                let content = self
-                    .fs
-                    .read_file_sync(path)
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
-                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
-                Some((RepoPath::from_rel_path(&repo_path), content))
-            })
-            .collect();
-
-        self.with_state_async(false, move |state| {
-            let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
+        fn diff_entries(
+            old_contents_by_path: &HashMap<RepoPath, String>,
+            new_contents_by_path: &HashMap<RepoPath, String>,
+            path_prefixes: &[RepoPath],
+        ) -> Vec<(RepoPath, git::status::DiffStat)> {
+            let all_paths: HashSet<&RepoPath> = old_contents_by_path
                 .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
+                .chain(new_contents_by_path.keys())
                 .collect();
+            let mut entries = Vec::new();
             for path in all_paths {
-                if !matches_prefixes(path, &path_prefixes) {
+                if !matches_prefixes(path, path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+
+                let old = old_contents_by_path.get(path);
+                let new = new_contents_by_path.get(path);
+                match (old, new) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),
@@ -1239,6 +1218,48 @@ impl GitRepository for FakeGitRepository {
                 }
             }
             entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            entries
+        }
+
+        let path_prefixes = path_prefixes.to_vec();
+
+        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+        let worktree_files: HashMap<RepoPath, String> = self
+            .fs
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path = path.strip_prefix(&workdir_path).ok()?;
+                if repo_path.starts_with(".git") {
+                    return None;
+                }
+                let content = self
+                    .fs
+                    .read_file_sync(path)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
+                Some((RepoPath::from_rel_path(&repo_path), content))
+            })
+            .collect();
+
+        self.with_state_async(false, move |state| {
+            let worktree_files = worktree_files
+                .iter()
+                .filter(|(path, _)| state.index_contents.contains_key(*path))
+                .map(|(path, contents)| (path.clone(), contents.clone()))
+                .collect::<HashMap<_, _>>();
+            let entries = match diff_stat_type {
+                git::repository::DiffStatType::HeadToWorktree => {
+                    diff_entries(&state.head_contents, &worktree_files, &path_prefixes)
+                }
+                git::repository::DiffStatType::HeadToIndex => {
+                    diff_entries(&state.head_contents, &state.index_contents, &path_prefixes)
+                }
+                git::repository::DiffStatType::IndexToWorktree => {
+                    diff_entries(&state.index_contents, &worktree_files, &path_prefixes)
+                }
+            };
             Ok(git::status::GitDiffStat {
                 entries: entries.into(),
             })

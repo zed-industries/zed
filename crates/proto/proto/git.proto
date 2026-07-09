@@ -330,6 +330,10 @@ message StatusEntry {
   GitFileStatus status = 3;
   optional uint32 diff_stat_added = 4;
   optional uint32 diff_stat_deleted = 5;
+  optional uint32 staged_diff_stat_added = 6;
+  optional uint32 staged_diff_stat_deleted = 7;
+  optional uint32 unstaged_diff_stat_added = 8;
+  optional uint32 unstaged_diff_stat_deleted = 9;
 }
 
 message StashEntry {
