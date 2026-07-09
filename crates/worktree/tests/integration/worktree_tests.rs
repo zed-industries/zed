@@ -4200,6 +4200,86 @@ async fn test_linked_worktree_gitfile_event_preserves_repo(
 }
 
 #[gpui::test]
+async fn test_shared_common_dir_event_updates_all_repositories(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // A main checkout and one of its linked worktrees can both live inside the
+    // same project worktree, sharing a common git directory. An event in that
+    // common directory (e.g. a ref update) must refresh every repository that
+    // reads from it, not just the first match.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main_repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/project/linked")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let mut events = cx.events(&tree);
+    fs.emit_fs_event(
+        path!("/project/main_repo/.git/refs/heads/main"),
+        Some(PathEventKind::Changed),
+    );
+    executor.run_until_parked();
+
+    let mut updated_work_dirs = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::UpdatedGitRepositories(updates) = event {
+            updated_work_dirs.extend(
+                updates
+                    .iter()
+                    .filter_map(|update| update.new_work_directory_abs_path.clone()),
+            );
+        }
+    }
+    updated_work_dirs.sort();
+    assert_eq!(
+        updated_work_dirs,
+        [
+            Arc::from(Path::new(path!("/project/linked"))),
+            Arc::from(Path::new(path!("/project/main_repo"))),
+        ],
+        "a ref update in the shared common dir should refresh both repositories"
+    );
+}
+
+#[gpui::test]
 async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,

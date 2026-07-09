@@ -5762,56 +5762,57 @@ impl BackgroundScanner {
         let scan_id = state.snapshot.scan_id;
         let mut affected_repo_roots = Vec::new();
         for dot_git_dir in dot_git_paths {
-            let existing_repository_entry =
-                state
-                    .snapshot
-                    .git_repositories
-                    .iter()
-                    .find_map(|(_, repo)| {
-                        let dot_git_dir = SanitizedPath::new(&dot_git_dir);
-                        if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
-                            || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
-                                == dot_git_dir
-                            || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
-                        {
-                            Some(repo.clone())
-                        } else {
-                            None
-                        }
-                    });
+            // Several repositories can share a git directory: a linked worktree's
+            // commondir is the main checkout's `.git`, so a ref update there must
+            // refresh every repository that reads from it.
+            let existing_work_directory_ids = state
+                .snapshot
+                .git_repositories
+                .iter()
+                .filter_map(|(&work_directory_id, repo)| {
+                    let dot_git_dir = SanitizedPath::new(&dot_git_dir);
+                    if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
+                        || SanitizedPath::new(repo.repository_dir_abs_path.as_ref()) == dot_git_dir
+                        || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
+                    {
+                        Some(work_directory_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
 
-            match existing_repository_entry {
-                None => {
-                    let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        // A `.git` path outside the worktree root is not
-                        // ours to register. This happens legitimately when
-                        // `.git` is a gitfile pointing outside the worktree
-                        // (linked worktrees and submodules), and also when
-                        // a rescan of a linked worktree's commondir arrives
-                        // after the worktree's repository has already been
-                        // unregistered.
-                        continue;
-                    };
-                    affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
+            if existing_work_directory_ids.is_empty() {
+                let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
+                    // A `.git` path outside the worktree root is not
+                    // ours to register. This happens legitimately when
+                    // `.git` is a gitfile pointing outside the worktree
+                    // (linked worktrees and submodules), and also when
+                    // a rescan of a linked worktree's commondir arrives
+                    // after the worktree's repository has already been
+                    // unregistered.
+                    continue;
+                };
+                affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
+                state
+                    .insert_git_repository(
+                        RelPath::new(relative, PathStyle::local())
+                            .unwrap()
+                            .into_arc(),
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    )
+                    .await;
+            } else {
+                for work_directory_id in existing_work_directory_ids {
                     state
-                        .insert_git_repository(
-                            RelPath::new(relative, PathStyle::local())
-                                .unwrap()
-                                .into_arc(),
-                            self.fs.as_ref(),
-                            self.watcher.as_ref(),
-                        )
-                        .await;
-                }
-                Some(local_repository) => {
-                    state.snapshot.git_repositories.update(
-                        &local_repository.work_directory_id,
-                        |entry| {
+                        .snapshot
+                        .git_repositories
+                        .update(&work_directory_id, |entry| {
                             entry.git_dir_scan_id = scan_id;
-                        },
-                    );
+                        });
                 }
-            };
+            }
         }
 
         // Remove any git repositories whose .git entry no longer exists.

@@ -795,7 +795,9 @@ impl MacWindow {
                 WindowKind::Normal => {
                     msg_send![WINDOW_CLASS, alloc]
                 }
-                WindowKind::PopUp => {
+                // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
+                // for exhaustiveness.
+                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
@@ -988,7 +990,9 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
                     }
                 }
-                WindowKind::PopUp => {
+                // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
+                // for exhaustiveness.
+                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
                     // Use a tracking area to allow receiving MouseMoved events even when
                     // the window or application aren't active, which is often the case
                     // e.g. for notification windows.

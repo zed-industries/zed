@@ -4428,6 +4428,141 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     }
 }
 
+async fn setup_three_worktree_panel(
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, ProjectPanel::new);
+    cx.run_until_parked();
+    (panel, cx)
+}
+
+#[gpui::test]
+async fn test_drag_worktree_root_reorders_worktrees(cx: &mut gpui::TestAppContext) {
+    let (panel, mut cx) = setup_three_worktree_panel(cx).await;
+    let cx = &mut cx;
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "worktrees should start in insertion order"
+    );
+
+    // [r1, r2, r3] -> [r2, r1, r3].
+    drag_entries_onto(&panel, &["root1"], "root2", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "dragging root1 onto root2 should swap their positions"
+    );
+
+    // [r2, r1, r3] -> [r3, r2, r1].
+    drag_entries_onto(&panel, &["root3"], "root2", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root3",
+            "      c.txt",
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dragging the last root onto the first should move it to the front"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppContext) {
+    let (panel, mut cx) = setup_three_worktree_panel(cx).await;
+    let cx = &mut cx;
+
+    // Drag {root1, root2/b.txt} onto root3's root entry: only the worktree
+    // reorder should happen and b.txt must stay in root2.
+    drag_entries_onto(&panel, &["root1", "root2/b.txt"], "root3", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dropping a mixed selection on a root should only reorder worktrees"
+    );
+
+    // Drag {root2, root3/c.txt} onto root1/a.txt (a non-root entry): the root
+    // still reorders to root1's position and c.txt must stay in root3.
+    drag_entries_onto(&panel, &["root2", "root3/c.txt"], "root1/a.txt", true, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root3",
+            "      c.txt",
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+        ],
+        "dropping a mixed selection on a non-root entry should only reorder worktrees"
+    );
+
+    // With the copy modifier held, a selection containing a root should still
+    // only reorder worktrees and copy nothing.
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        alt: true,
+        control: true,
+        ..Default::default()
+    });
+    drag_entries_onto(&panel, &["root3", "root1/a.txt"], "root2", false, cx);
+    cx.simulate_modifiers_change(Default::default());
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "copy-dragging a mixed selection should only reorder worktrees and copy nothing"
+    );
+}
+
 #[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
@@ -10065,6 +10200,48 @@ pub(crate) fn drag_selection_to(
             marked_selections: Arc::from(panel.marked_entries.clone()),
         };
         panel.drag_onto(&drag, target_entry, is_file, window, cx);
+    });
+    cx.executor().run_until_parked();
+}
+
+/// Drags the entries at `source_paths` onto `target_path`. Paths are worktree
+/// root names optionally followed by a path inside the worktree, e.g. "root1"
+/// or "root1/dir/file.txt". The first source path is the active selection.
+pub(crate) fn drag_entries_onto(
+    panel: &Entity<ProjectPanel>,
+    source_paths: &[&str],
+    target_path: &str,
+    target_is_file: bool,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry_id = find_project_entry(panel, target_path, cx)
+        .unwrap_or_else(|| panic!("no entry for target path {target_path:?}"));
+    let selections: Vec<SelectedEntry> = source_paths
+        .iter()
+        .map(|path| {
+            let entry_id = find_project_entry(panel, path, cx)
+                .unwrap_or_else(|| panic!("no entry for source path {path:?}"));
+            let worktree_id = panel
+                .update(cx, |panel, cx| {
+                    panel.project.read(cx).worktree_id_for_entry(entry_id, cx)
+                })
+                .unwrap_or_else(|| panic!("no worktree for source path {path:?}"));
+            SelectedEntry {
+                worktree_id,
+                entry_id,
+            }
+        })
+        .collect();
+    let active_selection = *selections
+        .first()
+        .expect("at least one source path is required");
+
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection,
+            marked_selections: Arc::from(selections),
+        };
+        panel.drag_onto(&drag, target_entry_id, target_is_file, window, cx);
     });
     cx.executor().run_until_parked();
 }
