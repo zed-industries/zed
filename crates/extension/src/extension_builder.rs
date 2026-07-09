@@ -14,7 +14,9 @@ use language::LanguageConfig;
 use semver::Version;
 use serde::Deserialize;
 use std::{
-    env, fs, mem,
+    env,
+    ffi::OsString,
+    fs, mem,
     num::NonZeroUsize,
     ops::Not,
     path::{Path, PathBuf},
@@ -226,7 +228,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_command("cargo")
+        let output = util::command::new_command(rust_tool("cargo"))
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -445,7 +447,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_command("rustc")
+        let rustc_output = util::command::new_command(rust_tool("rustc"))
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -463,7 +465,7 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_command("rustup")
+        let output = util::command::new_command(rust_tool("rustup"))
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -473,7 +475,7 @@ impl ExtensionBuilder {
         if !output.status.success() {
             bail!(
                 "failed to install the `{RUST_TARGET}` target: {}",
-                String::from_utf8_lossy(&rustc_output.stderr)
+                String::from_utf8_lossy(&output.stderr)
             );
         }
 
@@ -752,6 +754,36 @@ async fn populate_defaults(
     Ok(())
 }
 
+/// Resolves the path to a Rust toolchain binary (`cargo`, `rustc`, or `rustup`), honoring
+/// `CARGO_HOME` and `RUSTUP_HOME` so that dev extension builds pick up custom toolchain
+/// locations instead of assuming the tools are on `PATH`.
+fn rust_tool(tool: &str) -> OsString {
+    rust_tool_from_env(tool, env::var_os("CARGO_HOME"), env::var_os("RUSTUP_HOME"))
+}
+
+fn rust_tool_from_env(
+    tool: &str,
+    cargo_home: Option<OsString>,
+    rustup_home: Option<OsString>,
+) -> OsString {
+    // `rustup` is installed into `RUSTUP_HOME` rather than `CARGO_HOME` on some custom
+    // toolchain layouts, so prefer it for that tool specifically.
+    let tool_home = if tool == "rustup" {
+        rustup_home.or(cargo_home)
+    } else {
+        cargo_home
+    };
+
+    match tool_home {
+        Some(tool_home) => {
+            let mut tool_path = PathBuf::from(tool_home);
+            tool_path.extend(["bin", &format!("{tool}{}", env::consts::EXE_SUFFIX)]);
+            tool_path.into_os_string()
+        }
+        None => OsString::from(tool),
+    }
+}
+
 /// Returns `true` if the target exists and its last modified time is greater than that
 /// of each dependency which exists (i.e., dependency paths which do not exist are ignored).
 ///
@@ -789,8 +821,62 @@ mod tests {
 
     use crate::{
         ExtensionManifest, ExtensionSnippets,
-        extension_builder::{file_newer_than_deps, populate_defaults},
+        extension_builder::{file_newer_than_deps, populate_defaults, rust_tool_from_env},
     };
+
+    #[test]
+    fn rust_tool_uses_cargo_home_bin_when_set() {
+        let cargo_home = PathBuf::from("/custom/cargo");
+
+        let tool = rust_tool_from_env("cargo", Some(cargo_home.clone().into_os_string()), None);
+
+        assert_eq!(
+            tool,
+            cargo_home
+                .join("bin")
+                .join(format!("cargo{}", std::env::consts::EXE_SUFFIX))
+        );
+    }
+
+    #[test]
+    fn rust_tool_prefers_rustup_home_for_rustup() {
+        let cargo_home = PathBuf::from("/custom/cargo");
+        let rustup_home = PathBuf::from("/custom/rustup");
+
+        let tool = rust_tool_from_env(
+            "rustup",
+            Some(cargo_home.into_os_string()),
+            Some(rustup_home.clone().into_os_string()),
+        );
+
+        assert_eq!(
+            tool,
+            rustup_home
+                .join("bin")
+                .join(format!("rustup{}", std::env::consts::EXE_SUFFIX))
+        );
+    }
+
+    #[test]
+    fn rust_tool_falls_back_to_cargo_home_for_rustup_when_rustup_home_unset() {
+        let cargo_home = PathBuf::from("/custom/cargo");
+
+        let tool = rust_tool_from_env("rustup", Some(cargo_home.clone().into_os_string()), None);
+
+        assert_eq!(
+            tool,
+            cargo_home
+                .join("bin")
+                .join(format!("rustup{}", std::env::consts::EXE_SUFFIX))
+        );
+    }
+
+    #[test]
+    fn rust_tool_uses_path_lookup_when_env_not_set() {
+        let tool = rust_tool_from_env("rustup", None, None);
+
+        assert_eq!(tool, "rustup");
+    }
 
     #[test]
     fn test_file_newer_than_deps() {
