@@ -77,7 +77,7 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions,
 };
 
-use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme};
+use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme, should_create_empty_tab_on_new_workspace};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -1517,13 +1517,8 @@ pub(crate) async fn restore_or_create_workspace(
                     app_state.clone(),
                     cx,
                     |workspace, window, cx| {
-                        let restore_on_startup =
-                            WorkspaceSettings::get_global(cx).restore_on_startup;
-                        match restore_on_startup {
-                            workspace::RestoreOnStartupBehavior::Launchpad => {}
-                            _ => {
-                                Editor::new_file(workspace, &Default::default(), window, cx);
-                            }
+                        if should_create_empty_tab_on_new_workspace(cx) {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
                         }
                     },
                 )
@@ -1539,12 +1534,8 @@ pub(crate) async fn restore_or_create_workspace(
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
-                    match restore_on_startup {
-                        workspace::RestoreOnStartupBehavior::Launchpad => {}
-                        _ => {
-                            Editor::new_file(workspace, &Default::default(), window, cx);
-                        }
+                    if should_create_empty_tab_on_new_workspace(cx) {
+                        Editor::new_file(workspace, &Default::default(), window, cx);
                     }
                 },
             )

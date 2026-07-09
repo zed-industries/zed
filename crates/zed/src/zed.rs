@@ -95,8 +95,8 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
-    WorkspaceSettings, create_and_open_local_file,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, RestoreOnStartupBehavior,
+    Toast, Workspace, WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
@@ -882,6 +882,36 @@ async fn initialize_agent_panel(
     anyhow::Ok(())
 }
 
+/// Whether a freshly created empty workspace should open an untitled editor tab.
+///
+/// When `restore_on_startup` is `Launchpad`, leave the pane empty so the launchpad
+/// welcome page is shown instead. Used by both app startup and new-window paths.
+pub fn should_create_empty_tab_on_new_workspace(cx: &App) -> bool {
+    WorkspaceSettings::get_global(cx).restore_on_startup
+        != RestoreOnStartupBehavior::Launchpad
+}
+
+/// Initialize a new empty workspace: activate the window, and optionally create
+/// an untitled buffer synchronously (avoids the empty-state flicker on first paint).
+fn initialize_new_workspace_with_empty_tab_if_needed(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    cx.activate(true);
+    if !should_create_empty_tab_on_new_workspace(cx) {
+        return;
+    }
+
+    // Create buffer synchronously to avoid flicker
+    let project = workspace.project().clone();
+    let buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("", None, true, cx)
+    });
+    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+}
+
 fn register_actions(
     app_state: Arc<AppState>,
     workspace: &mut Workspace,
@@ -1195,24 +1225,7 @@ fn register_actions(
                     Default::default(),
                     app_state.clone(),
                     cx,
-                    |workspace, window, cx| {
-                        cx.activate(true);
-                        // Create buffer synchronously to avoid flicker
-                        let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer("", None, true, cx)
-                        });
-                        let editor = cx.new(|cx| {
-                            Editor::for_buffer(buffer, Some(project), window, cx)
-                        });
-                        workspace.add_item_to_active_pane(
-                            Box::new(editor),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-                    },
+                    initialize_new_workspace_with_empty_tab_if_needed,
                 )
                 .detach();
             }
@@ -1244,23 +1257,7 @@ fn register_actions(
                                 },
                                 app_state,
                                 cx,
-                                |workspace, window, cx| {
-                                    cx.activate(true);
-                                    let project = workspace.project().clone();
-                                    let buffer = project.update(cx, |project, cx| {
-                                        project.create_local_buffer("", None, true, cx)
-                                    });
-                                    let editor = cx.new(|cx| {
-                                        Editor::for_buffer(buffer, Some(project), window, cx)
-                                    });
-                                    workspace.add_item_to_active_pane(
-                                        Box::new(editor),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    );
-                                },
+                                initialize_new_workspace_with_empty_tab_if_needed,
                             )
                         })?;
                         task.await?;
@@ -3409,6 +3406,83 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_new_window_respects_restore_on_startup_launchpad(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        // Default / non-launchpad: new empty workspace gets an untitled editor.
+        cx.update(|cx| {
+            open_new(
+                Default::default(),
+                app_state.clone(),
+                cx,
+                initialize_new_workspace_with_empty_tab_if_needed,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
+            .unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .expect("empty_tab / default should open an untitled editor")
+                        .downcast::<editor::Editor>()
+                        .expect("active item should be an editor");
+                    editor.update(cx, |editor, cx| {
+                        assert!(editor.text(cx).is_empty());
+                    });
+                });
+            })
+            .unwrap();
+
+        multi_workspace
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Launchpad: leave the pane empty so the welcome/launchpad page shows.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.restore_on_startup =
+                        Some(RestoreOnStartupBehavior::Launchpad);
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            open_new(
+                Default::default(),
+                app_state.clone(),
+                cx,
+                initialize_new_workspace_with_empty_tab_if_needed,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
+            .unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(
+                        workspace.active_item(cx).is_none(),
+                        "launchpad should leave the pane empty (no untitled tab)"
+                    );
                 });
             })
             .unwrap();
