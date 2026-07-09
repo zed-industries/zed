@@ -104,7 +104,7 @@ impl BaseKeymap {
             BaseKeymap::TextMate => Some("keymaps/macos/textmate.json"),
             BaseKeymap::Emacs => Some("keymaps/macos/emacs.json"),
             BaseKeymap::Cursor => Some("keymaps/macos/cursor.json"),
-            BaseKeymap::VSCode => None,
+            BaseKeymap::VSCode => Some("keymaps/macos/vscode.json"),
             BaseKeymap::Zed => None,
             BaseKeymap::None => None,
         }
@@ -117,7 +117,7 @@ impl BaseKeymap {
             BaseKeymap::Emacs => Some("keymaps/linux/emacs.json"),
             BaseKeymap::Cursor => Some("keymaps/linux/cursor.json"),
             BaseKeymap::TextMate => None,
-            BaseKeymap::VSCode => None,
+            BaseKeymap::VSCode => Some("keymaps/linux/vscode.json"),
             BaseKeymap::Zed => None,
             BaseKeymap::None => None,
         }
