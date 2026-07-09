@@ -104,13 +104,16 @@ fn collect_inline_spans(source: &str, events: &[(Range<usize>, MarkdownEvent)]) 
 pub(crate) fn rebalanced_markdown_for_selection(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
+    root_block_starts: &[usize],
     selection: Range<usize>,
 ) -> String {
     let Some(selection) = clamp_to_char_boundaries(source, selection) else {
         return String::new();
     };
 
-    let spans = collect_inline_spans(source, events);
+    let (start_events, end_events) = boundary_block_events(events, root_block_starts, &selection);
+    let mut spans = collect_inline_spans(source, start_events);
+    spans.extend(collect_inline_spans(source, end_events));
 
     let Some(selection) = snap_out_of_delimiters(&spans, selection) else {
         return String::new();
@@ -121,6 +124,56 @@ pub(crate) fn rebalanced_markdown_for_selection(
     }
 
     rebalance_delimiters(source, &spans, &selection)
+}
+
+/// Returns the events of the root blocks containing each selection boundary.
+/// The second slice is empty when both boundaries share a block.
+fn boundary_block_events<'a>(
+    events: &'a [(Range<usize>, MarkdownEvent)],
+    root_block_starts: &[usize],
+    selection: &Range<usize>,
+) -> (
+    &'a [(Range<usize>, MarkdownEvent)],
+    &'a [(Range<usize>, MarkdownEvent)],
+) {
+    if root_block_starts.is_empty() {
+        return (events, &[]);
+    }
+    let start_block = root_block_index(root_block_starts, selection.start);
+    let end_block = root_block_index(root_block_starts, selection.end);
+    let start_events = root_block_events(events, root_block_starts, start_block);
+    if end_block == start_block {
+        (start_events, &[])
+    } else {
+        (
+            start_events,
+            root_block_events(events, root_block_starts, end_block),
+        )
+    }
+}
+
+fn root_block_index(root_block_starts: &[usize], offset: usize) -> usize {
+    root_block_starts
+        .partition_point(|block_start| *block_start <= offset)
+        .saturating_sub(1)
+}
+
+fn root_block_events<'a>(
+    events: &'a [(Range<usize>, MarkdownEvent)],
+    root_block_starts: &[usize],
+    block: usize,
+) -> &'a [(Range<usize>, MarkdownEvent)] {
+    let Some(&block_start) = root_block_starts.get(block) else {
+        return events;
+    };
+    let start = events.partition_point(|(range, _)| range.start < block_start);
+    let end = match root_block_starts.get(block + 1) {
+        Some(&next_block_start) => {
+            events.partition_point(|(range, _)| range.start < next_block_start)
+        }
+        None => events.len(),
+    };
+    events.get(start..end).unwrap_or(events)
 }
 
 fn clamp_to_char_boundaries(source: &str, selection: Range<usize>) -> Option<Range<usize>> {
@@ -225,7 +278,12 @@ mod tests {
 
     fn markdown_for(source: &str, selection: Range<usize>) -> String {
         let parsed = parse_markdown_with_options(source, false, false, false);
-        rebalanced_markdown_for_selection(source, &parsed.events, selection)
+        rebalanced_markdown_for_selection(
+            source,
+            &parsed.events,
+            &parsed.root_block_starts,
+            selection,
+        )
     }
 
     fn markdown_for_marked(marked_source: &str) -> String {
@@ -394,6 +452,70 @@ mod tests {
             "[Visit Rust's website](https://rust.org)",
         );
         assert_marked_selection("visit https://«example».com now", "example");
+    }
+
+    #[test]
+    fn test_markdown_for_selection_scopes_to_boundary_blocks() {
+        assert_marked_selection(
+            "**bo«ld one**\n\nmiddle `x`\n\n*ita»lic two*",
+            "**ld one**\n\nmiddle `x`\n\n*ita*",
+        );
+        assert_marked_selection("**bold** first\n\nsecond *ita«li»c* here", "*li*");
+        assert_marked_selection("one\n«\ntwo»", "\ntwo");
+        assert_marked_selection("**one*«*\n\ntw»o", "\n\ntw");
+    }
+
+    #[test]
+    fn test_root_block_index() {
+        let starts = [2, 10, 20];
+        assert_eq!(
+            root_block_index(&starts, 0),
+            0,
+            "an offset before the first block start must clamp to the first block"
+        );
+        assert_eq!(root_block_index(&starts, 2), 0);
+        assert_eq!(root_block_index(&starts, 9), 0);
+        assert_eq!(root_block_index(&starts, 10), 1);
+        assert_eq!(root_block_index(&starts, 19), 1);
+        assert_eq!(root_block_index(&starts, 20), 2);
+        assert_eq!(
+            root_block_index(&starts, 100),
+            2,
+            "an offset past the last block start must clamp to the last block"
+        );
+    }
+
+    #[test]
+    fn test_root_block_events_slices_each_block() {
+        let source = "first **a**\n\nsecond `b`\n\nthird *c*";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        let events = parsed.events.as_slice();
+        let starts = parsed.root_block_starts.as_slice();
+        assert_eq!(starts, &[0, 13, 25]);
+
+        let mut sliced_events = Vec::new();
+        for block in 0..starts.len() {
+            let slice = root_block_events(events, starts, block);
+            assert!(!slice.is_empty(), "block {block} must have events");
+            let block_end = starts.get(block + 1).copied().unwrap_or(source.len());
+            for (range, event) in slice {
+                assert!(
+                    (starts[block]..block_end).contains(&range.start),
+                    "event {event:?} at {range:?} must start within block {block}"
+                );
+            }
+            sliced_events.extend_from_slice(slice);
+        }
+        assert_eq!(
+            sliced_events, events,
+            "the per-block slices must partition all events in order"
+        );
+
+        assert_eq!(
+            root_block_events(events, starts, starts.len()),
+            events,
+            "an out-of-range block index must fall back to all events"
+        );
     }
 
     #[test]

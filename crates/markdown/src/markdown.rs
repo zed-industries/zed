@@ -1220,10 +1220,15 @@ impl ParsedMarkdown {
     /// delimiters (`**`, backticks, link syntax, etc.) so partial selections of
     /// styled spans stay well-formed.
     ///
-    /// With a exception of single inline code span, which is returned as plain
+    /// With an exception of a single inline code span, which is returned as plain
     /// text, since copying a command or identifier is the dominant use case there.
     pub fn rebalanced_markdown_for_selection(&self, selection: Range<usize>) -> String {
-        selection::rebalanced_markdown_for_selection(&self.source, &self.events, selection)
+        selection::rebalanced_markdown_for_selection(
+            &self.source,
+            &self.events,
+            &self.root_block_starts,
+            selection,
+        )
     }
 }
 
