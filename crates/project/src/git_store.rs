@@ -582,6 +582,7 @@ pub enum RepositoryEvent {
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
     GitDirectoryChanged,
+    GraphInvalidated,
 }
 
 #[derive(Clone, Debug)]
@@ -5600,6 +5601,14 @@ impl Repository {
             }
             _ => {}
         }
+    }
+
+    /// Drops all cached git graph data and notifies subscribers so any open
+    /// Git Graph views re-fetch, picking up refs (tags, remote branches) that
+    /// changed outside of Zed and aren't reflected in `HeadChanged`/`BranchListChanged`.
+    pub fn refresh_graph_data(&mut self, cx: &mut Context<Self>) {
+        self.initial_graph_data.clear();
+        cx.emit(RepositoryEvent::GraphInvalidated);
     }
 
     pub fn git_store(&self) -> Option<Entity<GitStore>> {

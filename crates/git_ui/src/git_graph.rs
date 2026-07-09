@@ -598,6 +598,8 @@ actions!(
         ScrollDown,
         /// Toggles the selected commit's changed files between flat and tree views.
         ToggleChangedFilesView,
+        /// Refreshes the git graph, picking up ref changes (tags, remote branches) made outside Zed.
+        Refresh,
     ]
 );
 
@@ -1679,6 +1681,9 @@ impl GitGraph {
                 }
             }
             RepositoryEvent::GraphEvent(_, _) => {}
+            RepositoryEvent::GraphInvalidated => {
+                self.invalidate_state(cx);
+            }
             _ => {}
         }
     }
@@ -2421,6 +2426,21 @@ impl GitGraph {
         self.copy_commit_sha(selected_entry_index, cx);
     }
 
+    fn refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
+        if self.commit_count_and_loading_state(cx).1 {
+            return;
+        }
+
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        self.pending_select_sha = self
+            .selected_entry_idx
+            .and_then(|index| self.graph_data.commits.get(index))
+            .map(|entry| entry.data.sha);
+        repository.update(cx, |repository, cx| repository.refresh_graph_data(cx));
+    }
+
     fn copy_commit_tag(&mut self, entry_index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commit) = self.graph_data.commits.get(entry_index) else {
             return;
@@ -2774,7 +2794,7 @@ impl GitGraph {
         self.set_context_menu(context_menu, position, None, window, cx);
     }
 
-    fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_search_bar(&self, is_loading: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
         let query_focus_handle = self
             .search_state
@@ -2825,6 +2845,19 @@ impl GitGraph {
                 h_flex()
                     .min_w_64()
                     .gap_1()
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
+                        IconButton::new("git-graph-refresh", IconName::ArrowCircle)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in("Refresh Graph", &Refresh, &focus_handle, cx)
+                            })
+                            .disabled(is_loading)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.refresh(&Refresh, window, cx);
+                            }))
+                    })
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("git-graph-search-prev", IconName::ChevronLeft)
@@ -4277,6 +4310,7 @@ impl Render for GitGraph {
             }))
             .on_action(cx.listener(Self::copy_selected_commit_sha))
             .on_action(cx.listener(Self::copy_selected_commit_tag))
+            .on_action(cx.listener(Self::refresh))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search_state
@@ -4309,7 +4343,7 @@ impl Render for GitGraph {
             .child(
                 v_flex()
                     .size_full()
-                    .child(self.render_search_bar(cx))
+                    .child(self.render_search_bar(is_loading, cx))
                     .child(div().flex_1().child(content)),
             )
             .children(self.context_menu.as_ref().map(|context_menu| {
@@ -6585,6 +6619,313 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(reloaded_shas, vec![updated_head, updated_stash]);
+    }
+
+    #[gpui::test]
+    async fn test_refresh_action_reloads_graph_after_tag_created(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let head_sha = Oid::from_bytes(&[1; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert!(
+                graph.graph_data.commits[0].data.tag_names().is_empty(),
+                "should not have a tag before it's created"
+            );
+        });
+
+        // A tag doesn't change HEAD or the branch list, so this alone must not
+        // invalidate the graph.
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into(), "tag: v1.0".into()],
+            })],
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert!(
+                graph.graph_data.commits[0].data.tag_names().is_empty(),
+                "graph should still be stale without an explicit refresh"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.refresh(&Refresh, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.graph_data.commits[0].data.tag_names(),
+                vec!["v1.0"],
+                "refresh should pick up the newly created tag"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_refresh_preserves_selected_commit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let old_head = Oid::from_bytes(&[1; 20]).unwrap();
+        let new_head = Oid::from_bytes(&[2; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: old_head,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.graph_data.commits[0].data.sha, old_head);
+        });
+
+        // Prepend a new commit (e.g. a push landed a new tip) so the previously
+        // selected commit shifts from index 0 to index 1.
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: new_head,
+                    parents: smallvec![old_head],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: old_head,
+                    parents: smallvec![],
+                    ref_names: vec![],
+                }),
+            ],
+        );
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.refresh(&Refresh, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.graph_data.commits.len(), 2);
+            assert_eq!(graph.selected_entry_idx, Some(1));
+            assert_eq!(
+                graph.graph_data.commits[graph.selected_entry_idx.unwrap()]
+                    .data
+                    .sha,
+                old_head,
+                "selection should follow the previously selected commit, not its index"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_refresh_invalidates_all_graph_views_of_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let head_sha = Oid::from_bytes(&[1; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph_a = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak.clone(),
+                None,
+                window,
+                cx,
+            )
+        });
+        let git_graph_b = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into(), "tag: v1.0".into()],
+            })],
+        );
+        cx.run_until_parked();
+
+        // Refresh only the first view.
+        git_graph_a.update_in(cx, |graph, window, cx| {
+            graph.refresh(&Refresh, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| {
+                v_flex()
+                    .child(git_graph_a.clone())
+                    .child(git_graph_b.clone())
+            },
+        );
+        cx.run_until_parked();
+
+        git_graph_a.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.graph_data.commits[0].data.tag_names(),
+                vec!["v1.0"],
+                "the refreshed view should see the new tag"
+            );
+        });
+        git_graph_b.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.graph_data.commits[0].data.tag_names(),
+                vec!["v1.0"],
+                "other views of the same repository should also reload, since the cache is shared"
+            );
+        });
     }
 
     #[gpui::test]
