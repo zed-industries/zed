@@ -276,8 +276,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    environment:
-      name: release-signing
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -327,8 +325,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    environment:
-      name: release-signing
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
