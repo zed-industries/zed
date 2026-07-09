@@ -400,7 +400,11 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
+        let openrouter_request =
+            match into_open_router(request, &self.model, self.max_output_tokens()) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
         let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
@@ -414,7 +418,11 @@ pub fn into_open_router(
     request: LanguageModelRequest,
     model: &Model,
     max_output_tokens: Option<u64>,
-) -> open_router::Request {
+) -> Result<open_router::Request> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("OpenRouter does not support custom tools");
+    }
+
     // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
     // in requests - it's an output-only field for them. However, Gemini models require
     // the thought signatures to be echoed back for proper reasoning chain continuity.
@@ -472,13 +480,15 @@ pub fn into_open_router(
                     message_added_content = true;
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use.input.as_json().ok_or_else(|| {
+                        anyhow::anyhow!("OpenRouter does not support custom tool calls")
+                    })?;
                     let tool_call = open_router::ToolCall {
                         id: tool_use.id.to_string(),
                         content: open_router::ToolCallContent::Function {
                             function: open_router::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                                 thought_signature: tool_use.thought_signature.clone(),
                             },
                         },
@@ -551,7 +561,7 @@ pub fn into_open_router(
         }
     }
 
-    open_router::Request {
+    Ok(open_router::Request {
         model: model.id().into(),
         messages,
         stream: true,
@@ -580,21 +590,32 @@ pub fn into_open_router(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| open_router::ToolDefinition::Function {
-                function: open_router::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("OpenRouter does not support custom tools"));
+                    }
+                };
+                Ok(open_router::ToolDefinition::Function {
+                    function: open_router::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect(),
+            .collect::<Result<_>>()?,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => open_router::ToolChoice::Auto,
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
         provider: model.provider.clone(),
-    }
+    })
 }
 
 fn open_router_session_id(thread_id: Option<String>) -> Option<String> {
@@ -809,7 +830,7 @@ impl OpenRouterEventMapper {
                                 id: entry.id.clone().into(),
                                 name: entry.name.as_str().into(),
                                 is_input_complete: false,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: entry.thought_signature.clone(),
                             },
@@ -832,7 +853,7 @@ impl OpenRouterEventMapper {
                                 id: tool_call.id.clone().into(),
                                 name: tool_call.name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
                                 thought_signature: tool_call.thought_signature.clone(),
                             },
@@ -1114,7 +1135,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = into_open_router(request, &model, None);
+        let result = into_open_router(request, &model, None).unwrap();
 
         assert_eq!(
             result.session_id.as_deref(),
@@ -1216,7 +1237,7 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let result = into_open_router(request, &model, None);
+        let result = into_open_router(request, &model, None).unwrap();
 
         let system_cache = result.messages.iter().find_map(|m| {
             if let open_router::RequestMessage::System { content } = m {
@@ -1355,7 +1376,7 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let result = into_open_router(request, &model, None);
+        let result = into_open_router(request, &model, None).unwrap();
 
         for message in &result.messages {
             let content = match message {
@@ -1418,7 +1439,7 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let result = into_open_router(request, &model, None);
+        let result = into_open_router(request, &model, None).unwrap();
 
         for message in &result.messages {
             let content = match message {

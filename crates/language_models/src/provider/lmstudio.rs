@@ -338,7 +338,11 @@ impl LmStudioLanguageModel {
     fn to_lmstudio_request(
         &self,
         request: LanguageModelRequest,
-    ) -> lmstudio::ChatCompletionRequest {
+    ) -> Result<lmstudio::ChatCompletionRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("LM Studio does not support custom tools");
+        }
+
         let mut messages = Vec::new();
 
         for message in request.messages {
@@ -365,13 +369,15 @@ impl LmStudioLanguageModel {
                         );
                     }
                     MessageContent::ToolUse(tool_use) => {
+                        let input = tool_use.input.as_json().ok_or_else(|| {
+                            anyhow!("LM Studio does not support custom tool calls")
+                        })?;
                         let tool_call = lmstudio::ToolCall {
                             id: tool_use.id.to_string(),
                             content: lmstudio::ToolCallContent::Function {
                                 function: lmstudio::FunctionContent {
                                     name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
+                                    arguments: serde_json::to_string(input).unwrap_or_default(),
                                 },
                             },
                         };
@@ -417,7 +423,7 @@ impl LmStudioLanguageModel {
             }
         }
 
-        lmstudio::ChatCompletionRequest {
+        Ok(lmstudio::ChatCompletionRequest {
             model: self.model.name.clone(),
             messages,
             stream: true,
@@ -430,20 +436,31 @@ impl LmStudioLanguageModel {
             tools: request
                 .tools
                 .into_iter()
-                .map(|tool| lmstudio::ToolDefinition::Function {
-                    function: lmstudio::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
+                .map(|tool| {
+                    let input_schema = match tool.input {
+                        language_model::LanguageModelRequestToolInput::Function {
+                            input_schema,
+                            ..
+                        } => input_schema,
+                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                            return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
+                        }
+                    };
+                    Ok(lmstudio::ToolDefinition::Function {
+                        function: lmstudio::FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             tool_choice: request.tool_choice.map(|choice| match choice {
                 LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
                 LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
                 LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
             }),
-        }
+        })
     }
 
     fn stream_completion(
@@ -533,7 +550,10 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_lmstudio_request(request);
+        let request = match self.to_lmstudio_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
@@ -637,7 +657,7 @@ impl LmStudioEventMapper {
                                 id: tool_call.id.into(),
                                 name: tool_call.name.into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments,
                                 thought_signature: None,
                             },
