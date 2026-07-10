@@ -235,15 +235,14 @@ impl Component for Avatar {
         ComponentScope::Collaboration
     }
 
-    fn description() -> Option<&'static str> {
-        Some(Avatar::DOCS)
+    fn description() -> &'static str {
+        Avatar::DOCS
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
-        Some(
-            v_flex()
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group(vec![
@@ -297,7 +296,6 @@ impl Component for Avatar {
                         ],
                     ),
                 ])
-                .into_any_element(),
-        )
+                .into_any_element()
     }
 }

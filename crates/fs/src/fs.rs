@@ -295,6 +295,7 @@ pub struct Metadata {
     pub len: u64,
     pub is_fifo: bool,
     pub is_executable: bool,
+    pub is_writable: bool,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -802,20 +803,13 @@ impl Fs for RealFs {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
-        let path = self
-            .canonicalize(path)
-            .await
-            .context("Could not canonicalize the path of the file")?;
+        // We deliberately use `std::path::absolute` instead of `canonicalize`
+        // to avoid resolving symlinks. Otherwise trashing a symlink would trash
+        // its target and leave the link behind.
+        let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("trash file or dir".to_string())
-            .spawn(|| tx.send(trash::delete_with_info(path)))
-            .expect("The os can spawn threads");
-
-        Ok(rx
+        Ok(smol::unblock(move || trash::delete_with_info(path))
             .await
-            .context("Tx dropped or fs.restore panicked")?
             .context("Could not trash file or dir")?
             .into())
     }
@@ -1032,6 +1026,7 @@ impl Fs for RealFs {
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
             is_executable,
+            is_writable: !metadata.permissions().readonly(),
         }))
     }
 
@@ -1098,7 +1093,11 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
+            // Skipped for poll watchers: PollWatcher::watch() recursively scans
+            // at registration, blocking on large virtual filesystem mounts
+            if let Some(parent) = target.parent()
+                && !fs_watcher::requires_poll_watcher(parent)
+            {
                 watcher.add(parent).log_err();
             }
         }
@@ -1335,6 +1334,40 @@ struct FakeFsState {
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
+    file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
+    remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+}
+
+#[cfg(feature = "test-support")]
+impl FakeFsState {
+    fn create_file_before_watch_add(&mut self, watch_path: &Path) -> Result<()> {
+        let Some((pending_watch_path, file_path)) = self.file_to_create_before_watch_add.take()
+        else {
+            return Ok(());
+        };
+        if pending_watch_path != watch_path {
+            self.file_to_create_before_watch_add = Some((pending_watch_path, file_path));
+            return Ok(());
+        }
+
+        let inode = self.get_and_increment_inode();
+        let mtime = self.get_and_increment_mtime();
+        self.write_path(&file_path, |entry| {
+            let btree_map::Entry::Vacant(entry) = entry else {
+                anyhow::bail!("file already exists: {}", file_path.display());
+            };
+            entry.insert(FakeFsEntry::File {
+                inode,
+                mtime,
+                len: 0,
+                content: Vec::new(),
+                git_dir_path: None,
+            });
+            Ok(())
+        })?;
+        self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -1621,6 +1654,8 @@ impl FakeFs {
                 moves: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
                 trash: Vec::new(),
+                file_to_create_before_watch_add: None,
+                remove_dir_errors: Default::default(),
             })),
         });
 
@@ -1794,6 +1829,17 @@ impl FakeFs {
 
     pub fn clear_buffered_events(&self) {
         self.state.lock().buffered_events.clear();
+    }
+
+    pub fn create_file_before_next_watch_add(
+        &self,
+        watch_path: impl AsRef<Path>,
+        path: impl AsRef<Path>,
+    ) {
+        self.state.lock().file_to_create_before_watch_add = Some((
+            normalize_path(watch_path.as_ref()),
+            normalize_path(path.as_ref()),
+        ));
     }
 
     pub fn flush_events(&self, count: usize) {
@@ -2352,6 +2398,25 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Makes subsequent `remove_dir` calls for `path` fail with `message`.
+    pub fn set_remove_dir_error(&self, path: impl AsRef<Path>, message: String) {
+        self.state
+            .lock()
+            .remove_dir_errors
+            .insert(Self::remove_dir_error_key(path.as_ref()), message);
+    }
+
+    /// Entry resolution in `try_entry` ignores drive prefixes, so the error
+    /// injection map must too.
+    /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
+    /// lookup for `\workspace\dir`.
+    fn remove_dir_error_key(path: &Path) -> PathBuf {
+        normalize_path(path)
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)))
+            .collect()
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
@@ -2494,6 +2559,14 @@ impl FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
+        if let Some(message) = self
+            .state
+            .lock()
+            .remove_dir_errors
+            .get(&Self::remove_dir_error_key(&path))
+        {
+            anyhow::bail!("{message}");
+        }
         let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().context("cannot remove the root")?;
 
@@ -2591,7 +2664,6 @@ impl FakeFsEntry {
 #[cfg(feature = "test-support")]
 struct FakeWatcher {
     tx: async_channel::Sender<Vec<PathEvent>>,
-    original_path: PathBuf,
     fs_state: Arc<Mutex<FakeFsState>>,
     prefixes: Mutex<Vec<PathBuf>>,
 }
@@ -2599,19 +2671,34 @@ struct FakeWatcher {
 #[cfg(feature = "test-support")]
 impl Watcher for FakeWatcher {
     fn add(&self, path: &Path) -> Result<()> {
-        if path.starts_with(&self.original_path) {
+        let path = normalize_path(path);
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .create_file_before_watch_add(&path)?;
+
+        let mut prefixes = self.prefixes.lock();
+        if prefixes.iter().any(|prefix| path.starts_with(prefix)) {
             return Ok(());
         }
+
         self.fs_state
             .try_lock()
             .unwrap()
             .event_txs
-            .push((path.to_owned(), self.tx.clone()));
-        self.prefixes.lock().push(path.to_owned());
+            .push((path.clone(), self.tx.clone()));
+        prefixes.push(path);
         Ok(())
     }
 
-    fn remove(&self, _: &Path) -> Result<()> {
+    fn remove(&self, path: &Path) -> Result<()> {
+        let path = normalize_path(path);
+        self.prefixes.lock().retain(|prefix| prefix != &path);
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .event_txs
+            .retain(|(watched_path, _)| watched_path != &path);
         Ok(())
     }
 }
@@ -3000,6 +3087,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -3011,6 +3099,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
@@ -3065,7 +3154,6 @@ impl Fs for FakeFs {
         let executor = self.executor.clone();
         let watcher = Arc::new(FakeWatcher {
             tx,
-            original_path: path.to_owned(),
             fs_state: self.state.clone(),
             prefixes: Mutex::new(vec![path]),
         });

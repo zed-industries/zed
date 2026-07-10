@@ -122,7 +122,29 @@ pub fn select_popover(
     })
 }
 
-pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut App)>;
+pub fn select_modal(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    let list = BranchList::new_select(
+        workspace,
+        repository,
+        BranchListStyle::Modal,
+        rems(34.),
+        selected_branch,
+        on_select,
+        window,
+        cx,
+    );
+    list.focus_handle(cx).focus(window, cx);
+    list
+}
+
+pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
 
 pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
@@ -142,7 +164,6 @@ enum BranchListStyle {
 }
 
 pub struct BranchList {
-    width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -256,8 +277,9 @@ impl BranchList {
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .initial_width(width)
                 .show_scrollbar(true)
-                .modal(!embedded)
+                .when(embedded, |picker| picker.embedded())
         });
         let picker_focus_handle = picker.focus_handle(cx);
 
@@ -318,7 +340,6 @@ impl BranchList {
         Self {
             picker,
             picker_focus_handle,
-            width,
             _subscriptions: subscriptions,
             embedded,
         }
@@ -422,7 +443,6 @@ impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("GitBranchSelector")
-            .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_force_delete))
@@ -741,6 +761,13 @@ fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
     branch.ref_name.as_ref() == branch_ref.as_ref() || branch.name() == branch_ref.as_ref()
 }
 
+// Git branch names can't contain whitespace, so we replace spaces with dashes,
+// but we need to first trim because a branch name can't start or end with a
+// dash.
+fn normalize_branch_name(query: &str) -> String {
+    query.trim().replace(' ', "-")
+}
+
 fn branch_remote_name(branch: &Branch) -> Option<&str> {
     branch.remote_name().or_else(|| {
         branch
@@ -859,7 +886,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let new_branch_name = normalize_branch_name(&new_branch_name);
         let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
@@ -1018,14 +1045,14 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "branch picker"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
-                if self.is_select_only() {
-                    "Select branch…"
-                } else {
-                    "Switch branch…"
-                }
+                "Switch or type to create a branch…"
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
         }
@@ -1212,7 +1239,7 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(cx, |picker, _| {
                     if let PickerState::CreateRemote(url) = &picker.delegate.state {
-                        let query = query.replace(' ', "-");
+                        let query = normalize_branch_name(&query);
                         if !query.is_empty() {
                             picker.delegate.matches = vec![Entry::NewRemoteName {
                                 name: query.clone(),
@@ -1231,7 +1258,7 @@ impl PickerDelegate for BranchListDelegate {
                         && !query.is_empty()
                         && !matches.first().is_some_and(|entry| entry.name() == query)
                     {
-                        let query = query.replace(' ', "-");
+                        let query = normalize_branch_name(&query);
                         let is_url = query.trim_start_matches("git@").parse::<Url>().is_ok();
                         let entry = if is_url {
                             Entry::NewUrl { url: query }
@@ -1288,7 +1315,7 @@ impl PickerDelegate for BranchListDelegate {
                 if let BranchSelectionBehavior::Select { on_select, .. } =
                     &self.branch_selection_behavior
                 {
-                    on_select(branch.clone(), cx);
+                    on_select(branch.clone(), window, cx);
                     cx.emit(DismissEvent);
                     return;
                 }
@@ -1526,7 +1553,7 @@ impl PickerDelegate for BranchListDelegate {
                     h_flex()
                         .w_full()
                         .gap_2p5()
-                        .flex_grow()
+                        .flex_grow_1()
                         .child(
                             Icon::new(entry_icon)
                                 .color(if is_checked_branch {
@@ -2060,7 +2087,6 @@ mod tests {
                     BranchList {
                         picker,
                         picker_focus_handle,
-                        width: rems(34.),
                         _subscriptions: vec![_subscription],
                         embedded: false,
                     }
@@ -2678,29 +2704,30 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_branch_creation_with_query(test_cx: &mut TestAppContext) {
+    async fn test_new_branch_creation_with_query(cx: &mut TestAppContext) {
         const MAIN_BRANCH: &str = "main";
         const FEATURE_BRANCH: &str = "feature";
         const NEW_BRANCH: &str = "new-feature-branch";
 
-        init_test(test_cx);
-        let (_project, repository) = init_fake_repository(test_cx).await;
+        init_test(cx);
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
             create_test_branch(FEATURE_BRANCH, false, None, Some(900)),
         ];
 
-        let (branch_list, mut ctx) =
-            init_branch_list_test(repository.into(), branches, test_cx).await;
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
                 branch_list.picker.update(cx, |picker, cx| {
+                    // Surrounding the branch with whitespace allows us to then
+                    // assert that this whitespace is trimmed away.
                     picker
                         .delegate
-                        .update_matches(NEW_BRANCH.to_string(), window, cx)
+                        .update_matches(format!(" {NEW_BRANCH} "), window, cx)
                 })
             })
             .await;
@@ -2744,6 +2771,13 @@ mod tests {
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
         );
+    }
+
+    #[test]
+    fn test_normalize_branch_name() {
+        assert_eq!(normalize_branch_name(" branch-name "), "branch-name");
+        assert_eq!(normalize_branch_name("branch name"), "branch-name");
+        assert_eq!(normalize_branch_name("  branch  name  "), "branch--name");
     }
 
     #[gpui::test]

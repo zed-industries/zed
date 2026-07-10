@@ -11,41 +11,11 @@ test_both_dbs!(
 );
 
 async fn test_channel_buffers(db: &Arc<Database>) {
-    let a_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 101,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let b_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 102,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let a_id = db.create_user(false).await.unwrap().user_id;
+    let b_id = db.create_user(false).await.unwrap().user_id;
 
     // This user will not be a part of the channel
-    let c_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user_c".into(),
-                github_user_id: 103,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let c_id = db.create_user(false).await.unwrap().user_id;
 
     let owner_id = db.create_server("production").await.unwrap().0 as u32;
 
@@ -180,28 +150,8 @@ test_both_dbs!(
 );
 
 async fn test_channel_buffers_last_operations(db: &Database) {
-    let user_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 101,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let observer_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 102,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_id = db.create_user(false).await.unwrap().user_id;
+    let observer_id = db.create_user(false).await.unwrap().user_id;
     let owner_id = db.create_server("production").await.unwrap().0 as u32;
     let connection_id = ConnectionId {
         owner_id,

@@ -7,7 +7,7 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
@@ -1320,6 +1320,20 @@ mod tests {
             event.tool_call.fields.title,
             Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
         );
+        // Skills always prompt, so no "Always allow" option is offered.
+        assert!(
+            event
+                .options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .is_none(),
+            "agent skills prompt must not offer an \"Always allow\" option: {:?}",
+            event.options,
+        );
+        assert!(
+            matches!(event.options, acp_thread::PermissionOptions::Flat(_)),
+            "agent skills prompt should use flat allow/deny options: {:?}",
+            event.options,
+        );
 
         // 5.6: The global .agents/skills directory is sensitive — still prompts
         let global_skill_path = agent_skills::global_skills_dir()
@@ -2442,10 +2456,10 @@ mod tests {
             .unwrap();
 
         // The prompt's response channel should drop without a click; the
-        // tool dismisses the prompt by transitioning the tool call status
-        // to `InProgress`.
-        let dismiss = stream_rx.expect_update_fields().await;
-        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        // tool dismisses the prompt by resolving the pending authorization.
+        let (_, outcome) = stream_rx.expect_authorization_resolved().await;
+        assert_eq!(outcome.option_id, acp::PermissionOptionId::new("save"));
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
         drop(auth);
 
         let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
@@ -2608,7 +2622,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming edit,

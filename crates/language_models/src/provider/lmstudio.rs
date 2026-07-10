@@ -1,19 +1,19 @@
-use anyhow::Result;
-use collections::HashMap;
+use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Subscription, Task, TaskExt};
-use http_client::HttpClient;
+use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, MessageContent, StopReason, TokenUsage, env_var,
 };
 use language_model::{
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -21,10 +21,11 @@ pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
-use std::{collections::BTreeMap, sync::Arc};
-use ui::{
-    ButtonLike, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip, prelude::*,
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
 };
+use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
@@ -44,6 +45,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -84,11 +86,18 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let api_key = self.api_key_state.key(&api_url);
+        let extra_headers = settings.custom_headers.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models =
-                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
+            let models = get_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                None,
+                &extra_headers,
+            )
+            .await?;
 
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
@@ -303,19 +312,17 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), _window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
+            )),
+        ))
     }
 }
 
@@ -331,7 +338,11 @@ impl LmStudioLanguageModel {
     fn to_lmstudio_request(
         &self,
         request: LanguageModelRequest,
-    ) -> lmstudio::ChatCompletionRequest {
+    ) -> Result<lmstudio::ChatCompletionRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("LM Studio does not support custom tools");
+        }
+
         let mut messages = Vec::new();
 
         for message in request.messages {
@@ -344,6 +355,7 @@ impl LmStudioLanguageModel {
                     ),
                     MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Compaction(_) => {}
                     MessageContent::Image(image) => {
                         add_message_content_part(
                             lmstudio::MessagePart::Image {
@@ -357,13 +369,15 @@ impl LmStudioLanguageModel {
                         );
                     }
                     MessageContent::ToolUse(tool_use) => {
+                        let input = tool_use.input.as_json().ok_or_else(|| {
+                            anyhow!("LM Studio does not support custom tool calls")
+                        })?;
                         let tool_call = lmstudio::ToolCall {
                             id: tool_use.id.to_string(),
                             content: lmstudio::ToolCallContent::Function {
                                 function: lmstudio::FunctionContent {
                                     name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
+                                    arguments: serde_json::to_string(input).unwrap_or_default(),
                                 },
                             },
                         };
@@ -409,7 +423,7 @@ impl LmStudioLanguageModel {
             }
         }
 
-        lmstudio::ChatCompletionRequest {
+        Ok(lmstudio::ChatCompletionRequest {
             model: self.model.name.clone(),
             messages,
             stream: true,
@@ -425,20 +439,31 @@ impl LmStudioLanguageModel {
             tools: request
                 .tools
                 .into_iter()
-                .map(|tool| lmstudio::ToolDefinition::Function {
-                    function: lmstudio::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
+                .map(|tool| {
+                    let input_schema = match tool.input {
+                        language_model::LanguageModelRequestToolInput::Function {
+                            input_schema,
+                            ..
+                        } => input_schema,
+                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                            return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
+                        }
+                    };
+                    Ok(lmstudio::ToolDefinition::Function {
+                        function: lmstudio::FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             tool_choice: request.tool_choice.map(|choice| match choice {
                 LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
                 LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
                 LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
             }),
-        }
+        })
     }
 
     fn stream_completion(
@@ -450,9 +475,13 @@ impl LmStudioLanguageModel {
         Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = LmStudioLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = AllLanguageModelSettings::get_global(cx)
+                .lmstudio
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -461,6 +490,7 @@ impl LmStudioLanguageModel {
                 &api_url,
                 api_key.as_deref(),
                 request,
+                &extra_headers,
             )
             .await?;
             Ok(stream)
@@ -523,7 +553,10 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_lmstudio_request(request);
+        let request = match self.to_lmstudio_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
@@ -628,7 +661,7 @@ impl LmStudioEventMapper {
                                 id: tool_call.id.into(),
                                 name: tool_call.name.into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments,
                                 thought_signature: None,
                             },
@@ -957,28 +990,8 @@ impl ConfigurationView {
         let custom_api_url_set = api_url != LMSTUDIO_API_URL;
 
         if custom_api_url_set {
-            h_flex()
-                .p_3()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(api_url))),
-                )
-                .child(
-                    Button::new("reset-api-url", "Reset API URL")
-                        .label_size(LabelSize::Small)
-                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(
-                            cx.listener(|this, _, _window, cx| this.reset_api_url(_window, cx)),
-                        ),
-                )
+            ConfiguredApiCard::new("reset-api-url", api_url)
+                .on_click(cx.listener(|this, _, _window, cx| this.reset_api_url(_window, cx)))
                 .into_any_element()
         } else {
             v_flex()
@@ -986,7 +999,6 @@ impl ConfigurationView {
                     this.save_api_url(cx);
                     cx.notify();
                 }))
-                .gap_2()
                 .child(self.api_url_editor.clone())
                 .into_any_element()
         }
@@ -1001,20 +1013,10 @@ impl ConfigurationView {
             "API key configured".to_string()
         };
 
-        if !state.api_key_state.has_key() {
-            v_flex()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(format!(
-                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .into_any_element()
+        let api_key_control = if !state.api_key_state.has_key() {
+            self.api_key_editor.clone().into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("lmstudio-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, _window, cx| this.reset_api_key(_window, cx)))
                 .when(env_var_set, |this| {
@@ -1023,7 +1025,20 @@ impl ConfigurationView {
                     ))
                 })
                 .into_any_element()
-        }
+        };
+
+        v_flex()
+            .on_action(cx.listener(Self::save_api_key))
+            .child(api_key_control)
+            .gap_1p5()
+            .mb_2()
+            .child(
+                Label::new(format!(
+                    "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
     }
 }
 
@@ -1036,39 +1051,45 @@ impl Render for ConfigurationView {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(Label::new("Run local LLMs like Llama, Phi, and Qwen."))
+                    .child(Headline::new("LM Studio").size(HeadlineSize::Small))
+                    .child(
+                        Label::new("Run local LLMs like Llama, Phi, and Qwen.").color(Color::Muted),
+                    )
                     .child(
                         List::new()
                             .child(ListBulletItem::new(
                                 "LM Studio needs to be running with at least one model downloaded.",
-                            ))
+                            ).label_color(Color::Muted))
                             .child(
                                 ListBulletItem::new("")
-                                    .child(Label::new("To get your first model, try running"))
-                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
+                                    .child(Label::new("To get your first model, try running").color(Color::Muted))
+                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx).color(Color::Muted).ml_1()),
                             ),
                     )
                     .child(Label::new(
                         "Alternatively, you can connect to an LM Studio server by specifying its \
                         URL and API key (may not be required):",
-                    )),
+                    ).color(Color::Muted)),
             )
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .child(Divider::horizontal())
             .child(
                 h_flex()
+                    .pt_2()
                     .w_full()
                     .justify_between()
-                    .gap_2()
+                    .gap_1()
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .gap_1()
                             .map(|this| {
                                 if is_authenticated {
                                     this.child(
                                         Button::new("lmstudio-site", "LM Studio")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::Small)
@@ -1085,7 +1106,8 @@ impl Render for ConfigurationView {
                                             "download_lmstudio_button",
                                             "Download LM Studio",
                                         )
-                                        .style(ButtonStyle::Subtle)
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .size(ButtonSize::Medium)
                                         .end_icon(
                                             Icon::new(IconName::ArrowUpRight)
                                                 .size(IconSize::Small)
@@ -1100,7 +1122,8 @@ impl Render for ConfigurationView {
                             })
                             .child(
                                 Button::new("view-models", "Model Catalog")
-                                    .style(ButtonStyle::Subtle)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .size(ButtonSize::Medium)
                                     .end_icon(
                                         Icon::new(IconName::ArrowUpRight)
                                             .size(IconSize::Small)
@@ -1115,18 +1138,17 @@ impl Render for ConfigurationView {
                         if is_authenticated {
                             this.child(
                                 ButtonLike::new("connected")
-                                    .disabled(true)
-                                    .cursor_style(CursorStyle::Arrow)
+                                    .size(ButtonSize::Medium)
                                     .child(
                                         h_flex()
-                                            .gap_2()
+                                            .gap_1()
                                             .child(Icon::new(IconName::Check).color(Color::Success))
                                             .child(Label::new("Connected"))
-                                            .into_any_element(),
                                     )
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
                                             .tooltip(Tooltip::text("Refresh Models"))
+                                            .icon_size(IconSize::Small)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.state.update(cx, |state, _| {
                                                     state.available_models.clear();
@@ -1138,6 +1160,8 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_lmstudio_models", "Connect")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
                                     .start_icon(
                                         Icon::new(IconName::PlayFilled).size(IconSize::XSmall),
                                     )

@@ -865,13 +865,12 @@ impl platform::Host for WasmState {
                 "macos" => platform::Os::Mac,
                 "linux" => platform::Os::Linux,
                 "windows" => platform::Os::Windows,
-                _ => panic!("unsupported os"),
+                _ => bail!("unsupported os"),
             },
             match env::consts::ARCH {
                 "aarch64" => platform::Architecture::Aarch64,
-                "x86" => platform::Architecture::X86,
                 "x86_64" => platform::Architecture::X8664,
-                _ => panic!("unsupported architecture"),
+                _ => bail!("unsupported architecture"),
             },
         ))
     }
@@ -969,6 +968,7 @@ impl ExtensionImports for WasmState {
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
+                            hard_tabs: settings.hard_tabs,
                             preferred_line_length: settings.preferred_line_length,
                         })?)
                     }
