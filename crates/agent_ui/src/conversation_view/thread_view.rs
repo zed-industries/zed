@@ -20,7 +20,6 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
@@ -2526,16 +2525,13 @@ impl ThreadView {
                     ToolCallStatus::WaitingForConfirmation { .. }
                 )
             }
-            AgentThreadEntry::Elicitation(elicitation_id) => {
-                cx.has_flag::<AcpBetaFeatureFlag>()
-                    && self
-                        .thread
-                        .read(cx)
-                        .elicitation(elicitation_id)
-                        .is_some_and(|(_, elicitation)| {
-                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
-                        })
-            }
+            AgentThreadEntry::Elicitation(elicitation_id) => self
+                .thread
+                .read(cx)
+                .elicitation(elicitation_id)
+                .is_some_and(|(_, elicitation)| {
+                    matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                }),
             _ => false,
         }
     }
@@ -2554,11 +2550,6 @@ impl ThreadView {
             };
             elicitation_id.clone()
         };
-
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.elicitation_form_states.remove(&elicitation_id);
-            return;
-        }
 
         let thread = self.thread.read(cx);
         let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
@@ -2605,10 +2596,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         let mode = self
             .thread
             .read(cx)
@@ -2654,10 +2641,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
@@ -2671,10 +2654,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
@@ -6333,8 +6312,7 @@ impl ThreadView {
             }
             AgentThreadEntry::Elicitation(elicitation_id) => {
                 let thread = self.thread.read(cx);
-                if cx.has_flag::<AcpBetaFeatureFlag>()
-                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                if let Some((_, elicitation)) = thread.elicitation(elicitation_id)
                     && should_render_elicitation(elicitation)
                 {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
