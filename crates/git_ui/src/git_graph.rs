@@ -1210,32 +1210,32 @@ pub fn open_or_reuse_graph(
         graph.repo_id == repo_id && graph.log_source == log_source
     });
 
-    if let Some(existing) = existing {
-        if let Some(sha) = sha {
-            existing.update(cx, |graph, cx| {
+    let git_graph = if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+        existing
+    } else {
+        let workspace_handle = workspace.weak_handle();
+        let git_graph = cx.new(|cx| {
+            GitGraph::new(
+                repo_id,
+                git_store,
+                workspace_handle,
+                Some(log_source),
+                window,
+                cx,
+            )
+        });
+        workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        git_graph
+    };
+
+    if let Some(sha) = sha {
+        cx.defer(move |cx| {
+            git_graph.update(cx, |graph, cx| {
                 graph.select_commit_by_sha(sha.as_str(), cx);
             });
-        }
-        workspace.activate_item(&existing, true, true, window, cx);
-        return;
+        });
     }
-
-    let workspace_handle = workspace.weak_handle();
-    let git_graph = cx.new(|cx| {
-        let mut graph = GitGraph::new(
-            repo_id,
-            git_store,
-            workspace_handle,
-            Some(log_source),
-            window,
-            cx,
-        );
-        if let Some(sha) = sha {
-            graph.select_commit_by_sha(sha.as_str(), cx);
-        }
-        graph
-    });
-    workspace.add_item_to_active_pane(Box::new(git_graph), None, true, window, cx);
 }
 
 fn lane_center_x(bounds: Bounds<Pixels>, lane: f32) -> Pixels {
@@ -6909,6 +6909,106 @@ mod tests {
             cx.read_from_clipboard().and_then(|item| item.text()),
             Some("v1.0.0".to_string())
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_at_commit_reuses_loaded_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let first_sha = Oid::from_bytes(&[1; 20]).expect("valid commit SHA");
+        let second_sha = Oid::from_bytes(&[2; 20]).expect("valid commit SHA");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: second_sha,
+                    parents: smallvec![first_sha],
+                    ref_names: vec!["HEAD -> main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: first_sha,
+                    parents: smallvec![],
+                    ref_names: Vec::new(),
+                }),
+            ],
+        );
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [first_sha, second_sha].map(|sha| {
+                (
+                    CommitData {
+                        sha,
+                        parents: smallvec![],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 1_700_000_000,
+                        subject: "Commit subject".into(),
+                        message: "Commit message".into(),
+                    },
+                    false,
+                )
+            }),
+        );
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace.downgrade(),
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_commit_by_sha(first_sha, cx);
+        });
+        cx.run_until_parked();
+        git_graph.update(cx, |graph, cx| {
+            graph.select_commit_by_sha(second_sha, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_or_reuse_graph(
+                workspace,
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                LogSource::All,
+                Some(first_sha.to_string()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(1));
+        });
     }
 
     #[gpui::test]
