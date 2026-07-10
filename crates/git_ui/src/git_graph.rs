@@ -1911,6 +1911,12 @@ impl GitGraph {
                                 let author_email = commit_data.author_email.clone();
                                 let message = commit_data.message.clone();
                                 let commit_timestamp = commit_data.commit_timestamp;
+                                let tag_names = commit
+                                    .data
+                                    .tag_names()
+                                    .into_iter()
+                                    .map(SharedString::from)
+                                    .collect::<Vec<_>>();
                                 let workspace = self.workspace.clone();
                                 let repository = repository.clone();
                                 this.hoverable_tooltip(move |_window, cx| {
@@ -1931,6 +1937,7 @@ impl GitGraph {
                                             remote_url.as_deref(),
                                             Some(provider_registry),
                                         )),
+                                        tag_names: tag_names.clone(),
                                     };
                                     cx.new(|cx| {
                                         CommitTooltip::new(

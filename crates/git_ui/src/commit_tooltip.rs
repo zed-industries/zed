@@ -14,8 +14,10 @@ use settings::Settings;
 use std::hash::Hash;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
+use ui::{Avatar, Chip, CopyButton, Divider, Tooltip, prelude::*, tooltip_container};
 use workspace::Workspace;
+
+const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 3;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -24,6 +26,42 @@ pub struct CommitDetails {
     pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
+    pub tag_names: Vec<SharedString>,
+}
+
+pub(crate) fn commit_tag_chips(tag_names: &[SharedString]) -> Option<impl IntoElement> {
+    if tag_names.is_empty() {
+        return None;
+    }
+
+    let hidden_tag_count = tag_names.len().saturating_sub(MAX_COMMIT_TOOLTIP_TAG_CHIPS);
+    Some(
+        h_flex()
+            .gap_1()
+            .min_w_0()
+            .children(
+                tag_names
+                    .iter()
+                    .take(MAX_COMMIT_TOOLTIP_TAG_CHIPS)
+                    .cloned()
+                    .map(|tag_name| {
+                        Chip::new(tag_name.clone())
+                            .truncate()
+                            .tooltip(Tooltip::text(tag_name))
+                    }),
+            )
+            .when(hidden_tag_count > 0, |this| {
+                let hidden_tag_names = tag_names[MAX_COMMIT_TOOLTIP_TAG_CHIPS..]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                this.child(
+                    Chip::new(format!("+{hidden_tag_count}"))
+                        .tooltip(Tooltip::text(hidden_tag_names)),
+                )
+            }),
+    )
 }
 
 pub struct CommitAvatar<'a> {
@@ -172,6 +210,7 @@ impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
+        tag_names: Vec<SharedString>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
@@ -192,6 +231,7 @@ impl CommitTooltip {
                     .into(),
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
+                tag_names,
             },
             repository,
             workspace,
@@ -270,6 +310,7 @@ impl Render for CommitTooltip {
             .message
             .as_ref()
             .and_then(|details| details.pull_request.clone());
+        let tag_names = self.commit.tag_names.clone();
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
@@ -342,6 +383,7 @@ impl Render for CommitTooltip {
                                 .child(
                                     h_flex()
                                         .gap_1()
+                                        .min_w_0()
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(
@@ -360,6 +402,10 @@ impl Render for CommitTooltip {
                                                 }),
                                             )
                                             .child(Divider::vertical())
+                                        })
+                                        .children(commit_tag_chips(&tag_names))
+                                        .when(!tag_names.is_empty(), |this| {
+                                            this.child(Divider::vertical())
                                         })
                                         .child(
                                             Button::new(
