@@ -1006,7 +1006,7 @@ pub mod tests {
     use crate::{DisplayPoint, Editor, SelectionEffects};
     use collections::HashSet;
     use futures::{StreamExt, future};
-    use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, TestAppContext, Window, WindowHandle};
     use itertools::Itertools as _;
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
@@ -4795,12 +4795,14 @@ let c = 3;"#
     }
 
     #[gpui::test]
-    async fn test_selection_ending_at_parameter_hint_excludes_hint(cx: &mut gpui::TestAppContext) {
+    async fn test_selection_rendering_around_parameter_hint(cx: &mut gpui::TestAppContext) {
         // Regression test for https://github.com/zed-industries/zed/issues/48141
         // Parameter hints are anchored to the position of their argument, right
         // after the opening `(` of a call. Selecting that `(` produces a selection
         // ending exactly at the hint's anchor, which must not render the hint
-        // itself as selected.
+        // itself as selected. Selections starting at the anchor must exclude the
+        // hint too, while selections spanning past it must keep it highlighted so
+        // the selection has no visual gap.
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
                 enabled: Some(true),
@@ -4869,6 +4871,34 @@ let c = 3;"#
             .unwrap();
         cx.executor().run_until_parked();
 
+        // Selection rendering goes through SelectionLayout, so assert on it
+        // rather than converting the selection's endpoints directly: the
+        // point-to-display-point conversion intentionally resolves to after
+        // the hint (caret semantics, where typed text would land).
+        fn layout_for_selection(
+            editor: &mut Editor,
+            range: Range<MultiBufferOffset>,
+            window: &mut Window,
+            cx: &mut Context<Editor>,
+        ) -> crate::element::SelectionLayout {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([range])
+            });
+            let snapshot = editor.display_snapshot(cx);
+            let mut selections = editor.selections.all::<Point>(&snapshot);
+            assert_eq!(selections.len(), 1);
+            crate::element::SelectionLayout::new(
+                selections.pop().unwrap(),
+                false,
+                false,
+                crate::CursorShape::Bar,
+                &snapshot,
+                true,
+                true,
+                None,
+            )
+        }
+
         editor
             .update(cx, |editor, window, cx| {
                 assert_eq!(
@@ -4877,37 +4907,49 @@ let c = 3;"#
                     "The parameter hint should be displayed before its argument"
                 );
 
-                // Select the `(` of `foo(1)`: buffer columns 15..16, with the
-                // hint anchored at column 16.
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([MultiBufferOffset(15)..MultiBufferOffset(16)])
-                });
-                // Selection rendering goes through SelectionLayout, so assert on
-                // it rather than converting the selection's endpoints directly:
-                // the point-to-display-point conversion intentionally resolves to
-                // after the hint (caret semantics, where typed text would land).
-                let snapshot = editor.display_snapshot(cx);
-                let mut selections = editor.selections.all::<Point>(&snapshot);
-                assert_eq!(selections.len(), 1);
-                let layout = crate::element::SelectionLayout::new(
-                    selections.remove(0),
-                    false,
-                    false,
-                    crate::CursorShape::Bar,
-                    &snapshot,
-                    true,
-                    true,
-                    None,
+                let display_point = |column| DisplayPoint::new(DisplayRow(0), column);
+
+                // `foo(1)` spans buffer columns 15..18 with the hint anchored at
+                // column 16; in display coordinates the hint occupies 16..21.
+                let ending_at_hint = layout_for_selection(
+                    editor,
+                    MultiBufferOffset(15)..MultiBufferOffset(16),
+                    window,
+                    cx,
                 );
                 assert_eq!(
-                    layout.range,
-                    DisplayPoint::new(DisplayRow(0), 15)..DisplayPoint::new(DisplayRow(0), 16),
+                    ending_at_hint.range,
+                    display_point(15)..display_point(16),
                     "Selecting the `(` should not render the parameter hint as selected"
                 );
                 assert_eq!(
-                    layout.head,
-                    DisplayPoint::new(DisplayRow(0), 21),
+                    ending_at_hint.head,
+                    display_point(21),
                     "The caret still lands after the hint, where typed text would appear"
+                );
+
+                let starting_at_hint = layout_for_selection(
+                    editor,
+                    MultiBufferOffset(16)..MultiBufferOffset(18),
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    starting_at_hint.range,
+                    display_point(21)..display_point(23),
+                    "Selecting `1)` should not render the parameter hint as selected"
+                );
+
+                let spanning_hint = layout_for_selection(
+                    editor,
+                    MultiBufferOffset(15)..MultiBufferOffset(18),
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    spanning_hint.range,
+                    display_point(15)..display_point(23),
+                    "Selecting `(1)` should keep the hint highlighted so the selection has no gap"
                 );
             })
             .unwrap();

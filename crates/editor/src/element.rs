@@ -171,13 +171,19 @@ impl SelectionLayout {
         let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
-        let offset_range = point_selection.start.to_offset(buffer_snapshot)
-            ..point_selection.end.to_offset(buffer_snapshot);
-        let isomorphic_range = map.isomorphic_display_point_ranges_for_buffer_range(offset_range);
-        if !point_selection.range().is_empty()
-            && let (Some(first), Some(last)) = (isomorphic_range.first(), isomorphic_range.last())
-        {
-            range = first.start..last.end;
+        if !line_mode && !point_selection.range().is_empty() {
+            let offset_range = point_selection.start.to_offset(buffer_snapshot)
+                ..point_selection.end.to_offset(buffer_snapshot);
+            let isomorphic_ranges =
+                map.isomorphic_display_point_ranges_for_buffer_range(offset_range);
+            // taking the start and end of the range means that inlays fully in
+            // the range will be highlighted, but inlays that are outside of the
+            // range will not be, this prevents inlays that are not actually
+            // inside the range from being highlighted.
+            if let (Some(first), Some(last)) = (isomorphic_ranges.first(), isomorphic_ranges.last())
+            {
+                range = first.start..last.end;
+            }
         }
         let mut head = display_selection.head();
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
