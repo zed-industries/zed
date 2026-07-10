@@ -214,7 +214,7 @@ Here's how you would structure these settings in Zed's `settings.json`:
 
 #### Possible configuration options
 
-Depending on how a particular language server is implemented, they may depend on different configuration options, both specified in the LSP.
+Language servers may use different configuration options depending on the implementation.
 
 - [initializationOptions](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#version_3_17_0)
 
@@ -249,7 +249,7 @@ Most of the servers would rely on this way of configuring only.
 }
 ```
 
-Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
+Apart from the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
 
 Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 

@@ -323,7 +323,8 @@ pub struct SplitSelectionIntoLines {
     pub keep_selections: bool,
 }
 
-/// Goes to the next diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -332,7 +333,8 @@ pub struct GoToDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Goes to the previous diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the previous diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +394,15 @@ actions!(
         /// Toggles the go to line dialog.
         #[action(name = "Toggle")]
         ToggleGoToLine
+    ]
+);
+
+actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
     ]
 );
 
@@ -643,14 +654,29 @@ actions!(
         MoveToBeginning,
         /// Moves cursor to the enclosing bracket.
         MoveToEnclosingBracket,
+        /// Selects the content within the nearest enclosing delimiters
+        /// (brackets, braces, parentheses, or quotes), excluding the
+        /// delimiters.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectInsideDelimiters,
+        /// Selects the nearest enclosing delimiters (brackets, braces,
+        /// parentheses, or quotes) together with the content between them.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectAroundDelimiters,
         /// Moves cursor to the end of the document.
         MoveToEnd,
         /// Moves cursor to the end of the paragraph.
         MoveToEndOfParagraph,
+        /// Moves cursor to the start of the next comment paragraph.
+        MoveToNextCommentParagraph,
         /// Moves cursor to the end of the next subword.
         MoveToNextSubwordEnd,
         /// Moves cursor to the end of the next word.
         MoveToNextWordEnd,
+        /// Moves cursor to the start of the previous comment paragraph.
+        MoveToPreviousCommentParagraph,
         /// Moves cursor to the start of the previous subword.
         MoveToPreviousSubwordStart,
         /// Moves cursor to the start of the previous word.
@@ -834,6 +860,10 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
+        /// Toggles a bookmark at the current line, prompting for a label when adding one.
+        ToggleBookmarkWithLabel,
+        /// Edits the bookmark's label at the current line.
+        EditBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -916,6 +946,8 @@ actions!(
         AlignSelections,
         /// Saves the current location to navigation history.
         SaveLocation,
+        /// Toggles breadcrumbs display.
+        ToggleBreadcrumb,
     ]
 );
 

@@ -365,13 +365,6 @@ pub struct WaitlistSummary {
     pub unknown_count: i64,
 }
 
-/// The parameters to create a new user.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NewUserParams {
-    pub github_login: String,
-    pub github_user_id: i32,
-}
-
 /// The result of creating a new user.
 #[derive(Debug)]
 pub struct NewUserResult {
@@ -532,6 +525,8 @@ impl RejoinedProject {
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
                     root_repo_common_dir: None,
+                    // todo(collab): Get this field from database
+                    root_repo_is_linked_worktree: false,
                 })
                 .collect(),
             collaborators: self

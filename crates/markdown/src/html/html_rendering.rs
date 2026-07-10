@@ -391,9 +391,7 @@ impl MarkdownElement {
         boundaries.sort_unstable();
         boundaries.dedup();
 
-        for segment in boundaries.windows(2) {
-            let start = segment[0];
-            let end = segment[1];
+        for &[start, end] in boundaries.array_windows::<2>() {
             if start >= end {
                 continue;
             }
@@ -561,6 +559,8 @@ mod tests {
         });
     }
 
+    use crate::WrapButtonVisibility;
+
     fn render_markdown_text(markdown: &str, cx: &mut TestAppContext) -> crate::RenderedText {
         struct TestWindow;
 
@@ -582,6 +582,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -642,6 +643,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
