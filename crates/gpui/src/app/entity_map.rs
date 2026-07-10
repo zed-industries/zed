@@ -164,6 +164,20 @@ impl EntityMap {
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
+    /// Read an entity's state through a dynamically typed handle, without
+    /// cloning the handle to downcast it. Panics if `T` does not match the
+    /// entity's actual type.
+    pub fn read_any<T: 'static>(&self, entity: &AnyEntity) -> &T {
+        self.assert_valid_context(entity);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(entity.entity_id);
+
+        self.entities
+            .get(entity.entity_id)
+            .and_then(|entity| entity.downcast_ref())
+            .unwrap_or_else(|| double_lease_panic::<T>("read"))
+    }
+
     fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
             Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
@@ -306,6 +320,19 @@ impl AnyEntity {
             Err(self)
         }
     }
+
+    /// Converts a reference to this entity handle into a strongly-typed reference,
+    /// without cloning the handle. Returns `None` if the entity is not of the
+    /// specified type.
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&Entity<T>> {
+        if TypeId::of::<T>() == self.entity_type {
+            // SAFETY: `Entity<T>` is `repr(transparent)` over `AnyEntity`, and
+            // we just checked that `T` matches the entity's actual type.
+            Some(unsafe { &*(self as *const AnyEntity as *const Entity<T>) })
+        } else {
+            None
+        }
+    }
 }
 
 impl Clone for AnyEntity {
@@ -410,7 +437,10 @@ impl std::fmt::Debug for AnyEntity {
 
 /// A strong, well-typed reference to a struct which is managed
 /// by GPUI
+// repr(transparent) over `AnyEntity` so that `AnyEntity::downcast_ref` can
+// reinterpret a borrowed handle as a typed one.
 #[derive(Deref, DerefMut)]
+#[repr(transparent)]
 pub struct Entity<T> {
     #[deref]
     #[deref_mut]
@@ -1182,9 +1212,153 @@ impl fmt::Debug for BacktraceFormatter {
     }
 }
 
+/// A strong, read-only handle to an entity of type `T`.
+///
+/// Entities buy back shared mutability from the borrow checker, but in doing
+/// so every handle becomes a write handle. A `ReadEntity` restores the
+/// read/write distinction at the capability level: holders can read the state
+/// (and thereby be re-rendered when it changes), but cannot update or notify
+/// it. This makes the set of possible writers of an entity exactly the set of
+/// `Entity` holders, which is auditable in a way "everyone" is not.
+///
+/// Like [`Entity`], this is a strong handle: it keeps the underlying entity
+/// alive. Use [`ReadEntity::downgrade`] where that would create a cycle.
+pub struct ReadEntity<T> {
+    entity: Entity<T>,
+}
+
+impl<T: 'static> ReadEntity<T> {
+    /// Read the entity's state.
+    pub fn read<'a>(&self, cx: &'a App) -> &'a T {
+        self.entity.read(cx)
+    }
+
+    /// Read the entity's state with the given function.
+    pub fn read_with<R, C: AppContext>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> R {
+        self.entity.read_with(cx, read)
+    }
+
+    /// The id of the underlying entity.
+    pub fn entity_id(&self) -> EntityId {
+        self.entity.entity_id()
+    }
+
+    /// Convert this handle into a weak variant, which does not keep the
+    /// underlying entity alive.
+    pub fn downgrade(&self) -> WeakReadEntity<T> {
+        WeakReadEntity {
+            entity: self.entity.downgrade(),
+        }
+    }
+}
+
+impl<T> Clone for ReadEntity<T> {
+    fn clone(&self) -> Self {
+        Self {
+            entity: self.entity.clone(),
+        }
+    }
+}
+
+impl<T: 'static> std::fmt::Debug for ReadEntity<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadEntity")
+            .field("entity_id", &self.entity.entity_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for ReadEntity<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity == other.entity
+    }
+}
+
+impl<T> Eq for ReadEntity<T> {}
+
+impl<T> Hash for ReadEntity<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.entity.hash(state);
+    }
+}
+
+impl<T: 'static> Entity<T> {
+    /// A read-only handle to this entity.
+    pub fn read_only(&self) -> ReadEntity<T> {
+        ReadEntity {
+            entity: self.clone(),
+        }
+    }
+}
+
+impl<T: 'static> From<Entity<T>> for ReadEntity<T> {
+    fn from(entity: Entity<T>) -> Self {
+        ReadEntity { entity }
+    }
+}
+
+impl<T: 'static> From<ReadEntity<T>> for crate::Projection<T> {
+    fn from(read_entity: ReadEntity<T>) -> Self {
+        read_entity.entity.project(|value| value)
+    }
+}
+
+/// A weak variant of [`ReadEntity`] which does not keep the underlying entity
+/// alive.
+pub struct WeakReadEntity<T> {
+    entity: WeakEntity<T>,
+}
+
+impl<T: 'static> WeakReadEntity<T> {
+    /// The id of the underlying entity.
+    pub fn entity_id(&self) -> EntityId {
+        self.entity.entity_id()
+    }
+
+    /// Upgrade to a strong read-only handle. Returns `None` if the underlying
+    /// entity has been released.
+    pub fn upgrade(&self) -> Option<ReadEntity<T>> {
+        Some(ReadEntity {
+            entity: self.entity.upgrade()?,
+        })
+    }
+
+    /// Read the entity's state with the given function, if the entity still
+    /// exists.
+    pub fn read_with<R, C: AppContext>(
+        &self,
+        cx: &C,
+        read: impl FnOnce(&T, &App) -> R,
+    ) -> Result<R> {
+        self.entity.read_with(cx, read)
+    }
+}
+
+impl<T> Clone for WeakReadEntity<T> {
+    fn clone(&self) -> Self {
+        Self {
+            entity: self.entity.clone(),
+        }
+    }
+}
+
+impl<T: 'static> std::fmt::Debug for WeakReadEntity<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WeakReadEntity")
+            .field("entity_id", &self.entity.entity_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: 'static> From<WeakEntity<T>> for WeakReadEntity<T> {
+    fn from(entity: WeakEntity<T>) -> Self {
+        WeakReadEntity { entity }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::EntityMap;
+    use crate::{AppContext as _, EntityMap, Projection, ReadEntity, TestAppContext};
 
     struct TestEntity {
         pub i: i32,
@@ -1274,5 +1448,55 @@ mod test {
 
         drop(pre_existing);
         drop(leaked);
+    }
+
+    #[test]
+    fn read_entity_reads_and_converts() {
+        let mut cx = TestAppContext::single();
+        let value = cx.update(|cx| cx.new(|_| "hello".to_string()));
+
+        let read_only = value.read_only();
+        let converted: ReadEntity<String> = value.clone().into();
+        let projected: Projection<String> = read_only.clone().into();
+
+        cx.update(|cx| {
+            assert_eq!(read_only.read(cx), "hello");
+            assert_eq!(converted.read(cx), "hello");
+            assert_eq!(projected.read(cx), "hello");
+            assert_eq!(
+                read_only.read_with(cx, |value, _| value.len()),
+                "hello".len()
+            );
+            assert_eq!(read_only.entity_id(), value.entity_id());
+            assert_eq!(read_only, converted);
+        });
+    }
+
+    #[test]
+    fn weak_read_entities_do_not_keep_the_entity_alive() {
+        let mut cx = TestAppContext::single();
+        let value = cx.update(|cx| cx.new(|_| "hello".to_string()));
+
+        let read_only = value.read_only();
+        let weak = read_only.downgrade();
+
+        {
+            let upgraded = weak.upgrade().expect("entity is alive");
+            cx.update(|cx| assert_eq!(upgraded.read(cx), "hello"));
+        }
+
+        cx.update(|cx| {
+            assert_eq!(
+                weak.read_with(cx, |value, _| value.clone()).ok(),
+                Some("hello".to_string())
+            );
+        });
+
+        drop(value);
+        drop(read_only);
+        cx.update(|_| {});
+
+        assert!(weak.upgrade().is_none());
+        cx.update(|cx| assert!(weak.read_with(cx, |value, _| value.clone()).is_err()));
     }
 }
