@@ -6484,7 +6484,6 @@ impl Render for AgentPanel {
                         .and_then(|terminal_id| self.terminals.get(&terminal_id))
                         .and_then(|terminal| terminal.search_bar.clone());
                     let terminal_content = v_flex()
-                        .key_context("AgentTerminalThread")
                         .size_full()
                         .when_some(search_bar, |this, search_bar| {
                             this.when(!search_bar.read(cx).is_dismissed(), |this| {
