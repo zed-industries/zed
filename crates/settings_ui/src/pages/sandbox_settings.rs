@@ -164,6 +164,27 @@ pub(crate) fn render_sandbox_settings_page(
                     empty_border,
                 )),
         )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_4()
+                .child(SettingsSectionHeader::new("Escalation Prompts").no_padding(true))
+                .child(
+                    SwitchField::new(
+                        "sandbox-warn-confusable-unicode",
+                        Some("Warn About Confusable Unicode"),
+                        Some(
+                            "Warn when an approval prompt requests a domain or write path that contains potentially confusable Unicode characters, such as homoglyphs (i.e. two symbols that look similar, such as a Cyrillic `а`)"
+                                .into(),
+                        ),
+                        permissions.warn_confusable_unicode,
+                        move |state, _window, cx| {
+                            set_warn_confusable_unicode(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                ),
+        )
         )
         .into_any_element()
 }
@@ -434,6 +455,12 @@ fn set_allow_all_hosts(value: bool, cx: &mut App) {
 fn set_allow_fs_write_all(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_fs_write_all = Some(value);
+    });
+}
+
+fn set_warn_confusable_unicode(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.warn_confusable_unicode = Some(value);
     });
 }
 
