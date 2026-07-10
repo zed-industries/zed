@@ -30,9 +30,7 @@ impl Render for HolyGrailExample {
             let header = block(gpui::white()).child(format!("Header — {}", container_size.width));
             let table_of_contents = block(gpui::red()).child("Table of contents");
             let content = block(gpui::green()).child("Content");
-            let ad = block(gpui::blue())
-                .child("AD :(")
-                .text_color(gpui::white());
+            let ad = block(gpui::blue()).child("AD :(").text_color(gpui::white());
             let footer = block(gpui::black())
                 .text_color(gpui::white())
                 .child("Footer");
