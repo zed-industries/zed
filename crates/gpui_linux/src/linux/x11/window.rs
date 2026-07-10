@@ -7,13 +7,13 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 use collections::FxHashSet;
+use gpui_util::{ResultExt, maybe};
 use raw_window_handle as rwh;
-use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
@@ -428,6 +428,12 @@ impl X11WindowState {
         supports_xinput_gestures: bool,
         is_bgr: bool,
     ) -> anyhow::Result<Self> {
+        // Native popups are not implemented on X11 yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| u64::from(did) as usize);
@@ -1410,7 +1416,11 @@ impl PlatformWindow for X11Window {
         )
         .log_err()
         .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
-            Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
+            let scale_factor = self.0.state.borrow().scale_factor;
+            Point::new(
+                px(reply.win_x as f32 / scale_factor),
+                px(reply.win_y as f32 / scale_factor),
+            )
         })
     }
 

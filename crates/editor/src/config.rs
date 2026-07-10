@@ -138,6 +138,31 @@ impl Editor {
         }
     }
 
+    pub fn breadcrumbs_visible(&self) -> bool {
+        self.breadcrumbs_visibility.visible()
+    }
+
+    fn set_breadcrumbs_visibility(
+        &mut self,
+        breadcrumbs_visibility: BreadcrumbsVisibility,
+        cx: &mut Context<Self>,
+    ) {
+        if self.breadcrumbs_visibility != breadcrumbs_visibility {
+            self.breadcrumbs_visibility = breadcrumbs_visibility;
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_breadcrumb(
+        &mut self,
+        _: &ToggleBreadcrumb,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_breadcrumbs_visibility(self.breadcrumbs_visibility.toggle_visibility(), cx);
+    }
+
     pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_show_scrollbars(false, cx);
         self.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
@@ -333,10 +358,6 @@ impl Editor {
 
     pub(super) fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
-    }
-
-    pub(super) fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
-        self.delegate_stage_and_restore = delegate;
     }
 
     pub(super) fn set_on_local_selections_changed(

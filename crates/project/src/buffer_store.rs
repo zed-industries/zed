@@ -647,6 +647,12 @@ impl LocalBufferStore {
             let path = path.clone();
             let buffer = match load_file.await {
                 Ok(loaded) => {
+                    let is_writable = loaded.is_writable;
+                    let capability = if is_writable {
+                        Capability::ReadWrite
+                    } else {
+                        Capability::Read
+                    };
                     let reservation = cx.reserve_entity::<Buffer>();
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                     let text_buffer = cx
@@ -655,8 +661,7 @@ impl LocalBufferStore {
                         })
                         .await;
                     cx.insert_entity(reservation, |_| {
-                        let mut buffer =
-                            Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite);
+                        let mut buffer = Buffer::build(text_buffer, Some(loaded.file), capability);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer

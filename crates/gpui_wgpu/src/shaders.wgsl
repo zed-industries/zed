@@ -1191,7 +1191,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let underline = b_underlines[input.underline_id];
-    if ((underline.wavy & 0xFFu) == 0u)
+    if (underline.wavy == 0u)
     {
         return blend_color(input.color, input.color.a);
     }
@@ -1305,7 +1305,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     var color = sample;
-    if ((sprite.grayscale & 0xFFu) != 0u) {
+    if (sprite.grayscale != 0u) {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
