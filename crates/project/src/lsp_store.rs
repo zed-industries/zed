@@ -347,6 +347,21 @@ pub struct LocalLspStore {
     _background_diagnostics_worker: Shared<Task<()>>,
 }
 
+fn workspace_folder_uri(worktree: &Worktree, path: &RelPath) -> Option<Uri> {
+    if !worktree.entry_for_path(path)?.is_dir() {
+        return None;
+    }
+
+    let absolute_path = worktree.absolutize(path);
+    match Uri::from_file_path(&absolute_path) {
+        Ok(uri) => Some(uri),
+        Err(()) => {
+            log::error!("{absolute_path:?} is not a valid URI");
+            None
+        }
+    }
+}
+
 impl LocalLspStore {
     /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
     pub fn running_language_server_for_id(
@@ -2953,7 +2968,7 @@ impl LocalLspStore {
                     let path = &disposition.path;
 
                     {
-                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                        let workspace_folder = workspace_folder_uri(worktree.read(cx), &path.path);
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -2964,9 +2979,9 @@ impl LocalLspStore {
                         );
 
                         if let Some(state) = self.language_servers.get(&server_id)
-                            && let Ok(uri) = uri
+                            && let Some(workspace_folder) = workspace_folder
                         {
-                            state.add_workspace_folder(uri);
+                            state.add_workspace_folder(workspace_folder);
                         };
                         server_id
                     }
@@ -5617,7 +5632,8 @@ impl LspStore {
                         }
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                            let workspace_folder =
+                                workspace_folder_uri(worktree.read(cx), &path.path);
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -5644,9 +5660,9 @@ impl LspStore {
                                 cx,
                             );
                             if let Some(state) = local.language_servers.get(&server_id)
-                                && let Ok(uri) = uri
+                                && let Some(workspace_folder) = workspace_folder
                             {
-                                state.add_workspace_folder(uri);
+                                state.add_workspace_folder(workspace_folder);
                             };
                             server_id
                         });

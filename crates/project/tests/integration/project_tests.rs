@@ -1332,6 +1332,42 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_single_file_worktree_is_not_an_lsp_workspace_folder(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "main.py": "",
+            "pyproject.toml": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root/main.py").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_python_servers = language_registry.register_fake_lsp(
+        "Python",
+        FakeLspAdapter {
+            name: "ty",
+            ..Default::default()
+        },
+    );
+    language_registry.add(python_lang(fs));
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.py"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_python_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(fake_server.server.workspace_folders(), BTreeSet::new());
+}
+
+#[gpui::test]
 async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     cx: &mut gpui::TestAppContext,
 ) {
