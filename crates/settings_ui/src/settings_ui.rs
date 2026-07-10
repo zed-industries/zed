@@ -5092,7 +5092,7 @@ fn render_subagent_model_picker(
         (Some(selection), None) => {
             format!("Unavailable: {}/{}", selection.provider.0, selection.model).into()
         }
-        (None, None) => default_option_label.clone(),
+        (None, None) => default_option_label,
     };
 
     let handle = ui::PopoverMenuHandle::<LanguageModelSelector>::default();
