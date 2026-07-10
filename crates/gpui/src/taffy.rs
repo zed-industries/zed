@@ -135,10 +135,8 @@ impl TaffyLayoutEngine {
                 taffy::style::Dimension::length(round_to_device_pixel(size.width.0, scale_factor));
         }
         if stretch_height {
-            style.size.height = taffy::style::Dimension::length(round_to_device_pixel(
-                size.height.0,
-                scale_factor,
-            ));
+            style.size.height =
+                taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
         }
         self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
     }
