@@ -23,12 +23,38 @@ enum ContentType {
     Json,
 }
 
+/// The maximum number of HTTP redirects the fetch tool will follow. Each hop is
+/// re-authorized against the shared network grants before being followed.
+const MAX_REDIRECTS: usize = 20;
+
+/// The outcome of a single (non-redirect-following) HTTP request.
+enum FetchStep {
+    /// The server responded with a redirect to this absolute URL. Its host must
+    /// be authorized before the redirect is followed.
+    Redirect(String),
+    /// A terminal response was received and converted to Markdown.
+    Complete(String),
+}
+
+/// Prepends `https://` when the URL has no explicit HTTP(S) scheme, matching the
+/// behavior the fetch tool has always had for user/model-supplied URLs.
+fn normalize_url(url: &str) -> Cow<'_, str> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        Cow::Owned(format!("https://{url}"))
+    } else {
+        Cow::Borrowed(url)
+    }
+}
+
 /// Fetches a URL and returns the content as Markdown.
 ///
 /// This tool is not run inside the terminal OS sandbox, but it still refuses to
 /// reach any host that hasn't been granted network access. It shares the same
 /// per-host grants as the `terminal` tool: approving a host for one authorizes
 /// it for the other, whether the grant is for this thread or saved permanently.
+/// HTTP redirects are followed one hop at a time, and each hop's host must be
+/// granted the same way, so a granted host can't redirect the request to a host
+/// that hasn't been approved.
 /// When unsandboxed access has been granted, these restrictions are lifted
 /// entirely, matching the terminal, which is also how loopback and IP-literal
 /// hosts (which can't be granted individually) become reachable.
@@ -47,14 +73,35 @@ impl FetchTool {
         Self { http_client }
     }
 
-    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
-            Cow::Owned(format!("https://{url}"))
-        } else {
-            Cow::Borrowed(url)
-        };
+    /// Performs a single HTTP GET *without* following redirects, so the tool can
+    /// re-authorize each hop against the shared network grants before following
+    /// it. Returns the redirect target when the server responds with a 3xx, or
+    /// the final content converted to Markdown otherwise.
+    async fn fetch_step(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<FetchStep> {
+        let normalized = normalize_url(url);
 
-        let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
+        let mut response = http_client
+            .get(&normalized, AsyncBody::default(), false)
+            .await?;
+
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get("location")
+                .context("redirect response is missing a Location header")?
+                .to_str()
+                .context("redirect response has an invalid Location header")?;
+            let target = url::Url::parse(&normalized)
+                .with_context(|| format!("could not parse URL {normalized:?}"))?
+                .join(location)
+                .with_context(|| format!("invalid redirect target {location:?}"))?;
+            anyhow::ensure!(
+                matches!(target.scheme(), "http" | "https"),
+                "refusing to follow redirect to non-HTTP(S) URL {target}"
+            );
+            return Ok(FetchStep::Redirect(target.to_string()));
+        }
 
         let mut body = Vec::new();
         response
@@ -63,12 +110,9 @@ impl FetchTool {
             .await
             .context("error reading response body")?;
 
-        if response.status().is_client_error() {
+        if status.is_client_error() {
             let text = String::from_utf8_lossy(body.as_slice());
-            bail!(
-                "status error {}, response: {text:?}",
-                response.status().as_u16()
-            );
+            bail!("status error {}, response: {text:?}", status.as_u16());
         }
 
         let Some(content_type) = response.headers().get("content-type") else {
@@ -86,7 +130,7 @@ impl FetchTool {
             ContentType::Html
         };
 
-        match content_type {
+        let text = match content_type {
             ContentType::Html => {
                 let mut handlers: Vec<TagHandler> = vec![
                     Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
@@ -96,7 +140,7 @@ impl FetchTool {
                     Rc::new(RefCell::new(markdown::TableHandler::new())),
                     Rc::new(RefCell::new(markdown::StyledTextHandler)),
                 ];
-                if url.contains("wikipedia.org") {
+                if normalized.contains("wikipedia.org") {
                     use html_to_markdown::structure::wikipedia;
 
                     handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
@@ -108,30 +152,25 @@ impl FetchTool {
                     handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
                 }
 
-                convert_html_to_markdown(&body[..], &mut handlers)
+                convert_html_to_markdown(&body[..], &mut handlers)?
             }
-            ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+            ContentType::Plaintext => std::str::from_utf8(&body)?.to_owned(),
             ContentType::Json => {
                 let json: serde_json::Value = serde_json::from_slice(&body)?;
 
-                Ok(format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(&json)?
-                ))
+                format!("```json\n{}\n```", serde_json::to_string_pretty(&json)?)
             }
-        }
+        };
+
+        Ok(FetchStep::Complete(text))
     }
 }
 
 /// Extracts the host from a fetch URL as a [`http_proxy::HostPattern`] so it can
 /// be matched against the shared network grants. Mirrors the scheme handling in
-/// [`FetchTool::build_message`] (defaulting to `https://` when none is given).
+/// [`normalize_url`] (defaulting to `https://` when none is given).
 fn host_pattern_for_url(url: &str) -> Result<http_proxy::HostPattern> {
-    let normalized = if !url.starts_with("https://") && !url.starts_with("http://") {
-        Cow::Owned(format!("https://{url}"))
-    } else {
-        Cow::Borrowed(url)
-    };
+    let normalized = normalize_url(url);
     let parsed =
         url::Url::parse(&normalized).with_context(|| format!("could not parse URL {url:?}"))?;
     let host = parsed
@@ -211,36 +250,61 @@ impl AgentTool for FetchTool {
             // already runs without isolation, so we drop fetch's restrictions
             // too — including reaching hosts that can't be granted individually
             // (loopback and IP literals).
+            //
+            // Crucially, this authorization is applied to every redirect hop as
+            // well as the initial URL, so a granted host can't 30x-redirect the
+            // fetch to a host the user never approved. We disable the HTTP
+            // client's own redirect following and re-run the grant for each hop
+            // before requesting it.
             let unsandboxed = cx.update(|cx| event_stream.unsandboxed_access_granted(cx));
-            if !unsandboxed {
-                let host = host_pattern_for_url(&input.url).map_err(|e| e.to_string())?;
-                let authorize_host = cx.update(|cx| {
-                    let request = SandboxRequest {
-                        network: NetworkRequest::Hosts(vec![host]),
-                        ..Default::default()
+
+            let mut current_url = input.url.clone();
+            let mut redirects = 0;
+            let text = loop {
+                if !unsandboxed {
+                    let host = host_pattern_for_url(&current_url).map_err(|e| e.to_string())?;
+                    let authorize_host = cx.update(|cx| {
+                        let request = SandboxRequest {
+                            network: NetworkRequest::Hosts(vec![host]),
+                            ..Default::default()
+                        };
+                        event_stream.authorize_sandbox(request, String::new(), cx)
+                    });
+                    futures::select! {
+                        result = authorize_host.fuse() => result.map_err(|e| e.to_string())?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Fetch cancelled by user".to_string());
+                        }
                     };
-                    event_stream.authorize_sandbox(request, String::new(), cx)
+                }
+
+                let fetch_task = cx.background_spawn({
+                    let http_client = http_client.clone();
+                    let url = current_url.clone();
+                    async move { Self::fetch_step(http_client, &url).await }
                 });
-                futures::select! {
-                    result = authorize_host.fuse() => result.map_err(|e| e.to_string())?,
+
+                let step = futures::select! {
+                    result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
                     _ = event_stream.cancelled_by_user().fuse() => {
                         return Err("Fetch cancelled by user".to_string());
                     }
                 };
-            }
 
-            let fetch_task = cx.background_spawn({
-                let http_client = http_client.clone();
-                let url = input.url.clone();
-                async move { Self::build_message(http_client, &url).await }
-            });
-
-            let text = futures::select! {
-                result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Fetch cancelled by user".to_string());
+                match step {
+                    FetchStep::Complete(text) => break text,
+                    FetchStep::Redirect(target) => {
+                        redirects += 1;
+                        if redirects > MAX_REDIRECTS {
+                            return Err(format!(
+                                "exceeded the maximum of {MAX_REDIRECTS} redirects"
+                            ));
+                        }
+                        current_url = target;
+                    }
                 }
             };
+
             if text.trim().is_empty() {
                 return Err("no textual content found".to_string());
             }

@@ -494,6 +494,7 @@ dependencies = [
  "heapless",
  "html_to_markdown",
  "http_client",
+ "idna",
  "image",
  "indoc",
  "itertools 0.14.0",
@@ -549,6 +550,7 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "ui_input",
+ "unicode-script",
  "unicode-segmentation",
  "unindent",
  "url",
@@ -15995,6 +15997,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "seccompiler",
  "serde",
  "serde_json",
  "smol",
@@ -16310,6 +16313,15 @@ dependencies = [
  "pkcs8 0.9.0",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -16724,6 +16736,7 @@ dependencies = [
  "agent_skills",
  "anyhow",
  "audio",
+ "client",
  "cloud_api_types",
  "codestral",
  "collections",
