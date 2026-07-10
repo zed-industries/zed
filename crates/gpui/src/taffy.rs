@@ -480,6 +480,10 @@ impl ToTaffy<taffy::style::Style> for Style {
                             vec![minmax(length(0.0_f32), max_content())],
                         )]
                     }
+                    // grid-template-*: repeat(<number>, auto)
+                    crate::TemplateColumnMinSize::Auto => {
+                        vec![repeat(template.repeat, vec![taffy::style_helpers::auto()])]
+                    }
                 }
             })
             .unwrap_or_default()

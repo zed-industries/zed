@@ -1582,6 +1582,56 @@ mod content_sizing_tests {
     }
 
     #[gpui::test]
+    fn grid_auto_columns_size_like_a_table(cx: &mut TestAppContext) {
+        let cx = harness(cx);
+
+        // A two-column auto grid behaves like `table-layout: auto`: the
+        // short column hugs its content instead of taking an equal share,
+        // and the long column absorbs the remaining space and wraps.
+        draw_fixture(
+            cx,
+            div()
+                .grid()
+                .grid_cols_auto(2)
+                .w(px(300.))
+                .child(div().debug_selector(|| "LABEL".into()).child("label:"))
+                .child(div().debug_selector(|| "PROSE".into()).child(LONG_TEXT))
+                .into_any_element(),
+        );
+
+        let label_bounds = cx.debug_bounds("LABEL").unwrap();
+        let prose_bounds = cx.debug_bounds("PROSE").unwrap();
+
+        assert!(
+            label_bounds.size.width < px(100.),
+            "the short column should hug its content rather than split the \
+             grid evenly (got {:?})",
+            label_bounds.size.width
+        );
+        assert!(
+            label_bounds.size.width > px(10.),
+            "the short column should still fit its content (got {:?})",
+            label_bounds.size.width
+        );
+        assert!(
+            label_bounds.size.width + prose_bounds.size.width <= px(300.5),
+            "auto columns should not overflow the grid \
+             (label {:?} + prose {:?})",
+            label_bounds.size.width,
+            prose_bounds.size.width
+        );
+        assert!(
+            prose_bounds.size.height >= LINE_HEIGHT * 2.,
+            "the long column should wrap its text (got {:?})",
+            prose_bounds.size.height
+        );
+        assert!(
+            label_bounds.size.height <= prose_bounds.size.height,
+            "the label's row participation should not exceed the prose cell"
+        );
+    }
+
+    #[gpui::test]
     fn truncated_text_stays_on_a_single_line(cx: &mut TestAppContext) {
         let cx = harness(cx);
 
