@@ -235,7 +235,7 @@ pub struct WindowFrameSource {
 
 impl WindowFrameSource {
     pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
-        unsafe {
+        let frame_requests = unsafe {
             let frame_requests = DispatchSource::new(
                 &raw const _dispatch_source_type_data_add as *mut _,
                 0,
@@ -244,13 +244,14 @@ impl WindowFrameSource {
             );
             frame_requests.set_context(data);
             frame_requests.set_event_handler_f(callback);
-            // Resume before anything fallible can drop the source: destroying
-            // a suspended dispatch source is undefined behavior (#50875).
+            // Resume before this source can ever be dropped: destroying a
+            // suspended dispatch source is undefined behavior (#50875).
             frame_requests.resume();
-            Self {
-                frame_requests,
-                registration: None,
-            }
+            frame_requests
+        };
+        Self {
+            frame_requests,
+            registration: None,
         }
     }
 
