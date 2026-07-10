@@ -213,7 +213,7 @@ where
     F: Fn(&T, &T) -> Ordering,
 {
     if limit == 0 {
-        items.clear();
+        items.truncate(0);
     }
     if items.len() <= limit {
         items.sort_by(compare);
