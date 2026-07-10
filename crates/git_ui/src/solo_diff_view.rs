@@ -430,14 +430,14 @@ impl Item for SoloDiffView {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<SplittableEditor>() {
-            None
+            Some(self.editor.clone().into())
         } else {
             self.editor.act_as_type(type_id, cx)
         }
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        None
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
