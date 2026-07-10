@@ -6003,9 +6003,7 @@ impl ThreadView {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
-                    let confirmation = entries
-                        .last()
-                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx))
+                    let confirmation = this.thread.read(cx).is_waiting_for_confirmation()
                         || this.has_pending_request_elicitation(cx);
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
@@ -6419,8 +6417,8 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation =
-            self.is_waiting_for_confirmation(entry, cx) || self.has_pending_request_elicitation(cx);
+        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
+            || self.has_pending_request_elicitation(cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
