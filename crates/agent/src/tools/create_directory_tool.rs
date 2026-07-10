@@ -286,7 +286,11 @@ async fn create_out_of_project_directory(
 
 /// Resolve a model-provided path to an absolute, lexically-normalized path.
 /// Relative paths are joined onto the first worktree root.
-fn resolve_absolute_path(project: &Entity<Project>, raw: &str, cx: &mut AsyncApp) -> Option<PathBuf> {
+fn resolve_absolute_path(
+    project: &Entity<Project>,
+    raw: &str,
+    cx: &mut AsyncApp,
+) -> Option<PathBuf> {
     let path = Path::new(raw);
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -669,7 +673,7 @@ mod tests {
                 tool.run(
                     ToolInput::resolved(CreateDirectoryToolInput {
                         path: "project/link_to_external".into(),
-                    reason: None,
+                        reason: None,
                     }),
                     event_stream,
                     cx,
@@ -738,7 +742,10 @@ mod tests {
 
         let result = task.await;
         assert!(result.is_ok(), "expected success, got {result:?}");
-        assert!(target.is_dir(), "the new directory should have been created");
+        assert!(
+            target.is_dir(),
+            "the new directory should have been created"
+        );
     }
 
     /// Denying the grant removes the directory we eagerly created, leaving no

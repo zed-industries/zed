@@ -24,8 +24,8 @@ use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
 use crate::message_editor::SharedSessionCapabilities;
-use crate::unicode_confusables;
 use crate::ui::{SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip};
+use crate::unicode_confusables;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
@@ -2509,8 +2509,10 @@ impl ThreadView {
     /// shortcuts must be ignored (mirroring the disabled allow buttons).
     fn pending_allow_blocked_by_confusables(&self, cx: &Context<Self>) -> bool {
         let session_id = self.thread.read(cx).session_id().clone();
-        let Some((_, tool_call_id, _)) =
-            self.conversation.read(cx).pending_tool_call(&session_id, cx)
+        let Some((_, tool_call_id, _)) = self
+            .conversation
+            .read(cx)
+            .pending_tool_call(&session_id, cx)
         else {
             return false;
         };
@@ -8947,7 +8949,10 @@ impl ThreadView {
         let Some(details) = tool_call.sandbox_authorization_details.as_ref() else {
             return false;
         };
-        if self.acknowledged_confusable_warnings.contains(&tool_call.id) {
+        if self
+            .acknowledged_confusable_warnings
+            .contains(&tool_call.id)
+        {
             return false;
         }
         !Self::sandbox_confusable_findings(details).is_empty()

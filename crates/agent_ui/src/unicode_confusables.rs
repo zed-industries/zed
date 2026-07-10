@@ -47,12 +47,12 @@ impl SuspiciousChar {
             // Bidi controls and invisible characters have no meaningful glyph to
             // show (and printing them could itself reorder the banner text), so
             // we render only the codepoint and a name.
-            SuspiciousKind::BidiControl | SuspiciousKind::Invisible => match well_known_name(
-                self.character,
-            ) {
-                Some(name) => format!("{codepoint} {name}"),
-                None => codepoint,
-            },
+            SuspiciousKind::BidiControl | SuspiciousKind::Invisible => {
+                match well_known_name(self.character) {
+                    Some(name) => format!("{codepoint} {name}"),
+                    None => codepoint,
+                }
+            }
         }
     }
 }
@@ -126,10 +126,12 @@ fn is_invisible(character: char) -> bool {
 }
 
 fn is_non_ascii_space(character: char) -> bool {
-    matches!(character,
+    matches!(
+        character,
         '\u{00A0}' // NO-BREAK SPACE
         | '\u{1680}' // OGHAM SPACE MARK
-        | '\u{2000}'..='\u{200A}' // EN QUAD … HAIR SPACE
+        | '\u{2000}'
+            ..='\u{200A}' // EN QUAD … HAIR SPACE
         | '\u{202F}' // NARROW NO-BREAK SPACE
         | '\u{205F}' // MEDIUM MATHEMATICAL SPACE
         | '\u{3000}' // IDEOGRAPHIC SPACE
