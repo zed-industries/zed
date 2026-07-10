@@ -325,6 +325,77 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_first_line_missing_indent(cx: &mut TestAppContext) {
+        // Reproduces https://github.com/zed-industries/zed/issues/60302: the
+        // first line of the multi-line `old_text` omits its leading
+        // indentation while subsequent lines include theirs, so the indent
+        // delta computed from the first line must not be applied to the
+        // following lines. `old_text` also omits the `self.extra` line, so
+        // the query lines don't correspond one-to-one to the matched buffer
+        // rows and the indent pairing must follow the fuzzy match's
+        // alignment instead of assuming equal line counts.
+        let content = concat!(
+            "class Outer:\n",
+            "    def method(self):\n",
+            "        self.kept = \"unchanged\"\n",
+            "        self.target_a = \"before\"\n",
+            "        self.extra = \"row\"\n",
+            "        self.target_b = \"before\"\n",
+            "        self.target_c = \"before\"\n",
+            "        self.target_d = \"before\"\n",
+            "        self.kept_2 = \"unchanged\"\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.py": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.py".into(),
+                        edits: vec![Edit {
+                            old_text: concat!(
+                                "self.target_a = \"before\"\n",
+                                "        self.target_b = \"before\"\n",
+                                "        self.target_c = \"before\"\n",
+                                "        self.target_d = \"before\"",
+                            )
+                            .into(),
+                            new_text: concat!(
+                                "self.target_a = \"after\"\n",
+                                "        self.target_b = \"after\"\n",
+                                "        self.target_c = \"after\"\n",
+                                "        self.target_d = \"after\"",
+                            )
+                            .into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        // The matched range includes the `self.extra` row, so it is replaced
+        // along with the rest of the match.
+        assert_eq!(
+            new_text,
+            concat!(
+                "class Outer:\n",
+                "    def method(self):\n",
+                "        self.kept = \"unchanged\"\n",
+                "        self.target_a = \"after\"\n",
+                "        self.target_b = \"after\"\n",
+                "        self.target_c = \"after\"\n",
+                "        self.target_d = \"after\"\n",
+                "        self.kept_2 = \"unchanged\"\n",
+            )
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_multiple_edits(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
             cx,
