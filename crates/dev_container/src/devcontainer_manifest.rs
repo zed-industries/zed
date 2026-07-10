@@ -1800,13 +1800,34 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         &self,
         resources: DockerComposeResources,
     ) -> Result<DockerInspect, DevContainerError> {
+        self.start_docker_compose_services(&resources, false)
+            .await?;
+
+        if let Some(docker_ps) = self.check_for_existing_container().await? {
+            log::debug!("Found newly created dev container");
+            return self.docker_client.inspect(&docker_ps.id).await;
+        }
+
+        log::error!("Could not find existing container after docker compose up");
+
+        Err(DevContainerError::DevContainerParseFailed)
+    }
+
+    async fn start_docker_compose_services(
+        &self,
+        resources: &DockerComposeResources,
+        no_recreate: bool,
+    ) -> Result<(), DevContainerError> {
         let mut command = Command::new(self.docker_client.docker_cli());
         let project_name = self.project_name().await?;
         command.args(&["compose", "--project-name", &project_name]);
-        for docker_compose_file in resources.files {
+        for docker_compose_file in &resources.files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+        if no_recreate {
+            command.arg("--no-recreate");
+        }
         if let Some(run_services) = self.dev_container().run_services.as_ref() {
             command.args(run_services);
         }
@@ -1828,14 +1849,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ));
         }
 
-        if let Some(docker_ps) = self.check_for_existing_container().await? {
-            log::debug!("Found newly created dev container");
-            return self.docker_client.inspect(&docker_ps.id).await;
-        }
-
-        log::error!("Could not find existing container after docker compose up");
-
-        Err(DevContainerError::DevContainerParseFailed)
+        Ok(())
     }
 
     async fn run_docker_image(
@@ -2165,7 +2179,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
             if !docker_inspect.is_running() {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
-                self.docker_client.start_container(&docker_ps.id).await?;
+                if matches!(
+                    self.dev_container().build_type(),
+                    DevContainerBuildType::DockerCompose
+                ) {
+                    let resources = self.docker_compose_manifest().await?;
+                    self.start_docker_compose_services(&resources, true).await?;
+                } else {
+                    self.docker_client.start_container(&docker_ps.id).await?;
+                }
             }
 
             let remote_user = get_remote_user_from_config(&docker_inspect, self)?;
@@ -4965,6 +4987,76 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
                 "db".to_string(),
             ]),
             "compose up should target only the requested service, got: {:?}",
+            compose_up.args
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resumes_only_requested_compose_services_without_recreating(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let given_devcontainer_contents = r#"
+        {
+          "dockerComposeFile": "docker-compose.yml",
+          "service": "devcontainer",
+          "runServices": ["devcontainer", "db"],
+          "workspaceFolder": "/workspaces/project",
+          "updateRemoteUserUID": false
+        }
+        "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+services:
+  app:
+    image: test_image:latest
+  devcontainer:
+    image: test_image:latest
+    depends_on:
+      - db
+  db:
+    image: postgres:14.1
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let devcontainer_up = devcontainer_manifest
+            .check_for_existing_devcontainer()
+            .await
+            .unwrap();
+
+        assert!(devcontainer_up.is_some());
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        assert!(
+            compose_up.args.ends_with(&[
+                "up".to_string(),
+                "-d".to_string(),
+                "--no-recreate".to_string(),
+                "devcontainer".to_string(),
+                "db".to_string(),
+            ]),
+            "compose resume should target requested services without recreating them, got: {:?}",
             compose_up.args
         );
     }
