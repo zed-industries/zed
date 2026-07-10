@@ -314,7 +314,11 @@ mod tests {
         [ActionAlpha, ActionBeta, ActionGamma, ActionDelta,]
     );
 
-    crate::keybinding!("ctrl-alt-shift-f19", KeybindingMacroTest, "GpuiKeybindingMacroTest");
+    crate::keybinding!(
+        "ctrl-alt-shift-f19",
+        KeybindingMacroTest,
+        "GpuiKeybindingMacroTest"
+    );
 
     #[test]
     fn keybinding_macro_registers_action_and_default_binding() {

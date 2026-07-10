@@ -229,7 +229,11 @@ impl Application {
         // Defaults are registered at `App` creation, before this builder can
         // run, so opting out removes them again. Nothing else can have bound
         // keys yet, so this is equivalent to never loading them.
-        self.0.borrow().keymap.borrow_mut().remove_default_bindings();
+        self.0
+            .borrow()
+            .keymap
+            .borrow_mut()
+            .remove_default_bindings();
         self
     }
 
