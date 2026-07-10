@@ -3,16 +3,18 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{AsyncBody, CustomHeaders, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, ReasoningEffort, env_var,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, ReasoningEffort,
+    SubPageProviderSettings, env_var,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
+pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::{Arc, LazyLock};
@@ -200,12 +202,6 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOpenCode)
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "To use OpenCode models in Zed, you need an API key.".into(),
-        ))
-    }
-
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         if Self::subscription_enabled(OpenCodeSubscription::Go, cx) {
             // If both Go and Zen are enabled, prefer Go since it's not pay-as-you-go
@@ -268,12 +264,12 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         }
 
         for model in &settings.available_models {
-            let protocol = match model.protocol.as_str() {
-                "anthropic" => ApiProtocol::Anthropic,
-                "openai_responses" => ApiProtocol::OpenAiResponses,
-                "openai_chat" => ApiProtocol::OpenAiChat,
-                "google" => ApiProtocol::Google,
-                _ => ApiProtocol::OpenAiChat, // default fallback
+            let protocol = match model.protocol {
+                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
+                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
+                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
+                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
+                None => ApiProtocol::OpenAiChat, // default fallback
             };
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
@@ -311,19 +307,17 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "To use OpenCode models in Zed, you need an API key.".into(),
+            )),
+        ))
     }
 }
 
@@ -581,6 +575,12 @@ impl LanguageModel for OpenCodeLanguageModel {
             .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model
+            .supported_reasoning_effort_levels()
+            .is_some_and(|levels| levels.contains(&ReasoningEffort::None))
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_reasoning_effort_levels()
@@ -669,7 +669,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     anthropic::AnthropicModelMode::Default
                 };
-                let anthropic_request = into_anthropic(
+                let anthropic_request = match into_anthropic(
                     request,
                     self.model.id().to_string(),
                     1.0,
@@ -678,7 +678,10 @@ impl LanguageModel for OpenCodeLanguageModel {
                         .unwrap_or(8192),
                     mode,
                     anthropic::completion::AnthropicPromptCacheMode::Automatic,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
@@ -696,16 +699,19 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     None
                 };
-                let openai_request = into_open_ai(
+                let openai_request = match into_open_ai(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream =
                     self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
                 async move {
@@ -722,7 +728,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     None,
@@ -737,11 +743,17 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::Google => {
-                let google_request = into_google(
-                    request,
-                    self.model.id().to_string(),
-                    google_ai::GoogleModelMode::Default,
-                );
+                let mode = if self.supports_thinking() && request.thinking_allowed {
+                    google_ai::GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    google_ai::GoogleModelMode::Default
+                };
+                let google_request = match into_google(request, self.model.id().to_string(), mode) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream = self.stream_google(google_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();

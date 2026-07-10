@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::util::parse_tool_arguments;
 use language_model::{
@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -562,12 +562,6 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         None
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "Run local models on your machine with LlamaCpp.".into(),
-        ))
-    }
-
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let settings = LlamaCppLanguageModelProvider::settings(cx);
         let effective = compute_effective_models(&self.state.read(cx).fetched_models, settings);
@@ -603,20 +597,17 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local models on your machine with LlamaCpp.".into(),
+            )),
+        ))
     }
 }
 
@@ -659,7 +650,7 @@ impl LlamaCppLanguageModel {
     fn to_llama_cpp_request(
         &self,
         request: LanguageModelRequest,
-    ) -> llama_cpp::ChatCompletionRequest {
+    ) -> Result<llama_cpp::ChatCompletionRequest> {
         build_llama_cpp_request(
             &self.name,
             self.supports_images,
@@ -706,7 +697,11 @@ fn build_llama_cpp_request(
     supports_images: bool,
     capabilities: LiveCapabilities,
     request: LanguageModelRequest,
-) -> llama_cpp::ChatCompletionRequest {
+) -> Result<llama_cpp::ChatCompletionRequest> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("llama.cpp does not support custom tools");
+    }
+
     let supports_tools = capabilities.supports_tools;
     let supports_thinking = capabilities.supports_thinking;
     let mut messages = Vec::new();
@@ -752,13 +747,15 @@ fn build_llama_cpp_request(
                     }
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use.input.as_json().ok_or_else(|| {
+                        anyhow::anyhow!("llama.cpp does not support custom tool calls")
+                    })?;
                     let tool_call = llama_cpp::ToolCall {
                         id: tool_use.id.to_string(),
                         content: llama_cpp::ToolCallContent::Function {
                             function: llama_cpp::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -820,14 +817,25 @@ fn build_llama_cpp_request(
         request
             .tools
             .into_iter()
-            .map(|tool| llama_cpp::ToolDefinition::Function {
-                function: llama_cpp::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("llama.cpp does not support custom tools"));
+                    }
+                };
+                Ok(llama_cpp::ToolDefinition::Function {
+                    function: llama_cpp::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -843,7 +851,7 @@ fn build_llama_cpp_request(
         })
     };
 
-    llama_cpp::ChatCompletionRequest {
+    Ok(llama_cpp::ChatCompletionRequest {
         model: model_name.to_string(),
         messages,
         stream: true,
@@ -862,7 +870,7 @@ fn build_llama_cpp_request(
         stream_options: Some(llama_cpp::StreamOptions {
             include_usage: true,
         }),
-    }
+    })
 }
 
 impl LanguageModel for LlamaCppLanguageModel {
@@ -928,7 +936,10 @@ impl LanguageModel for LlamaCppLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_llama_cpp_request(request);
+        let request = match self.to_llama_cpp_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LlamaCppEventMapper::new();
@@ -1028,7 +1039,9 @@ impl LlamaCppEventMapper {
                                         id: tool_call.id.into(),
                                         name: tool_call.name.into(),
                                         is_input_complete: true,
-                                        input,
+                                        input: language_model::LanguageModelToolUseInput::Json(
+                                            input,
+                                        ),
                                         raw_input: tool_call.arguments,
                                         thought_signature: None,
                                     },
@@ -1838,7 +1851,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1881,7 +1895,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1891,7 +1906,7 @@ mod tests {
                 tool_calls,
             } => {
                 assert_eq!(content, "answer");
-                assert_eq!(reasoning_content, &None);
+                assert!(reasoning_content.is_none());
                 assert!(tool_calls.is_empty());
             }
             message => panic!("unexpected message: {message:?}"),
@@ -1920,7 +1935,9 @@ mod tests {
                             id: "call_1".into(),
                             name: "weather".into(),
                             raw_input: r#"{"city":"Oslo"}"#.to_string(),
-                            input: serde_json::json!({ "city": "Oslo" }),
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                serde_json::json!({ "city": "Oslo" }),
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         }),
@@ -1930,7 +1947,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {

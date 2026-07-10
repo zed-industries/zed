@@ -320,6 +320,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
       "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-alt-home": "agent::ScrollOutputToTop",
@@ -1278,6 +1279,7 @@
     "context": "AgentPanel > Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-n": "agent::NewThread",
     },
   },

@@ -20,7 +20,6 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
@@ -924,6 +923,20 @@ impl ThreadView {
                     cx.notify();
                 },
             ));
+
+            // A "no model selected" error is stale as soon as the thread has a
+            // usable model
+            if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
+            {
+                subscriptions.push(cx.subscribe(
+                    &native_thread,
+                    |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
+                        if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
+                            this.clear_thread_error(cx);
+                        }
+                    },
+                ));
+            }
         }
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
@@ -1022,7 +1035,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
-        this.sync_editor_mode_for_empty_state(cx);
+        this.sync_editor_mode(cx);
         this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
@@ -1490,13 +1503,11 @@ impl ThreadView {
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
-                    let agent_id = self.agent_id.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
                         ConversationView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
-                            agent_id,
                             connection,
                             window,
                             cx,
@@ -2361,27 +2372,7 @@ impl ThreadView {
 
     pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
         self.editor_expanded = is_expanded;
-        self.message_editor.update(cx, |editor, cx| {
-            if is_expanded {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                    },
-                    cx,
-                )
-            } else {
-                let agent_settings = AgentSettings::get_global(cx);
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: agent_settings.message_editor_min_lines,
-                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
-                    },
-                    cx,
-                )
-            }
-        });
+        self.sync_editor_mode(cx);
         cx.notify();
     }
 
@@ -2526,26 +2517,18 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
-        match entry {
-            AgentThreadEntry::ToolCall(tool_call) => {
-                matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
-            }
-            AgentThreadEntry::Elicitation(elicitation_id) => {
-                cx.has_flag::<AcpBetaFeatureFlag>()
-                    && self
-                        .thread
-                        .read(cx)
-                        .elicitation(elicitation_id)
-                        .is_some_and(|(_, elicitation)| {
+    fn has_pending_request_elicitation(&self, cx: &App) -> bool {
+        self.server_view
+            .read_with(cx, |server_view, cx| {
+                server_view
+                    .request_elicitation_store()
+                    .is_some_and(|store| {
+                        store.read(cx).elicitations().iter().any(|elicitation| {
                             matches!(elicitation.status, ElicitationStatus::Pending { .. })
                         })
-            }
-            _ => false,
-        }
+                    })
+            })
+            .unwrap_or(false)
     }
 
     pub fn sync_elicitation_state_for_entry(
@@ -2562,11 +2545,6 @@ impl ThreadView {
             };
             elicitation_id.clone()
         };
-
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.elicitation_form_states.remove(&elicitation_id);
-            return;
-        }
 
         let thread = self.thread.read(cx);
         let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
@@ -2613,10 +2591,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         let mode = self
             .thread
             .read(cx)
@@ -2662,10 +2636,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
@@ -2679,10 +2649,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
@@ -4901,7 +4867,7 @@ impl ThreadView {
                             );
                         }),
                 )
-                .child(Divider::vertical().h_4())
+                .child(Divider::vertical())
                 .into_any_element(),
         )
     }
@@ -6018,9 +5984,8 @@ impl ThreadView {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
-                    let confirmation = entries
-                        .last()
-                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
+                    let confirmation = this.thread.read(cx).is_waiting_for_confirmation()
+                        || this.has_pending_request_elicitation(cx);
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6341,8 +6306,7 @@ impl ThreadView {
             }
             AgentThreadEntry::Elicitation(elicitation_id) => {
                 let thread = self.thread.read(cx);
-                if cx.has_flag::<AcpBetaFeatureFlag>()
-                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                if let Some((_, elicitation)) = thread.elicitation(elicitation_id)
                     && should_render_elicitation(elicitation)
                 {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
@@ -6434,7 +6398,8 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
+        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
+            || self.has_pending_request_elicitation(cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
@@ -7092,11 +7057,21 @@ impl ThreadView {
         open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
-    pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = !has_messages;
 
-        let mode = if v2_empty_state {
+        if !has_messages {
+            self.editor_expanded = false;
+        }
+
+        let mode = if self.editor_expanded {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            }
+        } else if v2_empty_state {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
@@ -7400,7 +7375,7 @@ impl ThreadView {
                                         block.markdown()
                                     }
                                 };
-                                md.map_or(false, |m| m.read(cx).selected_text().is_some())
+                                md.map_or(false, |m| m.read(cx).has_selection())
                             })
                         })
                         .unwrap_or(false);
@@ -7939,74 +7914,44 @@ impl ThreadView {
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line, docs section slug)
-        let (title, detail, docs_section): (
-            SharedString,
-            Option<SharedString>,
-            Option<&'static str>,
-        ) = match reason {
-            SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
-                "Couldn't create a sandbox".into(),
-                Some(error.user_facing_message().into()),
-                Some(error.docs_section()),
-            ),
-            SandboxNotAppliedReason::DisabledForThisThread => {
-                // The grant only exists because an earlier command failed to
-                // create a sandbox; surface that same explanation here.
-                let thread_error = self.find_thread_sandbox_error(cx);
-                let detail = thread_error
-                    .as_ref()
-                    .map(|error| {
-                        SharedString::from(format!(
-                            "Allowed for this thread after the sandbox failed: {}",
-                            error.user_facing_message()
-                        ))
-                    })
-                    .unwrap_or_else(|| {
-                        "Unsandboxed execution is allowed for the rest of this thread.".into()
-                    });
-                let docs_section = thread_error.as_ref().map(|error| error.docs_section());
-                ("Ran without sandbox".into(), Some(detail), docs_section)
-            }
-        };
+        // (title, detail line, docs section slug)
+        let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
+            match reason {
+                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                    "Couldn't create a sandbox".into(),
+                    error.user_facing_message().into(),
+                    Some(error.docs_section()),
+                ),
+                SandboxNotAppliedReason::DisabledForThisThread => {
+                    // The grant only exists because an earlier command failed to
+                    // create a sandbox; surface that same explanation here.
+                    let thread_error = self.find_thread_sandbox_error(cx);
+                    let detail = thread_error
+                        .as_ref()
+                        .map(|error| {
+                            SharedString::from(format!(
+                                "Allowed for this thread after the sandbox failed: {}",
+                                error.user_facing_message()
+                            ))
+                        })
+                        .unwrap_or_else(|| {
+                            "Unsandboxed execution is allowed for the rest of this thread.".into()
+                        });
+                    let docs_section = thread_error.as_ref().map(|error| error.docs_section());
+                    ("Ran without sandbox".into(), detail, docs_section)
+                }
+            };
 
-        h_flex()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.5))
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::XSmall)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .gap_0p5()
-                            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
-                            .when_some(detail, |this, detail| {
-                                this.child(
-                                    Label::new(detail)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                            })
-                            .child(self.render_sandbox_docs_link(
-                                "sandbox-not-applied-docs-link",
-                                docs_section,
-                                cx,
-                            )),
-                    ),
-            )
+        Callout::new()
+            .severity(Severity::Warning)
+            .icon(IconName::Warning)
+            .title(title)
+            .description(detail)
+            .actions_slot(self.render_sandbox_docs_link(
+                "sandbox-not-applied-docs-link",
+                docs_section,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -8154,15 +8099,19 @@ impl ThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
+
+        let has_content = !tool_call.content.is_empty()
+            || (should_show_raw_input && tool_call.raw_input.is_some());
+
+        let is_collapsible = has_content && !needs_confirmation;
         let mut is_open = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
-
-        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -10730,13 +10679,17 @@ impl ThreadView {
                 false,
                 cx,
             ),
-            ThreadError::NoModelSelected => self.render_error_callout(
-                "No Model Selected",
-                "Select a model from the model picker below to get started.".into(),
-                false,
-                false,
-                cx,
-            ),
+            ThreadError::NoModelSelected => self
+                .render_model_not_available_error(cx)
+                .unwrap_or_else(|| {
+                    self.render_error_callout(
+                        "No Model Selected",
+                        "Select a model from the model picker below to get started.".into(),
+                        false,
+                        false,
+                        cx,
+                    )
+                }),
             ThreadError::ApiError { provider } => self.render_error_callout(
                 "API Error",
                 format!(
@@ -10837,6 +10790,101 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
+    fn render_model_not_available_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        let thread = self.as_native_thread(cx)?;
+
+        let has_authenticated_provider =
+            LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx);
+
+        let (title, description): (SharedString, SharedString) =
+            match thread.read(cx).thread_model() {
+                agent::ThreadModel::Ready(_) => return None,
+                agent::ThreadModel::Unresolved(selected_model) => {
+                    if let Some(provider) = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .provider(&&selected_model.provider)
+                    {
+                        if !provider.is_authenticated(cx) {
+                            (
+                                format!("Failed to authenticate with {} provider", provider.name())
+                                    .into(),
+                                "Open the settings to configure the selected provider".into(),
+                            )
+                        } else {
+                            (
+                                format!("Model {} was not found", selected_model.model.0).into(),
+                                "You may need to reconfigure authentication for this provider"
+                                    .into(),
+                            )
+                        }
+                    } else {
+                        (
+                            format!("Provider {} was not found", selected_model.provider).into(),
+                            "Open the settings to configure providers".into(),
+                        )
+                    }
+                }
+                agent::ThreadModel::Unset => {
+                    if has_authenticated_provider {
+                        (
+                            "No model selected".into(),
+                            "Choose a different model or configure other providers to get started"
+                                .into(),
+                        )
+                    } else {
+                        (
+                            "No model selected".into(),
+                            "Configure a provider to get started".into(),
+                        )
+                    }
+                }
+            };
+
+        let callout = Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(title)
+            .description(description)
+            .actions_slot(
+                h_flex()
+                    .gap_1()
+                    .child(self.open_llm_providers_settings_button(cx))
+                    .when(has_authenticated_provider, |this| {
+                        this.child(self.open_model_selector_button(cx))
+                    }),
+            )
+            .dismiss_action(self.dismiss_error_button(cx));
+
+        Some(callout)
+    }
+
+    fn open_llm_providers_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("configure-llm-provider", "Configure Provider")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(
+                    Box::new(zed_actions::OpenSettingsAt {
+                        path: "llm_providers".to_string(),
+                        target: None,
+                    }),
+                    cx,
+                );
+            }))
+    }
+
+    fn open_model_selector_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("open-model-selector", "Select Model")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .key_binding(KeyBinding::for_action(&ToggleModelSelector, cx))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(ToggleModelSelector.boxed_clone(), cx);
+            }))
+    }
+
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
         const MESSAGE: &str = "This conversation is too long for the model's context window. \
             Start a new thread or remove some attached files to continue.";
@@ -10893,7 +10941,6 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, window, cx| {
                     let server_view = this.server_view.clone();
-                    let agent_name = this.agent_id.clone();
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
@@ -10906,7 +10953,6 @@ impl ThreadView {
                         ConversationView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
-                            agent_name,
                             connection,
                             window,
                             cx,
@@ -12020,19 +12066,31 @@ pub(crate) fn open_link(
         return;
     };
 
-    if let Some(mention) = MentionUri::parse(&url, workspace.read(cx).path_style(cx)).log_err() {
+    let path_style = workspace.read(cx).path_style(cx);
+    if let Some(mention) = MentionUri::parse_hyperlink(&url, path_style).log_err() {
+        // Percent escapes in bare paths are ambiguous: prefer the decoded
+        // interpretation, falling back to the literal one (e.g. a file
+        // actually named `a%20b.rs`) only when the decoded path doesn't
+        // resolve in the project but the literal one does.
+        let resolves_in_project = |mention: &MentionUri, cx: &App| {
+            mention.abs_path().is_some_and(|abs_path| {
+                let project = workspace.read(cx).project().read(cx);
+                project
+                    .find_project_path(abs_path, cx)
+                    .is_some_and(|path| project.entry_for_path(&path, cx).is_some())
+            })
+        };
+        let mention = match MentionUri::parse_hyperlink_literal(&url, path_style) {
+            Some(literal)
+                if !resolves_in_project(&mention, cx) && resolves_in_project(&literal, cx) =>
+            {
+                literal
+            }
+            _ => mention,
+        };
         workspace.update(cx, |workspace, cx| match mention {
             MentionUri::File { abs_path } => {
-                let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
-                else {
-                    return;
-                };
-
-                workspace
-                    .open_path(path, None, true, window, cx)
-                    .detach_and_log_err(cx);
+                open_abs_path_at_point(workspace, abs_path, None, window, cx);
             }
             MentionUri::PastedImage { .. } => {}
             MentionUri::Directory { abs_path } => {
@@ -12056,7 +12114,7 @@ pub(crate) fn open_link(
                 open_abs_path_at_point(
                     workspace,
                     path,
-                    Point::new(*line_range.start(), 0),
+                    Some(Point::new(*line_range.start(), 0)),
                     window,
                     cx,
                 );
@@ -12069,7 +12127,7 @@ pub(crate) fn open_link(
                 open_abs_path_at_point(
                     workspace,
                     path,
-                    Point::new(*line_range.start(), column.unwrap_or(0)),
+                    Some(Point::new(*line_range.start(), column.unwrap_or(0))),
                     window,
                     cx,
                 );
@@ -12156,6 +12214,7 @@ mod tests {
     use super::*;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -12258,6 +12317,118 @@ mod tests {
                 .and_then(|item| item.project_path(cx))
                 .expect("file should be open");
             assert!(*active.path == *"src/main.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_link_percent_escape_disambiguation(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a%20b.rs": "literal",
+                "a b.rs": "decoded",
+                "c d.rs": "",
+                "e%20f.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        let open_link_and_active_path = |url: String, cx: &mut gpui::VisualTestContext| {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(url.into(), &workspace_weak, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                    .expect("file should be open")
+                    .path
+            })
+        };
+
+        // Both interpretations exist: the decoded one wins.
+        let path = open_link_and_active_path(path!("/project/a%20b.rs").to_string(), cx);
+        assert_eq!(*path, *"a b.rs");
+
+        // Only the decoded file exists.
+        let path = open_link_and_active_path(path!("/project/c%20d.rs").to_string(), cx);
+        assert_eq!(*path, *"c d.rs");
+
+        // Only the literally-named file exists: fall back to it.
+        let path = open_link_and_active_path(path!("/project/e%20f.rs").to_string(), cx);
+        assert_eq!(*path, *"e%20f.rs");
+    }
+
+    #[gpui::test]
+    async fn test_open_link_out_of_project_path(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({"notes.md": "one\ntwo\nthree\n"}))
+            .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        // A nonexistent out-of-project path opens nothing, not even an
+        // empty buffer.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(
+                path!("/outside/missing.md").to_string().into(),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "nothing should open for a nonexistent path"
+            );
+        });
+
+        // An existing out-of-project file opens at the linked line.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(
+                format!("{}:2", path!("/outside/notes.md")).into(),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            let item = workspace.active_item(cx).expect("file should be open");
+            let project_path = item.project_path(cx).expect("item should have a path");
+            let abs_path = workspace
+                .project()
+                .read(cx)
+                .absolute_path(&project_path, cx);
+            assert_eq!(
+                abs_path.as_deref(),
+                Some(Path::new(path!("/outside/notes.md")))
+            );
+            item.downcast::<Editor>().expect("should be an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
         });
     }
 }

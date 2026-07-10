@@ -3,7 +3,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -13,7 +13,7 @@ use language_model::{
 use language_model::{
     InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelRequest, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -252,12 +252,6 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
-        ))
-    }
-
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
         // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
         // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
@@ -318,19 +312,17 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), _window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
+            )),
+        ))
     }
 }
 
@@ -346,7 +338,11 @@ impl LmStudioLanguageModel {
     fn to_lmstudio_request(
         &self,
         request: LanguageModelRequest,
-    ) -> lmstudio::ChatCompletionRequest {
+    ) -> Result<lmstudio::ChatCompletionRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("LM Studio does not support custom tools");
+        }
+
         let mut messages = Vec::new();
 
         for message in request.messages {
@@ -373,13 +369,15 @@ impl LmStudioLanguageModel {
                         );
                     }
                     MessageContent::ToolUse(tool_use) => {
+                        let input = tool_use.input.as_json().ok_or_else(|| {
+                            anyhow!("LM Studio does not support custom tool calls")
+                        })?;
                         let tool_call = lmstudio::ToolCall {
                             id: tool_use.id.to_string(),
                             content: lmstudio::ToolCallContent::Function {
                                 function: lmstudio::FunctionContent {
                                     name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
+                                    arguments: serde_json::to_string(input).unwrap_or_default(),
                                 },
                             },
                         };
@@ -425,7 +423,7 @@ impl LmStudioLanguageModel {
             }
         }
 
-        lmstudio::ChatCompletionRequest {
+        Ok(lmstudio::ChatCompletionRequest {
             model: self.model.name.clone(),
             messages,
             stream: true,
@@ -438,20 +436,31 @@ impl LmStudioLanguageModel {
             tools: request
                 .tools
                 .into_iter()
-                .map(|tool| lmstudio::ToolDefinition::Function {
-                    function: lmstudio::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
+                .map(|tool| {
+                    let input_schema = match tool.input {
+                        language_model::LanguageModelRequestToolInput::Function {
+                            input_schema,
+                            ..
+                        } => input_schema,
+                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                            return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
+                        }
+                    };
+                    Ok(lmstudio::ToolDefinition::Function {
+                        function: lmstudio::FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             tool_choice: request.tool_choice.map(|choice| match choice {
                 LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
                 LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
                 LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
             }),
-        }
+        })
     }
 
     fn stream_completion(
@@ -541,7 +550,10 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_lmstudio_request(request);
+        let request = match self.to_lmstudio_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
@@ -645,7 +657,7 @@ impl LmStudioEventMapper {
                                 id: tool_call.id.into(),
                                 name: tool_call.name.into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments,
                                 thought_signature: None,
                             },
