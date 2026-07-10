@@ -157,7 +157,7 @@ impl CsvPreviewView {
                 .contents
                 .line_numbers
                 .get(*data_row)?
-                .display_string(if self.settings.multiline_cells_enabled {
+                .display_string(if self.settings.multiline_cells_effectively_enabled() {
                     RowIdentDisplayMode::Vertical
                 } else {
                     RowIdentDisplayMode::Horizontal

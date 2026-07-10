@@ -60,7 +60,7 @@ impl CsvPreviewView {
                 match self.settings.rendering_with {
                     RowRenderMechanism::VariableList => {
                         table.variable_row_height_list(row_count, self.list_state.clone(), {
-                            cx.processor(move |this, display_row: usize, _window, cx| {
+                            cx.processor(move |this, display_row: usize, window, cx| {
                                 this.performance_metrics.rendered_indices.push(display_row);
 
                                 let display_row = DisplayRow(display_row);
@@ -69,6 +69,7 @@ impl CsvPreviewView {
                                     cols,
                                     display_row,
                                     row_identifier_text_color,
+                                    window.line_height(),
                                     cx,
                                 )
                                 .unwrap_or_else(|| panic!("Expected to render a table row"))
@@ -77,12 +78,13 @@ impl CsvPreviewView {
                     }
                     RowRenderMechanism::UniformList => {
                         table.uniform_list("csv-table", row_count, {
-                            cx.processor(move |this, range: Range<usize>, _window, cx| {
+                            cx.processor(move |this, range: Range<usize>, window, cx| {
                                 // Record all display indices in the range for performance metrics
                                 this.performance_metrics
                                     .rendered_indices
                                     .extend(range.clone());
 
+                                let row_height = window.line_height();
                                 range
                                     .filter_map(|display_index| {
                                         Self::render_single_table_row(
@@ -90,6 +92,7 @@ impl CsvPreviewView {
                                             cols,
                                             DisplayRow(display_index),
                                             row_identifier_text_color,
+                                            row_height,
                                             cx,
                                         )
                                     })
@@ -110,6 +113,7 @@ impl CsvPreviewView {
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
+        row_height: Pixels,
         cx: &Context<CsvPreviewView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
@@ -130,10 +134,10 @@ impl CsvPreviewView {
 
             let cell = div()
                 .size_full()
-                .when(!this.settings.multiline_cells_enabled, |div| {
+                .when(!this.settings.multiline_cells_effectively_enabled(), |div| {
                     div.whitespace_nowrap()
                         .text_ellipsis()
-                        .h(this.row_height)
+                        .h(row_height)
                         .overflow_hidden()
                 })
                 .child(CsvPreviewView::create_selectable_cell(

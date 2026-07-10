@@ -25,6 +25,11 @@ mod types;
 
 actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
 
+/// Cheap stand-in for a single table row's height, used only to size the
+/// scrollbar for off-screen rows without a full `.measure_all()` pass. Not
+/// meant to exactly match the rendered row height.
+const APPROXIMATE_ROW_HEIGHT: Pixels = px(24.);
+
 pub struct TabularDataPreviewFeatureFlag;
 
 impl FeatureFlag for TabularDataPreviewFeatureFlag {
@@ -49,9 +54,6 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
-    /// Cached row height used as a scroll height hint for off-screen list items.
-    /// Updated each render frame from the actual text line height.
-    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -189,8 +191,7 @@ impl CsvPreviewView {
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(px(24.)),
-                row_height: px(20.),
+                    .with_uniform_item_height(APPROXIMATE_ROW_HEIGHT),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -246,7 +247,7 @@ impl CsvPreviewView {
                 // Approximation of single csv table row height. Will be re-measured on scrolling.
                 // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
                 view.list_state
-                    .reset_with_uniform_height(visible_rows, view.row_height);
+                    .reset_with_uniform_height(visible_rows, APPROXIMATE_ROW_HEIGHT);
                 cx.notify();
             })
             .ok();
