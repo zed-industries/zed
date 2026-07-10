@@ -84,9 +84,12 @@ struct DisplayEntry {
     subscribers: Vec<(SubscriberId, DispatchRetained<DispatchSource>)>,
 }
 
-// SAFETY: `sys::DisplayLink` is a refcounted handle to a thread-safe
-// CoreVideo object; the raw pointer inside it is valid on any thread. All
-// mutation of the entry itself is serialized by the registry lock.
+// SAFETY: Both fields wrapping raw pointers are refcounted handles to
+// thread-safe objects that are valid on any thread: `sys::DisplayLink` to a
+// CoreVideo object, and each subscriber's `DispatchRetained<DispatchSource>`
+// to a GCD object (which the display's io thread really does use, calling
+// `merge_data` from the output callback). All mutation of the entry itself
+// is serialized by the registry lock.
 unsafe impl Send for DisplayEntry {}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
