@@ -295,7 +295,7 @@ impl Item for CsvPreviewView {
     type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::FileDoc))
+        Some(Icon::new(IconName::Table))
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
