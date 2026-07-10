@@ -1,7 +1,7 @@
 //! Table Cell Rendering
 
-use gpui::{AnyElement, ElementId};
-use ui::{SharedString, Tooltip, div, prelude::*};
+use gpui::{AnyElement, ClipboardItem, ElementId, MouseButton};
+use ui::{Color, Divider, Label, LabelSize, SharedString, Tooltip, div, prelude::*};
 
 use crate::{CsvPreviewView, settings::VerticalAlignment, types::DisplayCellId};
 
@@ -40,12 +40,25 @@ fn create_table_cell(
             VerticalAlignment::Center => div.items_center(),
         })
         .font_buffer(cx)
+        .on_mouse_down(MouseButton::Right, {
+            let text = cell_content.clone();
+            move |_event, _window, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+            }
+        })
         .tooltip(Tooltip::element({
             let text = cell_content.clone();
             move |_window, cx| {
-                div()
-                    .font_buffer(cx)
-                    .child(text.clone())
+                v_flex()
+                    .gap_1()
+                    .child(div().font_buffer(cx).child(text.clone()))
+                    .child(Divider::horizontal())
+                    .child(
+                        Label::new("Right click to copy content")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
                     .into_any_element()
             }
         }))
