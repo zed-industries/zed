@@ -56,13 +56,22 @@ impl FsWatcher {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
-        if let Some(registration) = register_existing_path(
-            path,
+        match register_existing_path(
+            path.clone(),
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
         )? {
-            self.registrations.lock().insert(key, registration);
+            Some(registration) => {
+                self.registrations.lock().insert(key, registration);
+            }
+            None => {
+                // Registration was skipped (e.g. the native watch-limit cooldown
+                // is active). Retry in the background rather than silently leaving
+                // the path unwatched forever.
+                log::warn!("watch registration for {path:?} was skipped; retrying in background");
+                self.add_pending_path(path);
+            }
         }
         Ok(())
     }

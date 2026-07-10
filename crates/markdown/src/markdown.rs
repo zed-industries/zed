@@ -2,6 +2,7 @@ pub mod html;
 mod mermaid;
 pub mod parser;
 mod path_range;
+mod selection;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
@@ -808,12 +809,15 @@ impl Markdown {
         output.into()
     }
 
-    pub fn selected_text(&self) -> Option<String> {
+    pub fn has_selection(&self) -> bool {
+        self.selection.end > self.selection.start
+    }
+
+    pub fn selected_source(&self) -> Option<&str> {
         if self.selection.end <= self.selection.start {
-            None
-        } else {
-            Some(self.source[self.selection.start..self.selection.end].to_string())
+            return None;
         }
+        self.source.get(self.selection.start..self.selection.end)
     }
 
     pub fn set_search_highlights(
@@ -873,7 +877,9 @@ impl Markdown {
         if self.selection.end <= self.selection.start {
             return;
         }
-        let text = self.source[self.selection.start..self.selection.end].to_string();
+        let text = self
+            .parsed_markdown
+            .rebalanced_markdown_for_selection(self.selection.start..self.selection.end);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -884,8 +890,10 @@ impl Markdown {
     ) {
         let range = self.selection.start..self.selection.end;
         if range.end > range.start {
-            self.context_menu_selected_markdown =
-                Some(SharedString::new(&self.source[range.clone()]));
+            self.context_menu_selected_markdown = Some(SharedString::new(
+                self.parsed_markdown
+                    .rebalanced_markdown_for_selection(range.clone()),
+            ));
             self.context_menu_selected_text = rendered_text
                 .map(|text| text.text_for_range(range))
                 .map(SharedString::new)
@@ -910,8 +918,9 @@ impl Markdown {
         self.context_menu_selected_text.as_ref()
     }
 
-    /// Returns the raw markdown source that was selected when the most recent
-    /// context menu invocation happened.
+    /// Returns the markdown that was selected when the most recent context
+    /// menu invocation happened, rebalanced via
+    /// [`ParsedMarkdown::rebalanced_markdown_for_selection`].
     pub fn context_menu_selected_markdown(&self) -> Option<&SharedString> {
         self.context_menu_selected_markdown.as_ref()
     }
@@ -1206,6 +1215,21 @@ impl ParsedMarkdown {
             .partition_point(|block_start| *block_start <= source_index);
 
         Some(partition.saturating_sub(1))
+    }
+
+    /// Extracts the markdown source for a selection, rebalancing inline
+    /// delimiters (`**`, backticks, link syntax, etc.) so partial selections of
+    /// styled spans stay well-formed.
+    ///
+    /// With an exception of a single inline code span, which is returned as plain
+    /// text, since copying a command or identifier is the dominant use case there.
+    pub fn rebalanced_markdown_for_selection(&self, selection: Range<usize>) -> String {
+        selection::rebalanced_markdown_for_selection(
+            &self.source,
+            &self.events,
+            &self.root_block_starts,
+            selection,
+        )
     }
 }
 

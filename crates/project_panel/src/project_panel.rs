@@ -2553,7 +2553,7 @@ impl ProjectPanel {
         cx: &mut Context<ProjectPanel>,
     ) {
         maybe!({
-            let items_to_delete = self.disjoint_effective_entries(cx);
+            let items_to_delete = self.disjoint_effective_entries_excluding_roots(cx);
             if items_to_delete.is_empty() {
                 return None;
             }
@@ -3266,7 +3266,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_effective_entries(cx);
+        let entries = self.disjoint_effective_entries_excluding_roots(cx);
         if !entries.is_empty() {
             self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Cut(entries));
@@ -3275,7 +3275,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_effective_entries(cx);
+        let entries = self.disjoint_effective_entries_excluding_roots(cx);
         if !entries.is_empty() {
             self.write_entries_to_system_clipboard(&entries, cx);
             self.clipboard = Some(ClipboardEntry::Copied(entries));
@@ -3870,25 +3870,6 @@ impl ProjectPanel {
         }
     }
 
-    fn move_entry(
-        &mut self,
-        entry_to_move: ProjectEntryId,
-        destination: ProjectEntryId,
-        destination_is_file: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<CreatedEntry>>> {
-        if self
-            .project
-            .read(cx)
-            .entry_is_worktree_root(entry_to_move, cx)
-        {
-            self.move_worktree_root(entry_to_move, destination, cx);
-            None
-        } else {
-            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
-        }
-    }
-
     fn move_worktree_root(
         &mut self,
         entry_to_move: ProjectEntryId,
@@ -3971,8 +3952,14 @@ impl ProjectPanel {
         self.index_for_entry(selection.entry_id, selection.worktree_id)
     }
 
-    fn disjoint_effective_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
-        self.disjoint_entries(self.effective_entries(), cx)
+    fn disjoint_effective_entries_excluding_roots(&self, cx: &App) -> BTreeSet<SelectedEntry> {
+        let project = self.project.read(cx);
+        let entries = self
+            .effective_entries()
+            .into_iter()
+            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+            .collect();
+        self.disjoint_entries(entries, cx)
     }
 
     fn disjoint_entries(
@@ -3988,7 +3975,6 @@ impl ProjectPanel {
         let project = self.project.read(cx);
         let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
             .into_iter()
-            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
             .fold(HashMap::default(), |mut map, entry| {
                 map.entry(entry.worktree_id).or_default().push(entry);
                 map
@@ -4745,6 +4731,21 @@ impl ProjectPanel {
             .collect::<BTreeSet<SelectedEntry>>();
         let entries = self.disjoint_entries(resolved_selections, cx);
 
+        let root_entries: Vec<ProjectEntryId> = {
+            let project = self.project.read(cx);
+            entries
+                .iter()
+                .filter(|entry| project.entry_is_worktree_root(entry.entry_id, cx))
+                .map(|entry| entry.entry_id)
+                .collect()
+        };
+        if !root_entries.is_empty() {
+            for entry_id in root_entries {
+                self.move_worktree_root(entry_id, target_entry_id, cx);
+            }
+            return;
+        }
+
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -4862,7 +4863,9 @@ impl ProjectPanel {
             // results with folded selections that need refreshing.
             let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
             for entry in entries {
-                if let Some(task) = self.move_entry(entry.entry_id, target_entry_id, is_file, cx) {
+                if let Some(task) =
+                    self.move_worktree_entry(entry.entry_id, target_entry_id, is_file, cx)
+                {
                     move_tasks.push((entry.entry_id, task));
                 }
             }

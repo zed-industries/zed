@@ -462,7 +462,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .as_ref()
                     .and_then(|effort| anthropic::Effort::from_str(effort).ok());
 
-                let mut request = into_anthropic(
+                let mut request = match into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -475,7 +475,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                         AnthropicModelMode::Default
                     },
                     AnthropicPromptCacheMode::Automatic,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
 
                 if enable_thinking && effort.is_some() {
                     request.thinking = Some(anthropic::Thinking::Adaptive {
@@ -592,7 +595,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             cloud_llm_client::LanguageModelProvider::XAi => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
-                let request = into_open_ai(
+                let request = match into_open_ai(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -601,7 +604,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     None,
                     false,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
@@ -640,7 +646,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let request =
-                    into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
+                    match into_google(request, self.model.id.to_string(), GoogleModelMode::Default)
+                    {
+                        Ok(request) => request,
+                        Err(error) => return async move { Err(error.into()) }.boxed(),
+                    };
                 let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {

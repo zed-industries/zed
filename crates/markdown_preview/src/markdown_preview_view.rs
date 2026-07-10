@@ -1385,7 +1385,11 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        self.markdown.read(cx).selected_text().unwrap_or_default()
+        self.markdown
+            .read(cx)
+            .selected_source()
+            .unwrap_or_default()
+            .to_string()
     }
 
     fn activate_match(

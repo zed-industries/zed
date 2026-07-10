@@ -262,7 +262,18 @@ impl GitRepository for FakeGitRepository {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         self.with_state_async(false, move |state| {
-            let sha = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let sha = match state.refs.get(&commit) {
+                Some(sha) => sha.clone(),
+                // Real git fails to show an unresolvable revision (e.g. HEAD on an
+                // unborn branch), so only fall back to treating the input as a sha.
+                None => {
+                    anyhow::ensure!(
+                        commit.parse::<Oid>().is_ok(),
+                        "unable to resolve revision: {commit}"
+                    );
+                    commit
+                }
+            };
             Ok(CommitDetails {
                 sha: sha.into(),
                 message: "initial commit".into(),

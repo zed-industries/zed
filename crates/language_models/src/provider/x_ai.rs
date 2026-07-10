@@ -413,7 +413,7 @@ impl LanguageModel for XAiLanguageModel {
         >,
     > {
         let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
-        let request = crate::provider::open_ai::into_open_ai(
+        let request = match crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
@@ -422,7 +422,10 @@ impl LanguageModel for XAiLanguageModel {
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             reasoning_effort,
             false,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();

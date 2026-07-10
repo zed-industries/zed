@@ -7402,7 +7402,7 @@ impl ThreadView {
                                         block.markdown()
                                     }
                                 };
-                                md.map_or(false, |m| m.read(cx).selected_text().is_some())
+                                md.map_or(false, |m| m.read(cx).has_selection())
                             })
                         })
                         .unwrap_or(false);
@@ -8116,15 +8116,19 @@ impl ThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
+
+        let has_content = !tool_call.content.is_empty()
+            || (should_show_raw_input && tool_call.raw_input.is_some());
+
+        let is_collapsible = has_content && !needs_confirmation;
         let mut is_open = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
-
-        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)

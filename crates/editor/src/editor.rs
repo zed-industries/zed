@@ -9568,6 +9568,9 @@ impl Editor {
                 ranges,
                 path_key,
             } => {
+                if let Some(hovered_link_state) = self.hovered_link_state.as_mut() {
+                    hovered_link_state.symbol_range = None;
+                }
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
