@@ -2517,25 +2517,6 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
-        match entry {
-            AgentThreadEntry::ToolCall(tool_call) => {
-                matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
-            }
-            AgentThreadEntry::Elicitation(elicitation_id) => self
-                .thread
-                .read(cx)
-                .elicitation(elicitation_id)
-                .is_some_and(|(_, elicitation)| {
-                    matches!(elicitation.status, ElicitationStatus::Pending { .. })
-                }),
-            _ => false,
-        }
-    }
-
     fn has_pending_request_elicitation(&self, cx: &App) -> bool {
         self.server_view
             .read_with(cx, |server_view, cx| {
