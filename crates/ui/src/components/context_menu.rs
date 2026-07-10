@@ -4,8 +4,8 @@ use crate::{
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
-    Subscription, TaskExt, anchored, canvas, prelude::*, px,
+    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role,
+    Size, Subscription, TaskExt, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -610,9 +610,23 @@ impl ContextMenu {
     }
 
     pub fn toggleable_entry(
+        self,
+        label: impl Into<SharedString>,
+        toggled: bool,
+        position: IconPosition,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.toggleable_entry_disabled_when(label, toggled, false, position, action, handler)
+    }
+
+    /// Like [`Self::toggleable_entry`], but the entry is rendered disabled (and its handler is not
+    /// invoked) when `disabled` is `true`.
+    pub fn toggleable_entry_disabled_when(
         mut self,
         label: impl Into<SharedString>,
         toggled: bool,
+        disabled: bool,
         position: IconPosition,
         action: Option<Box<dyn Action>>,
         handler: impl Fn(&mut Window, &mut App) + 'static,
@@ -629,7 +643,7 @@ impl ContextMenu {
             icon_size: IconSize::Small,
             icon_color: None,
             action,
-            disabled: false,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,
@@ -1391,6 +1405,11 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        // The menu keeps real focus on its container, so for assistive
+        // technology to track the selected item we report it as the active
+        // descendant. GPUI only honors this while the menu actually holds
+        // focus, so we mark the selected item unconditionally here.
+        let is_active_descendant = |selectable: bool| selectable && Some(ix) == self.selected_index;
         match item {
             ContextMenuItem::Separator => ListSeparator.into_any_element(),
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
@@ -1420,9 +1439,9 @@ impl ContextMenu {
                 .disabled(true)
                 .child(Label::new(label.clone()))
                 .into_any_element(),
-            ContextMenuItem::Entry(entry) => {
-                self.render_menu_entry(ix, entry, cx).into_any_element()
-            }
+            ContextMenuItem::Entry(entry) => self
+                .render_menu_entry(ix, entry, is_active_descendant(true), cx)
+                .into_any_element(),
             ContextMenuItem::CustomEntry {
                 entry_render,
                 handler,
@@ -1469,6 +1488,10 @@ impl ContextMenu {
                     .child(
                         ListItem::new(ix)
                             .inset(true)
+                            .when(selectable, |item| item.aria_role(Role::MenuItem))
+                            .when(is_active_descendant(selectable), |item| {
+                                item.aria_active_descendant()
+                            })
                             .toggle_state(Some(ix) == self.selected_index)
                             .selectable(selectable)
                             .when(selectable, |item| {
@@ -1500,7 +1523,14 @@ impl ContextMenu {
                 icon_color,
                 ..
             } => self
-                .render_submenu_item_trigger(ix, label.clone(), *icon, *icon_color, cx)
+                .render_submenu_item_trigger(
+                    ix,
+                    label.clone(),
+                    *icon,
+                    *icon_color,
+                    is_active_descendant(true),
+                    cx,
+                )
                 .into_any_element(),
         }
     }
@@ -1511,6 +1541,7 @@ impl ContextMenu {
         label: SharedString,
         icon: Option<IconName>,
         icon_color: Option<Color>,
+        is_active_descendant: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let toggle_state = Some(ix) == self.selected_index
@@ -1544,6 +1575,9 @@ impl ContextMenu {
             .child(
                 ListItem::new(ix)
                     .inset(true)
+                    .aria_role(Role::MenuItem)
+                    .when(is_active_descendant, |item| item.aria_active_descendant())
+                    .aria_label(label.clone())
                     .toggle_state(toggle_state)
                     .child(
                         canvas(
@@ -1722,6 +1756,7 @@ impl ContextMenu {
         &self,
         ix: usize,
         entry: &ContextMenuEntry,
+        is_active_descendant: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -1862,6 +1897,13 @@ impl ContextMenu {
                     .group_name("label_container")
                     .inset(true)
                     .disabled(*disabled)
+                    .aria_role(if toggle.is_some() {
+                        Role::MenuItemCheckBox
+                    } else {
+                        Role::MenuItem
+                    })
+                    .when(is_active_descendant, |item| item.aria_active_descendant())
+                    .aria_label(label.clone())
                     .toggle_state(Some(ix) == self.selected_index)
                     .when(self.main_menu.is_none() && !*disabled, |item| {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {
@@ -2155,6 +2197,7 @@ impl Render for ContextMenu {
                 .child(
                     v_flex()
                         .id("context-menu")
+                        .role(Role::Menu)
                         .max_h(vh(0.75, window))
                         .flex_shrink_0()
                         .child(menu_bounds_measure)

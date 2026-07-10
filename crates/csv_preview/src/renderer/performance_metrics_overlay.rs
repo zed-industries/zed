@@ -20,7 +20,7 @@ impl CsvPreviewView {
 
         let children = div()
             .absolute()
-            .top_24()
+            .bottom_8()
             .right_4()
             .px_3()
             .py_2()
