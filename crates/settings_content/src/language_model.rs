@@ -106,6 +106,8 @@ pub struct AnthropicAvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// Whether Anthropic's fast mode is available for this model.
+    pub supports_fast_mode: Option<bool>,
     /// The model's mode (e.g. thinking)
     pub mode: Option<ModelMode>,
 }
