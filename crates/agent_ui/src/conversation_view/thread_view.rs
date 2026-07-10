@@ -2536,6 +2536,20 @@ impl ThreadView {
         }
     }
 
+    fn has_pending_request_elicitation(&self, cx: &App) -> bool {
+        self.server_view
+            .read_with(cx, |server_view, cx| {
+                server_view
+                    .request_elicitation_store()
+                    .is_some_and(|store| {
+                        store.read(cx).elicitations().iter().any(|elicitation| {
+                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                        })
+                    })
+            })
+            .unwrap_or(false)
+    }
+
     pub fn sync_elicitation_state_for_entry(
         &mut self,
         index: usize,
@@ -5991,7 +6005,8 @@ impl ThreadView {
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
-                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
+                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx))
+                        || this.has_pending_request_elicitation(cx);
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6404,7 +6419,8 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
+        let needs_confirmation =
+            self.is_waiting_for_confirmation(entry, cx) || self.has_pending_request_elicitation(cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
