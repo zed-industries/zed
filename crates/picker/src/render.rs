@@ -22,7 +22,9 @@ pub mod window_controls;
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.finish_any_completed_resize(window, cx);
-
+        // toggle between BelowForced and Right based on whether it'd clamp if
+        // horizontal
+        let rendered_layout = self.preview_layout_rendered(window);
         let content = match &self.preview {
             Some(
                 preview @ Preview {
@@ -30,6 +32,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     ..
                 },
             ) => self
+                .render_with_preview_below(preview, window, cx)
+                .into_any_element(),
+            // render sideways based on bounds
+            Some(
+                preview @ Preview {
+                    layout: Layout::Right,
+                    ..
+                },
+            ) if rendered_layout == Some(Layout::Below) => self
                 .render_with_preview_below(preview, window, cx)
                 .into_any_element(),
             Some(
@@ -58,7 +69,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(has_preview, |this| this.overflow_hidden())
             .child(content);
 
-        let layout = self.preview_layout().unwrap_or(Layout::Hidden);
+        let layout = self
+            .preview_layout_rendered(window)
+            .unwrap_or(Layout::Hidden);
 
         div()
             .relative()
@@ -101,7 +114,7 @@ impl<D: PickerDelegate> Picker<D> {
             .relative()
             .map(|this| {
                 self.shape.apply_results_size(
-                    self.preview_layout(),
+                    self.preview_layout_rendered(window),
                     &self.size_bounds,
                     self.fill_height(),
                     this,
@@ -309,7 +322,11 @@ impl<D: PickerDelegate> Picker<D> {
                     ),
             )
             .when(self.is_resizable(), |this| {
-                this.child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
+                this.child(self.render_resize(
+                    window_controls::Middle(preview::Layout::Below),
+                    window,
+                    cx,
+                ))
             })
     }
 
@@ -365,7 +382,8 @@ impl<D: PickerDelegate> Picker<D> {
         if let Shape::Resizing(pos) = self.shape
             && !cx.has_active_drag()
         {
-            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            let centered =
+                Shape::centered_and_relative(pos, self.preview_layout_rendered(window), window);
             persistence::store_shape_for_this_layout(
                 D::name(),
                 self.preview_layout(),
