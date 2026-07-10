@@ -28,6 +28,14 @@
 //!   stop links directly, so interleaved starts/stops of windows sharing a
 //!   display cannot conflict.
 //!
+//! One tradeoff of immortal entries: a link created for a given
+//! `CGDirectDisplayID` is reused forever, including after the display is
+//! unplugged and one reappears with the same id, or after mode/refresh-rate
+//! changes. `CVDisplayLink` looks up display timing dynamically, so a cached
+//! link keeps pacing correctly; if that ever proves untrue the fix is to
+//! also refresh entries from a display-reconfiguration callback, not to
+//! release links (which would reintroduce the teardown race).
+//!
 //! Lock ordering: the output callback runs on the link's io thread and takes
 //! the registry lock, possibly while holding CVDisplayLink-internal locks. To
 //! avoid a lock cycle through those (undocumented) internals, we never call a
