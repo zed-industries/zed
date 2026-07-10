@@ -2,20 +2,242 @@ pub(super) mod blame;
 
 use super::*;
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
 
-pub type RenderDiffHunkControlsFn = Arc<
-    dyn Fn(
-        u32,
-        &DiffHunkStatus,
-        Range<Anchor>,
-        bool,
-        Pixels,
-        &Entity<Editor>,
-        &mut Window,
-        &mut App,
-    ) -> AnyElement,
->;
+#[derive(Clone)]
+pub struct ResolvedDiffHunk {
+    pub buffer_range: Range<text::Anchor>,
+    pub diff_base_byte_range: Range<usize>,
+    pub status: DiffHunkStatus,
+}
+
+#[derive(Clone)]
+pub struct ResolvedDiffHunks {
+    pub diff: Entity<BufferDiff>,
+    pub buffer_id: BufferId,
+    pub buffer: Option<Entity<Buffer>>,
+    pub hunks: Vec<ResolvedDiffHunk>,
+}
+
+pub trait DiffHunkDelegate {
+    fn toggle(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    );
+
+    fn stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    );
+
+    fn restore(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if hunks.is_empty() || editor.read_only(cx) {
+            return;
+        }
+        self.stage_or_unstage(false, hunks.clone(), editor, window, cx);
+        editor.transact(window, cx, |editor, window, cx| {
+            editor.restore_diff_hunks(hunks, cx);
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            editor.change_selections(
+                SelectionEffects::no_scroll(),
+                window,
+                cx,
+                |selections_state| {
+                    selections_state.select(selections);
+                },
+            );
+        });
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement;
+
+    fn render_hunk_as_staged(&self, status: &DiffHunkStatus, _cx: &App) -> bool {
+        !status.has_secondary_hunk()
+    }
+}
+
+pub struct UncommittedDiffHunkDelegate;
+
+impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
+    fn toggle(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let stage = hunks
+            .iter()
+            .flat_map(|hunks| hunks.hunks.iter())
+            .any(|hunk| hunk.status.has_secondary_hunk());
+        self.stage_or_unstage(stage, hunks, editor, window, cx);
+    }
+
+    fn stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let Some(project) = editor.project() else {
+            return;
+        };
+        for hunks in hunks {
+            let Some(buffer) = hunks.buffer else {
+                continue;
+            };
+            let ranges = hunks
+                .hunks
+                .into_iter()
+                .map(|hunk| hunk.buffer_range)
+                .collect::<Vec<_>>();
+            if ranges.is_empty() {
+                continue;
+            }
+            let secondary_diff = hunks.diff.read(cx).secondary_diff();
+            project
+                .update(cx, |project, cx| {
+                    if stage {
+                        let Some(secondary_diff) = secondary_diff else {
+                            return Err(anyhow::anyhow!("diff has no unstaged secondary"));
+                        };
+                        project.stage_hunks(buffer, secondary_diff, ranges, cx)
+                    } else {
+                        project.unstage_uncommitted_hunks(buffer, hunks.diff, ranges, cx)
+                    }
+                })
+                .log_err();
+        }
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        render_diff_hunk_controls(
+            row,
+            status,
+            hunk_range,
+            is_created_file,
+            line_height,
+            editor,
+            window,
+            cx,
+        )
+    }
+}
+
+pub struct RestoreOnlyDiffHunkDelegate;
+
+impl DiffHunkDelegate for RestoreOnlyDiffHunkDelegate {
+    fn toggle(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn render_hunk_controls(
+        &self,
+        _row: u32,
+        _status: &DiffHunkStatus,
+        _hunk_range: Range<Anchor>,
+        _is_created_file: bool,
+        _line_height: Pixels,
+        _editor: &Entity<Editor>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> AnyElement {
+        gpui::Empty.into_any_element()
+    }
+}
+
+pub struct RestoreOnlyUnstagedDiffHunkDelegate;
+
+impl DiffHunkDelegate for RestoreOnlyUnstagedDiffHunkDelegate {
+    fn toggle(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn render_hunk_controls(
+        &self,
+        _row: u32,
+        _status: &DiffHunkStatus,
+        _hunk_range: Range<Anchor>,
+        _is_created_file: bool,
+        _line_height: Pixels,
+        _editor: &Entity<Editor>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> AnyElement {
+        gpui::Empty.into_any_element()
+    }
+
+    fn render_hunk_as_staged(&self, _status: &DiffHunkStatus, _cx: &App) -> bool {
+        false
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DisplayDiffHunk {
@@ -166,24 +388,115 @@ impl Editor {
         })
     }
 
-    pub fn set_render_diff_hunk_controls(
-        &mut self,
-        render_diff_hunk_controls: RenderDiffHunkControlsFn,
-        cx: &mut Context<Self>,
-    ) {
-        self.render_diff_hunk_controls = render_diff_hunk_controls;
-        cx.notify();
+    fn resolve_diff_hunks(
+        &self,
+        hunks: Vec<MultiBufferDiffHunk>,
+        cx: &App,
+    ) -> Vec<ResolvedDiffHunks> {
+        let multibuffer = self.buffer().read(cx);
+        let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
+        let mut resolved = Vec::new();
+
+        for (source_buffer_id, hunks) in &chunk_by {
+            let Some(diff) = multibuffer.diff_for(source_buffer_id) else {
+                continue;
+            };
+            let diff_snapshot = diff.read(cx).snapshot(cx);
+            let main_buffer_id = diff_snapshot.buffer_id();
+            let buffer = multibuffer.buffer(main_buffer_id).or_else(|| {
+                self.project
+                    .as_ref()
+                    .and_then(|project| project.read(cx).buffer_for_id(main_buffer_id, cx))
+            });
+            let mut resolved_hunks = Vec::new();
+
+            for hunk in hunks {
+                if hunk.buffer_id == main_buffer_id {
+                    resolved_hunks.push(ResolvedDiffHunk {
+                        buffer_range: hunk.buffer_range,
+                        diff_base_byte_range: hunk.diff_base_byte_range.start.0
+                            ..hunk.diff_base_byte_range.end.0,
+                        status: hunk.status,
+                    });
+                } else {
+                    let diff_base_byte_range =
+                        hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0;
+                    let Some(hunk) = diff_snapshot
+                        .hunks_intersecting_base_text_range(
+                            diff_base_byte_range.clone(),
+                            diff_snapshot.buffer_snapshot(),
+                        )
+                        .find(|hunk| hunk.diff_base_byte_range == diff_base_byte_range)
+                    else {
+                        continue;
+                    };
+                    let kind = if hunk.buffer_range.start == hunk.buffer_range.end {
+                        DiffHunkStatusKind::Deleted
+                    } else if hunk.diff_base_byte_range.is_empty() {
+                        DiffHunkStatusKind::Added
+                    } else {
+                        DiffHunkStatusKind::Modified
+                    };
+                    resolved_hunks.push(ResolvedDiffHunk {
+                        buffer_range: hunk.buffer_range,
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        status: DiffHunkStatus {
+                            kind,
+                            secondary: hunk.secondary_status,
+                        },
+                    });
+                }
+            }
+
+            if !resolved_hunks.is_empty() {
+                resolved.push(ResolvedDiffHunks {
+                    diff,
+                    buffer_id: main_buffer_id,
+                    buffer,
+                    hunks: resolved_hunks,
+                });
+            }
+        }
+
+        resolved
     }
 
-    /// Make all diff hunks render with the "unstaged" appearance, regardless
-    /// of whether they have a secondary hunk. Intended for views whose diffs
-    /// aren't related to the git index (e.g. agent diffs).
-    pub fn set_render_diff_hunks_as_unstaged(
+    pub fn diff_hunk_delegate(&self) -> Arc<dyn DiffHunkDelegate> {
+        self.diff_hunk_delegate
+            .clone()
+            .unwrap_or_else(|| Arc::new(UncommittedDiffHunkDelegate))
+    }
+
+    pub fn set_diff_hunk_delegate(
         &mut self,
-        render_as_unstaged: bool,
+        delegate: Option<Arc<dyn DiffHunkDelegate>>,
         cx: &mut Context<Self>,
     ) {
-        self.render_diff_hunks_as_unstaged = render_as_unstaged;
+        let had_delegate = self.diff_hunk_delegate.is_some();
+        let has_delegate = delegate.is_some();
+        self.diff_hunk_delegate = delegate;
+
+        if !had_delegate && has_delegate {
+            self.load_diff_task.take();
+        } else if had_delegate && !has_delegate {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.set_all_diff_hunks_collapsed(cx);
+            });
+
+            if let Some(project) = self.project.clone() {
+                self.load_diff_task = Some(
+                    update_uncommitted_diff_for_buffer(
+                        cx.entity(),
+                        &project,
+                        self.buffer.read(cx).all_buffers(),
+                        self.buffer.clone(),
+                        cx,
+                    )
+                    .shared(),
+                );
+            }
+        }
+
         cx.notify();
     }
 
@@ -263,33 +576,6 @@ impl Editor {
     ) {
         self.toggle_git_blame_inline_internal(true, window, cx);
         cx.notify();
-    }
-
-    pub fn start_temporary_diff_override(&mut self) {
-        self.load_diff_task.take();
-        self.temporary_diff_override = true;
-    }
-
-    pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
-        self.temporary_diff_override = false;
-        self.render_diff_hunks_as_unstaged = false;
-        self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_all_diff_hunks_collapsed(cx);
-        });
-
-        if let Some(project) = self.project.clone() {
-            self.load_diff_task = Some(
-                update_uncommitted_diff_for_buffer(
-                    cx.entity(),
-                    &project,
-                    self.buffer.read(cx).all_buffers(),
-                    self.buffer.clone(),
-                    cx,
-                )
-                .shared(),
-            );
-        }
     }
 
     /// Hides the inline blame popover element, in case it's already visible, or
@@ -638,6 +924,29 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let just_started = self.blame.is_none();
+        if just_started {
+            self.start_git_blame(true, window, cx);
+        }
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        if just_started && !blame.read(cx).has_generated_entries() {
+            let subscription = cx.observe_in(blame, window, |editor, blame, window, cx| {
+                if blame.read(cx).has_generated_entries() {
+                    editor.pending_blame_hover_observation.take();
+                    editor.show_blame_hover_popover(window, cx);
+                }
+            });
+            self.pending_blame_hover_observation = Some(subscription);
+            return;
+        }
+
+        self.show_blame_hover_popover(window, cx);
+    }
+
+    fn show_blame_hover_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -647,9 +956,6 @@ impl Editor {
             return;
         };
 
-        if self.blame.is_none() {
-            self.start_git_blame(true, window, cx);
-        }
         let Some(blame) = self.blame.as_ref() else {
             return;
         };
@@ -744,31 +1050,48 @@ impl Editor {
         );
     }
 
-    pub(super) fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
-        let mut revert_changes = HashMap::default();
-        let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
-        for (buffer_id, hunks) in &chunk_by {
-            let hunks = hunks.collect::<Vec<_>>();
-            for hunk in &hunks {
-                self.prepare_restore_change(&mut revert_changes, hunk, cx);
-            }
-            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
-        }
-        if !revert_changes.is_empty() {
-            self.buffer().update(cx, |multi_buffer, cx| {
-                for (buffer_id, changes) in revert_changes {
-                    if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit(
-                                changes
-                                    .into_iter()
-                                    .map(|(range, text)| (range, text.to_string())),
-                                None,
-                                cx,
-                            );
-                        });
+    pub(super) fn restore_diff_hunks(
+        &mut self,
+        hunks: Vec<ResolvedDiffHunks>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut revert_changes = Vec::new();
+        for hunks in hunks {
+            let Some(buffer) = hunks.buffer else {
+                continue;
+            };
+            let diff_snapshot = hunks.diff.read(cx).snapshot(cx);
+            let changes = hunks
+                .hunks
+                .into_iter()
+                .filter_map(|hunk| {
+                    if hunk.diff_base_byte_range == (0..0)
+                        && hunk.buffer_range.start.is_min()
+                        && hunk.buffer_range.end.is_max()
+                    {
+                        return None;
                     }
-                }
+                    let original_text = diff_snapshot
+                        .base_text()
+                        .as_rope()
+                        .slice(hunk.diff_base_byte_range.start..hunk.diff_base_byte_range.end);
+                    Some((hunk.buffer_range, original_text))
+                })
+                .collect::<Vec<_>>();
+            if !changes.is_empty() {
+                revert_changes.push((buffer, changes));
+            }
+        }
+
+        for (buffer, changes) in revert_changes {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    changes
+                        .into_iter()
+                        .map(|(range, text)| (range, text.to_string())),
+                    None,
+                    cx,
+                );
             });
         }
     }
@@ -1401,18 +1724,25 @@ impl Editor {
     pub(super) fn toggle_staged_selected_diff_hunks(
         &mut self,
         _: &::git::ToggleStaged,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self
             .selections
             .disjoint_anchors()
             .iter()
             .map(|s| s.range())
             .collect();
-        let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, ranges, cx);
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            task.await?;
+            this.update_in(cx, |this, window, cx| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                let hunks = this.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+                this.apply_toggle(hunks, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub(super) fn stage_and_next(
@@ -1433,42 +1763,47 @@ impl Editor {
         self.do_stage_or_unstage_and_next(false, window, cx);
     }
 
-    pub(super) fn do_stage_or_unstage(
-        &self,
+    pub fn apply_toggle(
+        &mut self,
+        hunks: Vec<MultiBufferDiffHunk>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        let delegate = self.diff_hunk_delegate();
+        delegate.toggle(hunks, self, window, cx);
+    }
+
+    pub fn apply_stage_or_unstage(
+        &mut self,
         stage: bool,
-        buffer_id: BufferId,
-        hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        cx: &mut App,
-    ) -> Option<()> {
-        let project = self.project()?;
-        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
-        let diff = self.buffer.read(cx).diff_for(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let file_exists = buffer_snapshot
-            .file()
-            .is_some_and(|file| file.disk_state().exists());
-        diff.update(cx, |diff, cx| {
-            diff.stage_or_unstage_hunks(
-                stage,
-                &hunks
-                    .map(|hunk| buffer_diff::DiffHunk {
-                        buffer_range: hunk.buffer_range,
-                        // We don't need to pass in word diffs here because they're only used for rendering and
-                        // this function changes internal state
-                        base_word_diffs: Vec::default(),
-                        buffer_word_diffs: Vec::default(),
-                        diff_base_byte_range: hunk.diff_base_byte_range.start.0
-                            ..hunk.diff_base_byte_range.end.0,
-                        secondary_status: hunk.status.secondary,
-                        range: Point::zero()..Point::zero(), // unused
-                    })
-                    .collect::<Vec<_>>(),
-                &buffer_snapshot,
-                file_exists,
-                cx,
-            )
-        });
-        None
+        hunks: Vec<MultiBufferDiffHunk>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        let delegate = self.diff_hunk_delegate();
+        delegate.stage_or_unstage(stage, hunks, self, window, cx);
+    }
+
+    pub fn apply_restore(
+        &mut self,
+        hunks: Vec<MultiBufferDiffHunk>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        let delegate = self.diff_hunk_delegate();
+        delegate.restore(hunks, self, window, cx);
     }
 
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut Context<Self>) -> bool {
@@ -1756,31 +2091,20 @@ impl Editor {
         }
     }
 
-    fn stage_or_unstage_diff_hunks(
+    pub fn stage_or_unstage_diff_hunks(
         &mut self,
         stage: bool,
         ranges: Vec<Range<Anchor>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.delegate_stage_and_restore {
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let hunks: Vec<_> = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
-            if !hunks.is_empty() {
-                cx.emit(EditorEvent::StageOrUnstageRequested { stage, hunks });
-            }
-            return;
-        }
         let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             task.await?;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
-                let chunk_by = this
-                    .diff_hunks_in_ranges(&ranges, &snapshot)
-                    .chunk_by(|hunk| hunk.buffer_id);
-                for (buffer_id, hunks) in &chunk_by {
-                    this.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                }
+                let hunks = this.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+                this.apply_stage_or_unstage(stage, hunks, window, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1827,66 +2151,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if self.delegate_stage_and_restore {
-            let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
-            if !hunks.is_empty() {
-                cx.emit(EditorEvent::RestoreRequested { hunks });
-            }
-            return;
-        }
         let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
-        self.transact(window, cx, |editor, window, cx| {
-            editor.restore_diff_hunks(hunks, cx);
-            let selections = editor
-                .selections
-                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select(selections);
-            });
-        });
-    }
-
-    fn has_stageable_diff_hunks_in_ranges(
-        &self,
-        ranges: &[Range<Anchor>],
-        snapshot: &MultiBufferSnapshot,
-    ) -> bool {
-        let mut hunks = self.diff_hunks_in_ranges(ranges, snapshot);
-        hunks.any(|hunk| hunk.status().has_secondary_hunk())
-    }
-
-    fn prepare_restore_change(
-        &self,
-        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
-        hunk: &MultiBufferDiffHunk,
-        cx: &mut App,
-    ) -> Option<()> {
-        if hunk.is_created_file() {
-            return None;
-        }
-        let multi_buffer = self.buffer.read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let diff_snapshot = multi_buffer_snapshot.diff_for_buffer_id(hunk.buffer_id)?;
-        let original_text = diff_snapshot
-            .base_text()
-            .as_rope()
-            .slice(hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0);
-        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
-        let buffer = buffer.read(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
-        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
-            probe
-                .0
-                .start
-                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
-                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
-        }) {
-            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), original_text));
-            Some(())
-        } else {
-            None
-        }
+        self.apply_restore(hunks, window, cx);
     }
 
     fn save_buffers_for_ranges_if_needed(
@@ -1929,11 +2195,11 @@ impl Editor {
         let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
         if ranges.iter().any(|range| range.start != range.end) {
-            self.stage_or_unstage_diff_hunks(stage, ranges, cx);
+            self.stage_or_unstage_diff_hunks(stage, ranges, window, cx);
             return;
         }
 
-        self.stage_or_unstage_diff_hunks(stage, ranges, cx);
+        self.stage_or_unstage_diff_hunks(stage, ranges, window, cx);
 
         let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
         let wrap_around = !all_diff_hunks_expanded;
@@ -2658,7 +2924,7 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
-pub(super) fn render_diff_hunk_controls(
+pub fn render_diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
@@ -2703,11 +2969,12 @@ pub(super) fn render_diff_hunk_controls(
                     })
                     .on_click({
                         let editor = editor.clone();
-                        move |_event, _window, cx| {
+                        move |_event, window, cx| {
                             editor.update(cx, |editor, cx| {
                                 editor.stage_or_unstage_diff_hunks(
                                     true,
                                     vec![hunk_range.start..hunk_range.start],
+                                    window,
                                     cx,
                                 );
                             });
@@ -2729,11 +2996,12 @@ pub(super) fn render_diff_hunk_controls(
                     })
                     .on_click({
                         let editor = editor.clone();
-                        move |_event, _window, cx| {
+                        move |_event, window, cx| {
                             editor.update(cx, |editor, cx| {
                                 editor.stage_or_unstage_diff_hunks(
                                     false,
                                     vec![hunk_range.start..hunk_range.start],
+                                    window,
                                     cx,
                                 );
                             });
@@ -2860,7 +3128,7 @@ pub(super) fn update_uncommitted_diff_for_buffer(
     });
     cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
-        if editor.read_with(cx, |editor, _cx| editor.temporary_diff_override) {
+        if editor.read_with(cx, |editor, _cx| editor.diff_hunk_delegate.is_some()) {
             return;
         }
 
