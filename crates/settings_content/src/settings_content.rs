@@ -690,6 +690,11 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
 
+    /// Whether to show stash entries in the Git Graph.
+    ///
+    /// Default: true
+    pub show_stashes_in_graph: Option<bool>,
+
     /// Whether to show entries with tree or flat view in the panel
     ///
     /// Default: false
