@@ -220,6 +220,19 @@ impl Application {
         self
     }
 
+    /// Run without the library-default key bindings registered via
+    /// [`crate::keybinding!`]. Applications that own their entire keymap (like
+    /// Zed) can use this to ensure no bindings exist except the ones they load
+    /// themselves. Individual defaults can instead be masked by binding
+    /// [`crate::NoAction`] over their keystrokes.
+    pub fn without_default_key_bindings(self) -> Self {
+        // Defaults are registered at `App` creation, before this builder can
+        // run, so opting out removes them again. Nothing else can have bound
+        // keys yet, so this is equivalent to never loading them.
+        self.0.borrow().keymap.borrow_mut().remove_default_bindings();
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -852,6 +865,14 @@ impl App {
                 _ref_counts,
             }),
         });
+
+        // Library-default key bindings (registered via `keybinding!`) are
+        // bound before anything else so that all subsequent bindings shadow
+        // them via declaration-order precedence.
+        app.borrow()
+            .keymap
+            .borrow_mut()
+            .add_bindings(crate::DefaultKeyBinding::load_all());
 
         init_app_menus(platform.as_ref(), &app.borrow());
         SystemWindowTabController::init(&mut app.borrow_mut());

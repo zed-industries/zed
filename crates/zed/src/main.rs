@@ -85,11 +85,14 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn build_application() -> Application {
     let platform = gpui_platform::current_platform(false);
-    if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
+    let application = if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
         Application::with_platform(platform)
     } else {
         Application::new_inaccessible(platform)
-    }
+    };
+    // Zed owns its entire keymap via its keymap JSON files, so opt out of any
+    // library-default key bindings registered with `gpui::keybinding!`.
+    application.without_default_key_bindings()
 }
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
