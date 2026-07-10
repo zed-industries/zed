@@ -166,11 +166,8 @@ impl DiffHunkDelegate for UnstagedDiffDelegate {
                         move |_event, window, cx| {
                             editor.update(cx, |editor, cx| {
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                let hunks: Vec<_> =
-                                    editor.diff_hunks_in_ranges(
-                                        &[hunk_range.clone()],
-                                        &snapshot,
-                                    )
+                                let hunks: Vec<_> = editor
+                                    .diff_hunks_in_ranges(&[hunk_range.clone()], &snapshot)
                                     .collect();
                                 if !hunks.is_empty() {
                                     editor.apply_restore(hunks, window, cx);
@@ -833,9 +830,7 @@ impl Render for UnstagedDiffToolbar {
                     .width(rems_from_px(80.))
                     .disabled(!button_states.restore_all)
                     .tooltip(Tooltip::text("Restore All Changes"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.restore_all(window, cx)
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.restore_all(window, cx))),
             )
     }
 }

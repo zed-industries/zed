@@ -1050,11 +1050,7 @@ impl Editor {
         );
     }
 
-    pub fn restore_diff_hunks(
-        &mut self,
-        hunks: Vec<ResolvedDiffHunks>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn restore_diff_hunks(&mut self, hunks: Vec<ResolvedDiffHunks>, cx: &mut Context<Self>) {
         let mut revert_changes = Vec::new();
         for hunks in hunks {
             let Some(buffer) = hunks.buffer else {

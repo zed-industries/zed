@@ -375,8 +375,7 @@ impl DiffMultibuffer {
         let ranges = self.hunk_action_ranges(cx);
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let hunks: Vec<_> =
-                editor.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+            let hunks: Vec<_> = editor.diff_hunks_in_ranges(&ranges, &snapshot).collect();
             if !hunks.is_empty() {
                 editor.apply_restore(hunks, window, cx);
             }
