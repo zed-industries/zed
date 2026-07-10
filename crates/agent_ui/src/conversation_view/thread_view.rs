@@ -20,7 +20,6 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
@@ -2518,26 +2517,18 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
-        match entry {
-            AgentThreadEntry::ToolCall(tool_call) => {
-                matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
-            }
-            AgentThreadEntry::Elicitation(elicitation_id) => {
-                cx.has_flag::<AcpBetaFeatureFlag>()
-                    && self
-                        .thread
-                        .read(cx)
-                        .elicitation(elicitation_id)
-                        .is_some_and(|(_, elicitation)| {
+    fn has_pending_request_elicitation(&self, cx: &App) -> bool {
+        self.server_view
+            .read_with(cx, |server_view, cx| {
+                server_view
+                    .request_elicitation_store()
+                    .is_some_and(|store| {
+                        store.read(cx).elicitations().iter().any(|elicitation| {
                             matches!(elicitation.status, ElicitationStatus::Pending { .. })
                         })
-            }
-            _ => false,
-        }
+                    })
+            })
+            .unwrap_or(false)
     }
 
     pub fn sync_elicitation_state_for_entry(
@@ -2554,11 +2545,6 @@ impl ThreadView {
             };
             elicitation_id.clone()
         };
-
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.elicitation_form_states.remove(&elicitation_id);
-            return;
-        }
 
         let thread = self.thread.read(cx);
         let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
@@ -2605,10 +2591,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         let mode = self
             .thread
             .read(cx)
@@ -2654,10 +2636,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
@@ -2671,10 +2649,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
@@ -6010,9 +5984,8 @@ impl ThreadView {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
-                    let confirmation = entries
-                        .last()
-                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
+                    let confirmation = this.thread.read(cx).is_waiting_for_confirmation()
+                        || this.has_pending_request_elicitation(cx);
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6333,8 +6306,7 @@ impl ThreadView {
             }
             AgentThreadEntry::Elicitation(elicitation_id) => {
                 let thread = self.thread.read(cx);
-                if cx.has_flag::<AcpBetaFeatureFlag>()
-                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                if let Some((_, elicitation)) = thread.elicitation(elicitation_id)
                     && should_render_elicitation(elicitation)
                 {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
@@ -6426,7 +6398,8 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
+        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
+            || self.has_pending_request_elicitation(cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
@@ -8116,15 +8089,19 @@ impl ThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
+
+        let has_content = !tool_call.content.is_empty()
+            || (should_show_raw_input && tool_call.raw_input.is_some());
+
+        let is_collapsible = has_content && !needs_confirmation;
         let mut is_open = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
-
-        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
