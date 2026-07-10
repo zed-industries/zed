@@ -450,6 +450,25 @@ pub fn auth_server_metadata_urls(issuer: &Url) -> Vec<Url> {
     urls
 }
 
+fn auth_server_metadata_issuer_matches(advertised_issuer: &Url, reported_issuer: &Url) -> bool {
+    if reported_issuer == advertised_issuer {
+        return true;
+    }
+
+    // Some providers, including Atlassian's remote MCP OAuth endpoint, advertise a
+    // path-scoped authorization server in protected-resource metadata so that DCR
+    // remains tenant/resource scoped, but return the same-origin root issuer in
+    // Authorization Server Metadata. Keep accepting exact matches per RFC 8414,
+    // and tolerate only this narrower same-origin root-issuer form.
+    reported_issuer.origin() == advertised_issuer.origin()
+        && reported_issuer.path() == "/"
+        && reported_issuer.query().is_none()
+        && reported_issuer.fragment().is_none()
+        && advertised_issuer.path() != "/"
+        && advertised_issuer.query().is_none()
+        && advertised_issuer.fragment().is_none()
+}
+
 // -- Canonical server URI (RFC 8707) -----------------------------------------
 
 /// Derive the canonical resource URI for an MCP server URL, suitable for the
@@ -813,9 +832,16 @@ pub async fn fetch_auth_server_metadata(
             Ok(response) => {
                 let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
 
-                if reported_issuer != *issuer {
+                if !auth_server_metadata_issuer_matches(issuer, &reported_issuer) {
                     bail!(
                         "Auth server metadata issuer mismatch: expected {}, got {}",
+                        issuer,
+                        reported_issuer
+                    );
+                } else if reported_issuer != *issuer {
+                    log::warn!(
+                        "Auth server metadata issuer differs from advertised issuer, \
+                         but shares the same origin: expected {}, got {}",
                         issuer,
                         reported_issuer
                     );
@@ -1567,6 +1593,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_auth_server_metadata_issuer_matches_exactly() {
+        let advertised_issuer = Url::parse("https://auth.example.com/tenant1").unwrap();
+        let reported_issuer = Url::parse("https://auth.example.com/tenant1").unwrap();
+
+        assert!(auth_server_metadata_issuer_matches(
+            &advertised_issuer,
+            &reported_issuer
+        ));
+    }
+
+    #[test]
+    fn test_auth_server_metadata_issuer_matches_same_origin_root_issuer() {
+        let advertised_issuer =
+            Url::parse("https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3").unwrap();
+        let reported_issuer = Url::parse("https://auth.atlassian.com").unwrap();
+
+        assert!(auth_server_metadata_issuer_matches(
+            &advertised_issuer,
+            &reported_issuer
+        ));
+    }
+
+    #[test]
+    fn test_auth_server_metadata_issuer_rejects_cross_origin_root_issuer() {
+        let advertised_issuer = Url::parse("https://auth.example.com/tenant1").unwrap();
+        let reported_issuer = Url::parse("https://evil.example.com").unwrap();
+
+        assert!(!auth_server_metadata_issuer_matches(
+            &advertised_issuer,
+            &reported_issuer
+        ));
+    }
+
+    #[test]
+    fn test_auth_server_metadata_issuer_rejects_different_same_origin_path() {
+        let advertised_issuer = Url::parse("https://auth.example.com/tenant1").unwrap();
+        let reported_issuer = Url::parse("https://auth.example.com/tenant2").unwrap();
+
+        assert!(!auth_server_metadata_issuer_matches(
+            &advertised_issuer,
+            &reported_issuer
+        ));
+    }
+
     // -- Canonical server URI tests ------------------------------------------
 
     #[test]
@@ -2214,6 +2285,41 @@ mod tests {
                 "https://auth.example.com/authorize"
             );
             assert!(!metadata.client_id_metadata_document_supported);
+        });
+    }
+
+    #[test]
+    fn test_fetch_auth_server_metadata_accepts_same_origin_root_issuer() {
+        gpui::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains(".well-known/oauth-authorization-server") {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.atlassian.com",
+                                "authorization_endpoint": "https://auth.atlassian.com/authorize",
+                                "token_endpoint": "https://auth.atlassian.com/oauth/token",
+                                "registration_endpoint": "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/dcr/register",
+                                "code_challenge_methods_supported": ["S256"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let issuer =
+                Url::parse("https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3").unwrap();
+            let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
+
+            assert_eq!(metadata.issuer.as_str(), "https://auth.atlassian.com/");
+            assert_eq!(
+                metadata.registration_endpoint.unwrap().as_str(),
+                "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/dcr/register"
+            );
         });
     }
 
