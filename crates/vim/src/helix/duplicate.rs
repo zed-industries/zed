@@ -331,14 +331,20 @@ mod tests {
             editor.splice_inlays(
                 &[],
                 vec![
-                    Inlay::mock_hint(0, buffer.anchor_after(MultiBufferOffset(6)), ": i32"),
-                    Inlay::mock_hint(1, buffer.anchor_after(MultiBufferOffset(15)), ": i32"),
+                    Inlay::mock_hint(0, buffer.anchor_after(MultiBufferOffset(5)), ": i32"),
+                    Inlay::mock_hint(1, buffer.anchor_after(MultiBufferOffset(16)), ": i32"),
                 ],
                 cx,
             );
         });
 
         cx.simulate_keystrokes("C");
+
+        assert_eq!(
+            cx.display_text(),
+            "let x: i32 = 1;
+let y: i32 = 2;",
+        );
 
         cx.assert_state(
             indoc! {"
