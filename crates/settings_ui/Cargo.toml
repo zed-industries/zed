@@ -19,6 +19,7 @@ test-support = []
 agent.workspace = true
 agent_settings.workspace = true
 agent_skills.workspace = true
+agent_ui.workspace = true
 anyhow.workspace = true
 audio.workspace = true
 cloud_api_types.workspace = true

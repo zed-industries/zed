@@ -2,7 +2,9 @@ mod components;
 mod page_data;
 pub mod pages;
 
+use agent_settings::{AgentSettings, language_model_to_selection};
 use agent_skills::SkillIndex;
+use agent_ui::{LanguageModelSelector, language_model_selector};
 use anyhow::{Context as _, Result};
 use cloud_api_types::OrganizationConfiguration;
 use editor::{Editor, EditorEvent};
@@ -18,6 +20,9 @@ use gpui::{
 use heck::ToTitleCase as _;
 
 use language::Buffer;
+use language_model::{
+    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+};
 use platform_title_bar::PlatformTitleBar;
 use project::{Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
@@ -608,6 +613,9 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
+        .add_basic_renderer::<Option<settings::LanguageModelSelection>>(
+            render_subagent_model_picker,
+        )
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelClickBehavior>(render_dropdown)
@@ -5047,6 +5055,99 @@ fn wire_picker_trigger_a11y<M: gpui::ManagedView>(
         .on_a11y_action(gpui::accesskit::Action::Collapse, move |_, _window, cx| {
             hide_handle.hide(cx);
         })
+}
+
+fn resolve_language_model_selection(
+    selection: &settings::LanguageModelSelection,
+    cx: &App,
+) -> Option<ConfiguredModel> {
+    let provider_id = LanguageModelProviderId::from(selection.provider.0.clone());
+    let model_id = LanguageModelId::from(selection.model.clone());
+    let provider = LanguageModelRegistry::read_global(cx).provider(&provider_id)?;
+    let model = provider
+        .provided_models(cx)
+        .into_iter()
+        .find(|model| model.id() == model_id)?;
+    Some(ConfiguredModel { provider, model })
+}
+
+fn render_subagent_model_picker(
+    field: SettingField<Option<settings::LanguageModelSelection>>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let default_option_label = SharedString::from("Same as parent");
+    let current_selection = SettingsStore::global(cx)
+        .get_value_from_file(file.to_settings(), field.pick)
+        .1
+        .and_then(|selection| selection.as_ref())
+        .cloned();
+    let current_model = current_selection
+        .as_ref()
+        .and_then(|selection| resolve_language_model_selection(selection, cx));
+    let current_label = match (&current_selection, &current_model) {
+        (_, Some(model)) => model.model.name().0,
+        (Some(selection), None) => {
+            format!("Unavailable: {}/{}", selection.provider.0, selection.model).into()
+        }
+        (None, None) => default_option_label.clone(),
+    };
+
+    let handle = ui::PopoverMenuHandle::<LanguageModelSelector>::default();
+    PopoverMenu::new("language-model-picker")
+        .trigger(wire_picker_trigger_a11y(
+            render_picker_trigger_button(
+                "language_model_picker_trigger".into(),
+                current_label.clone(),
+            )
+            .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+                this.aria_label(format!("{}: {}", label, current_label))
+            }),
+            handle.clone(),
+        ))
+        .menu(move |window, cx| {
+            Some(cx.new(move |cx| {
+                language_model_selector(
+                    |cx| {
+                        AgentSettings::get_global(cx)
+                            .subagent_model
+                            .as_ref()
+                            .and_then(|selection| resolve_language_model_selection(selection, cx))
+                    },
+                    move |model, cx| {
+                        let current_selection = AgentSettings::get_global(cx)
+                            .subagent_model
+                            .as_ref()
+                            .filter(|selection| {
+                                selection.provider.0 == model.provider_id().0.as_ref()
+                                    && selection.model == model.id().0.as_ref()
+                            });
+                        let selection = language_model_to_selection(&model, current_selection);
+                        let fs = <dyn fs::Fs>::global(cx);
+                        settings::update_settings_file(fs, cx, move |settings, app| {
+                            (field.write)(settings, Some(Some(selection)), app);
+                        });
+                    },
+                    move |model, should_be_favorite, cx| {
+                        let fs = <dyn fs::Fs>::global(cx);
+                        agent_ui::toggle_favorite_model(model, should_be_favorite, fs, cx);
+                    },
+                    true,
+                    cx.focus_handle(),
+                    window,
+                    cx,
+                )
+            }))
+        })
+        .anchor(gpui::Anchor::TopLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .with_handle(handle)
+        .into_any_element()
 }
 
 fn render_font_picker(

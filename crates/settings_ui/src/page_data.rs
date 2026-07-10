@@ -2,7 +2,7 @@ use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-    LanguageSettingsContent, SemanticTokens, SettingsContent,
+    LanguageModelSelection, LanguageSettingsContent, SemanticTokens, SettingsContent,
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
@@ -8076,7 +8076,31 @@ fn ai_page(cx: &App) -> SettingsPage {
     }
 
     fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
-        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+        let mut items = vec![
+            SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Subagent Model",
+                description: "The model used by subagents. Reset to use the parent thread's model.",
+                field: Box::new(SettingField::<Option<LanguageModelSelection>> {
+                    organization_override: None,
+                    json_path: Some("agent.subagent_model"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()
+                            .map(|agent| &agent.subagent_model)
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .subagent_model = value.flatten();
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ];
 
         items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {

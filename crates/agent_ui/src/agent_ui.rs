@@ -81,6 +81,8 @@ pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::open_markdown_in_workspace;
 pub use conversation_view::{ConversationView, StateChange};
 pub use external_source_prompt::ExternalSourcePrompt;
+pub use favorite_models::toggle_in_settings as toggle_favorite_model;
+pub use language_model_selector::{LanguageModelSelector, language_model_selector};
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
