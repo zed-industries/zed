@@ -64,17 +64,28 @@ pub(crate) fn runnable_ranges(
     buffer: &BufferSnapshot,
     offset_range: Range<usize>,
 ) -> impl Iterator<Item = RunnableRange> + '_ {
-    let mut syntax_matches = buffer.matches(offset_range.clone(), |grammar| {
-        grammar.runnable_config.as_ref().map(|config| &config.query)
-    });
+    let mut syntax_matches = buffer
+        .language()
+        .is_none_or(|language| language.config().runnables)
+        .then(|| {
+            buffer.matches(offset_range.clone(), |grammar| {
+                grammar.runnable_config.as_ref().map(|config| &config.query)
+            })
+        });
 
     let runnable_configs = syntax_matches
-        .grammars()
-        .iter()
-        .map(|grammar| grammar.runnable_config.as_ref())
-        .collect::<Vec<_>>();
+        .as_ref()
+        .map(|syntax_matches| {
+            syntax_matches
+                .grammars()
+                .iter()
+                .map(|grammar| grammar.runnable_config.as_ref())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     iter::from_fn(move || -> Option<SmallVec<[RunnableRange; 1]>> {
+        let syntax_matches = syntax_matches.as_mut()?;
         let mat = syntax_matches.peek()?;
 
         let ranges = match runnable_configs[mat.grammar_index] {

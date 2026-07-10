@@ -1,5 +1,6 @@
 name = "Markdown"
 grammar = "markdown"
+runnables = false
 path_suffixes = ["md", "mdx", "mdwn", "mdc", "markdown", "MD"]
 modeline_aliases = ["md"]
 completion_query_characters = ["-"]

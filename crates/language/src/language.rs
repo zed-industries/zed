@@ -1610,6 +1610,7 @@ pub fn markdown_lang() -> Arc<Language> {
     let language = Language::new(
         LanguageConfig {
             name: "Markdown".into(),
+            runnables: false,
             matcher: LanguageMatcher {
                 path_suffixes: vec!["md".into()],
                 ..Default::default()

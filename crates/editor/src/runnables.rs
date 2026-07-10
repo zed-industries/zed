@@ -436,21 +436,18 @@ impl Editor {
         buffers
             .into_iter()
             .filter_map(|buffer| {
-                let lsp_tasks_source = buffer
-                    .read(cx)
-                    .language()?
-                    .context_provider()?
-                    .lsp_task_source()?;
+                let buffer_read = buffer.read(cx);
+                let language = buffer_read.language()?;
+                if !language.config().runnables {
+                    return None;
+                }
+                let lsp_tasks_source = language.context_provider()?.lsp_task_source()?;
                 if lsp_settings
                     .get(&lsp_tasks_source)
                     .is_none_or(|s| s.enable_lsp_tasks)
                 {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if skip_cached
-                        && self
-                            .runnables
-                            .has_cached(buffer_id, &buffer.read(cx).version())
-                    {
+                    let buffer_id = buffer_read.remote_id();
+                    if skip_cached && self.runnables.has_cached(buffer_id, &buffer_read.version()) {
                         None
                     } else {
                         Some((lsp_tasks_source, buffer_id))

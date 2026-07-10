@@ -135,6 +135,12 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// Whether buffers whose root language is this language may expose runnable tasks.
+    ///
+    /// When false, runnable discovery is disabled for the whole buffer, including
+    /// injected syntax layers.
+    #[serde(default = "default_true")]
+    pub runnables: bool,
     /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
@@ -190,6 +196,7 @@ impl Default for LanguageConfig {
             wrap_characters: None,
             prettier_parser_name: None,
             hidden: false,
+            runnables: true,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             linked_edit_characters: Default::default(),
