@@ -998,11 +998,12 @@ fn spawn_editor_hints_refresh(
 
 #[cfg(test)]
 pub mod tests {
+    use crate::display_map::DisplayRow;
     use crate::editor_tests::update_test_language_settings;
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::Autoscroll;
     use crate::scroll::ScrollAmount;
-    use crate::{Editor, SelectionEffects};
+    use crate::{DisplayPoint, Editor, SelectionEffects};
     use collections::HashSet;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
@@ -4788,6 +4789,125 @@ let c = 3;"#
                     rs_hints.len(),
                     1,
                     "Rust hints should still be present after editing. Got: {rs_hints:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_selection_ending_at_parameter_hint_excludes_hint(cx: &mut gpui::TestAppContext) {
+        // Regression test for https://github.com/zed-industries/zed/issues/48141
+        // Parameter hints are anchored to the position of their argument, right
+        // after the opening `(` of a call. Selecting that `(` produces a selection
+        // ending exactly at the hint's anchor, which must not render the hint
+        // itself as selected.
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_parameter_hints: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { foo(1); } // long comment to ensure hints are not trimmed out",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        |_, _| async move {
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 16),
+                                label: lsp::InlayHintLabel::String("num:".to_string()),
+                                kind: Some(lsp::InlayHintKind::PARAMETER),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: Some(true),
+                                data: None,
+                            }]))
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        cx.executor().run_until_parked();
+        let _fake_server = fake_servers.next().await.unwrap();
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    "fn main() { foo(num: 1); } // long comment to ensure hints are not trimmed out",
+                    "The parameter hint should be displayed before its argument"
+                );
+
+                // Select the `(` of `foo(1)`: buffer columns 15..16, with the
+                // hint anchored at column 16.
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(15)..MultiBufferOffset(16)])
+                });
+                // Selection rendering goes through SelectionLayout, so assert on
+                // it rather than converting the selection's endpoints directly:
+                // the point-to-display-point conversion intentionally resolves to
+                // after the hint (caret semantics, where typed text would land).
+                let snapshot = editor.display_snapshot(cx);
+                let mut selections = editor.selections.all::<Point>(&snapshot);
+                assert_eq!(selections.len(), 1);
+                let layout = crate::element::SelectionLayout::new(
+                    selections.remove(0),
+                    false,
+                    false,
+                    crate::CursorShape::Bar,
+                    &snapshot,
+                    true,
+                    true,
+                    None,
+                );
+                assert_eq!(
+                    layout.range,
+                    DisplayPoint::new(DisplayRow(0), 15)..DisplayPoint::new(DisplayRow(0), 16),
+                    "Selecting the `(` should not render the parameter hint as selected"
+                );
+                assert_eq!(
+                    layout.head,
+                    DisplayPoint::new(DisplayRow(0), 21),
+                    "The caret still lands after the hint, where typed text would appear"
                 );
             })
             .unwrap();
