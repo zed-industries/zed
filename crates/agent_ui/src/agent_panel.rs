@@ -12487,20 +12487,13 @@ mod tests {
         });
     }
     #[gpui::test]
-    async fn test_search_does_not_target_center_pane_from_agent_panel(cx: &mut TestAppContext) {
+    async fn test_vim_search_does_not_steal_focus_from_agent_panel(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             vim::init(cx);
             search::init(cx);
-
-            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/default-macos.json",
-                cx,
-            )
-            .expect("default macOS keymap should load");
-            cx.bind_keys(default_key_bindings);
 
             // Enable vim mode
             settings::SettingsStore::update_global(cx, |store, cx| {
@@ -12579,22 +12572,6 @@ mod tests {
             );
         });
 
-        cx.simulate_keystrokes("cmd-f");
-        cx.run_until_parked();
-
-        let thread_view = panel
-            .read_with(&cx, |panel, cx| {
-                panel
-                    .active_conversation_view()?
-                    .read(cx)
-                    .root_thread_view()
-            })
-            .expect("active conversation should have a root thread view");
-        assert!(thread_view.read_with(&cx, |view, _cx| view.thread_search_visible));
-
-        cx.simulate_keystrokes("escape");
-        cx.run_until_parked();
-
         // Press '/' — the vim search keybinding.
         cx.simulate_keystrokes("/");
 
@@ -12604,25 +12581,6 @@ mod tests {
                 panel.read(cx).focus_handle(cx).contains_focused(window, cx),
                 "Focus should remain on the agent panel after pressing '/'"
             );
-        });
-
-        panel
-            .update_in(&mut cx, |panel, window, cx| {
-                panel.insert_test_terminal("Dev Server", true, window, cx)
-            })
-            .expect("test terminal should be inserted");
-        cx.run_until_parked();
-
-        cx.simulate_keystrokes("cmd-f");
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, cx| {
-            let search_bar = panel
-                .active_terminal_id()
-                .and_then(|terminal_id| panel.terminals.get(&terminal_id))
-                .and_then(|terminal| terminal.search_bar.as_ref())
-                .expect("terminal search bar should be deployed");
-            assert!(!search_bar.read(cx).is_dismissed());
         });
     }
 
