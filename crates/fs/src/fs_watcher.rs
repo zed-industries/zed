@@ -26,6 +26,8 @@ pub struct FsWatcher {
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
     pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
+    #[cfg(test)]
+    test_watcher: Option<Arc<GlobalWatcher>>,
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +48,25 @@ impl FsWatcher {
             pending_path_events,
             registrations: Default::default(),
             pending_registrations: Default::default(),
+            #[cfg(test)]
+            test_watcher: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_test(
+        executor: BackgroundExecutor,
+        tx: async_channel::Sender<()>,
+        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+        test_watcher: Arc<GlobalWatcher>,
+    ) -> Self {
+        Self {
+            executor,
+            tx,
+            pending_path_events,
+            registrations: Default::default(),
+            pending_registrations: Default::default(),
+            test_watcher: Some(test_watcher),
         }
     }
 
@@ -61,7 +82,7 @@ impl FsWatcher {
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
-            global_watcher(),
+            self.watcher(),
         )? {
             Some(registration) => {
                 self.registrations.lock().insert(key, registration);
@@ -90,8 +111,20 @@ impl FsWatcher {
             self.pending_path_events.clone(),
             self.registrations.clone(),
             self.pending_registrations.clone(),
+            self.watcher().clone(),
         ));
         pending_registrations.insert(path, task);
+    }
+
+    fn watcher(&self) -> &Arc<GlobalWatcher> {
+        #[cfg(test)]
+        {
+            self.test_watcher
+                .as_ref()
+                .unwrap_or_else(|| global_watcher())
+        }
+        #[cfg(not(test))]
+        global_watcher()
     }
 }
 
@@ -105,9 +138,9 @@ impl Drop for FsWatcher {
             std::mem::swap(old.deref_mut(), &mut registrations);
         }
 
-        let global_watcher = global_watcher();
+        let watcher = self.watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration.id);
+            watcher.remove(registration.id);
         }
     }
 }
@@ -154,7 +187,7 @@ impl Watcher for FsWatcher {
                 .or_else(|| registrations.remove(&WatchKey::folded(sanitized)))
         };
         if let Some(registration) = registration {
-            global_watcher().remove(registration.id);
+            self.watcher().remove(registration.id);
         }
         Ok(())
     }
@@ -216,7 +249,7 @@ fn register_existing_path(
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    global_watcher: &GlobalWatcher,
+    global_watcher: &Arc<GlobalWatcher>,
 ) -> anyhow::Result<Option<FsWatcherRegistration>> {
     let mode = if requires_poll_watcher(path.as_ref()) {
         log::info!(
@@ -488,6 +521,7 @@ async fn poll_path_until_created(
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Arc<Mutex<HashMap<WatchKey, FsWatcherRegistration>>>,
     pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
+    watcher: Arc<GlobalWatcher>,
 ) {
     loop {
         executor.timer(poll_interval()).await;
@@ -515,13 +549,13 @@ async fn poll_path_until_created(
             case_insensitive,
             tx.clone(),
             pending_path_events.clone(),
-            global_watcher(),
+            &watcher,
         ) {
             Ok(Some(registration)) => {
                 {
                     let mut pending_registrations = pending_registrations.lock();
                     if pending_registrations.remove(path.as_ref()).is_none() {
-                        global_watcher().remove(registration.id);
+                        watcher.remove(registration.id);
                         return;
                     }
                     registrations.lock().insert(key, registration);
@@ -830,7 +864,7 @@ pub struct GlobalWatcher {
 impl GlobalWatcher {
     #[must_use]
     fn add(
-        &self,
+        self: &Arc<Self>,
         path: Arc<std::path::Path>,
         mode: WatcherMode,
         case_insensitive: bool,
@@ -886,7 +920,7 @@ impl GlobalWatcher {
         Ok(Some(id))
     }
 
-    fn enqueue(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
+    fn enqueue(self: &Arc<Self>, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
         if matches!(
             event,
             Ok(Event {
@@ -902,7 +936,7 @@ impl GlobalWatcher {
         self.event_tx.try_send((mode, event)).ok();
     }
 
-    fn dispatch(&self, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
+    fn dispatch(self: &Arc<Self>, mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
         let event = match event {
             Ok(event) => event,
             Err(error) => {
@@ -952,7 +986,7 @@ impl GlobalWatcher {
     }
 
     fn dispatch_batch(
-        &self,
+        self: &Arc<Self>,
         first: DispatchEvent,
         event_rx: &async_channel::Receiver<DispatchEvent>,
     ) {
@@ -979,7 +1013,7 @@ impl GlobalWatcher {
         }
     }
 
-    fn start_native_watch_limit_cooldown(&self, path: &Path) {
+    fn start_native_watch_limit_cooldown(self: &Arc<Self>, path: &Path) {
         let mut state = self.state.lock();
         let now = Instant::now();
         let should_log = !state.is_native_watch_limit_cooldown_active();
@@ -992,7 +1026,7 @@ impl GlobalWatcher {
         }
     }
 
-    pub fn remove(&self, id: WatcherRegistrationId) {
+    pub fn remove(self: &Arc<Self>, id: WatcherRegistrationId) {
         let mut state = self.state.lock();
         let Some((path, mode)) = state.remove_registration(id) else {
             return;
@@ -1009,7 +1043,11 @@ impl GlobalWatcher {
     /// an OS watch of its own. When the covering watch goes away (e.g. the
     /// project that owned it is closed), the surviving registrations would
     /// otherwise silently stop receiving events.
-    fn rewatch_orphaned_descendants(&self, removed_path: &SanitizedPath, mode: WatcherMode) {
+    fn rewatch_orphaned_descendants(
+        self: &Arc<Self>,
+        removed_path: &SanitizedPath,
+        mode: WatcherMode,
+    ) {
         if mode != WatcherMode::Poll && !cfg!(any(target_os = "windows", target_os = "macos")) {
             return;
         }
@@ -1077,7 +1115,7 @@ impl GlobalWatcher {
         }
     }
 
-    fn watch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
+    fn watch(self: &Arc<Self>, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
         match mode {
             WatcherMode::Native => {
                 self.ensure_native_watcher()?;
@@ -1107,7 +1145,7 @@ impl GlobalWatcher {
         Ok(())
     }
 
-    fn unwatch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
+    fn unwatch(self: &Arc<Self>, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
         let watcher = match mode {
             WatcherMode::Native => self
                 .native_watcher
@@ -1132,11 +1170,12 @@ impl GlobalWatcher {
         }
     }
 
-    fn ensure_native_watcher(&self) -> anyhow::Result<()> {
+    fn ensure_native_watcher(self: &Arc<Self>) -> anyhow::Result<()> {
         if self.native_watcher.lock().is_some() {
             return Ok(());
         }
 
+        let this = self.clone();
         // CORE excludes Access events, which Zed discards anyway. Without this,
         // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
         // file read in a watched directory would queue events, increasing the
@@ -1144,23 +1183,22 @@ impl GlobalWatcher {
         // workloads like grep or language server indexing.
         let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
         let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
-            |event| global_watcher().enqueue(WatcherMode::Native, event),
+            move |event| this.enqueue(WatcherMode::Native, event),
             config,
         )?;
         *self.native_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
 
-    fn ensure_poll_watcher(&self) -> anyhow::Result<()> {
+    fn ensure_poll_watcher(self: &Arc<Self>) -> anyhow::Result<()> {
         if self.poll_watcher.lock().is_some() {
             return Ok(());
         }
 
+        let this = self.clone();
         let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
-        let watcher = notify::PollWatcher::new(
-            |event| global_watcher().enqueue(WatcherMode::Poll, event),
-            config,
-        )?;
+        let watcher =
+            notify::PollWatcher::new(move |event| this.enqueue(WatcherMode::Poll, event), config)?;
         *self.poll_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
@@ -1194,9 +1232,9 @@ pub fn poll_interval() -> Duration {
     *POLL_INTERVAL
 }
 
-static FS_WATCHER_INSTANCE: OnceLock<GlobalWatcher> = OnceLock::new();
+static FS_WATCHER_INSTANCE: OnceLock<Arc<GlobalWatcher>> = OnceLock::new();
 
-fn global_watcher() -> &'static GlobalWatcher {
+fn global_watcher() -> &'static Arc<GlobalWatcher> {
     FS_WATCHER_INSTANCE.get_or_init(|| {
         let (event_tx, event_rx) = async_channel::unbounded::<DispatchEvent>();
         std::thread::Builder::new()
@@ -1207,7 +1245,7 @@ fn global_watcher() -> &'static GlobalWatcher {
                 }
             })
             .expect("failed to spawn fs watcher dispatch thread");
-        GlobalWatcher {
+        Arc::new(GlobalWatcher {
             state: Mutex::new(WatcherState {
                 watchers: Default::default(),
                 native_path_registrations: Default::default(),
@@ -1218,7 +1256,7 @@ fn global_watcher() -> &'static GlobalWatcher {
             native_watcher: Mutex::new(None),
             poll_watcher: Mutex::new(None),
             event_tx,
-        }
+        })
     })
 }
 
@@ -1275,19 +1313,19 @@ mod tests {
         }
     }
 
-    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
+    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> Arc<GlobalWatcher> {
         test_watcher_with_backends(None, Some(poll_watcher))
     }
 
     fn test_watcher_with_backends(
         native_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
         poll_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
-    ) -> GlobalWatcher {
+    ) -> Arc<GlobalWatcher> {
         // Tests call `handle_event` directly to exercise dispatch synchronously,
         // rather than going through the OS watcher callbacks, so nothing is ever
         // sent on this channel; the receiver can just be dropped.
         let (event_tx, _event_rx) = async_channel::unbounded();
-        GlobalWatcher {
+        Arc::new(GlobalWatcher {
             state: Mutex::new(WatcherState {
                 watchers: Default::default(),
                 native_path_registrations: Default::default(),
@@ -1306,7 +1344,7 @@ mod tests {
                 }),
             ),
             event_tx,
-        }
+        })
     }
 
     struct TestCase {
@@ -1448,6 +1486,9 @@ mod tests {
 
     #[gpui::test]
     async fn dropping_fs_watcher_releases_all_watches(cx: &mut gpui::TestAppContext) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_watcher_with_backends(Some(backend), None);
+
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
         let subdir = root.join("sub");
@@ -1455,7 +1496,7 @@ mod tests {
         std::fs::create_dir_all(&nested).expect("create subdirs");
 
         let (tx, _rx) = async_channel::unbounded();
-        let watcher = FsWatcher::new(cx.executor().clone(), tx, Default::default());
+        let watcher = FsWatcher::new_test(cx.executor(), tx, Default::default(), global.clone());
         // Mimic the worktree scanner: the root is watched first, then descendant
         // directories (scanned dirs, git state dirs) are added to the same watcher.
         watcher.add(&root).expect("watch root");
@@ -1472,7 +1513,7 @@ mod tests {
             .expect("root watch registered with the global watcher")
             .mode;
         let global_has_os_watcher = |key: &WatchKey| {
-            let mut state = global_watcher().state.lock();
+            let mut state = global.state.lock();
             state
                 .path_registrations(mode)
                 .get_mut(key)
@@ -1587,7 +1628,7 @@ mod tests {
         }
     }
 
-    fn recording_watcher() -> (GlobalWatcher, Arc<Mutex<Vec<String>>>) {
+    fn recording_watcher() -> (Arc<GlobalWatcher>, Arc<Mutex<Vec<String>>>) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let watcher = test_watcher_with_backends(Some(backend), None);
         let fired = Arc::new(Mutex::new(Vec::new()));
@@ -1925,7 +1966,7 @@ mod tests {
     }
 }
 
-pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
+pub fn global<T>(f: impl FnOnce(&Arc<GlobalWatcher>) -> T) -> anyhow::Result<T> {
     let global_watcher = global_watcher();
     global_watcher.ensure_native_watcher()?;
     Ok(f(global_watcher))
