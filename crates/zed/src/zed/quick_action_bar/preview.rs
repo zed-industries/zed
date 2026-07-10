@@ -1,4 +1,4 @@
-use csv_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
+use tabular_data_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
 use editor::{Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Entity, Modifiers};
@@ -11,7 +11,7 @@ use super::QuickActionBar;
 enum PreviewTarget {
     Markdown(Entity<Editor>),
     Svg(Entity<MultiBuffer>),
-    Csv(Entity<Editor>),
+    TabularData(Entity<Editor>),
 }
 
 impl QuickActionBar {
@@ -34,7 +34,7 @@ impl QuickActionBar {
             && cx.has_flag::<TabularDataPreviewFeatureFlag>()
             && CsvPreviewView::is_csv_file(&editor, cx)
         {
-            PreviewTarget::Csv(editor)
+            PreviewTarget::TabularData(editor)
         } else {
             return None;
         };
@@ -50,10 +50,10 @@ impl QuickActionBar {
                 "Preview SVG",
                 &svg_preview::OpenPreview as &dyn gpui::Action,
             ),
-            PreviewTarget::Csv(_) => (
-                "toggle-csv-preview",
-                "Preview CSV",
-                &csv_preview::OpenPreview as &dyn gpui::Action,
+            PreviewTarget::TabularData(_) => (
+                "toggle-tabular-preview",
+                "Preview Tabular Data",
+                &tabular_data_preview::OpenPreview as &dyn gpui::Action,
             ),
         };
 
@@ -114,7 +114,7 @@ impl QuickActionBar {
                                     );
                                 }
                             }
-                            PreviewTarget::Csv(editor) => {
+                            PreviewTarget::TabularData(editor) => {
                                 let editor = editor.clone();
                                 if open_to_the_side {
                                     CsvPreviewView::open_preview_to_the_side_of_pane(
