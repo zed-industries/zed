@@ -23,7 +23,7 @@ mod settings;
 mod table_data_engine;
 mod types;
 
-actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
+actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 
 /// Cheap stand-in for a single table row's height, used only to size the
 /// scrollbar for off-screen rows without a full `.measure_all()` pass. Not
@@ -272,12 +272,10 @@ impl CsvPreviewView {
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .and_then(|file| {
-                file.path()
-                    .extension()
-                    .map(|ext_str| {
-                        let lower = ext_str.to_lowercase();
-                        matches!(lower.as_str(), "csv" | "tsv" | "ssv" | "psv")
-                    })
+                file.path().extension().map(|ext_str| {
+                    let lower = ext_str.to_lowercase();
+                    matches!(lower.as_str(), "csv" | "tsv" | "ssv" | "psv")
+                })
             })
             .unwrap_or(false)
     }
