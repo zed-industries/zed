@@ -707,7 +707,7 @@ mod tests {
     use futures::StreamExt as _;
     use gpui::{AppContext as _, Entity, Task, TestAppContext};
     use indoc::indoc;
-    use language::{ContextProvider, FakeLspAdapter};
+    use language::{ContextProvider, FakeLspAdapter, markdown_lang};
     use languages::rust_lang;
     use lsp::LanguageServerName;
     use multi_buffer::{MultiBuffer, PathKey};
@@ -795,6 +795,14 @@ mod tests {
         )
     }
 
+    fn markdown_lang_with_lsp_task_context() -> Arc<language::Language> {
+        Arc::new(
+            Arc::try_unwrap(markdown_lang())
+                .expect("test Markdown language should have a single owner")
+                .with_context_provider(Some(Arc::new(TestRustContextProviderWithLsp))),
+        )
+    }
+
     fn collect_runnable_labels(
         editor: &Editor,
     ) -> Vec<(text::BufferId, language::BufferRow, Vec<String>)> {
@@ -816,6 +824,40 @@ mod tests {
             .collect::<Vec<_>>();
         result.sort_by_key(|(id, row, _)| (*id, *row));
         result
+    }
+
+    #[gpui::test]
+    async fn test_disabled_language_omits_lsp_task_sources(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "README.md": "# Project\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(markdown_lang_with_lsp_task_context());
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/README.md"), cx)
+            })
+            .await
+            .expect("open README.md");
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx
+            .add_window(|window, cx| build_editor_with_project(project, multi_buffer, window, cx));
+
+        let task_sources = editor
+            .update(cx, |editor, _, cx| {
+                editor.lsp_task_sources(false, false, cx)
+            })
+            .expect("editor update");
+        assert!(task_sources.is_empty());
     }
 
     #[gpui::test]

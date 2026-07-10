@@ -107,3 +107,15 @@ pub fn load_queries(name: &str) -> LanguageQueries {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_runnables_config() {
+        assert!(!load_config("markdown").runnables);
+        assert!(load_config("rust").runnables);
+        assert!(!load_config_for_feature("markdown", false).runnables);
+    }
+}

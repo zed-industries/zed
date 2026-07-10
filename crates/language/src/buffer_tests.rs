@@ -2982,6 +2982,101 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_root_language_controls_injected_runnables(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let go_source = "func TestAddition(t *testing.T) {}";
+        let go_language = test_go_lang();
+        let go_buffer = Buffer::local(go_source, cx).with_language(go_language.clone(), cx);
+        assert_eq!(
+            go_buffer
+                .snapshot()
+                .runnable_ranges(0..go_source.len())
+                .count(),
+            1
+        );
+
+        let markdown_source = indoc! {r#"
+            ```go
+            func TestAddition(t *testing.T) {}
+            ```
+
+            ```rust
+            #[test]
+            fn test_addition() {}
+            ```
+        "#};
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(markdown_lang());
+        language_registry.add(go_language.clone());
+        language_registry.add(rust_lang());
+
+        let mut markdown_buffer = Buffer::local(markdown_source, cx);
+        markdown_buffer.set_language_registry(language_registry.clone());
+        markdown_buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .and_then(Result::ok),
+            cx,
+        );
+
+        let markdown_snapshot = markdown_buffer.snapshot();
+        let test_offset = markdown_source
+            .find("TestAddition")
+            .expect("test name should be present");
+        assert_eq!(
+            markdown_snapshot
+                .language_at(test_offset)
+                .expect("Go injection should be parsed")
+                .name(),
+            "Go"
+        );
+        let rust_test_offset = markdown_source
+            .find("test_addition")
+            .expect("Rust test name should be present");
+        assert_eq!(
+            markdown_snapshot
+                .language_at(rust_test_offset)
+                .expect("Rust injection should be parsed")
+                .name(),
+            "Rust"
+        );
+        assert_eq!(
+            markdown_snapshot
+                .runnable_ranges(0..markdown_source.len())
+                .count(),
+            0
+        );
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(test_markdown_lang_with_runnables());
+        language_registry.add(go_language);
+        language_registry.add(rust_lang());
+
+        let mut runnable_markdown_buffer = Buffer::local(markdown_source, cx);
+        runnable_markdown_buffer.set_language_registry(language_registry.clone());
+        runnable_markdown_buffer.set_language(
+            language_registry
+                .language_for_name("Runnable Markdown")
+                .now_or_never()
+                .and_then(Result::ok),
+            cx,
+        );
+        assert_eq!(
+            runnable_markdown_buffer
+                .snapshot()
+                .runnable_ranges(0..markdown_source.len())
+                .count(),
+            2
+        );
+
+        markdown_buffer
+    });
+}
+
+#[gpui::test]
 fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -4357,6 +4452,38 @@ pub fn markdown_inline_lang() -> Language {
     )
     .with_highlights_query("(emphasis) @emphasis")
     .unwrap()
+}
+
+fn test_go_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Go".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["go".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_go::LANGUAGE.into()),
+        )
+        .with_runnable_query(include_str!("../../grammars/src/go/runnables.scm"))
+        .expect("valid Go runnable query"),
+    )
+}
+
+fn test_markdown_lang_with_runnables() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Runnable Markdown".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::LANGUAGE.into()),
+        )
+        .with_injection_query(include_str!("../../grammars/src/markdown/injections.scm"))
+        .expect("valid Markdown injection query"),
+    )
 }
 
 fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> String {
