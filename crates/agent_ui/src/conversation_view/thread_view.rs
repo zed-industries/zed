@@ -933,6 +933,8 @@ impl ThreadView {
                     |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
                         if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
                             this.clear_thread_error(cx);
+                        } else {
+                            cx.notify();
                         }
                     },
                 ));
@@ -10084,6 +10086,12 @@ impl ThreadView {
             .as_ref()
             .map(|thread| thread.read(cx).session_id().clone());
         let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
+        let subagent_model = thread_view.and_then(|thread_view| {
+            let thread_view = thread_view.read(cx);
+            let thread = thread_view.as_native_thread(cx)?;
+            let model = thread.read(cx).model()?;
+            Some((model.provider_name(), model.name()))
+        });
         let changed_buffers = action_log
             .map(|log| log.read(cx).changed_buffers(cx).collect::<Vec<_>>())
             .unwrap_or_default();
@@ -10231,6 +10239,20 @@ impl ThreadView {
                                         Label::new(title.to_string())
                                             .size(LabelSize::Custom(self.tool_name_font_size()))
                                             .truncate(),
+                                    )
+                                    .when_some(
+                                        subagent_model,
+                                        |this, (provider_name, model_name)| {
+                                            this.child(
+                                                Label::new(format!(
+                                                    "Model: {} · {}",
+                                                    provider_name.0, model_name.0
+                                                ))
+                                                .size(LabelSize::Custom(self.tool_name_font_size()))
+                                                .color(Color::Muted)
+                                                .truncate(),
+                                            )
+                                        },
                                     )
                                     .when(files_changed > 0, |this| {
                                         this.child(
