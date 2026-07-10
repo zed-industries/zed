@@ -621,7 +621,9 @@ mod tests {
                 );
 
                 let mut recorded = self.recorded.borrow_mut();
-                recorded.identities.push((name.entity_id(), age.entity_id()));
+                recorded
+                    .identities
+                    .push((name.entity_id(), age.entity_id()));
                 recorded.names.push(name.read(cx).clone());
                 recorded.name_projection = Some(name);
                 div()
