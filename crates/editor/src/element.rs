@@ -59,7 +59,7 @@ use language::{
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 
 use project::{
@@ -139,12 +139,12 @@ impl LineNumberStyle {
 }
 
 #[derive(Debug)]
-struct SelectionLayout {
-    head: DisplayPoint,
+pub(crate) struct SelectionLayout {
+    pub(crate) head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
     is_local: bool,
-    range: Range<DisplayPoint>,
+    pub(crate) range: Range<DisplayPoint>,
     active_rows: Range<DisplayRow>,
     user_name: Option<SharedString>,
 }
@@ -157,7 +157,7 @@ struct InlineBlameLayout {
 }
 
 impl SelectionLayout {
-    fn new<T: ToPoint + ToDisplayPoint + Clone>(
+    pub(crate) fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
         cursor_offset: bool,
@@ -167,9 +167,18 @@ impl SelectionLayout {
         is_local: bool,
         user_name: Option<SharedString>,
     ) -> Self {
-        let point_selection = selection.map(|p| p.to_point(map.buffer_snapshot()));
+        let buffer_snapshot = map.buffer_snapshot();
+        let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
+        let offset_range = point_selection.start.to_offset(buffer_snapshot)
+            ..point_selection.end.to_offset(buffer_snapshot);
+        let isomorphic_range = map.isomorphic_display_point_ranges_for_buffer_range(offset_range);
+        if !point_selection.range().is_empty()
+            && let (Some(first), Some(last)) = (isomorphic_range.first(), isomorphic_range.last())
+        {
+            range = first.start..last.end;
+        }
         let mut head = display_selection.head();
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
