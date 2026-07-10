@@ -1,4 +1,6 @@
-use crate::{AnyEntity, AnyWeakEntity, App, Entity, EntityId};
+use crate::{
+    AnyEntity, AnyWeakEntity, App, Context, ElementId, Entity, EntityId, Subscription, Window,
+};
 
 /// A lens is a plain function pointer rather than a closure so that
 /// projections are allocation-free: non-capturing closures coerce to function
@@ -58,6 +60,12 @@ fn write_trampoline<E: 'static, P: ?Sized + 'static>(
 /// stores it. `P` may be unsized, so display-only components can accept e.g.
 /// `Projection<str>` and be backed by any string-shaped state.
 ///
+/// Projections are created during render, via [`Window::use_projection`] and
+/// friends (or by converting an [`Entity`] with `From`). There is no way to
+/// construct a lens projection outside a render context: a projection's
+/// identity comes from its render call site, and state that needs an identity
+/// independent of any view should be a proper entity instead.
+///
 /// Projections are strong handles: holding one keeps the source entity alive,
 /// so reads are infallible. Use [`Projection::downgrade`] where that would
 /// create a cycle. They are also allocation-free — the cost of constructing
@@ -74,6 +82,12 @@ fn write_trampoline<E: 'static, P: ?Sized + 'static>(
 /// its own entity, and project from that.
 pub struct Projection<P: ?Sized + 'static> {
     entity: AnyEntity,
+    /// The id this projection reports as its identity. For projections
+    /// created through the `use_projection` hooks this is the relay entity
+    /// allocated for the call site, so sibling projections of different
+    /// fields of one entity don't collide; for identity conversions from
+    /// [`Entity`] it is the source entity itself.
+    identity: EntityId,
     lens: ErasedLens,
     read: ReadFn<P>,
 }
@@ -82,6 +96,7 @@ impl<P: ?Sized + 'static> Clone for Projection<P> {
     fn clone(&self) -> Self {
         Self {
             entity: self.entity.clone(),
+            identity: self.identity,
             lens: self.lens,
             read: self.read,
         }
@@ -94,10 +109,12 @@ impl<P: ?Sized + 'static> Projection<P> {
         (self.read)(self.lens, &self.entity, cx)
     }
 
-    /// The id of the entity this projection reads from. Notifications for the
-    /// projected value are delivered as notifications of this entity.
+    /// This projection's identity: the relay entity of the `use_projection`
+    /// call site that created it, or the source entity for identity
+    /// conversions from [`Entity`]. Notifications for the projected value are
+    /// delivered as notifications of this entity.
     pub fn entity_id(&self) -> EntityId {
-        self.entity.entity_id()
+        self.identity
     }
 
     /// Convert this projection into a weak variant, which does not keep the
@@ -105,6 +122,7 @@ impl<P: ?Sized + 'static> Projection<P> {
     pub fn downgrade(&self) -> WeakProjection<P> {
         WeakProjection {
             entity: self.entity.downgrade(),
+            identity: self.identity,
             lens: self.lens,
             read: self.read,
         }
@@ -114,7 +132,7 @@ impl<P: ?Sized + 'static> Projection<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for Projection<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Projection")
-            .field("entity_id", &self.entity.entity_id())
+            .field("entity_id", &self.identity)
             .finish_non_exhaustive()
     }
 }
@@ -122,7 +140,7 @@ impl<P: ?Sized + 'static> std::fmt::Debug for Projection<P> {
 /// A read-write handle to a value `P` projected out of an entity.
 ///
 /// Like [`Projection`], but writable: updates are applied through the lens to
-/// the source entity, which is then notified. See [`Entity::project_mut`].
+/// the source entity, which is then notified. See [`Window::use_projection_mut`].
 pub struct ProjectionMut<P: ?Sized + 'static> {
     read: Projection<P>,
     write_lens: ErasedLens,
@@ -188,7 +206,7 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for ProjectionMut<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProjectionMut")
-            .field("entity_id", &self.read.entity.entity_id())
+            .field("entity_id", &self.read.identity)
             .finish_non_exhaustive()
     }
 }
@@ -197,6 +215,7 @@ impl<P: ?Sized + 'static> std::fmt::Debug for ProjectionMut<P> {
 /// alive. Upgrade it to read.
 pub struct WeakProjection<P: ?Sized + 'static> {
     entity: AnyWeakEntity,
+    identity: EntityId,
     lens: ErasedLens,
     read: ReadFn<P>,
 }
@@ -205,6 +224,7 @@ impl<P: ?Sized + 'static> Clone for WeakProjection<P> {
     fn clone(&self) -> Self {
         Self {
             entity: self.entity.clone(),
+            identity: self.identity,
             lens: self.lens,
             read: self.read,
         }
@@ -212,9 +232,9 @@ impl<P: ?Sized + 'static> Clone for WeakProjection<P> {
 }
 
 impl<P: ?Sized + 'static> WeakProjection<P> {
-    /// The id of the entity this projection reads from.
+    /// This projection's identity. See [`Projection::entity_id`].
     pub fn entity_id(&self) -> EntityId {
-        self.entity.entity_id()
+        self.identity
     }
 
     /// Upgrade to a strong projection. Returns `None` if the source entity has
@@ -222,6 +242,7 @@ impl<P: ?Sized + 'static> WeakProjection<P> {
     pub fn upgrade(&self) -> Option<Projection<P>> {
         Some(Projection {
             entity: self.entity.upgrade()?,
+            identity: self.identity,
             lens: self.lens,
             read: self.read,
         })
@@ -231,7 +252,7 @@ impl<P: ?Sized + 'static> WeakProjection<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for WeakProjection<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeakProjection")
-            .field("entity_id", &self.entity.entity_id())
+            .field("entity_id", &self.identity)
             .finish_non_exhaustive()
     }
 }
@@ -274,7 +295,7 @@ impl<P: ?Sized + 'static> WeakProjectionMut<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for WeakProjectionMut<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeakProjectionMut")
-            .field("entity_id", &self.read.entity.entity_id())
+            .field("entity_id", &self.read.identity)
             .finish_non_exhaustive()
     }
 }
@@ -282,15 +303,19 @@ impl<P: ?Sized + 'static> std::fmt::Debug for WeakProjectionMut<P> {
 impl<E: 'static> Entity<E> {
     /// Project a read-only view of part of this entity's state.
     ///
-    /// The lens maps the entity's state to the projected value. It must be a
-    /// plain function (closures that capture nothing coerce automatically):
-    ///
-    /// ```ignore
-    /// let name: Projection<String> = person.project(|person| &person.name);
-    /// let name_str: Projection<str> = person.project(|person| person.name.as_str());
-    /// ```
-    pub fn project<P: ?Sized + 'static>(&self, lens: for<'a> fn(&'a E) -> &'a P) -> Projection<P> {
+    /// Crate-private on purpose: a raw lens projection reports its *source*
+    /// entity as its identity, so two projections of different fields of one
+    /// entity would collide when used as view identities. Public construction
+    /// goes through [`Window::use_projection`], which allocates a per-call-site
+    /// relay entity as the identity, or through the identity `From<Entity<P>>`
+    /// conversions, which have the same identity semantics as the entity
+    /// itself.
+    pub(crate) fn project<P: ?Sized + 'static>(
+        &self,
+        lens: for<'a> fn(&'a E) -> &'a P,
+    ) -> Projection<P> {
         Projection {
+            identity: self.entity_id(),
             entity: self.clone().into_any(),
             // SAFETY: erasing a function pointer's type; `read_trampoline::<E, P>`
             // stored alongside it transmutes it back to exactly this type.
@@ -301,16 +326,9 @@ impl<E: 'static> Entity<E> {
         }
     }
 
-    /// Project a read-write view of part of this entity's state.
-    ///
-    /// Takes two lenses because reads only have shared access to the entity
-    /// while writes have exclusive access; they should address the same value.
-    /// Like [`Entity::project`], the lenses must be plain functions:
-    ///
-    /// ```ignore
-    /// let name = person.project_mut(|person| &person.name, |person| &mut person.name);
-    /// ```
-    pub fn project_mut<P: ?Sized + 'static>(
+    /// Project a read-write view of part of this entity's state. See
+    /// [`Entity::project`] for why this is crate-private.
+    pub(crate) fn project_mut<P: ?Sized + 'static>(
         &self,
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
@@ -325,6 +343,128 @@ impl<E: 'static> Entity<E> {
             write: write_trampoline::<E, P>,
         }
     }
+}
+
+/// The state behind a `use_projection` call site. It gives the projection a
+/// stable identity distinct from its source entity, and forwards the source's
+/// notifications so observation and caching keyed on the projection work.
+struct ProjectionRelay {
+    _source_subscription: Subscription,
+}
+
+impl ProjectionRelay {
+    fn new<E: 'static>(source: &Entity<E>, cx: &mut Context<Self>) -> Self {
+        ProjectionRelay {
+            _source_subscription: cx.observe(source, |_, _, cx| cx.notify()),
+        }
+    }
+}
+
+impl Window {
+    /// Use a read-only projection of part of an entity's state. Must be called
+    /// during render.
+    ///
+    /// The lens must be a plain function (closures that capture nothing coerce
+    /// automatically):
+    ///
+    /// ```ignore
+    /// let name: Projection<String> = window.use_projection(cx, &person, |person| &person.name);
+    /// ```
+    ///
+    /// The projection's identity is a relay entity memoized per call site,
+    /// like [`Window::use_state`], so sibling projections of different fields
+    /// of one entity don't collide. When rendering multiple projections from
+    /// the same location (e.g. in a loop), use [`Window::use_keyed_projection`].
+    #[track_caller]
+    pub fn use_projection<E: 'static, P: ?Sized + 'static>(
+        &mut self,
+        cx: &mut App,
+        source: &Entity<E>,
+        lens: for<'a> fn(&'a E) -> &'a P,
+    ) -> Projection<P> {
+        self.use_keyed_projection(
+            ElementId::CodeLocation(*core::panic::Location::caller()),
+            cx,
+            source,
+            lens,
+        )
+    }
+
+    /// Like [`Window::use_projection`], with an explicit key to disambiguate
+    /// call sites that render multiple times (e.g. in a loop).
+    pub fn use_keyed_projection<E: 'static, P: ?Sized + 'static>(
+        &mut self,
+        key: impl Into<ElementId>,
+        cx: &mut App,
+        source: &Entity<E>,
+        lens: for<'a> fn(&'a E) -> &'a P,
+    ) -> Projection<P> {
+        let relay = self.use_keyed_state(key, cx, |_, cx| ProjectionRelay::new(source, cx));
+        let mut projection = source.project(lens);
+        projection.identity = relay.entity_id();
+        projection
+    }
+
+    /// Use a read-write projection of part of an entity's state. Must be
+    /// called during render. See [`Window::use_projection`].
+    ///
+    /// Takes two lenses because reads only have shared access to the entity
+    /// while writes have exclusive access; they should address the same value.
+    /// The [`crate::project!`] macro writes both from a single field path.
+    #[track_caller]
+    pub fn use_projection_mut<E: 'static, P: ?Sized + 'static>(
+        &mut self,
+        cx: &mut App,
+        source: &Entity<E>,
+        read: for<'a> fn(&'a E) -> &'a P,
+        write: for<'a> fn(&'a mut E) -> &'a mut P,
+    ) -> ProjectionMut<P> {
+        self.use_keyed_projection_mut(
+            ElementId::CodeLocation(*core::panic::Location::caller()),
+            cx,
+            source,
+            read,
+            write,
+        )
+    }
+
+    /// Like [`Window::use_projection_mut`], with an explicit key to
+    /// disambiguate call sites that render multiple times (e.g. in a loop).
+    pub fn use_keyed_projection_mut<E: 'static, P: ?Sized + 'static>(
+        &mut self,
+        key: impl Into<ElementId>,
+        cx: &mut App,
+        source: &Entity<E>,
+        read: for<'a> fn(&'a E) -> &'a P,
+        write: for<'a> fn(&'a mut E) -> &'a mut P,
+    ) -> ProjectionMut<P> {
+        let relay = self.use_keyed_state(key, cx, |_, cx| ProjectionRelay::new(source, cx));
+        let mut projection = source.project_mut(read, write);
+        projection.read.identity = relay.entity_id();
+        projection
+    }
+}
+
+/// Use a read-write projection of an entity field, writing both lenses from a
+/// single field path. Must be called during render.
+///
+/// ```ignore
+/// let name: ProjectionMut<String> = project!(window, cx, &person, name);
+/// let city: ProjectionMut<String> = project!(window, cx, &person, address.city);
+/// ```
+///
+/// Expands to [`Window::use_projection_mut`] with `|state| &state.<path>` and
+/// `|state| &mut state.<path>` as the lenses.
+#[macro_export]
+macro_rules! project {
+    ($window:expr, $cx:expr, $entity:expr, $($field:ident).+) => {
+        $window.use_projection_mut(
+            $cx,
+            $entity,
+            |state| &state.$($field).+,
+            |state| &mut state.$($field).+,
+        )
+    };
 }
 
 impl<P: 'static> From<Entity<P>> for Projection<P> {
@@ -451,6 +591,95 @@ mod tests {
         let name: Projection<str> = person.project(|person| person.name.as_str());
 
         cx.update(|cx| assert_eq!(name.read(cx), "Ada"));
+    }
+
+    #[test]
+    fn use_projection_assigns_stable_distinct_identities() {
+        use crate::{AnyWindowHandle, Context, IntoElement, Render, Window, div};
+        use std::cell::RefCell;
+
+        #[derive(Default)]
+        struct Recorded {
+            identities: Vec<(EntityId, EntityId)>,
+            names: Vec<String>,
+            name_projection: Option<ProjectionMut<String>>,
+        }
+
+        struct HookView {
+            person: Entity<Person>,
+            recorded: Rc<RefCell<Recorded>>,
+        }
+
+        impl Render for HookView {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let name = crate::project!(window, cx, &self.person, name);
+                let age = window.use_projection_mut(
+                    cx,
+                    &self.person,
+                    |person| &person.age,
+                    |person| &mut person.age,
+                );
+
+                let mut recorded = self.recorded.borrow_mut();
+                recorded.identities.push((name.entity_id(), age.entity_id()));
+                recorded.names.push(name.read(cx).clone());
+                recorded.name_projection = Some(name);
+                div()
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let person = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let person_id = person.entity_id();
+        let recorded = Rc::new(RefCell::new(Recorded::default()));
+
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let recorded = recorded.clone();
+                move |_, _| HookView { person, recorded }
+            })
+            .into();
+
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+
+        let name_projection = recorded
+            .borrow_mut()
+            .name_projection
+            .take()
+            .expect("render ran");
+        cx.update(|cx| name_projection.update(cx, |name| name.push_str(" Lovelace")));
+
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+
+        let recorded = recorded.borrow();
+        assert!(recorded.identities.len() >= 3);
+        let first = recorded.identities[0];
+        assert!(
+            recorded.identities.iter().all(|frame| *frame == first),
+            "identities must be stable across frames: {:?}",
+            recorded.identities
+        );
+        let (name_id, age_id) = first;
+        assert_ne!(name_id, age_id, "call sites must have distinct identities");
+        assert_ne!(name_id, person_id, "identity must differ from the source");
+        assert_ne!(age_id, person_id, "identity must differ from the source");
+        assert_eq!(
+            recorded.names.last().map(String::as_str),
+            Some("Ada Lovelace"),
+            "writes through the projection must be visible to later renders"
+        );
     }
 
     #[test]
