@@ -33,12 +33,12 @@
 
 use crate::{
     A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
-    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
+    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
 use derive_more::{Deref, DerefMut};
 use std::{
-    any::{Any, type_name},
+    any::Any,
     fmt::{self, Debug, Display},
     mem, panic,
     sync::Arc,
@@ -204,116 +204,6 @@ pub trait ParentElement {
         Self: Sized,
     {
         self.extend(children.into_iter().map(|child| child.into_any_element()));
-        self
-    }
-}
-
-/// An element for rendering components. An implementation detail of the [`IntoElement`] derive macro
-/// for [`RenderOnce`]
-#[doc(hidden)]
-pub struct Component<C: RenderOnce> {
-    component: Option<C>,
-    #[cfg(debug_assertions)]
-    source: &'static core::panic::Location<'static>,
-}
-
-impl<C: RenderOnce> Component<C> {
-    /// Create a new component from the given RenderOnce type.
-    #[track_caller]
-    pub fn new(component: C) -> Self {
-        Component {
-            component: Some(component),
-            #[cfg(debug_assertions)]
-            source: core::panic::Location::caller(),
-        }
-    }
-}
-
-fn prepaint_component(
-    (element, name): &mut (AnyElement, &'static str),
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
-        element.prepaint(window, cx);
-    })
-}
-
-fn paint_component(
-    (element, name): &mut (AnyElement, &'static str),
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
-        element.paint(window, cx);
-    })
-}
-impl<C: RenderOnce> Element for Component<C> {
-    type RequestLayoutState = (AnyElement, &'static str);
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        #[cfg(debug_assertions)]
-        return Some(self.source);
-
-        #[cfg(not(debug_assertions))]
-        return None;
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_id(ElementId::Name(type_name::<C>().into()), |window| {
-            let mut element = self
-                .component
-                .take()
-                .unwrap()
-                .render(window, cx)
-                .into_any_element();
-
-            let layout_id = element.request_layout(window, cx);
-            (layout_id, (element, type_name::<C>()))
-        })
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        prepaint_component(state, window, cx);
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        paint_component(state, window, cx);
-    }
-}
-
-impl<C: RenderOnce> IntoElement for Component<C> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
         self
     }
 }
