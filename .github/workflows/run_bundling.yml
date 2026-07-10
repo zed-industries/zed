@@ -9,6 +9,8 @@ on:
     types:
     - labeled
     - synchronize
+permissions:
+  contents: read
 jobs:
   bundle_linux_aarch64:
     if: |-
@@ -99,6 +101,9 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   build_static_bwrap_linux_aarch64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     steps:
     - name: steps::cache_nix_dependencies_namespace
@@ -130,6 +135,9 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   build_static_bwrap_linux_x86_64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     runs-on: namespace-profile-32x64-ubuntu-2004
     steps:
     - name: steps::cache_nix_dependencies_namespace
@@ -185,9 +193,10 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -234,9 +243,10 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
