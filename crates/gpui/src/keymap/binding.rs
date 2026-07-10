@@ -255,7 +255,7 @@ macro_rules! keybinding {
     };
     (@impl $keystrokes:literal, $name:ident, $context:expr) => {
         #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
-        #[action(crate_namespace)]
+        #[action(namespace = crate)]
         pub struct $name;
 
         const _: () = {
