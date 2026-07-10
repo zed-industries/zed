@@ -45,8 +45,10 @@
 //! across the calls.
 //!
 //! `std::sync::Mutex` rather than `parking_lot` is deliberate: on macOS it is
-//! backed by `os_unfair_lock`, whose priority donation resolves inversions
-//! between the high-priority io thread and the main thread.
+//! currently backed by `os_unfair_lock`, whose priority donation resolves
+//! inversions between the high-priority io thread and the main thread. (That
+//! is a std implementation detail, not a guarantee; if it changes, the cost
+//! is added latency under contention, not incorrectness.)
 
 use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
