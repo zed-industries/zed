@@ -5,49 +5,77 @@
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
-Zed reached its 1.0 milestone in April 2026 and has shipped weekly stable releases since — v1.10.1 as of July 9, 2026 (changelog: [zed.dev/releases/stable](https://zed.dev/releases/stable)). Don't rely on this README for the exact current version; check the changelog link, since it updates weekly. Core capabilities beyond editing and multiplayer: an Agent Panel supporting the Agent Client Protocol (ACP), which lets external agents (Claude Code, Codex, OpenCode, etc.) drive the editor directly with diffs rendered inline; an open-weight edit-prediction model (Zeta); a Debug Adapter Protocol (DAP) debugger for Rust, C/C++, JavaScript, Go, and Python; and a WebAssembly-based extension system. AI inference can run against hosted providers (Anthropic, OpenAI, Google, AWS Bedrock, and others via BYOK) or fully locally via `llama.cpp`.
+Zed reached its 1.0 milestone in April 2026 and has shipped weekly stable releases since. See the stable release changelog at [zed.dev/releases/stable](https://zed.dev/releases/stable) for the latest version information.
 
-### Editions and pricing
+## Features
 
-- **Personal** — free. Full editor, unlimited use of BYOK/external agents, 2,000 accepted edit predictions/month.
-- **Pro** — $10/month. Unlimited edit predictions plus bundled hosted-AI token credits (overage billed at provider list price).
-- **Business** — $30/seat/month. Org-wide AI policy controls, prompt-sharing and edit-prediction training disabled by default, BYOK for major providers at no added fee.
+In addition to editing and multiplayer collaboration, Zed includes:
 
-Current as of July 2026; confirm details at [zed.dev/pricing](https://zed.dev/pricing) before procurement, as tiers have changed more than once this year.
+- Agent Panel with support for the Agent Client Protocol (ACP)
+- Inline diff rendering from external agents
+- Open-weight edit prediction model (Zeta)
+- Debug Adapter Protocol (DAP) debugger for Rust, C/C++, JavaScript, Go, and Python
+- WebAssembly-based extension system
+- Hosted and local AI inference support through providers such as Anthropic, OpenAI, Google, AWS Bedrock, and `llama.cpp`
 
-### Security and compliance status
+## Editions and Pricing
 
-For sysadmins and enterprise evaluators: **SSO, SAML/OIDC, SCIM, and SOC 2 certification are not yet available** as of this writing — they are on Zed's roadmap but not shipped. Zed does not store prompts or use them to train models, and hosted-model agreements are zero-data-retention, with one documented exception (certain Anthropic Mythos-class models retain prompts/outputs briefly for safety review). Regulated environments should treat Zed as **not yet compliance-certified** and evaluate on that basis rather than assuming parity with certified competitors. Contact `sales@zed.dev` for current status or to be notified when these ship.
+Zed offers Personal, Pro, and Business plans.
+
+For the latest plan information, features, and pricing, see:
+
+- https://zed.dev/pricing
+
+## Security and Compliance Status
+
+As of this writing, SSO, SAML/OIDC, SCIM, and SOC 2 certification are not yet available.
+
+Zed does not store prompts or use them to train models. Hosted model agreements are based on zero-data-retention policies, with limited exceptions where noted by individual providers.
+
+Organizations with regulatory requirements should evaluate Zed according to their own compliance requirements and verify current status before deployment.
+
+For additional information, contact:
+
+- sales@zed.dev
 
 ---
 
-### Installation
+## Installation
 
-On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)). All three platforms are stable and at feature parity.
+On macOS, Linux, and Windows, you can download Zed directly or install it through your local package manager.
+
+- [Download Zed](https://zed.dev/download)
+- [Install on macOS](https://zed.dev/docs/installation#macos)
+- [Install on Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)
+- [Install on Windows](https://zed.dev/docs/windows#package-managers)
 
 Other platforms are not yet available:
 
 - Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
 
-### Developing Zed
+## Developing Zed
 
 - [Building Zed for macOS](./docs/src/development/macos.md)
 - [Building Zed for Linux](./docs/src/development/linux.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
-Required Rust toolchain version is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). Extensions are WebAssembly-based; see the extension docs if you're building one rather than the editor itself.
+The required Rust toolchain version is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml).
 
-### Contributing
+Extensions are WebAssembly-based. See the extension documentation if you are building an extension rather than the editor itself.
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+## Contributing
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for information about contributing to Zed.
 
-### Community
+Interested in working on Zed full-time? See our [jobs](https://zed.dev/jobs) page for open roles.
 
-For support and general discussion, use [Zed's community channels](https://discord.com/invite/zedindustries) rather than GitHub Issues (Issues are for bugs and feature requests).
+## Community
 
-### Licensing
+For support and general discussion, use [Zed's community channels](https://discord.com/invite/zedindustries).
+
+GitHub Issues are intended for bug reports and feature requests.
+
+## Licensing
 
 Zed source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked. Server-side components are licensed under AGPL-3.0. See `LICENSE-GPL`, `LICENSE-APACHE`, and `LICENSE-AGPL` in the repo root, and check individual file headers when in doubt — this matters if you're redistributing or building a commercial product on top of Zed's code.
 
@@ -61,8 +89,10 @@ We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automati
 
 ## Sponsorship
 
-Zed is developed by **Zed Industries, Inc.**, a venture-backed, for-profit company. The editor is free and open source; the company's revenue comes primarily from paid Pro and Business plans, not from sponsorships.
+Zed is developed by **Zed Industries, Inc.**, a venture-backed, for-profit company.
 
-If you'd like to financially support the project, you can do so via GitHub Sponsors.
-Sponsorships go directly to Zed Industries and are used as general company revenue.
-There are no perks or entitlements associated with sponsorship.
+The editor is free and open source. Company revenue comes primarily from paid Pro and Business plans.
+
+If you would like to support the project financially, you can do so through GitHub Sponsors.
+
+Sponsorships go directly to Zed Industries and are treated as general company revenue. Sponsorship does not include additional product benefits or entitlements.
