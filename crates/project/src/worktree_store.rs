@@ -106,8 +106,10 @@ impl WorktreePaths {
     }
 
     /// Add a new path pair. If the exact (main, folder) pair already exists,
-    /// this is a no-op. Rebuilds both internal `PathList`s to maintain
-    /// consistent ordering.
+    /// this is a no-op. A folder can only belong to one main worktree, so a
+    /// resolved pair (main != folder) replaces an unresolved one for the
+    /// same folder — but never the reverse, since the main path computation
+    /// falls back to the folder path while git state is unavailable.
     pub fn add_path(&mut self, main_path: &Path, folder_path: &Path) {
         let already_exists = self
             .ordered_pairs()
@@ -115,14 +117,52 @@ impl WorktreePaths {
         if already_exists {
             return;
         }
+        let folder_is_resolved = self
+            .ordered_pairs()
+            .any(|(m, f)| f.as_path() == folder_path && m != f);
+        if main_path == folder_path && folder_is_resolved {
+            return;
+        }
         let (mut mains, mut folders): (Vec<PathBuf>, Vec<PathBuf>) = self
             .ordered_pairs()
+            .filter(|(_, f)| f.as_path() != folder_path)
             .map(|(m, f)| (m.clone(), f.clone()))
             .unzip();
         mains.push(main_path.to_path_buf());
         folders.push(folder_path.to_path_buf());
         self.main_paths = PathList::new(&mains);
         self.paths = PathList::new(&folders);
+    }
+
+    /// Returns `self` with any unresolved pair (main == folder) replaced by
+    /// the resolved pair from `stored` for the same folder, if one exists.
+    ///
+    /// The main path computation falls back to the folder path while git
+    /// state is unavailable, so freshly-computed paths can transiently lose
+    /// a linked worktree's association with its main repository; the
+    /// previously-resolved main path must win, otherwise threads get
+    /// re-grouped under the wrong worktree.
+    pub fn preserving_resolved_main_paths(&self, stored: &WorktreePaths) -> WorktreePaths {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .map(|(main, folder)| {
+                if main == folder
+                    && let Some((stored_main, _)) = stored
+                        .ordered_pairs()
+                        .find(|(stored_main, stored_folder)| {
+                            *stored_folder == folder && *stored_main != folder
+                        })
+                {
+                    (stored_main.clone(), folder.clone())
+                } else {
+                    (main.clone(), folder.clone())
+                }
+            })
+            .unzip();
+        WorktreePaths {
+            paths: PathList::new(&folders),
+            main_paths: PathList::new(&mains),
+        }
     }
 
     /// Remove all pairs whose main worktree path matches the given path.
