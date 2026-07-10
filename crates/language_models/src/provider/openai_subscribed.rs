@@ -338,6 +338,8 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 // approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
 enum ChatGptModel {
+    Gpt56Sol,
+    Gpt56Terra,
     Gpt55,
     Gpt54,
     Gpt54Mini,
@@ -345,11 +347,19 @@ enum ChatGptModel {
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
-        vec![Self::Gpt55, Self::Gpt54, Self::Gpt54Mini]
+        vec![
+            Self::Gpt56Sol,
+            Self::Gpt56Terra,
+            Self::Gpt55,
+            Self::Gpt54,
+            Self::Gpt54Mini,
+        ]
     }
 
     fn id(&self) -> &str {
         match self {
+            Self::Gpt56Sol => "gpt-5.6-sol",
+            Self::Gpt56Terra => "gpt-5.6-terra",
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
@@ -358,6 +368,8 @@ impl ChatGptModel {
 
     fn display_name(&self) -> &str {
         match self {
+            Self::Gpt56Sol => "GPT-5.6 Sol",
+            Self::Gpt56Terra => "GPT-5.6 Terra",
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
@@ -365,11 +377,10 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        // All Codex-supported models use a 272K context window in the Codex
-        // backend, even when the raw model exposes a larger context window via the
-        // public API (e.g. gpt-5.4 has max_context_window 1M, but Codex uses
-        // context_window 272K). Source: openai/codex models-manager/models.json.
-        272_000
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra => 372_000,
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+        }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
@@ -383,18 +394,30 @@ impl ChatGptModel {
     }
 
     fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
-        // Codex bundled models all default to Medium reasoning effort.
-        Some(ReasoningEffort::Medium)
+        match self {
+            Self::Gpt56Sol => Some(ReasoningEffort::Low),
+            Self::Gpt56Terra | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
+                Some(ReasoningEffort::Medium)
+            }
+        }
     }
 
     fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
-        // The Codex backend's supported_reasoning_levels for every model in this list is low/medium/high/xhigh
-        &[
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-            ReasoningEffort::XHigh,
-        ]
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+        }
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -407,7 +430,7 @@ impl ChatGptModel {
 
     fn supports_priority(&self) -> bool {
         match self {
-            Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt55 | Self::Gpt54 => true,
             Self::Gpt54Mini => false,
         }
     }
@@ -476,7 +499,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
+                    ReasoningEffort::Max => ("Max", "max"),
                 };
 
                 Some(LanguageModelEffortLevel {
