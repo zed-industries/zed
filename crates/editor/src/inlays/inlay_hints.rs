@@ -4878,6 +4878,7 @@ let c = 3;"#
         fn layout_for_selection(
             editor: &mut Editor,
             range: Range<MultiBufferOffset>,
+            cursor_offset: bool,
             window: &mut Window,
             cx: &mut Context<Editor>,
         ) -> crate::element::SelectionLayout {
@@ -4890,7 +4891,7 @@ let c = 3;"#
             crate::element::SelectionLayout::new(
                 selections.pop().unwrap(),
                 false,
-                false,
+                cursor_offset,
                 crate::CursorShape::Bar,
                 &snapshot,
                 true,
@@ -4914,6 +4915,7 @@ let c = 3;"#
                 let ending_at_hint = layout_for_selection(
                     editor,
                     MultiBufferOffset(15)..MultiBufferOffset(16),
+                    false,
                     window,
                     cx,
                 );
@@ -4931,6 +4933,7 @@ let c = 3;"#
                 let starting_at_hint = layout_for_selection(
                     editor,
                     MultiBufferOffset(16)..MultiBufferOffset(18),
+                    false,
                     window,
                     cx,
                 );
@@ -4943,6 +4946,7 @@ let c = 3;"#
                 let spanning_hint = layout_for_selection(
                     editor,
                     MultiBufferOffset(15)..MultiBufferOffset(18),
+                    false,
                     window,
                     cx,
                 );
@@ -4950,6 +4954,46 @@ let c = 3;"#
                     spanning_hint.range,
                     display_point(15)..display_point(23),
                     "Selecting `(1)` should keep the hint highlighted so the selection has no gap"
+                );
+
+                // Vim visual mode (cursor_offset) pulls the head back onto the
+                // last selected character. For a selection ending at the hint's
+                // anchor the head starts past the hint, so the pull-back lands
+                // inside the hint text and must clip back out of it.
+                let vim_ending_at_hint = layout_for_selection(
+                    editor,
+                    MultiBufferOffset(15)..MultiBufferOffset(16),
+                    true,
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    vim_ending_at_hint.range,
+                    display_point(15)..display_point(16),
+                    "Vim visual selection of `(` should not render the parameter hint as selected"
+                );
+                assert_eq!(
+                    vim_ending_at_hint.head,
+                    display_point(15),
+                    "The vim block cursor should clip through the hint onto the selected `(`"
+                );
+
+                let vim_spanning_hint = layout_for_selection(
+                    editor,
+                    MultiBufferOffset(15)..MultiBufferOffset(18),
+                    true,
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    vim_spanning_hint.range,
+                    display_point(15)..display_point(23),
+                    "Vim visual selection of `(1)` should keep the hint highlighted"
+                );
+                assert_eq!(
+                    vim_spanning_hint.head,
+                    display_point(22),
+                    "The vim block cursor should sit on the last selected character `)`"
                 );
             })
             .unwrap();
