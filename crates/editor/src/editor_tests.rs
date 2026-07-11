@@ -21857,6 +21857,59 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_with_blank_lines_when_comment_on_empty_lines(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.update(|_window, cx| {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.comment_on_empty_lines = true;
+        EditorSettings::override_global(editor_settings, cx);
+    });
+
+    // Toggle comment on a multi-line selection with blank lines
+    cx.set_state(indoc! {"
+        fn a() {
+            «a();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            // «a();
+            //
+            // c();ˇ»
+        }
+    "});
+
+    // Uncomment: blank line should remain blank (trailing whitespace from padding is OK)
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    let editor = cx.editor.clone();
+    let text = cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.buffer.read(cx).read(cx).text()
+        })
+    });
+    assert!(text.contains("    a();"));
+    assert!(text.contains("    c();"));
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

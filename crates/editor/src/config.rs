@@ -82,6 +82,17 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
+    pub fn toggle_comment_on_empty_lines(
+        &mut self,
+        _: &ToggleCommentOnEmptyLines,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.comment_on_empty_lines = !editor_settings.comment_on_empty_lines;
+        EditorSettings::override_global(editor_settings, cx);
+    }
+
     pub fn line_numbers_enabled(&self, cx: &App) -> bool {
         if let Some(show_line_numbers) = self.show_line_numbers {
             return show_line_numbers;

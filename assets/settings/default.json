@@ -371,6 +371,11 @@
   //
   // Default: 100
   "minimum_split_diff_width": 100,
+  // Whether to insert comment markers on empty lines when toggling comments
+  // in a multi-line selection.
+  //
+  // Default: false
+  "comment_on_empty_lines": false,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.

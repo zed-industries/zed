@@ -70,6 +70,7 @@ pub struct EditorSettings {
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
     pub file_diff: FileDiffSettings,
+    pub comment_on_empty_lines: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -326,6 +327,7 @@ impl Settings for EditorSettings {
             file_diff: FileDiffSettings {
                 show_full_file: file_diff.show_full_file.unwrap(),
             },
+            comment_on_empty_lines: editor.comment_on_empty_lines.unwrap_or(false),
         }
     }
 }

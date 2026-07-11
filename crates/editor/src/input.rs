@@ -1545,11 +1545,22 @@ impl Editor {
                         .map(|p| p.trim_end_matches(' ').len())
                         .collect::<SmallVec<[usize; 4]>>();
 
+                    let comment_on_empty_lines =
+                        EditorSettings::get_global(cx).comment_on_empty_lines;
+
                     let mut all_selection_lines_are_comments = true;
+                    let mut blank_prefix_ranges = Vec::new();
 
                     for row in start_row.0..=end_row.0 {
                         let row = MultiBufferRow(row);
-                        if start_row < end_row && snapshot.is_line_blank(row) {
+                        let is_blank_multiline = comment_on_empty_lines
+                            && start_row < end_row
+                            && snapshot.is_line_blank(row);
+
+                        if !comment_on_empty_lines
+                            && start_row < end_row
+                            && snapshot.is_line_blank(row)
+                        {
                             continue;
                         }
 
@@ -1568,11 +1579,14 @@ impl Editor {
                             .max_by_key(|range| range.end.column - range.start.column)
                             .expect("prefixes is non-empty");
 
-                        if prefix_range.is_empty() {
-                            all_selection_lines_are_comments = false;
+                        if is_blank_multiline {
+                            blank_prefix_ranges.push((row, prefix_range));
+                        } else {
+                            if prefix_range.is_empty() {
+                                all_selection_lines_are_comments = false;
+                            }
+                            selection_edit_ranges.push(prefix_range);
                         }
-
-                        selection_edit_ranges.push(prefix_range);
                     }
 
                     if all_selection_lines_are_comments {
@@ -1582,6 +1596,11 @@ impl Editor {
                                 .cloned()
                                 .map(|range| (range, empty_str.clone())),
                         );
+                        for (_, range) in &blank_prefix_ranges {
+                            if !range.is_empty() {
+                                edits.push((range.clone(), empty_str.clone()));
+                            }
+                        }
                     } else {
                         let min_column = selection_edit_ranges
                             .iter()
@@ -1592,6 +1611,28 @@ impl Editor {
                             let position = Point::new(range.start.row, min_column);
                             (position..position, first_prefix.clone())
                         }));
+                        for (row, range) in &blank_prefix_ranges {
+                            if range.is_empty() {
+                                let len = snapshot.line_len(*row);
+                                let col = min_column.min(len);
+                                let prefix = first_prefix.trim_end();
+                                let text: Arc<str> = if col < min_column {
+                                    format!(
+                                        "{:padding$}{}",
+                                        "",
+                                        prefix,
+                                        padding = (min_column - col) as usize
+                                    )
+                                    .into()
+                                } else {
+                                    Arc::from(prefix)
+                                };
+                                edits.push((
+                                    Point::new(row.0, col)..Point::new(row.0, col),
+                                    text,
+                                ));
+                            }
+                        }
                     }
                 } else if let Some(BlockCommentConfig {
                     start: full_comment_prefix,

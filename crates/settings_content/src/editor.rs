@@ -279,6 +279,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 100
     pub minimum_split_diff_width: Option<f32>,
+
+    /// Whether to insert comment markers on empty lines when toggling comments
+    /// in a multi-line selection.
+    ///
+    /// Default: false
+    pub comment_on_empty_lines: Option<bool>,
 }
 
 #[derive(

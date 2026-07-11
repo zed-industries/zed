@@ -482,6 +482,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_breadcrumb);
         register_action(editor, window, Editor::toggle_line_numbers);
         register_action(editor, window, Editor::toggle_relative_line_numbers);
+        register_action(editor, window, Editor::toggle_comment_on_empty_lines);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inline_values);
         register_action(editor, window, Editor::toggle_edit_predictions);

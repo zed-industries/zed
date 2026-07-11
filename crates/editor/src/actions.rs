@@ -894,6 +894,8 @@ actions!(
         ToggleEditPrediction,
         /// Toggles line numbers display.
         ToggleLineNumbers,
+        /// Toggles comment on empty lines when toggling comments in a multi-line selection.
+        ToggleCommentOnEmptyLines,
         /// Toggles the minimap display.
         ToggleMinimap,
         /// Swaps the start and end of the current selection.
