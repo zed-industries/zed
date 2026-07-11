@@ -167,7 +167,10 @@ impl DiffHunkDelegate for UnstagedDiffDelegate {
                             editor.update(cx, |editor, cx| {
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 let hunks: Vec<_> = editor
-                                    .diff_hunks_in_ranges(&[hunk_range.clone()], &snapshot)
+                                    .diff_hunks_in_ranges(
+                                        std::slice::from_ref(&hunk_range),
+                                        &snapshot,
+                                    )
                                     .collect();
                                 if !hunks.is_empty() {
                                     editor.apply_restore(hunks, window, cx);
