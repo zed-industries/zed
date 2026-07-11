@@ -622,6 +622,17 @@ fn render_header_cell(
         })
 }
 
+// Applies the row separator to a div that hugs the width of its cell children, rather than
+// the full row container, so the line stops at the last column instead of spanning any
+// leftover space in a wider scroll viewport.
+fn apply_row_border(div: Div, is_striped: bool, show_row_borders: bool, is_last: bool, cx: &App) -> Div {
+    div.when(!is_striped && show_row_borders, |row| {
+        row.border_b_1()
+            .border_color(transparent_black())
+            .when(!is_last, |row| row.border_color(cx.theme().colors().border))
+    })
+}
+
 pub fn render_table_row(
     row_index: usize,
     items: TableRow<impl IntoElement>,
@@ -641,6 +652,8 @@ pub fn render_table_row(
         Some(widths) => widths.clone().map(Some),
         None => vec![None; cols].into_table_row(cols),
     };
+    let with_row_border =
+        |row: Div| apply_row_border(row, is_striped, table_context.show_row_borders, is_last, cx);
 
     let mut row = div()
         // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
@@ -652,11 +665,6 @@ pub fn render_table_row(
         .when_some(bg, |row, bg| row.bg(bg))
         .when(table_context.show_row_hover, |row| {
             row.hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
-        })
-        .when(!is_striped && table_context.show_row_borders, |row| {
-            row.border_b_1()
-                .border_color(transparent_black())
-                .when(!is_last, |row| row.border_color(cx.theme().colors().border))
         });
 
     let pinned_cols = table_context.pinned_cols;
@@ -680,10 +688,10 @@ pub fn render_table_row(
             .collect();
         let scrollable: Vec<(AnyElement, Option<Length>)> = kept.drain(pinned_visible..).collect();
 
-        let pinned_section = div().flex().flex_row().flex_shrink_0().children(
+        let pinned_section = with_row_border(div().flex().flex_row().flex_shrink_0().children(
             kept.into_iter()
                 .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
-        );
+        ));
 
         // Scrollable section: overflow_x_scroll + track_scroll so GPUI handles the visual
         // shift natively without requiring per-scroll re-renders of list items.
@@ -694,13 +702,11 @@ pub fn render_table_row(
             .overflow_x_scroll()
             .restrict_scroll_to_axis()
             .flex()
-            .child(
-                div().flex().flex_row().children(
-                    scrollable
-                        .into_iter()
-                        .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
-                ),
-            );
+            .child(with_row_border(div().flex().flex_row().children(
+                scrollable
+                    .into_iter()
+                    .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
+            )));
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
@@ -708,16 +714,34 @@ pub fn render_table_row(
 
         row = row.child(pinned_section).child(scrollable_section);
     } else {
-        row = row.children(
-            items
-                .map(IntoElement::into_any_element)
-                .into_vec()
-                .into_iter()
-                .zip(column_widths.into_vec())
-                .enumerate()
-                .filter(|(idx, _)| column_is_visible(column_filter, *idx))
-                .map(|(_, (cell, width))| render_cell(width, cell, &table_context, cx)),
-        );
+        // Only `Resizable` columns (independent absolute pixel widths) should leave the wrapper
+        // hugging their combined width so the row border stops at the last column. Percentage
+        // widths (`Redistributable`) need a full-size ancestor for their fractions to resolve
+        // against, and `flex_1`/auto cells are meant to stretch across the whole row anyway.
+        let is_absolute_width_table = table_context
+            .column_widths
+            .as_ref()
+            .is_some_and(|widths| {
+                widths
+                    .as_slice()
+                    .iter()
+                    .all(|width| matches!(width, Length::Definite(DefiniteLength::Absolute(_))))
+            });
+        let cells_row = div()
+            .flex()
+            .flex_row()
+            .when(!is_absolute_width_table, |this| this.size_full())
+            .children(
+                items
+                    .map(IntoElement::into_any_element)
+                    .into_vec()
+                    .into_iter()
+                    .zip(column_widths.into_vec())
+                    .enumerate()
+                    .filter(|(idx, _)| column_is_visible(column_filter, *idx))
+                    .map(|(_, (cell, width))| render_cell(width, cell, &table_context, cx)),
+            );
+        row = row.child(with_row_border(cells_row));
     }
 
     let row = if let Some(map_row) = table_context.map_row {
