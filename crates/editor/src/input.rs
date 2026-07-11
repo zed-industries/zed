@@ -1611,26 +1611,20 @@ impl Editor {
                             let position = Point::new(range.start.row, min_column);
                             (position..position, first_prefix.clone())
                         }));
+                        let trimmed_prefix = first_prefix.trim_end();
                         for (row, range) in &blank_prefix_ranges {
                             if range.is_empty() {
                                 let len = snapshot.line_len(*row);
-                                let col = min_column.min(len);
-                                let prefix = first_prefix.trim_end();
-                                let text: Arc<str> = if col < min_column {
-                                    format!(
-                                        "{:padding$}{}",
-                                        "",
-                                        prefix,
-                                        padding = (min_column - col) as usize
-                                    )
-                                    .into()
+                                let (col, text) = if len >= min_column {
+                                    (min_column, Arc::from(trimmed_prefix))
                                 } else {
-                                    Arc::from(prefix)
+                                    let padding = (min_column - len) as usize;
+                                    let mut s = String::with_capacity(padding + trimmed_prefix.len());
+                                    s.extend(std::iter::repeat(' ').take(padding));
+                                    s.push_str(trimmed_prefix);
+                                    (len, s.into())
                                 };
-                                edits.push((
-                                    Point::new(row.0, col)..Point::new(row.0, col),
-                                    text,
-                                ));
+                                edits.push((Point::new(row.0, col)..Point::new(row.0, col), text));
                             }
                         }
                     }
