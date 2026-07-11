@@ -2999,8 +2999,10 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_short_standalone_terminal_stays_top_anchored_on_resize(cx: &mut TestAppContext) {
+    async fn draw_standalone_terminal(
+        output: &[u8],
+        cx: &mut TestAppContext,
+    ) -> (gpui::Bounds<Pixels>, gpui::Size<Pixels>) {
         let (project, workspace) = init_test(cx).await;
         let terminal = cx.new(|cx| {
             terminal::TerminalBuilder::new_display_only(
@@ -3011,11 +3013,10 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
         terminal.update(cx, |terminal, cx| {
-            terminal.write_output(b"$ ", cx);
+            terminal.write_output(output, cx);
         });
 
         let (terminal_view, cx) = cx.add_window_view(|window, cx| {
@@ -3039,63 +3040,29 @@ mod tests {
             terminal_view.clone().into_any_element()
         });
 
-        let terminal_origin_y = terminal.read_with(cx, |terminal, _| {
-            let content = terminal.last_content();
-            content.terminal_bounds.bounds.origin.y
+        let bounds = terminal.read_with(cx, |terminal, _| {
+            terminal.last_content().terminal_bounds.bounds
         });
-        assert_eq!(terminal_origin_y, px(0.));
+        (bounds, draw_size)
+    }
+
+    #[gpui::test]
+    async fn test_short_standalone_terminal_stays_top_anchored_on_resize(cx: &mut TestAppContext) {
+        let (bounds, _) = draw_standalone_terminal(b"$ ", cx).await;
+        assert_eq!(bounds.origin.y, px(0.));
     }
 
     #[gpui::test]
     async fn test_full_standalone_terminal_stays_bottom_anchored_on_resize(
         cx: &mut TestAppContext,
     ) {
-        let (project, workspace) = init_test(cx).await;
-        let terminal = cx.new(|cx| {
-            terminal::TerminalBuilder::new_display_only(
-                CursorShape::default(),
-                terminal::terminal_settings::AlternateScroll::On,
-                None,
-                0,
-                cx.background_executor(),
-                PathStyle::local(),
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
-        terminal.update(cx, |terminal, cx| {
-            terminal.write_output(
-                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
-                cx,
-            );
-        });
-
-        let (terminal_view, cx) = cx.add_window_view(|window, cx| {
-            TerminalView::new(
-                terminal.clone(),
-                workspace.downgrade(),
-                None,
-                project.downgrade(),
-                window,
-                cx,
-            )
-        });
-
-        let draw_size = gpui::size(px(400.), px(201.));
-        cx.simulate_resize(draw_size);
-        cx.draw(gpui::Point::default(), draw_size, |_, _| {
-            terminal_view.clone().into_any_element()
-        });
-        cx.run_until_parked();
-        cx.draw(gpui::Point::default(), draw_size, |_, _| {
-            terminal_view.clone().into_any_element()
-        });
-
-        let terminal_bounds = terminal.read_with(cx, |terminal, _| {
-            terminal.last_content().terminal_bounds.bounds
-        });
-        assert!(terminal_bounds.origin.y > px(0.));
-        assert_eq!(terminal_bounds.bottom(), draw_size.height);
+        let (bounds, draw_size) = draw_standalone_terminal(
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+            cx,
+        )
+        .await;
+        assert!(bounds.origin.y > px(0.));
+        assert_eq!(bounds.bottom(), draw_size.height);
     }
 
     #[gpui::test]
