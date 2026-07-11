@@ -1105,6 +1105,7 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
@@ -1187,6 +1188,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Clone, Copy)]
+pub enum DiffStatType {
+    HeadToIndex,
+    HeadToWorktree,
+    IndexToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2329,6 +2337,7 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2337,12 +2346,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match diff {
+                    DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
+                    DiffStatType::HeadToWorktree => args.push("HEAD".into()),
+                    DiffStatType::IndexToWorktree => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(
