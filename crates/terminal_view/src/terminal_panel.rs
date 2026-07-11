@@ -129,12 +129,9 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
-                let should_hide = !pane.has_focus(window, cx)
-                    && !pane.context_menu_focused(window, cx)
-                    && !has_focused_rename_editor;
-                // Omit the buttons entirely (rather than hiding them) so the tab scroll
-                // area can use the full width and partially-visible tabs stay clickable.
-                if should_hide {
+                if !pane.has_focus(window, cx)
+                && !has_focused_rename_editor
+                {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);

@@ -4205,11 +4205,7 @@ fn default_render_tab_bar_buttons(
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) -> (Option<AnyElement>, Option<AnyElement>) {
-    let should_hide = !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx);
-
-    // Omit the buttons entirely (rather than hiding them) so the tab scroll
-    // area can use the full width and partially-visible tabs stay clickable.
-    if should_hide {
+    if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
 
