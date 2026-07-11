@@ -166,6 +166,7 @@ fn pending_hunks(
     hunks: &[DiffHunk],
     version: &clock::Global,
     sense: PendingSense,
+    buffer: &text::BufferSnapshot,
 ) -> Vec<PendingHunk> {
     hunks
         .iter()
@@ -175,6 +176,14 @@ fn pending_hunks(
                 hunk.diff_base_byte_range.clone(),
                 version.clone(),
                 sense,
+                hunk.staged_added
+                    .iter()
+                    .map(|range| {
+                        buffer.anchor_before(rope::Point::new(range.start, 0))
+                            ..buffer.anchor_before(rope::Point::new(range.end, 0))
+                    })
+                    .collect(),
+                hunk.staged_deleted.clone(),
             )
         })
         .collect()
@@ -1203,11 +1212,17 @@ impl GitStore {
         };
 
         let version = buffer_snapshot.version().clone();
-        let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
+        let unstaged_pending = pending_hunks(
+            &unstaged_hunks,
+            &version,
+            PendingSense::Suppress,
+            &buffer_snapshot,
+        );
         let uncommitted_pending = pending_hunks(
             &uncommitted_hunks,
             &version,
             PendingSense::SetSecondaryStatus { stage: true },
+            &buffer_snapshot,
         );
         drop(unstaged_snapshot);
 
@@ -1336,7 +1351,7 @@ impl GitStore {
             .read(cx)
             .unstage_staged_hunks(&hunks, &index_snapshot);
         let version = index_snapshot.version().clone();
-        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress);
+        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress, &index_snapshot);
         drop(staged_snapshot);
 
         diff_state.update(cx, |diff_state, _| {

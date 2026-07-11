@@ -1753,7 +1753,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_staged_selected_diff_hunks(&::git::ToggleStaged, window, cx);
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            task.await?;
+            this.update_in(cx, |this, window, cx| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                let hunks = this.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+                this.apply_toggle(hunks, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub(super) fn stage_and_next(
