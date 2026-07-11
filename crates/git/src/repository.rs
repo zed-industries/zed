@@ -18,6 +18,7 @@ use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::AtomicBool;
@@ -757,20 +758,22 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_args(&self) -> Result<Vec<&str>> {
+    fn get_args(&self) -> Vec<Cow<'_, str>> {
         match self {
-            LogSource::All => Ok(vec![
-                "--ignore-missing", // needed in case of unborn HEAD
-                "--branches",
-                "--remotes",
-                "--tags",
-                "HEAD",
-            ]),
-            LogSource::Branch(branch) => Ok(vec![branch.as_str()]),
-            LogSource::Sha(oid) => Ok(vec![
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")?,
-            ]),
-            LogSource::Path(path) => Ok(vec!["--follow", "--", path.as_unix_str()]),
+            LogSource::All => vec![
+                Cow::Borrowed("--ignore-missing"), // needed in case of unborn HEAD
+                Cow::Borrowed("--branches"),
+                Cow::Borrowed("--remotes"),
+                Cow::Borrowed("--tags"),
+                Cow::Borrowed("HEAD"),
+            ],
+            LogSource::Branch(branch) => vec![Cow::Borrowed(branch.as_str())],
+            LogSource::Sha(oid) => vec![Cow::Owned(oid.to_string())],
+            LogSource::Path(path) => vec![
+                Cow::Borrowed("--follow"),
+                Cow::Borrowed("--"),
+                Cow::Borrowed(path.as_unix_str()),
+            ],
         }
     }
 }
@@ -3111,8 +3114,9 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
+            let log_source_args = log_source.get_args();
             let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
-            git_log_command.extend(log_source.get_args()?);
+            git_log_command.extend(log_source_args.iter().map(|arg| arg.as_ref()));
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3182,6 +3186,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
+            let log_source_args = log_source.get_args();
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
             let hash_query = commit_hash_search_query(search_args.query.as_str())
                 .map(|query| query.to_ascii_lowercase());
@@ -3197,7 +3202,7 @@ impl GitRepository for RealGitRepository {
                 args.push(search_args.query.as_str());
             }
 
-            args.extend(log_source.get_args()?);
+            args.extend(log_source_args.iter().map(|arg| arg.as_ref()));
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3942,7 +3947,7 @@ mod tests {
 
     #[allow(clippy::disallowed_methods)]
     #[track_caller]
-    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    fn git_command_output<I, S>(working_directory: &Path, arguments: I) -> String
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -3963,6 +3968,19 @@ mod tests {
             "git command failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        String::from_utf8(output.stdout)
+            .expect("git command output was not valid UTF-8")
+            .trim()
+            .to_string()
+    }
+
+    #[track_caller]
+    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        git_command_output(working_directory, arguments);
     }
 
     fn git_init_repo(path: &Path) {
@@ -4479,6 +4497,42 @@ mod tests {
                 ],
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_accepts_sha_log_source(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file"), "initial").unwrap();
+        git_command(repo_dir.path(), ["add", "file"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Initial commit"]);
+
+        let commit_sha: Oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+
+        repo.initial_graph_data(LogSource::Sha(commit_sha), LogOrder::DateOrder, request_tx)
+            .await
+            .unwrap();
+
+        let graph_data = request_rx.recv().await.unwrap();
+        assert_eq!(graph_data.len(), 1);
+        assert_eq!(graph_data[0].sha, commit_sha);
     }
 
     #[gpui::test]
