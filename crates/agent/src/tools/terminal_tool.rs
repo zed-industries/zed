@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use shell_command_parser::{OutputPipeBehavior, rewrite_outermost_output_pipe};
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -33,7 +34,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
 ///
-/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window. If you do pipe the outermost command to `head` or `tail` anyway with only a simple line-count argument, or to bare `less`, and omit both `head_lines` and `tail_lines`, this tool will run the command without that pipe and apply the corresponding output selection when applicable.
 ///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
@@ -75,7 +76,7 @@ pub struct TerminalToolInput {
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
 ///
-/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window. If you do pipe the outermost command to `head` or `tail` anyway with only a simple line-count argument, or to bare `less`, and omit both `head_lines` and `tail_lines`, this tool will run the command without that pipe and apply the corresponding output selection when applicable.
 ///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
@@ -230,6 +231,7 @@ impl From<TerminalToolInput> for TerminalToolRequest {
             },
             sandbox: None,
         }
+        .with_outermost_output_pipe_rewrite()
     }
 }
 
@@ -252,6 +254,30 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 reason: input.reason,
             }),
         }
+        .with_outermost_output_pipe_rewrite()
+    }
+}
+
+impl TerminalToolRequest {
+    fn with_outermost_output_pipe_rewrite(mut self) -> Self {
+        if self.selection.is_enabled() {
+            return self;
+        }
+
+        if let Some(rewrite) = rewrite_outermost_output_pipe(&self.command) {
+            self.command = rewrite.command;
+            match rewrite.behavior {
+                OutputPipeBehavior::Head(line_count) => {
+                    self.selection.head_lines = Some(line_count);
+                }
+                OutputPipeBehavior::Tail(line_count) => {
+                    self.selection.tail_lines = Some(line_count);
+                }
+                OutputPipeBehavior::FullOutput => {}
+            }
+        }
+
+        self
     }
 }
 
@@ -302,7 +328,7 @@ impl AgentTool for TerminalTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        terminal_initial_title(input.map(|input| input.command))
+        terminal_initial_title(input.map(TerminalToolRequest::from))
     }
 
     fn run(
@@ -344,7 +370,7 @@ impl AgentTool for SandboxedTerminalTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        terminal_initial_title(input.map(|input| input.command))
+        terminal_initial_title(input.map(TerminalToolRequest::from))
     }
 
     fn run(
@@ -367,9 +393,9 @@ impl AgentTool for SandboxedTerminalTool {
     }
 }
 
-fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedString {
-    if let Ok(command) = input {
-        command.into()
+fn terminal_initial_title(input: Result<TerminalToolRequest, serde_json::Value>) -> SharedString {
+    if let Ok(input) = input {
+        input.command.into()
     } else {
         "".into()
     }
@@ -1428,6 +1454,63 @@ mod tests {
         } else {
             String::new()
         }
+    }
+
+    #[test]
+    fn test_terminal_tool_request_rewrites_outermost_tail_pipe_to_selection() {
+        let request: TerminalToolRequest = TerminalToolInput {
+            command: "printf lines | tail -n 2".to_string(),
+            cd: ".".to_string(),
+            ..Default::default()
+        }
+        .into();
+
+        assert_eq!(request.command, "printf lines");
+        assert_eq!(request.selection.head_lines, None);
+        assert_eq!(request.selection.tail_lines, Some(2));
+    }
+
+    #[test]
+    fn test_terminal_tool_request_rewrites_outermost_head_pipe_to_selection() {
+        let request: TerminalToolRequest = SandboxedTerminalToolInput {
+            command: "printf lines | head".to_string(),
+            cd: ".".to_string(),
+            ..Default::default()
+        }
+        .into();
+
+        assert_eq!(request.command, "printf lines");
+        assert_eq!(request.selection.head_lines, Some(10));
+        assert_eq!(request.selection.tail_lines, None);
+    }
+
+    #[test]
+    fn test_terminal_tool_request_rewrites_outermost_less_pipe_to_full_output() {
+        let request: TerminalToolRequest = TerminalToolInput {
+            command: "printf lines | less".to_string(),
+            cd: ".".to_string(),
+            ..Default::default()
+        }
+        .into();
+
+        assert_eq!(request.command, "printf lines");
+        assert_eq!(request.selection.head_lines, None);
+        assert_eq!(request.selection.tail_lines, None);
+    }
+
+    #[test]
+    fn test_terminal_tool_request_keeps_pipe_when_selection_already_specified() {
+        let request: TerminalToolRequest = TerminalToolInput {
+            command: "printf lines | tail -n 2".to_string(),
+            cd: ".".to_string(),
+            head_lines: Some(5),
+            ..Default::default()
+        }
+        .into();
+
+        assert_eq!(request.command, "printf lines | tail -n 2");
+        assert_eq!(request.selection.head_lines, Some(5));
+        assert_eq!(request.selection.tail_lines, None);
     }
 
     #[test]
