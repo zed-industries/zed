@@ -130,8 +130,8 @@ impl TerminalPanel {
                     .and_then(|item| item.downcast::<TerminalView>())
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
                 if !pane.has_focus(window, cx)
-                && !pane.context_menu_focused(window, cx)
-                && !has_focused_rename_editor
+                    && !pane.context_menu_focused(window, cx)
+                    && !has_focused_rename_editor
                 {
                     return (None, None);
                 }
