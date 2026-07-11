@@ -157,7 +157,7 @@ pub struct ThemeSettingsContent {
     /// markdown preview. Falls back to the buffer font if unset.
     pub markdown_preview_code_font_family: Option<FontFamilyName>,
     /// The font size to use for rendering in the markdown preview.
-    /// Falls back to the buffer font size if unset.
+    /// Falls back to the UI font size if unset.
     pub markdown_preview_font_size: Option<FontSize>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
