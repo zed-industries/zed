@@ -333,6 +333,17 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
     );
     let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking);
+    let supports_speed = available
+        .supports_fast_mode
+        .unwrap_or_else(|| anthropic::supports_fast_mode(&available.name));
+    let mut extra_beta_headers = available.extra_beta_headers.clone();
+    if supports_speed
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::FAST_MODE_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -347,7 +358,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
-        supports_speed: false,
+        supports_speed,
         supports_compaction: false,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
@@ -361,7 +372,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
             vec![]
         },
         tool_override: available.tool_override.clone(),
-        extra_beta_headers: available.extra_beta_headers.clone(),
+        extra_beta_headers,
     }
 }
 

@@ -19,7 +19,14 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+
+pub fn supports_fast_mode(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+    )
+}
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
@@ -156,10 +163,7 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(
-            entry.id.as_str(),
-            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
-        );
+        let supports_speed = supports_fast_mode(&entry.id);
 
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
