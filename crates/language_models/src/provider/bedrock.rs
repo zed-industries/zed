@@ -937,6 +937,13 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
+        if request.contains_custom_tool_input() {
+            return async move {
+                Err(anyhow::anyhow!("Bedrock does not support custom tools").into())
+            }
+            .boxed();
+        }
+
         let (region, allow_global, guardrail_identifier, guardrail_version) =
             cx.read_entity(&self.state, |state, _cx| {
                 let (gid, gv) = state.get_guardrail_config();
@@ -1477,7 +1484,7 @@ impl LanguageModel for BedrockMantleModel {
             }
             MantleProtocol::ChatCompletions => {
                 let reasoning_effort = mantle_selected_reasoning_effort(&request, &self.model);
-                let request = into_open_ai(
+                let request = match into_open_ai(
                     request,
                     &model_id,
                     self.model.supports_tools(),
@@ -1486,7 +1493,10 @@ impl LanguageModel for BedrockMantleModel {
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
                     false,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let completions = self.stream_completion(request, cx);
                 async move {
                     let mapper = OpenAiEventMapper::new();
@@ -1526,6 +1536,10 @@ pub fn into_bedrock(
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("Bedrock does not support custom tools");
+    }
+
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
 
@@ -1588,12 +1602,19 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolUse(tool_use) => {
                             messages_contain_tool_content = true;
-                            let input = if tool_use.input.is_null() {
-                                // Bedrock API requires valid JsonValue, not null, for tool use input
-                                value_to_aws_document(&serde_json::json!({}))
-                            } else {
-                                value_to_aws_document(&tool_use.input)
-                            };
+                            let input =
+                                if let language_model::LanguageModelToolUseInput::Json(input) =
+                                    &tool_use.input
+                                {
+                                    if input.is_null() {
+                                        // Bedrock API requires valid JsonValue, not null, for tool use input
+                                        value_to_aws_document(&serde_json::json!({}))
+                                    } else {
+                                        value_to_aws_document(input)
+                                    }
+                                } else {
+                                    value_to_aws_document(&serde_json::json!({}))
+                                };
                             BedrockToolUseBlock::builder()
                                 .name(tool_use.name.to_string())
                                 .tool_use_id(tool_use.id.to_string())
@@ -1727,19 +1748,25 @@ pub fn into_bedrock(
         request
             .tools
             .iter()
-            .filter_map(|tool| {
-                Some(BedrockTool::ToolSpec(
+            .map(|tool| {
+                let language_model::LanguageModelRequestToolInput::Function {
+                    input_schema, ..
+                } = &tool.input
+                else {
+                    anyhow::bail!("Bedrock does not support custom tools");
+                };
+                Ok(BedrockTool::ToolSpec(
                     BedrockToolSpec::builder()
                         .name(tool.name.clone())
                         .description(tool.description.clone())
                         .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
-                            &tool.input_schema,
+                            input_schema,
                         )))
                         .build()
-                        .log_err()?,
+                        .context("failed to build Bedrock tool spec")?,
                 ))
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -1894,7 +1921,10 @@ pub fn map_to_language_model_completion_events(
                                                 name: tool_use.name.clone().into(),
                                                 is_input_complete: false,
                                                 raw_input: tool_use.input_json.clone(),
-                                                input,
+                                                input:
+                                                    language_model::LanguageModelToolUseInput::Json(
+                                                        input,
+                                                    ),
                                                 thought_signature: None,
                                             },
                                         )))
@@ -1959,7 +1989,9 @@ pub fn map_to_language_model_completion_events(
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
                                         raw_input: tool_use.input_json,
-                                        input,
+                                        input: language_model::LanguageModelToolUseInput::Json(
+                                            input,
+                                        ),
                                         thought_signature: None,
                                     },
                                 ))

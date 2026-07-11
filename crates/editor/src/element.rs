@@ -312,6 +312,8 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_end_of_line);
         register_action(editor, window, Editor::move_to_start_of_paragraph);
         register_action(editor, window, Editor::move_to_end_of_paragraph);
+        register_action(editor, window, Editor::move_to_next_comment_paragraph);
+        register_action(editor, window, Editor::move_to_previous_comment_paragraph);
         register_action(editor, window, Editor::move_to_beginning);
         register_action(editor, window, Editor::move_to_end);
         register_action(editor, window, Editor::move_to_start_of_excerpt);

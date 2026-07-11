@@ -252,11 +252,19 @@ impl UnstagedDiff {
 
         if let Some(entry) = entry {
             unstaged_diff.update(cx, |unstaged_diff, cx| {
-                unstaged_diff
-                    .diff
-                    .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
+                unstaged_diff.move_to_entry(entry, window, cx);
             });
         }
+    }
+
+    pub(crate) fn move_to_entry(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff
+            .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
     }
 
     pub(crate) fn new(
