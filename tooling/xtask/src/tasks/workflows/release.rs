@@ -356,9 +356,14 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     };
 
     named::job(
-        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
-            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
-        ),
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            // The release is still a draft at this point, and draft releases are
+            // only visible to tokens with write access to repository contents.
+            .permissions(Permissions::default().contents(Level::Write))
+            .add_step(
+                named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+            ),
     )
 }
 

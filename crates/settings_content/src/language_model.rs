@@ -106,6 +106,8 @@ pub struct AnthropicAvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// Whether Anthropic's fast mode is available for this model.
+    pub supports_fast_mode: Option<bool>,
     /// The model's mode (e.g. thinking)
     pub mode: Option<ModelMode>,
 }
@@ -114,6 +116,10 @@ pub struct AnthropicAvailableModel {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
+    /// Custom models served through the `bedrock-mantle` endpoint's
+    /// OpenAI-compatible APIs, in addition to the built-in Mantle models
+    /// (GPT-5.5, GPT-5.4, Grok 4.3).
+    pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
@@ -137,6 +143,32 @@ pub struct BedrockAvailableModel {
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,
     pub mode: Option<ModelMode>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct BedrockMantleAvailableModel {
+    /// The model id as expected in Bedrock Mantle request bodies, e.g. `openai.gpt-5.5`.
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    /// The OpenAI-compatible API this model must be called through.
+    pub protocol: BedrockMantleProtocolContent,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
+    /// Whether this custom Mantle model supports OpenAI reasoning effort parameters.
+    pub supports_thinking: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub enum BedrockMantleProtocolContent {
+    /// The OpenAI Chat Completions API (`/chat/completions`).
+    #[serde(rename = "chat_completions")]
+    ChatCompletions,
+    /// The OpenAI Responses API (`/responses`).
+    #[serde(rename = "responses")]
+    Responses,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -218,6 +250,18 @@ pub struct OpenCodeSettingsContent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub enum OpenCodeApiProtocol {
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "openai_responses", alias = "open_ai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_chat", alias = "open_ai_chat")]
+    OpenAiChat,
+    #[serde(rename = "google")]
+    Google,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenCodeModelSubscription {
     Zen,
@@ -232,8 +276,8 @@ pub struct OpenCodeAvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
-    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
-    pub protocol: String,
+    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google". Defaults to "openai_chat".
+    pub protocol: Option<OpenCodeApiProtocol>,
     /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
     /// Custom Model API URL to use for this model.

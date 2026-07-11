@@ -40,18 +40,23 @@ jobs:
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const GUILD_TEAM_SLUG = 'guild-cohort-2';
+            // Guild cohort members are outside collaborators holding this custom
+            // repository role, not members of an org team.
+            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
             const pr = context.payload.pull_request;
             const author = pr.user.login;
 
             const isGuildMember = async (username) => {
               try {
-                const response = await github.rest.teams.getMembershipForUserInOrg({
-                  org: 'zed-industries',
-                  team_slug: GUILD_TEAM_SLUG,
+                const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: 'zed-industries',
+                  repo: 'zed',
                   username
                 });
-                return response.data.state === 'active';
+                // role_name is the effective (highest) role; for cohort outside
+                // collaborators that is the custom role. Built-in roles come back
+                // lowercased and won't match.
+                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
               } catch (error) {
                 if (error.status === 404) {
                   return false;
