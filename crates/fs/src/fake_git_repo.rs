@@ -168,9 +168,13 @@ impl GitRepository for FakeGitRepository {
         self.with_state_async(false, |state| Ok(state.commit_template.clone()))
     }
 
-    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
+    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
         self.with_state_async(false, move |state| {
-            state.oids.get(&oid).cloned().context("oid does not exist")
+            state
+                .oids
+                .get(&oid)
+                .map(|content| content.as_bytes().to_vec())
+                .context("oid does not exist")
         })
         .boxed()
     }
@@ -183,10 +187,10 @@ impl GitRepository for FakeGitRepository {
         async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
     }
 
-    fn set_index_text(
+    fn set_index_bytes(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         _env: Arc<HashMap<String, String>>,
         _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -194,7 +198,9 @@ impl GitRepository for FakeGitRepository {
             if let Some(message) = &state.simulated_index_write_error_message {
                 anyhow::bail!("{message}");
             } else if let Some(content) = content {
-                state.index_contents.insert(path, content);
+                state
+                    .index_contents
+                    .insert(path, String::from_utf8(content)?);
             } else {
                 state.index_contents.remove(&path);
             }
@@ -259,7 +265,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+    fn load_revisions(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
         let fut = self.with_state_async(false, move |state| {
             Ok(revisions
                 .into_iter()
@@ -267,10 +276,11 @@ impl GitRepository for FakeGitRepository {
                     let (prefix, path) = rev.split_once(':')?;
                     let repo_path = RepoPath::new(path).ok()?;
                     match prefix {
-                        "" => state.index_contents.get(&repo_path).cloned(),
-                        "HEAD" => state.head_contents.get(&repo_path).cloned(),
+                        "" => state.index_contents.get(&repo_path),
+                        "HEAD" => state.head_contents.get(&repo_path),
                         _ => None,
                     }
+                    .map(|content| content.as_bytes().to_vec())
                 })
                 .collect())
         });
