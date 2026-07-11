@@ -132,10 +132,14 @@ impl TerminalPanel {
                 let should_hide = !pane.has_focus(window, cx)
                     && !pane.context_menu_focused(window, cx)
                     && !has_focused_rename_editor;
+                // Omit the buttons entirely (rather than hiding them) so the tab scroll
+                // area can use the full width and partially-visible tabs stay clickable.
+                if should_hide {
+                    return (None, None);
+                }
                 let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
-                    .when(should_hide, |this| this.invisible())
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(

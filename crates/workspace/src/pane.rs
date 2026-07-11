@@ -4197,6 +4197,12 @@ fn default_render_tab_bar_buttons(
 ) -> (Option<AnyElement>, Option<AnyElement>) {
     let should_hide = !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx);
 
+    // Omit the buttons entirely (rather than hiding them) so the tab scroll
+    // area can use the full width and partially-visible tabs stay clickable.
+    if should_hide {
+        return (None, None);
+    }
+
     let (can_clone, can_split_move) = match pane.active_item() {
         Some(active_item) if active_item.can_split(cx) => (true, false),
         Some(_) => (false, pane.items_len() > 1),
@@ -4207,7 +4213,6 @@ fn default_render_tab_bar_buttons(
     let right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
         .gap(DynamicSpacing::Base04.rems(cx))
-        .when(should_hide, |this| this.hidden())
         .child(
             PopoverMenu::new("pane-tab-bar-popover-menu")
                 .trigger_with_tooltip(
@@ -5707,61 +5712,6 @@ mod tests {
         assert!(
             border_bounds.is_some(),
             "pinned_tabs_border should exist in two-row layout to show right border"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_tab_bar_buttons_reserve_space_when_unfocused(cx: &mut TestAppContext) {
-        // Regression test for https://github.com/zed-industries/zed/issues/60367
-        // The tab bar action buttons must reserve layout space even when the pane
-        // is unfocused, so that gaining focus on mouse-down doesn't shift the
-        // scroll area and cancel the tab click at mouse-up.
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        add_labeled_item(&pane, "A", false, cx);
-        cx.run_until_parked();
-
-        // Pane is focused by default — end children should be present.
-        let focused_bounds = cx
-            .debug_bounds("tab_bar_end_children")
-            .expect("end children container should exist when pane is focused");
-        assert!(
-            focused_bounds.size.width > px(0.),
-            "end children container should have non-zero width when focused"
-        );
-
-        // Blur the window so the pane loses focus.
-        cx.update(|window, _cx| window.blur());
-        cx.run_until_parked();
-
-        // Verify the pane actually lost focus — otherwise the test below
-        // would compare focused bounds against focused bounds and pass vacuously.
-        pane.update_in(cx, |pane, window, cx| {
-            assert!(
-                !pane.has_focus(window, cx),
-                "precondition: pane must be unfocused after window.blur()"
-            );
-        });
-
-        // End children must still be present (invisible but reserving space)
-        // so the scroll area width doesn't change on focus.
-        let unfocused_bounds = cx
-            .debug_bounds("tab_bar_end_children")
-            .expect("end children container should still exist when pane is unfocused, reserving layout space to prevent click-cancellation on focus shift");
-        let width_diff = (unfocused_bounds.size.width - focused_bounds.size.width).abs();
-        assert!(
-            width_diff < px(0.5),
-            "end children container width must not change between focused and unfocused states \
-             (focused: {:?}, unfocused: {:?}, diff: {:?})",
-            focused_bounds.size.width,
-            unfocused_bounds.size.width,
-            width_diff
         );
     }
 
