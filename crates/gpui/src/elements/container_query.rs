@@ -1,10 +1,6 @@
 //! A container query element, in the spirit of CSS container queries.
 //! The element's own size is determined solely by its style and the space
-//! offered by its parent. Once that size is known (during prepaint), the
-//! provided closure is called with the measured size to build the contents,
-//! which are then laid out within it. This allows children to be chosen or
-//! configured based on the actual size of their container rather than the
-//! window or a hardcoded breakpoint.
+//! offered by its parent.
 
 use refineable::Refineable as _;
 
