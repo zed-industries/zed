@@ -167,6 +167,15 @@ fn render_context_server(
         .read(cx)
         .settings_for_server(context_server_id)
         .is_some_and(|s| s.enabled());
+    // While the server is transitioning (starting up or authenticating) the
+    // toggle stays visually enabled but is not interactive, signaling that work
+    // is still happening in the background. Once it settles (Running or Error)
+    // the toggle becomes interactive again so a failed server can still be
+    // turned off from the UI.
+    let is_transitioning = matches!(
+        server_status,
+        ContextServerStatus::Starting | ContextServerStatus::Authenticating
+    );
     let item_id = SharedString::from(context_server_id.0.to_string());
 
     // Determine the source from the configured settings rather than the runtime
@@ -222,7 +231,8 @@ fn render_context_server(
     let uninstall_button = render_uninstall_button(context_server_id, provided_by_extension);
 
     // Build toggle switch
-    let toggle_switch = render_toggle_switch(context_server_id, store, is_enabled);
+    let toggle_switch =
+        render_toggle_switch(context_server_id, store, is_enabled, is_transitioning);
 
     // Surface invalid settings (which prevent the server from starting at all)
     // ahead of runtime status feedback, so the misconfiguration is visible.
@@ -322,6 +332,7 @@ fn render_toggle_switch(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
     is_enabled: bool,
+    is_transitioning: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
@@ -334,6 +345,7 @@ fn render_toggle_switch(
             ToggleState::Unselected
         },
     )
+    .disabled(is_transitioning)
     .tab_index(0isize)
     .on_click({
         move |state, _window, cx| {
