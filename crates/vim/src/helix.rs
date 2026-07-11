@@ -1759,6 +1759,7 @@ struct HelixJumpUiData {
 
 #[cfg(test)]
 mod test {
+    use futures::StreamExt;
     use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
@@ -2336,6 +2337,31 @@ mod test {
             indoc! {"
             The quick brownˇfox jumps over
             the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    // Deleting a selection that ends at the last non-newline character should
+    // leave the cursor on the newline (matching Helix), not clamp it onto the
+    // character to the left of the selection.
+    #[gpui::test]
+    async fn test_delete_to_end_of_line_keeps_cursor_on_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+            ab«cdefgˇ»
+            hij"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            abˇ
+            hij"},
             Mode::HelixNormal,
         );
     }
@@ -2984,11 +3010,11 @@ mod test {
         cx.simulate_keystrokes("v g l d");
         cx.assert_state("ˇ\nfox jumps over", Mode::HelixNormal);
 
-        // same from the middle of a line — cursor lands on the last
-        // remaining character (the space) after delete
+        // same from the middle of a line — the cursor rests on the trailing
+        // newline, matching Helix and the whole-line case above.
         cx.set_state("The ˇquick brown\nfox jumps over", Mode::HelixNormal);
         cx.simulate_keystrokes("v g l d");
-        cx.assert_state("Theˇ \nfox jumps over", Mode::HelixNormal);
+        cx.assert_state("The ˇ\nfox jumps over", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -4239,5 +4265,118 @@ mod test {
             lˇ»ine three"},
             Mode::HelixSelect,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_go_to_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+            ˇone
+            two
+            three"},
+            Mode::HelixNormal,
+        );
+        cx.set_head_text(indoc! {"
+            one
+            CHANGED
+            three"});
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("]");
+        assert_eq!(
+            cx.active_operator(),
+            Some(Operator::HelixNext { around: true })
+        );
+
+        cx.simulate_keystrokes("g");
+        cx.assert_state(
+            indoc! {"
+            one
+            ˇtwo
+            three"},
+            Mode::HelixNormal,
+        );
+        assert_eq!(cx.active_operator(), None);
+
+        cx.set_state(
+            indoc! {"
+            one
+            two
+            ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.set_head_text(indoc! {"
+            one
+            CHANGED
+            three"});
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("[");
+        assert_eq!(
+            cx.active_operator(),
+            Some(Operator::HelixPrevious { around: true })
+        );
+
+        cx.simulate_keystrokes("g");
+        cx.assert_state(
+            indoc! {"
+            one
+            ˇtwo
+            three"},
+            Mode::HelixNormal,
+        );
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_rename_uses_visible_cursor_position(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_typescript(cx).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            "const before = 2; console.log(«beforeˇ»)",
+            Mode::HelixNormal,
+        );
+
+        let expected_position = cx.to_lsp(MultiBufferOffset(
+            "const before = 2; console.log(befor".len(),
+        ));
+        let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+        let tgt_range = cx.lsp_range("const before = 2; console.log(«beforeˇ»)");
+        let mut prepare_request = cx
+            .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+                move |_, params, _| async move {
+                    assert_eq!(params.position, expected_position);
+                    Ok(Some(lsp::PrepareRenameResponse::Range(tgt_range)))
+                },
+            );
+        let mut rename_request = cx.set_request_handler::<lsp::request::Rename, _, _>(
+            move |url, params, _| async move {
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [(
+                            url.clone(),
+                            vec![
+                                lsp::TextEdit::new(def_range, params.new_name.clone()),
+                                lsp::TextEdit::new(tgt_range, params.new_name),
+                            ],
+                        )]
+                        .into(),
+                    ),
+                    ..Default::default()
+                }))
+            },
+        );
+
+        cx.simulate_keystrokes("space r");
+        prepare_request.next().await.unwrap();
+        cx.simulate_input("after");
+        cx.simulate_keystrokes("enter");
+        rename_request.next().await.unwrap();
+
+        cx.assert_state("const after = 2; console.log(afterˇ)", Mode::HelixNormal);
     }
 }
