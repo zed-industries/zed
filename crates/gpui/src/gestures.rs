@@ -3,43 +3,24 @@
 //! GPUI recognizes gestures from raw [`TouchEvent`](crate::TouchEvent)s in a
 //! single, portable arena in gpui core: recognizers compete for in-flight
 //! touches, winners claim them, and losers are cancelled. Recognized gestures
-//! are surfaced through *existing* semantic events wherever possible — a tap
+//! are surfaced through *existing* semantic events wherever possible, a tap
 //! becomes [`ClickEvent::Touch`](crate::ClickEvent), a pan becomes
 //! [`ScrollWheelEvent`](crate::ScrollWheelEvent)s carrying a
 //! [`TouchPhase`](crate::TouchPhase), and a pinch becomes
 //! [`PinchEvent`](crate::PinchEvent)s — so components written against
 //! `on_click` and scroll containers work untouched on mobile.
-//!
-//! Two hard rules, established by the mobile design work:
-//!
-//! 1. **Never synthesize mouse events from touches.** Touches must not
-//!    produce `MouseDown`/`MouseMove`/`MouseUp`, update the window's mouse
-//!    position, or affect hover state or cursor style. Gesture recognition is
-//!    the *only* sanctioned synthesis point, and it emits the semantic events
-//!    above, never mouse-mechanical ones.
-//! 2. **"The system took this touch" is a first-class outcome.** Mobile OSes
-//!    steal in-flight touches (system edge gestures, incoming calls, native
-//!    views claiming a gesture); recognizers observe this as
-//!    [`TouchPhase::Cancelled`](crate::TouchPhase) and must fully unwind.
-//!
-//! The arena itself is not implemented yet; this module defines the shared
-//! vocabulary that platform implementations and the arena build against.
 
 use std::time::Duration;
 
 use crate::{Pixels, Point, px};
 
-/// Feel constants consumed by gesture recognizers.
-///
-/// Platforms provide native values through [`PlatformGestures::tuning`] so
-/// that gestures feel native on each OS (Android's touch slop, iOS's scroll
-/// momentum decay, and so on). Recognizers in gpui core must source all
-/// disambiguation thresholds from this struct rather than hardcoding them.
+/// Feel constants consumed by gesture recognizers. Provided on a best-effort
+/// basis, depending on each platform's support, defaulting to GPUI's own
+/// (iOS flavored) values
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GestureTuning {
     /// Distance a touch may travel before it stops being a potential tap and
-    /// becomes a pan/drag. (Android `ViewConfiguration.getScaledTouchSlop`;
-    /// UIKit applies an equivalent implicitly.)
+    /// becomes a pan/drag.
     pub touch_slop: Pixels,
     /// Maximum interval between taps for them to accumulate a tap count.
     pub multi_tap_interval: Duration,
@@ -108,32 +89,21 @@ impl GestureKinds {
 
 /// A long-press gesture, mobile's context-menu trigger.
 ///
-/// There is no desktop analogue; elements opt in explicitly. The element
-/// registration API ships together with the gesture arena.
+/// A bare long press is surfaced as a [`ClickEvent`](crate::ClickEvent) with
+/// `long_press: true`, delivered to aux-click listeners alongside right
+/// clicks. This event is the raw hook for elements that need the gesture
+/// itself (e.g. long-press to start a drag); the registration API ships
+/// together with the gesture arena.
 #[derive(Clone, Debug, Default)]
 pub struct LongPressEvent {
     /// The position of the touch that was recognized as a long press.
     pub position: Point<Pixels>,
 }
 
-/// Platform gesture recognition services: the third platform layer alongside
-/// [`Platform`](crate::Platform) and [`PlatformWindow`](crate::PlatformWindow).
+/// Platform gesture recognition services.
 ///
-/// The gesture arena in gpui core always owns *arbitration* — which
-/// recognizer claims which touch. This trait lets a platform take over
-/// *detection* for the gesture kinds it can recognize with OS fidelity (for
-/// example, UIKit's `UIPanGestureRecognizer`/`UIPinchGestureRecognizer` on
-/// iOS). Native recognizers enter the arena as ordinary contestants: they
-/// claim touches and receive and issue cancellation exactly like a core
-/// recognizer, and "a native view claimed the touch" is observed by the
-/// losers as [`TouchPhase::Cancelled`](crate::TouchPhase).
-///
-/// Gesture kinds not claimed here fall back to gpui core's portable
-/// recognizers, tuned by [`Self::tuning`].
-///
-/// The registration and event-feed API between native recognizers and the
-/// arena is deliberately unspecified until the arena's design doc lands; this
-/// trait currently captures only the platform-declared capabilities.
+/// If your mobile platform supports native gesture recognition, use this
+/// to share it with GPUI.
 pub trait PlatformGestures {
     /// Feel constants for the portable recognizers on this platform.
     fn tuning(&self) -> GestureTuning {
