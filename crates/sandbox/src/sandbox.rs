@@ -1487,6 +1487,184 @@ mod tests {
     }
 }
 
+/// A directory that is about to be granted as a sandbox write path but may not
+/// exist yet. Preparing one resolves the platform difference in how a
+/// not-yet-existing write grant is materialized, while keeping the same security
+/// property: the caller shows [`Self::canonical_path`] to the user and records
+/// *that* as the grant, so approval is always against the real, symlink-resolved
+/// target.
+///
+/// - **Linux/WSL**: bubblewrap can only bind an existing inode, so the missing
+///   directory (and any missing parents) is created **eagerly**, per component,
+///   and the leaf's inode is pinned to read back its canonical path. If the
+///   grant is denied, [`Self::discard`] removes exactly the directories that were
+///   created, deepest-first, following no symlinks (`rmdir` only removes empty
+///   dirs and never traverses a swapped-in symlink).
+/// - **macOS**: Seatbelt resolves paths at syscall time and can grant a missing
+///   path, so nothing is created here; the directory is materialized only after
+///   approval via [`Self::finalize`].
+///
+/// The eventual bind is still protected by the usual capture-and-revalidate path
+/// (`HostFilesystemLocation`), which re-pins the inode when the command runs.
+pub struct GrantableWriteDir {
+    canonical_path: PathBuf,
+    /// Directories created eagerly to pin the inode, shallowest-first. Empty on
+    /// platforms that defer creation to [`Self::finalize`].
+    eagerly_created: Vec<PathBuf>,
+}
+
+impl GrantableWriteDir {
+    /// Prepare `path` for use as a sandbox write grant. `path` must be absolute.
+    pub fn prepare(path: &Path) -> std::io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut eagerly_created = Vec::new();
+            if let Err(error) = create_missing_dirs(path, &mut eagerly_created) {
+                // Roll back any partial creation so a failure leaves no litter.
+                for dir in eagerly_created.iter().rev() {
+                    let _ = std::fs::remove_dir(dir);
+                }
+                return Err(error);
+            }
+            let canonical_path = pinned_canonical_path(path)?;
+            Ok(Self {
+                canonical_path,
+                eagerly_created,
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Ok(Self {
+                canonical_path: canonicalize_allowing_missing_leaf(path),
+                eagerly_created: Vec::new(),
+            })
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = path;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "granting a not-yet-existing write directory is not supported on this platform",
+            ))
+        }
+    }
+
+    /// The canonical, symlink-resolved path to show the user and record as the
+    /// grant.
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    /// Materialize the directory once the grant is approved. A no-op on platforms
+    /// that already created it eagerly.
+    pub fn finalize(&self) -> std::io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            std::fs::create_dir_all(&self.canonical_path)?;
+        }
+        Ok(())
+    }
+
+    /// Remove exactly the directories we created (deepest-first) when the grant
+    /// is denied. Best-effort; `rmdir` leaves non-empty dirs and swapped-in
+    /// symlinks untouched.
+    pub fn discard(self) {
+        for dir in self.eagerly_created.iter().rev() {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+}
+
+/// Create each missing component of `path` with `create_dir` (never
+/// `create_dir_all`), recording exactly the directories created so they can be
+/// removed again if the grant is denied. Components that already exist are left
+/// alone.
+#[cfg(target_os = "linux")]
+fn create_missing_dirs(path: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let mut cur = PathBuf::new();
+    for component in path.components() {
+        cur.push(component);
+        match std::fs::create_dir(&cur) {
+            Ok(()) => created.push(cur.clone()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Open an `O_PATH` handle to `path` and read back the canonical path of the
+/// inode it pins, so the value shown to the user reflects the real target even
+/// when a component is a symlink.
+#[cfg(target_os = "linux")]
+fn pinned_canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
+        .open(path)?;
+    std::fs::read_link(format!("/proc/self/fd/{}", handle.as_raw_fd()))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod grantable_write_dir_tests {
+    use super::GrantableWriteDir;
+    use std::fs;
+
+    #[test]
+    fn creates_missing_dirs_and_discard_removes_only_those() {
+        let root = tempfile::tempdir().unwrap();
+        let existing = root.path().join("existing");
+        fs::create_dir(&existing).unwrap();
+        let target = existing.join("a").join("b").join("c");
+
+        let prepared = GrantableWriteDir::prepare(&target).unwrap();
+        assert!(target.is_dir());
+        assert_eq!(prepared.canonical_path(), target.canonicalize().unwrap());
+
+        prepared.discard();
+        // Everything we created is gone...
+        assert!(!existing.join("a").exists());
+        // ...but the pre-existing ancestor is untouched.
+        assert!(existing.is_dir());
+    }
+
+    #[test]
+    fn existing_dir_is_left_alone_and_not_removed_on_discard() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("already");
+        fs::create_dir(&target).unwrap();
+
+        let prepared = GrantableWriteDir::prepare(&target).unwrap();
+        assert!(target.is_dir());
+        // We created nothing, so discard removes nothing.
+        prepared.discard();
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn canonical_path_resolves_a_symlinked_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Granting `link/child` where `link` legitimately points at `real` must
+        // succeed and show the user the *resolved* `real/child`, not fail.
+        let prepared = GrantableWriteDir::prepare(&link.join("child")).unwrap();
+        assert_eq!(
+            prepared.canonical_path(),
+            real.canonicalize().unwrap().join("child")
+        );
+        assert!(real.join("child").is_dir());
+
+        prepared.discard();
+        assert!(!real.join("child").exists());
+    }
+}
+
 /// Canonicalize `path`, resolving symlinks, even when its final component
 /// doesn't exist yet.
 ///

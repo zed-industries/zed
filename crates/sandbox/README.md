@@ -228,6 +228,47 @@ If the attacker managed to change a path to point to a different inode to when
 the FD was captured, the check will fail, and we don't run the untrusted
 command.
 
+#### Blocking IPC-socket escapes (seccomp)
+
+A read-only bind mount does **not** stop a process from `connect()`-ing to a
+Unix-domain socket: the kernel deliberately exempts sockets (and FIFOs, and
+device nodes) from the read-only-filesystem write check, because connecting
+modifies no filesystem data. So even with `--ro-bind / /`, a sandboxed command
+could reach a session IPC socket in `$XDG_RUNTIME_DIR` (a Wayland compositor,
+the D-Bus session bus, ...) or a system socket like the Docker daemon, and use
+it to run a process *outside* the sandbox — defeating both the filesystem and
+network restrictions, regardless of the read/write grant. `--unshare-net` does
+not help: it isolates abstract sockets and TCP/IP, but these are pathname
+sockets on the bound filesystem.
+
+The fix is a seccomp-BPF filter (built with `seccompiler`) installed on the
+untrusted command just before it runs. Rather than trying to hide every socket,
+it stops the command from *obtaining* one it could escape through:
+
+- `socket()` is allowed only for `AF_INET`/`AF_INET6`/`AF_NETLINK`; every other
+  family — notably `AF_UNIX` (session IPC) and `AF_VSOCK` (the VM host) — is
+  denied with `EPERM`.
+- `socketpair()` is allowed only for `AF_UNIX` (a process-local pair that can't
+  reach anything outside the sandbox).
+- `io_uring_*` is denied, so its ring operations can't create/connect a socket
+  without going through the filtered syscalls; `ptrace`/`process_vm_*` are denied.
+- `connect`/`recvmsg`/`sendmsg`/`bind`/`listen`/`accept` stay allowed. With no
+  way to create a forbidden socket — and, by fd hygiene, none inherited — there
+  is nothing dangerous for them to act on, and blocking `connect` would break
+  legitimate loopback/proxy use. `seccompiler`'s architecture check kills
+  foreign-arch syscalls, closing the 32-bit (`socketcall`) bypass.
+
+The filter must apply to the command but **not** to the launcher/bridge process,
+which keeps using `AF_UNIX` to reach the host proxy for every request. So it is
+installed inline right before `exec` in the direct case, and via the child's
+`pre_exec` in the restricted-network bridge case. Because the filter lives in the
+in-sandbox launcher, the launcher is now **always** run (even when there are no
+writable binds to validate and no bridge), so the filter is always installed.
+
+This is Linux/WSL-specific. On macOS, Seatbelt gates Unix-socket `connect` as a
+separate `network-outbound` capability that is denied by default, so the same
+escape is already closed there without a seccomp filter.
+
 ### Windows
 
 > [!NOTE] The Windows implementation depends heavily on the details of the Linux
@@ -241,6 +282,27 @@ To work around this, we launch `zed --wsl-sandbox-helper` in WSL, which is a
 shim that captures the FDs and sets up the socket. We download this to
 `~/.local/libexec/zed`, so that it does not conflict with the Windows `zed.exe`
 binary that WSL will inject into the Linux `$PATH` (yes the `.exe` is stripped).
+
+### MacOS
+
+MacOS uses seatbelt, which enforces a rules file. This generally makes
+enforcement more straightforward. Unlike Linux, paths are resolved and checked
+at *syscall time*, meaning the symlink swap attack will not succeed. 
+
+However, care has to be taken with various parts of the rules file, specifically
+when it comes to `mach-lookup`. This controls access to, among other things,
+Launch Services, which allows unsandboxed code execution. 
+
+The exact policy is defined in `src/macos_seatbelt.rs`, and is inspired by a
+mixture of Codex and Chromium's rules. 
+
+Some of the denied services are somewhat questionable (i.e.
+`com.apple.FontObjectsServer`) - there are legitimate uses for an application to
+use this, but on the other hand, fonts can contain executable code, and have
+historically been exploited to achieve RCE. Given that, in the Zed agent, it is
+easy to opt-out of the sandbox, denying seems like a good choice. But we may
+want to revisit this.
+
 ## Code design
 
 ### `HostFilesystemLocation`
