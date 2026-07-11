@@ -299,13 +299,6 @@
     },
   },
   {
-    "context": "AgentTerminalThread",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-f": "agent::ToggleSearch",
-    },
-  },
-  {
     "context": "AcpThreadSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -326,6 +319,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
       "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-alt-home": "agent::ScrollOutputToTop",
@@ -1240,6 +1234,7 @@
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
+      "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
@@ -1270,7 +1265,9 @@
   },
   {
     "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-n": "agent::NewThread",
     },
   },

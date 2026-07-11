@@ -34,12 +34,14 @@ use crate::{
 };
 
 mod askpass_modal;
+pub mod branch_diff;
 pub mod branch_picker;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod created_worktrees;
+mod diff_multibuffer;
 pub mod file_diff_view;
 pub mod git_graph;
 pub mod git_panel;
@@ -52,8 +54,10 @@ pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod solo_diff_view;
+pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod unstaged_diff;
 pub mod worktree_names;
 pub mod worktree_picker;
 pub mod worktree_service;
@@ -87,6 +91,9 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
+        staged_diff::StagedDiff::register(workspace, cx);
+        unstaged_diff::UnstagedDiff::register(workspace, cx);
+        branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);

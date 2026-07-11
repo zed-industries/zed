@@ -1,5 +1,5 @@
-pub mod branch_diff;
 mod conflict_set;
+pub mod diff_buffer_list;
 pub mod git_traversal;
 pub mod job_debug_queue;
 pub mod pending_op;
@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{BufferDiff, BufferDiffEvent};
+use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -51,7 +51,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, Language, LanguageRegistry,
+    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -82,7 +82,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
-use text::{Bias, BufferId};
+use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -106,6 +106,7 @@ pub struct GitStore {
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
+    buffer_ids_by_index_text_buffer_id: HashMap<BufferId, BufferId>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,6 +143,16 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
+    /// The optimistic, in-flight index state: the sole input to the index write,
+    /// expressed relative to the currently-loaded index text (`I0`). Never shown
+    /// to any view (views use per-diff pending hunks). Cleared when a
+    /// recalculation settles.
+    ///
+    /// `I0` is immutable for the lifetime of any pending edit (the index text
+    /// buffer is only fast-forwarded when a recalculation settles, which clears
+    /// this state in the same update), so byte offsets stay valid for the whole
+    /// window.
+    pending_index_edits: Option<Vec<(Range<usize>, Arc<str>)>>,
     oid_texts: HashMap<git::Oid, Arc<str>>,
     head_text_buffer: WeakEntity<Buffer>,
     index_text_buffer: WeakEntity<Buffer>,
@@ -149,6 +160,24 @@ struct BufferGitState {
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
+}
+
+fn pending_hunks(
+    hunks: &[DiffHunk],
+    version: &clock::Global,
+    sense: PendingSense,
+) -> Vec<PendingHunk> {
+    hunks
+        .iter()
+        .map(|hunk| {
+            PendingHunk::new(
+                hunk.buffer_range.clone(),
+                hunk.diff_base_byte_range.clone(),
+                version.clone(),
+                sense,
+            )
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +197,73 @@ enum DiffKind {
     Staged,
     Uncommitted,
     SinceOid(Option<git::Oid>),
+}
+
+struct IndexTextFile {
+    path: Arc<RelPath>,
+    full_path: PathBuf,
+    path_style: PathStyle,
+    file_name: String,
+    worktree_id: WorktreeId,
+    is_private: bool,
+}
+
+impl IndexTextFile {
+    fn new(file: &dyn language::File, cx: &App) -> Self {
+        Self {
+            path: file.path().clone(),
+            full_path: file.full_path(cx),
+            path_style: file.path_style(cx),
+            file_name: file.file_name(cx).to_string(),
+            worktree_id: file.worktree_id(cx),
+            is_private: file.is_private(),
+        }
+    }
+}
+
+impl language::File for IndexTextFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> language::DiskState {
+        language::DiskState::Historic { was_deleted: false }
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.full_path.clone()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        self.path_style
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        &self.file_name
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _: &App) -> rpc::proto::File {
+        rpc::proto::File {
+            worktree_id: self.worktree_id.to_proto(),
+            entry_id: None,
+            path: self.path.as_ref().to_proto(),
+            mtime: None,
+            is_deleted: false,
+            is_historic: true,
+        }
+    }
+
+    fn is_private(&self) -> bool {
+        self.is_private
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -648,6 +744,7 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            buffer_ids_by_index_text_buffer_id: HashMap::default(),
         }
     }
 
@@ -897,6 +994,16 @@ impl GitStore {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
         {
+            // If this unstaged diff was first opened as the uncommitted diff's
+            // secondary, its index text wasn't highlighted. Enable it now and
+            // recalc so the language gets applied to the deleted (base) side.
+            diff_state.update(cx, |diff_state, cx| {
+                if !diff_state.index_text_buffer_language_enabled {
+                    diff_state.index_text_buffer_language_enabled = true;
+                    let buffer_snapshot = buffer.read(cx).text_snapshot();
+                    diff_state.recalculate_diffs(buffer_snapshot, cx);
+                }
+            });
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
@@ -944,15 +1051,17 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    /// Opens the staged (HEAD-vs-index) diff for the given buffer, along with
+    /// the index text buffer that is the diff's main buffer.
     pub fn open_staged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferDiff>>> {
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(staged_diff) = diff_state.read(cx).staged_diff()
+            && let Some(staged_diff) = diff_state.read(cx).staged_diff_and_index_text_buffer()
         {
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
@@ -988,7 +1097,270 @@ impl GitStore {
             })
             .clone();
 
-        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.spawn(async move |this, cx| {
+            let diff = task.await.map_err(|e| anyhow!("{e}"))?;
+            this.update(cx, |this, cx| {
+                let index_text_buffer = this
+                    .diffs
+                    .get(&buffer_id)
+                    .and_then(|diff_state| {
+                        let (_, index_text_buffer) = diff_state.read(cx).staged_diff.as_ref()?;
+                        Some(index_text_buffer.clone())
+                    })
+                    .context("index text buffer missing after opening staged diff")?;
+                Ok((diff, index_text_buffer))
+            })?
+        })
+    }
+
+    /// Stages the worktree changes covered by `worktree_ranges`, acting on the
+    /// given unstaged (index-vs-worktree) diff. Used by both the unstaged-changes
+    /// view and the uncommitted (gutter) controls: "stage" means the same index
+    /// change regardless of which view it was invoked from, so callers holding an
+    /// uncommitted diff pass its unstaged secondary.
+    ///
+    /// Decomposes the worktree region into the unstaged hunks it covers, so no
+    /// worktree->index projection is needed. Optimistically suppresses the staged
+    /// hunks from the unstaged diff and, if the uncommitted diff happens to be
+    /// open, marks the corresponding uncommitted hunks as staging.
+    pub fn stage_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        unstaged_diff: Entity<BufferDiff>,
+        worktree_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if worktree_ranges.is_empty() {
+            return Ok(());
+        }
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        let unstaged_snapshot = unstaged_diff.read(cx).snapshot(cx);
+
+        // Decompose: the unstaged hunks the worktree region covers carry the
+        // index range directly. Sorting by buffer offset also sorts by index
+        // offset, since the hunks are non-overlapping. We read the raw hunks
+        // (ignoring optimistic suppression) so that re-staging a hunk that was
+        // optimistically staged and then unstaged still finds it. The footprints
+        // let the patch drop earlier edits the region covers even where the raw
+        // diff is empty (re-staging a hunk that is staged on disk but
+        // optimistically unstaged).
+        let mut unstaged_hunks = Vec::new();
+        let mut index_footprints = Vec::new();
+        for range in &worktree_ranges {
+            unstaged_hunks.extend(
+                unstaged_snapshot.raw_hunks_intersecting_range(range.clone(), &buffer_snapshot),
+            );
+            index_footprints.push(
+                unstaged_snapshot.base_text_range_for_buffer_range(range.clone(), &buffer_snapshot),
+            );
+        }
+        unstaged_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        unstaged_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        // The uncommitted hunks the region covers get the optimistic
+        // "staging" secondary status (free cross-view update).
+        let uncommitted_diff = self.get_uncommitted_diff(buffer_id, cx);
+        let mut uncommitted_hunks = Vec::new();
+        if let Some(uncommitted_diff) = &uncommitted_diff {
+            let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+            for range in &worktree_ranges {
+                uncommitted_hunks.extend(
+                    uncommitted_snapshot
+                        .hunks_intersecting_range(range.clone(), &buffer_snapshot)
+                        .filter(|hunk| {
+                            hunk.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
+                        }),
+                );
+            }
+            uncommitted_hunks
+                .sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+            uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+        }
+
+        let index_edits = if !file_exists {
+            // The worktree file is gone: staging removes it from the index.
+            None
+        } else {
+            Some(
+                unstaged_hunks
+                    .iter()
+                    .map(|hunk| {
+                        let worktree_range = hunk.buffer_range.to_offset(&buffer_snapshot);
+                        let replacement: Arc<str> = Arc::from(
+                            buffer_snapshot
+                                .text_for_range(worktree_range)
+                                .collect::<String>(),
+                        );
+                        (hunk.diff_base_byte_range.clone(), replacement)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let version = buffer_snapshot.version().clone();
+        let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
+        let uncommitted_pending = pending_hunks(
+            &uncommitted_hunks,
+            &version,
+            PendingSense::SetSecondaryStatus { stage: true },
+        );
+        drop(unstaged_snapshot);
+
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.remove_overlapping_pending_index_edits(&index_footprints);
+            diff_state.insert_pending_index_edits(index_edits);
+        });
+
+        if let Some(uncommitted_diff) = uncommitted_diff {
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.set_pending_hunks(&uncommitted_pending, &buffer_snapshot, cx);
+            });
+        }
+        unstaged_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&unstaged_pending, &buffer_snapshot, cx);
+        });
+
+        self.write_optimistic_index(buffer_id, cx);
+        Ok(())
+    }
+
+    /// Unstages the worktree changes covered by `worktree_ranges`, acting on the
+    /// given uncommitted (HEAD-vs-worktree) diff, invoked from the uncommitted
+    /// (gutter) controls. Uses the worktree->index projection (the hard part)
+    /// because the acted-on hunks are HEAD-vs-worktree.
+    pub fn unstage_uncommitted_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        uncommitted_diff: Entity<BufferDiff>,
+        worktree_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if worktree_ranges.is_empty() {
+            return Ok(());
+        }
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+        let unstaged_snapshot = uncommitted_snapshot
+            .secondary_diff()
+            .context("diff has no unstaged secondary")?;
+
+        let mut hunks = Vec::new();
+        for range in &worktree_ranges {
+            hunks.extend(
+                uncommitted_snapshot.hunks_intersecting_range(range.clone(), &buffer_snapshot),
+            );
+        }
+        hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let (index_edits, pending) = uncommitted_snapshot.compute_uncommitted_index_edits(
+            unstaged_snapshot,
+            false,
+            &hunks,
+            &buffer_snapshot,
+            file_exists,
+        );
+        drop(uncommitted_snapshot);
+
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.insert_pending_index_edits(index_edits)
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&pending, &buffer_snapshot, cx);
+        });
+
+        self.write_optimistic_index(buffer_id, cx);
+        Ok(())
+    }
+
+    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges` (in the
+    /// index text buffer's coordinates), acting on the given staged diff,
+    /// invoked from the staged-changes view. The acted-on hunks already carry
+    /// an index range, so no projection is needed; optimistically suppresses
+    /// them from the staged diff.
+    pub fn unstage_staged_hunks(
+        &mut self,
+        staged_diff: Entity<BufferDiff>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if index_ranges.is_empty() {
+            return Ok(());
+        }
+        let index_buffer_id = staged_diff.read(cx).buffer_id;
+        let buffer_id = *self
+            .buffer_ids_by_index_text_buffer_id
+            .get(&index_buffer_id)
+            .context("failed to find git state for index text buffer")?;
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
+        let index_buffer = diff_state
+            .read(cx)
+            .index_text_buffer()
+            .context("index text is not loaded")?;
+        let index_snapshot = index_buffer.read(cx).text_snapshot();
+        let staged_snapshot = staged_diff.read(cx).snapshot(cx);
+
+        let mut hunks = Vec::new();
+        for range in &index_ranges {
+            hunks.extend(staged_snapshot.hunks_intersecting_range(range.clone(), &index_snapshot));
+        }
+        hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&index_snapshot));
+        hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let index_edits = staged_diff
+            .read(cx)
+            .unstage_staged_hunks(&hunks, &index_snapshot);
+        let version = index_snapshot.version().clone();
+        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress);
+        drop(staged_snapshot);
+
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.insert_pending_index_edits(index_edits)
+        });
+        staged_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&pending, &index_snapshot, cx);
+        });
+
+        self.write_optimistic_index(buffer_id, cx);
+        Ok(())
+    }
+
+    /// Derives the desired index text from the buffer's optimistic patch and
+    /// schedules the write.
+    fn write_optimistic_index(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        let Some(diff_state) = self.diffs.get(&buffer_id) else {
+            return;
+        };
+        let new_index_text = diff_state
+            .read(cx)
+            .pending_index_text(cx)
+            .map(|rope| rope.to_string());
+        self.write_index_text_for_buffer_id(buffer_id, new_index_text, cx);
     }
 
     pub fn open_diff_since(
@@ -1058,9 +1430,6 @@ impl GitStore {
                     });
 
                     this.update(cx, |this, cx| {
-                        cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
-                            .detach();
-
                         this.loading_diffs.remove(&(buffer_id, diff_kind));
 
                         let git_store = cx.weak_entity();
@@ -1174,6 +1543,9 @@ impl GitStore {
             let buffer_id = buffer.remote_id();
             let language = buffer.language().cloned();
             let language_registry = buffer.language_registry();
+            let index_text_file = buffer.file().map(|file| {
+                Arc::new(IndexTextFile::new(file.as_ref(), cx)) as Arc<dyn language::File>
+            });
             let text_snapshot = buffer.text_snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
@@ -1194,7 +1566,7 @@ impl GitStore {
                 let diff = match kind {
                     DiffKind::Unstaged => {
                         let base_text_buffer = diff_state.update(cx, |diff_state, cx| {
-                            diff_state.get_or_create_index_text_buffer(cx)
+                            diff_state.get_or_create_index_text_buffer(index_text_file.clone(), cx)
                         });
                         cx.new(|cx| {
                             BufferDiff::new_with_base_text_buffer(
@@ -1208,7 +1580,10 @@ impl GitStore {
                         let (index_text_buffer, base_text_buffer) =
                             diff_state.update(cx, |diff_state, cx| {
                                 (
-                                    diff_state.get_or_create_index_text_buffer(cx),
+                                    diff_state.get_or_create_index_text_buffer(
+                                        index_text_file.clone(),
+                                        cx,
+                                    ),
                                     diff_state.get_or_create_head_text_buffer(cx),
                                 )
                             });
@@ -1244,16 +1619,19 @@ impl GitStore {
                         unreachable!("open_diff_internal is not used for OID diffs")
                     }
                 };
-                cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
                 diff
             };
-            diff_state.update(cx, |diff_state, cx| {
+            let rx = diff_state.update(cx, |diff_state, cx| {
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
                 match kind {
                     DiffKind::Unstaged => {
                         diff_state.unstaged_diff = Some(diff.downgrade());
+                        // The deleted (base) side of a standalone unstaged diff
+                        // is the index, so highlight it. The recalc kicked off by
+                        // `diff_bases_changed` below applies the language.
+                        diff_state.index_text_buffer_language_enabled = true;
                     }
                     DiffKind::Staged => {
                         diff_state.index_text_buffer_language_enabled = true;
@@ -1266,7 +1644,8 @@ impl GitStore {
                         let unstaged_diff = if let Some(diff) = existing_unstaged_diff {
                             diff
                         } else {
-                            let base_text_buffer = diff_state.get_or_create_index_text_buffer(cx);
+                            let base_text_buffer =
+                                diff_state.get_or_create_index_text_buffer(index_text_file, cx);
                             let unstaged_diff = cx.new(|cx| {
                                 BufferDiff::new_with_base_text_buffer(
                                     &text_snapshot,
@@ -1295,7 +1674,15 @@ impl GitStore {
                     }
                     Ok(diff)
                 })
-            })
+            });
+            let diff_state = this.diffs.get(&buffer_id).cloned();
+            if let Some(index_text_buffer) =
+                diff_state.and_then(|diff_state| diff_state.read(cx).index_text_buffer())
+            {
+                this.buffer_ids_by_index_text_buffer_id
+                    .insert(index_text_buffer.read(cx).remote_id(), buffer_id);
+            }
+            rx
         })??
         .await
     }
@@ -1997,6 +2384,8 @@ impl GitStore {
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 self.diffs.remove(buffer_id);
+                self.buffer_ids_by_index_text_buffer_id
+                    .retain(|_, main_buffer_id| main_buffer_id != buffer_id);
                 for diffs in self.shared_diffs.values_mut() {
                     diffs.remove(buffer_id);
                 }
@@ -2073,48 +2462,45 @@ impl GitStore {
         }
     }
 
-    fn on_buffer_diff_event(
+    fn write_index_text_for_buffer_id(
         &mut self,
-        diff: Entity<buffer_diff::BufferDiff>,
-        event: &BufferDiffEvent,
+        buffer_id: BufferId,
+        new_index_text: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
-            let buffer_id = diff.read(cx).buffer_id;
-            if let Some(diff_state) = self.diffs.get(&buffer_id) {
-                let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
-                if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
-                    return;
-                }
-                let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
-                    diff_state.hunk_staging_operation_count += 1;
-                    diff_state.hunk_staging_operation_count
-                });
-                if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
-                    let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.as_unix_str());
-                        repo.spawn_set_index_text_job(
-                            path,
-                            new_index_text,
-                            Some(hunk_staging_operation_count),
-                            cx,
-                        )
-                    });
-                    let diff = diff.downgrade();
-                    cx.spawn(async move |this, cx| {
-                        if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                            diff.update(cx, |diff, cx| {
-                                diff.clear_pending_hunks(cx);
-                            })
-                            .ok();
-                            this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
-                                .ok();
-                        }
-                    })
-                    .detach();
-                }
+        let Some(diff_state) = self.diffs.get(&buffer_id) else {
+            return;
+        };
+        let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
+            diff_state.hunk_staging_operation_count += 1;
+            diff_state.hunk_staging_operation_count
+        });
+        let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) else {
+            return;
+        };
+        let recv = repo.update(cx, |repo, cx| {
+            log::debug!("hunks changed for {}", path.as_unix_str());
+            repo.spawn_set_index_text_job(
+                path,
+                new_index_text,
+                Some(hunk_staging_operation_count),
+                cx,
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Err(error)) = cx.background_spawn(recv).await {
+                this.update(cx, |this, cx| {
+                    if let Some(diff_state) = this.diffs.get(&buffer_id).cloned() {
+                        diff_state.update(cx, |diff_state, cx| {
+                            diff_state.clear_pending_index_edits_and_hunks(cx);
+                        });
+                    }
+                    cx.emit(GitStoreEvent::IndexWriteError(error));
+                })
+                .ok();
             }
-        }
+        })
+        .detach();
     }
 
     fn local_worktree_git_repos_changed(
@@ -3154,7 +3540,7 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch(false)
+                repository_handle.default_branch(envelope.payload.include_remote_name)
             })
             .await??
             .map(Into::into);
@@ -3951,6 +4337,7 @@ impl BufferGitState {
             hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
+            pending_index_edits: Some(Vec::new()),
             oid_texts: Default::default(),
             head_text_buffer: WeakEntity::new_invalid(),
             index_text_buffer: WeakEntity::new_invalid(),
@@ -3978,13 +4365,27 @@ impl BufferGitState {
         buffer
     }
 
-    fn get_or_create_index_text_buffer(&mut self, cx: &mut Context<Self>) -> Entity<Buffer> {
+    fn index_text_buffer(&self) -> Option<Entity<Buffer>> {
+        self.index_text_buffer.upgrade()
+    }
+
+    fn get_or_create_index_text_buffer(
+        &mut self,
+        file: Option<Arc<dyn language::File>>,
+        cx: &mut Context<Self>,
+    ) -> Entity<Buffer> {
         if let Some(buffer) = self.index_text_buffer.upgrade() {
+            if let Some(file) = file {
+                buffer.update(cx, |buffer, cx| buffer.file_updated(file, cx));
+            }
             return buffer;
         }
         let index_text = self.index_text.clone();
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(index_text.as_deref().unwrap_or(""), cx);
+            if let Some(file) = file {
+                buffer.file_updated(file, cx);
+            }
             buffer.set_capability(Capability::ReadOnly, cx);
             buffer
         });
@@ -4055,6 +4456,11 @@ impl BufferGitState {
         self.staged_diff.as_ref().and_then(|(set, _)| set.upgrade())
     }
 
+    fn staged_diff_and_index_text_buffer(&self) -> Option<(Entity<BufferDiff>, Entity<Buffer>)> {
+        let (diff, index_text_buffer) = self.staged_diff.as_ref()?;
+        Some((diff.upgrade()?, index_text_buffer.clone()))
+    }
+
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
         self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
     }
@@ -4076,6 +4482,100 @@ impl BufferGitState {
         }
     }
 
+    fn remove_overlapping_pending_index_edits(&mut self, ranges: &[Range<usize>]) {
+        if let Some(edits) = &mut self.pending_index_edits {
+            edits.retain(|(existing, _)| {
+                ranges.iter().all(|footprint| {
+                    existing.end < footprint.start || footprint.end < existing.start
+                })
+            });
+        }
+    }
+
+    fn insert_pending_index_edits(&mut self, edits: Option<Vec<(Range<usize>, Arc<str>)>>) {
+        match edits {
+            None => {
+                self.pending_index_edits = None;
+            }
+            Some(new_edits) => {
+                let mut edits = self.pending_index_edits.take().unwrap_or_default();
+                for (range, replacement) in new_edits {
+                    edits.retain(|(existing, _)| {
+                        existing.end < range.start || range.end < existing.start
+                    });
+                    let position =
+                        edits.partition_point(|(existing, _)| existing.start < range.start);
+                    edits.insert(position, (range, replacement));
+                }
+                self.pending_index_edits = Some(edits);
+            }
+        }
+    }
+
+    fn pending_index_text(&self, cx: &App) -> Option<Rope> {
+        let index_text_buffer = self.index_text_buffer.upgrade()?;
+        let edits = self.pending_index_edits.as_ref()?;
+        #[cfg(debug_assertions)]
+        for window in edits.windows(2) {
+            debug_assert!(window[0].0.end <= window[1].0.start);
+        }
+        let mut index_text = index_text_buffer.read(cx).text_snapshot().as_rope().clone();
+        for (old_range, replacement_text) in edits.iter().rev() {
+            index_text.replace(old_range.clone(), replacement_text);
+        }
+        Some(index_text)
+    }
+
+    fn clear_pending_index_edits(&mut self) {
+        self.pending_index_edits = Some(Vec::new());
+    }
+
+    fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
+        for diff in [
+            self.uncommitted_diff(),
+            self.unstaged_diff(),
+            self.staged_diff(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            diff.update(cx, |diff, cx| diff.clear_pending_hunks(cx));
+        }
+    }
+
+    fn mark_whole_file_stage_or_unstage_pending(
+        &mut self,
+        stage: bool,
+        buffer_snapshot: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(uncommitted_diff) = self.uncommitted_diff() {
+            uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+                uncommitted_diff.mark_all_hunks_pending(stage, buffer_snapshot, cx);
+            });
+        }
+
+        if stage {
+            if let Some(unstaged_diff) = self.unstaged_diff() {
+                unstaged_diff.update(cx, |unstaged_diff, cx| {
+                    unstaged_diff.suppress_all_hunks_pending(buffer_snapshot, cx);
+                });
+            }
+        } else if let Some(staged_diff) = self.staged_diff()
+            && let Some(index_text_buffer) = self.index_text_buffer()
+        {
+            let index_snapshot = index_text_buffer.read(cx).text_snapshot();
+            staged_diff.update(cx, |staged_diff, cx| {
+                staged_diff.suppress_all_hunks_pending(&index_snapshot, cx);
+            });
+        }
+    }
+
+    fn clear_pending_index_edits_and_hunks(&mut self, cx: &mut Context<Self>) {
+        self.clear_pending_index_edits();
+        self.clear_pending_hunks(cx);
+    }
+
     fn handle_base_texts_updated(
         &mut self,
         buffer: text::BufferSnapshot,
@@ -4089,16 +4589,17 @@ impl BufferGitState {
         };
 
         let diff_bases_change = match mode {
-            Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
-            Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
-            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.committed_text),
-            Mode::IndexAndHead => DiffBasesChange::SetEach {
+            Mode::HeadOnly => Some(DiffBasesChange::SetHead(message.committed_text)),
+            Mode::IndexOnly => Some(DiffBasesChange::SetIndex(message.staged_text)),
+            Mode::IndexMatchesHead => Some(DiffBasesChange::SetBoth(message.committed_text)),
+            Mode::IndexAndHead => Some(DiffBasesChange::SetEach {
                 index: message.staged_text,
                 head: message.committed_text,
-            },
+            }),
+            Mode::Unchanged => None,
         };
 
-        self.diff_bases_changed(buffer, Some(diff_bases_change), cx);
+        self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
@@ -4403,7 +4904,9 @@ impl BufferGitState {
                 return Ok(());
             }
 
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
+                this.clear_pending_index_edits();
+
                 if let (Some(staged_diff), Some(new_staged_diff)) =
                     (staged_diff.as_ref(), new_staged_diff.clone())
                 {
@@ -4422,7 +4925,7 @@ impl BufferGitState {
                                 head_text_buffer.fast_forward(edited_head_text, cx)
                             });
                         }
-                        diff.set_snapshot(new_staged_diff, cx)
+                        diff.set_snapshot_with_secondary(new_staged_diff, None, true, cx)
                     });
                 }
 
@@ -4437,7 +4940,7 @@ impl BufferGitState {
                                 index_text_buffer.fast_forward(edited_index_text, cx)
                             });
                         }
-                        diff.set_snapshot(new_unstaged_diff, cx)
+                        diff.set_snapshot_with_secondary(new_unstaged_diff, None, true, cx)
                     }))
                 } else {
                     None
@@ -5167,26 +5670,36 @@ impl Repository {
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
-                        let mut changes = Vec::new();
-                        for (
-                            buffer,
-                            repo_path,
-                            is_symlink,
-                            current_index_text,
-                            current_head_text,
-                        ) in &repo_diff_state_updates
+                        let mut revisions = Vec::new();
+                        for (_, repo_path, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
                         {
-                            let index_text = if current_index_text.is_some() && !*is_symlink {
-                                backend.load_index_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let head_text = if current_head_text.is_some() && !*is_symlink {
-                                backend.load_committed_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let (index_text, head_text) = future::join(index_text, head_text).await;
+                            if current_index_text.is_some() && !*is_symlink {
+                                revisions.push(format!(":{}", repo_path.as_unix_str()));
+                            }
+                            if current_head_text.is_some() && !*is_symlink {
+                                revisions.push(format!("HEAD:{}", repo_path.as_unix_str()));
+                            }
+                        }
+
+                        let mut loaded_revisions = backend
+                            .load_revisions(revisions)
+                            .await
+                            .log_err()
+                            .into_iter()
+                            .flatten();
+
+                        let mut changes = Vec::new();
+                        for (buffer, _, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
+                        {
+                            let index_text = (current_index_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
+
+                            let head_text = (current_head_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -5244,21 +5757,23 @@ impl Repository {
                         diff_state.update(cx, |diff_state, cx| {
                             use proto::update_diff_bases::Mode;
 
-                            if let Some((diff_bases_change, (client, project_id))) =
-                                diff_bases_change.clone().zip(downstream_client)
-                            {
-                                let (staged_text, committed_text, mode) = match diff_bases_change {
-                                    DiffBasesChange::SetIndex(index) => {
-                                        (index, None, Mode::IndexOnly)
-                                    }
-                                    DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
-                                    DiffBasesChange::SetEach { index, head } => {
-                                        (index, head, Mode::IndexAndHead)
-                                    }
-                                    DiffBasesChange::SetBoth(text) => {
-                                        (None, text, Mode::IndexMatchesHead)
-                                    }
-                                };
+                            if let Some((client, project_id)) = downstream_client {
+                                let (staged_text, committed_text, mode) =
+                                    match diff_bases_change.clone() {
+                                        Some(DiffBasesChange::SetIndex(index)) => {
+                                            (index, None, Mode::IndexOnly)
+                                        }
+                                        Some(DiffBasesChange::SetHead(head)) => {
+                                            (None, head, Mode::HeadOnly)
+                                        }
+                                        Some(DiffBasesChange::SetEach { index, head }) => {
+                                            (index, head, Mode::IndexAndHead)
+                                        }
+                                        Some(DiffBasesChange::SetBoth(text)) => {
+                                            (None, text, Mode::IndexMatchesHead)
+                                        }
+                                        None => (None, None, Mode::Unchanged),
+                                    };
                                 client
                                     .send(proto::UpdateDiffBases {
                                         project_id: project_id.to_proto(),
@@ -6454,33 +6969,15 @@ impl Repository {
                                         else {
                                             continue;
                                         };
-                                        let Some(uncommitted_diff) =
-                                            diff_state.read(cx).uncommitted_diff.as_ref().and_then(
-                                                |uncommitted_diff| uncommitted_diff.upgrade(),
-                                            )
-                                        else {
-                                            continue;
-                                        };
                                         let buffer_snapshot = buffer.read(cx).text_snapshot();
-                                        let file_exists = buffer
-                                            .read(cx)
-                                            .file()
-                                            .is_some_and(|file| file.disk_state().exists());
                                         let hunk_staging_operation_count =
                                             diff_state.update(cx, |diff_state, cx| {
-                                                uncommitted_diff.update(
-                                                    cx,
-                                                    |uncommitted_diff, cx| {
-                                                        uncommitted_diff
-                                                            .stage_or_unstage_all_hunks(
-                                                                stage,
-                                                                &buffer_snapshot,
-                                                                file_exists,
-                                                                cx,
-                                                            );
-                                                    },
-                                                );
-
+                                                diff_state
+                                                    .mark_whole_file_stage_or_unstage_pending(
+                                                        stage,
+                                                        &buffer_snapshot,
+                                                        cx,
+                                                    );
                                                 diff_state.hunk_staging_operation_count += 1;
                                                 diff_state.hunk_staging_operation_count
                                             });
@@ -6547,14 +7044,8 @@ impl Repository {
                                         if result.is_ok() {
                                             diff_state.hunk_staging_operation_count_as_of_write =
                                                 hunk_staging_operation_count;
-                                        } else if let Some(uncommitted_diff) =
-                                            &diff_state.uncommitted_diff
-                                        {
-                                            uncommitted_diff
-                                                .update(cx, |uncommitted_diff, cx| {
-                                                    uncommitted_diff.clear_pending_hunks(cx);
-                                                })
-                                                .ok();
+                                        } else {
+                                            diff_state.clear_pending_hunks(cx);
                                         }
                                     })
                                     .ok();
@@ -7858,6 +8349,7 @@ impl Repository {
                         .request(proto::GetDefaultBranch {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
+                            include_remote_name,
                         })
                         .await?;
 
@@ -8515,8 +9007,13 @@ impl Repository {
         let rx = self.send_job("load_committed_text", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
-                    let staged_text = backend.load_index_text(repo_path).await;
+                    let revisions = vec![
+                        format!("HEAD:{}", repo_path.as_unix_str()),
+                        format!(":{}", repo_path.as_unix_str()),
+                    ];
+                    let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
+                    let committed_text = loaded_revisions.next().flatten();
+                    let staged_text = loaded_revisions.next().flatten();
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {

@@ -2181,6 +2181,38 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_hard_tabs(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n\tb();\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Insert a block whose indentation mixes tab-indented lines with
+        // lines that have no leading whitespace, like a snippet body.
+        let inserted_text = "if c {\n\td();\n}\n";
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            cx,
+        );
+
+        // All of the block's lines are indented, including the ones that
+        // originally had no indentation.
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n\tb();\n\tif c {\n\t\td();\n\t}\n}"
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
     init_settings(cx, |_| {});
 
