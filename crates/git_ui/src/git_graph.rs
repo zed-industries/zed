@@ -2168,10 +2168,9 @@ impl GitGraph {
                     column_label(formatted_time.into()),
                     {
                         let avatar_sha: SharedString = commit.data.sha.to_string().into();
-                        let avatar =
-                            CommitAvatar::new(&avatar_sha, author_email.clone(), remote.as_ref())
-                                .size(px(16.))
-                                .render(window, cx);
+                        let avatar = CommitAvatar::new(&avatar_sha, author_email, remote.as_ref())
+                            .size(px(16.))
+                            .render(window, cx);
                         h_flex()
                             .id(ElementId::NamedInteger("commit-author".into(), idx as u64))
                             .h(row_height)
