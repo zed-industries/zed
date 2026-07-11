@@ -4208,7 +4208,6 @@ fn default_render_tab_bar_buttons(
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
-
     let (can_clone, can_split_move) = match pane.active_item() {
         Some(active_item) if active_item.can_split(cx) => (true, false),
         Some(_) => (false, pane.items_len() > 1),
