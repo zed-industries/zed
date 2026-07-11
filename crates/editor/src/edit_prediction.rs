@@ -399,7 +399,7 @@ impl Editor {
                                 ));
                             self.highlight_rows::<EditPredictionPreview>(
                                 target..target,
-                                cx.theme().colors().editor_highlighted_line_background,
+                                |cx| cx.theme().colors().editor_highlighted_line_background,
                                 RowHighlightOptions {
                                     autoscroll: true,
                                     ..Default::default()
@@ -2295,7 +2295,7 @@ impl Editor {
         let file_name = snapshot
             .file()
             .map(|file| SharedString::new(file.file_name(cx)))
-            .unwrap_or(SharedString::new_static("untitled"));
+            .unwrap_or(SharedString::new_static(MultiBuffer::DEFAULT_TITLE));
 
         h_flex()
             .id("ep-jump-outside-popover")
@@ -2429,7 +2429,7 @@ impl Editor {
                 let file_name = snapshot
                     .file()
                     .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
+                    .unwrap_or(MultiBuffer::DEFAULT_TITLE);
                 Some(
                     h_flex()
                         .px_2()

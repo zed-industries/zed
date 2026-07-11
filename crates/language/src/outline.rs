@@ -19,6 +19,7 @@ pub struct Outline<T> {
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
+    pub selection_range: Range<T>,
     pub source_range_for_text: Range<T>,
     pub text: SharedString,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
@@ -71,6 +72,8 @@ impl<T: ToPoint> OutlineItem<T> {
         OutlineItem {
             depth: self.depth,
             range: self.range.start.to_point(buffer)..self.range.end.to_point(buffer),
+            selection_range: self.selection_range.start.to_point(buffer)
+                ..self.selection_range.end.to_point(buffer),
             source_range_for_text: self.source_range_for_text.start.to_point(buffer)
                 ..self.source_range_for_text.end.to_point(buffer),
             text: self.text.clone(),
@@ -315,6 +318,7 @@ mod tests {
         let item = OutlineItem {
             depth: 0,
             range: range.clone(),
+            selection_range: range.clone(),
             source_range_for_text: range,
             text: "completion".into(),
             highlight_ranges: Vec::new(),
@@ -332,6 +336,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                selection_range: Point::new(0, 6)..Point::new(0, 9),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 9),
                 text: "class Foo".into(),
                 highlight_ranges: vec![],
@@ -342,6 +347,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(2, 0)..Point::new(2, 7),
+                selection_range: Point::new(2, 0)..Point::new(2, 7),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 7),
                 text: "private".into(),
                 highlight_ranges: vec![],
@@ -373,6 +379,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                selection_range: Point::new(0, 3)..Point::new(0, 10),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 10),
                 text: "fn process".into(),
                 highlight_ranges: vec![],
@@ -383,6 +390,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(7, 0)..Point::new(12, 0),
+                selection_range: Point::new(0, 7)..Point::new(0, 20),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 20),
                 text: "struct DataProcessor".into(),
                 highlight_ranges: vec![],

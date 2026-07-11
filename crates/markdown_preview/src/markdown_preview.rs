@@ -4,9 +4,12 @@ use markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use workspace::item::ItemHandle;
 use workspace::{AutoPreviewMatch, AutoPreviewProvider, Workspace, register_auto_preview_provider};
 
+pub mod markdown_preview_settings;
 pub mod markdown_preview_view;
 
 pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
+
+use crate::markdown_preview_view::MarkdownPreviewView;
 
 actions!(
     markdown,
@@ -99,6 +102,8 @@ impl AutoPreviewProvider for MarkdownAutoPreviewProvider {
 }
 
 pub fn init(cx: &mut App) {
+    workspace::register_serializable_item::<MarkdownPreviewView>(cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
