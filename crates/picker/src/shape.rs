@@ -20,6 +20,12 @@ pub(crate) struct PositionAndShape {
     pub(crate) preview: Pixels,
 }
 
+impl PositionAndShape {
+    pub(crate) fn width(&self) -> Pixels {
+        self.right - self.left
+    }
+}
+
 macro_rules! relative_size {
     ($name:ident, $accessor:ident) => {
         /// Size type that is the sum of a relative size to the viewport and a
@@ -377,6 +383,16 @@ impl SizeBounds {
         };
         let max_preview = (total - min_results).max(min_preview);
         working.preview = working.preview.clamp(min_preview, max_preview);
+    }
+
+    pub(crate) fn would_clamp_width_if_horizontal(&self, shape: &Shape, window: &Window) -> bool {
+        let min_width = self.min_width(Some(Layout::Right), window);
+
+        let unbounded_width = shape
+            .picker_position_and_size(Some(Layout::Right), window)
+            .width();
+
+        unbounded_width <= min_width
     }
 
     /// Clamps a whole picker rect (results + preview) into bounds: the total size

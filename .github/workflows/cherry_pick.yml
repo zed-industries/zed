@@ -27,10 +27,6 @@ jobs:
   run_cherry_pick:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
     - id: generate-token
       name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
@@ -40,6 +36,11 @@ jobs:
         permission-contents: write
         permission-workflows: write
         permission-pull-requests: write
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        token: ${{ steps.generate-token.outputs.token }}
     - name: cherry_pick::run_cherry_pick::cherry_pick
       run: ./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL"
       env:
