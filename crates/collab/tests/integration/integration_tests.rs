@@ -126,7 +126,7 @@ async fn test_basic_calls(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.calling_user.github_login, "user_a");
+    assert_eq!(call_b.calling_user.username, "user_a");
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -135,7 +135,7 @@ async fn test_basic_calls(
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     executor.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.calling_user.github_login, "user_a");
+    assert_eq!(call_b2.calling_user.username, "user_a");
 
     // User B joins the room using the first client.
     active_call_b
@@ -190,7 +190,7 @@ async fn test_basic_calls(
 
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.calling_user.github_login, "user_b");
+    assert_eq!(call_c.calling_user.username, "user_b");
     active_call_c.update(cx_c, |call, cx| call.decline_incoming(cx).unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
@@ -236,7 +236,7 @@ async fn test_basic_calls(
 
     // User C accepts the call.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.calling_user.github_login, "user_a");
+    assert_eq!(call_c.calling_user.username, "user_a");
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
         .await
@@ -677,7 +677,7 @@ async fn test_room_uniqueness(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b1.calling_user.github_login, "user_a");
+    assert_eq!(call_b1.calling_user.username, "user_a");
 
     // Ensure calling users A and B from client C fails.
     active_call_c
@@ -739,7 +739,7 @@ async fn test_room_uniqueness(
         .unwrap();
     executor.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.calling_user.github_login, "user_c");
+    assert_eq!(call_b2.calling_user.username, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
@@ -1873,7 +1873,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 legacy_id: client_a.user_id().unwrap(),
-                github_login: "user_a".into(),
+                username: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
             }),
@@ -1892,7 +1892,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 legacy_id: client_b.user_id().unwrap(),
-                github_login: "user_b".into(),
+                username: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
             }),
@@ -2281,12 +2281,7 @@ async fn test_room_location(
         room.read_with(cx, |room, _| {
             room.remote_participants()
                 .values()
-                .map(|participant| {
-                    (
-                        participant.user.github_login.to_string(),
-                        participant.location,
-                    )
-                })
+                .map(|participant| (participant.user.username.to_string(), participant.location))
                 .collect()
         })
     }
@@ -6393,7 +6388,7 @@ async fn test_contacts(
                 .iter()
                 .map(|contact| {
                     (
-                        contact.user.github_login.clone().to_string(),
+                        contact.user.username.clone().to_string(),
                         if contact.online { "online" } else { "offline" },
                         if contact.busy { "busy" } else { "free" },
                     )
@@ -6629,7 +6624,7 @@ async fn test_join_call_after_screen_was_shared(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.calling_user.github_login, "user_a");
+    assert_eq!(call_b.calling_user.username, "user_a");
 
     // User A shares their screen
     let display = gpui::TestScreenCaptureSource::new();
@@ -7315,6 +7310,20 @@ async fn test_remote_git_branches(
     });
 
     assert_eq!(host_branch.name(), "totally-new-branch");
+
+    let default_branch_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _cx| repository.default_branch(false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_b.as_deref(), Some("main"));
+
+    let default_branch_with_remote_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _cx| repository.default_branch(true)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_with_remote_b.as_deref(), Some("origin/main"));
 }
 
 #[gpui::test]

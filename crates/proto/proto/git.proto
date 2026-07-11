@@ -25,6 +25,11 @@ message UpdateDiffBases {
     // and the contents of the index and HEAD differ for this path,
     // where None means the path doesn't exist in that state of the repo.
     INDEX_AND_HEAD = 3;
+    // The contents of the index and HEAD are unchanged. Sent so that
+    // remote clients still recalculate their diffs in response to git
+    // events, just as the host does, even when an index write ends up
+    // changing nothing (e.g. writing content identical to what's there).
+    UNCHANGED = 4;
   }
 
   optional string staged_text = 3;
@@ -507,6 +512,7 @@ message BlameBufferResponse {
 message GetDefaultBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
+  bool include_remote_name = 3;
 }
 
 message GetDefaultBranchResponse {

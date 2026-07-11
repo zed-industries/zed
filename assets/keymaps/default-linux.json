@@ -319,6 +319,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
       "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-alt-home": "agent::ScrollOutputToTop",
@@ -337,6 +338,7 @@
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
       "ctrl-shift-backspace": "agent::RemoveFirstQueuedMessage",
       "ctrl-alt-e": "agent::EditFirstQueuedMessage",
+      "ctrl-alt-s": "agent::ToggleSteerFirstQueuedMessage",
       "ctrl-alt-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
@@ -677,6 +679,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
+      "ctrl-k ctrl-p": "workspace::ReopenLastPicker",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-k ctrl-shift-t": "theme::ToggleMode",
@@ -954,6 +957,7 @@
       "left": "project_panel::CollapseSelectedEntry",
       "ctrl-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
+      "ctrl-right": "project_panel::ExpandAllEntries",
       "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
       "alt-new": "project_panel::NewDirectory",
@@ -1230,6 +1234,7 @@
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
+      "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
@@ -1260,7 +1265,9 @@
   },
   {
     "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-n": "agent::NewThread",
     },
   },
@@ -1276,13 +1283,6 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm",
-    },
-  },
-  {
-    "context": "ContextServerToolsModal",
-    "use_key_equivalents": true,
-    "bindings": {
-      "escape": "menu::Cancel",
     },
   },
   {

@@ -963,9 +963,14 @@ impl BlockMap {
             // Ensure the edit starts at a transform boundary.
             // If the edit starts within an isomorphic transform, preserve its prefix
             // If the edit lands within a replacement block, expand the edit to include the start of the replaced input range
-            let transform = cursor.item().unwrap();
+            // The cursor can sit past the end of the tree when a companion edit
+            // is anchored at the new end-of-file and maps to `old_start` at the
+            // very end of the old transforms; in that case there is no transform
+            // preceding the edit and nothing to preserve.
             let transform_rows_before_edit = old_start - *cursor.start();
-            if transform_rows_before_edit > RowDelta(0) {
+            if transform_rows_before_edit > RowDelta(0)
+                && let Some(transform) = cursor.item()
+            {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
                     push_isomorphic(
@@ -1075,6 +1080,18 @@ impl BlockMap {
                     .iter()
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
+                        if !matches!(placement, BlockPlacement::Replace(_))
+                            && wrap_snapshot.intersects_fold(Point::new(
+                                block
+                                    .placement
+                                    .start()
+                                    .to_point(wrap_snapshot.buffer_snapshot())
+                                    .row,
+                                0,
+                            ))
+                        {
+                            return None;
+                        }
                         if let BlockPlacement::Above(row) = placement
                             && row < new_start
                         {
@@ -2934,7 +2951,8 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+            Companion, fold_map::FoldMap, fold_map::FoldPlaceholder, inlay_map::InlayMap,
+            tab_map::TabMap, wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -3142,6 +3160,74 @@ mod tests {
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
+    }
+
+    #[gpui::test]
+    fn test_blocks_hidden_in_folds(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line0\nline1\nline2\nline3\nline4";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let tab_size = 1.try_into().unwrap();
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let above = |row| BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(row, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        };
+        let below = |row| BlockProperties {
+            placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(row, 0))),
+            ..above(row)
+        };
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        let block_ids = writer.insert(vec![above(1), above(2), below(2), above(4)]);
+        let (block_a, block_b, block_c, block_d) =
+            (block_ids[0], block_ids[1], block_ids[2], block_ids[3]);
+
+        let present_blocks =
+            |block_map: &mut BlockMap, wraps_snapshot: WrapSnapshot, wrap_edits: WrapPatch| {
+                let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
+                let max_row = snapshot.max_point().row;
+                snapshot
+                    .blocks_in_range(BlockRow(0)..BlockRow(max_row + 1))
+                    .filter_map(|(_, block)| Some(block.as_custom()?.id))
+                    .collect::<HashSet<_>>()
+            };
+
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, Default::default()),
+            HashSet::from_iter([block_a, block_b, block_c, block_d]),
+            "every block is present before folding",
+        );
+
+        // Fold lines 2 and 3 entirely, leaving line1 (the fold start) visible.
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot.clone(), vec![]);
+        let (mut fold_writer, _, _) = fold_map.write(inlay_snapshot, inlay_edits);
+        let (fold_snapshot, fold_edits) = fold_writer.fold(vec![(
+            Point::new(1, 5)..Point::new(3, 5),
+            FoldPlaceholder::test(),
+        )]);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, wrap_edits),
+            HashSet::from_iter([block_a, block_d]),
+            "blocks B and C anchored to folded lines are dropped, A (fold-start line) and D (past the fold) stay",
+        );
     }
 
     #[gpui::test]
@@ -4936,6 +5022,61 @@ mod tests {
             "aaa\nbbb\nccc\nddd\n\n\n\nddd\nddd\n\n\n\neee\n",
             "LHS should have 3 more spacer lines to balance the insertion"
         );
+    }
+
+    // Regression test for ZED-9V4: `BlockMap::sync` walks the (old) transform
+    // tree with a `WrapRow` cursor and used to `cursor.item().unwrap()` for
+    // every edit, assuming each edit's `old.start` lands strictly inside the
+    // tree. The companion (split-diff) branch of `sync` can compose an edit
+    // anchored at the trailing boundary of the old transforms
+    // (`old.start == input_rows`), at which point the cursor is past the end of
+    // the tree and `item()` is `None`. That used to abort the process.
+    #[gpui::test]
+    fn test_sync_edit_anchored_at_end_of_transforms(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple("aaa\nbbb\nccc\n", cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (wrap_map, old_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
+        let block_map = BlockMap::new(old_wrap_snapshot.clone(), 0, 0);
+
+        // The tree now spans exactly `old_end` input rows.
+        let old_end = old_wrap_snapshot.max_point().row() + RowDelta(1);
+
+        // Grow the buffer so the new snapshot is larger than the old transforms.
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(Point::new(3, 0)..Point::new(3, 0), "ddd\neee\n")],
+                None,
+                cx,
+            );
+            buffer.snapshot(cx)
+        });
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+        let (new_wrap_snapshot, _) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let new_end = new_wrap_snapshot.max_point().row() + RowDelta(1);
+
+        // An edit anchored exactly at the end of the old transforms, of the shape
+        // the companion branch of `sync` can produce.
+        let edits = Patch::new(vec![text::Edit {
+            old: old_end..old_end,
+            new: old_end..new_end,
+        }]);
+
+        let snapshot = block_map.read(new_wrap_snapshot, edits, None);
+        assert_eq!(snapshot.snapshot.text(), "aaa\nbbb\nccc\nddd\neee\n");
     }
 
     fn init_test(cx: &mut gpui::App) {
