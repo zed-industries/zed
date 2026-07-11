@@ -2316,6 +2316,28 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn ctrl_q_is_forwarded_to_terminal_not_quit(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(load_default_keymap);
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(
+            terminal.update(&mut cx, |terminal, _| terminal.take_input_log()),
+            vec![vec![0x11]],
+            "ctrl-q in a focused terminal should send 0x11 to the PTY, not trigger zed::Quit",
+        );
+    }
+
     // Working directory calculation tests
 
     // No Worktrees in project -> home_dir()

@@ -11,28 +11,41 @@ env:
   PRIORITY_LABELS: '["priority:P0", "priority:P1"]'
   REPRODUCIBLE_LABEL: 'state:reproducible'
   FREQUENCY_LABELS: '["frequency:always", "frequency:common"]'
+  MARKER_REACTION: 'eyes'
 
 jobs:
   notify-slack:
     if: github.repository_owner == 'zed-industries' && github.event.issue.state == 'open'
     runs-on: namespace-profile-2x4-ubuntu-2404
-    # Serialize per-issue so concurrent `labeled` events can't both observe
-    # the trifecta and double-notify.
+    permissions:
+      contents: read
+      # For the issue reaction used to dedupe notifications.
+      issues: write
+    # Serialize per issue so the reaction claim below can't race.
     concurrency:
       group: slack-notify-first-responders-${{ github.event.issue.number }}
       cancel-in-progress: false
 
     steps:
-      - name: Check if label combination requires first responder notification
+      - name: Check label combination and claim the notification
         id: check-label
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           LABEL_NAME: ${{ github.event.label.name }}
-          ISSUE_LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
 
-          # Gate on the just-added label so unrelated labeling on an
-          # already-qualifying issue doesn't re-fire the notification.
+          api() {
+            curl -sS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$@"
+          }
+
+          # Ignore labels outside the trifecta so unrelated later edits don't re-fire.
           TRIGGER_LABELS=$(jq -cn \
             --argjson priority "$PRIORITY_LABELS" \
             --arg repro "$REPRODUCIBLE_LABEL" \
@@ -45,18 +58,51 @@ jobs:
             exit 0
           fi
 
+          # The webhook's issue.labels snapshot is racy under bulk apply; read live.
+          ISSUE_LABELS_JSON=$(api -f "https://api.github.com/repos/$GH_REPO/issues/$ISSUE_NUMBER/labels?per_page=100" | jq '[.[].name]')
+
           MATCHED_PRIORITY=$(echo "$ISSUE_LABELS_JSON" | jq -r --argjson priority "$PRIORITY_LABELS" 'map(select(. as $x | $priority | index($x) != null)) | first // ""')
           HAS_REPRO=$(echo "$ISSUE_LABELS_JSON" | jq --arg l "$REPRODUCIBLE_LABEL" 'index($l) != null')
           HAS_FREQ=$(echo "$ISSUE_LABELS_JSON" | jq --argjson freq "$FREQUENCY_LABELS" 'any(.[]; . as $x | $freq | index($x) != null)')
 
-          if [ -n "$MATCHED_PRIORITY" ] && [ "$HAS_REPRO" = "true" ] && [ "$HAS_FREQ" = "true" ]; then
-            echo "Confirmed high-frequency $MATCHED_PRIORITY, notifying"
-            echo "notify_reason=confirmed $MATCHED_PRIORITY" >> "$GITHUB_OUTPUT"
-            echo "should_notify=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$MATCHED_PRIORITY" ] || [ "$HAS_REPRO" != "true" ] || [ "$HAS_FREQ" != "true" ]; then
             echo "Combination not yet satisfied (priority=$MATCHED_PRIORITY, reproducible=$HAS_REPRO, frequency=$HAS_FREQ), skipping"
             echo "should_notify=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # A bulk label apply emits one `labeled` event per label, so several
+          # runs reach this point. Creating the reaction is our atomic claim:
+          # one run gets 201 and notifies, the rest get 200. It's scoped to our
+          # own reaction, so a human's reaction can't suppress it.
+          REACTION_PAYLOAD=$(jq -cn --arg content "$MARKER_REACTION" '{content: $content}')
+          REACTION_RESPONSE=$(api -w "\n%{http_code}" -X POST \
+            "https://api.github.com/repos/$GH_REPO/issues/$ISSUE_NUMBER/reactions" \
+            -d "$REACTION_PAYLOAD")
+          REACTION_BODY=$(echo "$REACTION_RESPONSE" | sed '$d')
+          REACTION_STATUS=$(echo "$REACTION_RESPONSE" | tail -n1)
+
+          if [ "$REACTION_STATUS" = "200" ]; then
+            echo "First responders already notified for this issue (reaction present), skipping"
+            echo "should_notify=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$REACTION_STATUS" != "201" ]; then
+            echo "::error::Unexpected status $REACTION_STATUS creating reaction: $REACTION_BODY"
+            exit 1
+          fi
+
+          REACTION_ID=$(echo "$REACTION_BODY" | jq -r '.id')
+          LABELS=$(echo "$ISSUE_LABELS_JSON" | jq -r 'join(", ")')
+
+          echo "Confirmed high-frequency $MATCHED_PRIORITY, notifying"
+          {
+            echo "notify_reason=confirmed $MATCHED_PRIORITY"
+            echo "issue_labels=$LABELS"
+            echo "reaction_id=$REACTION_ID"
+            echo "should_notify=true"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build Slack message payload
         if: steps.check-label.outputs.should_notify == 'true'
@@ -65,10 +111,8 @@ jobs:
           ISSUE_URL: ${{ github.event.issue.html_url }}
           LABELED_BY: ${{ github.event.sender.login }}
           NOTIFY_REASON: ${{ steps.check-label.outputs.notify_reason }}
-          LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
+          LABELS: ${{ steps.check-label.outputs.issue_labels }}
         run: |
-          LABELS=$(echo "$LABELS_JSON" | jq -r 'join(", ")')
-
           jq -n \
             --arg notify_reason "$NOTIFY_REASON" \
             --arg issue_title "$ISSUE_TITLE" \
@@ -111,9 +155,27 @@ jobs:
         if: steps.check-label.outputs.should_notify == 'true'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_FIRST_RESPONDERS }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REACTION_ID: ${{ steps.check-label.outputs.reaction_id }}
         run: |
+          set -uo pipefail
+
+          release_claim() {
+            if [ -n "${REACTION_ID:-}" ]; then
+              echo "Releasing reaction claim so the notification can be retried"
+              curl -sS -X DELETE \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$GH_REPO/issues/$ISSUE_NUMBER/reactions/$REACTION_ID" || true
+            fi
+          }
+
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
             echo "::error::SLACK_WEBHOOK_FIRST_RESPONDERS secret is not set"
+            release_claim
             exit 1
           fi
 
@@ -129,6 +191,7 @@ jobs:
 
           if [ "$HTTP_STATUS" -ne 200 ]; then
             echo "::error::Slack notification failed with status $HTTP_STATUS: $HTTP_BODY"
+            release_claim
             exit 1
           fi
 

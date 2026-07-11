@@ -29,11 +29,11 @@ use std::{
     sync::Arc,
 };
 use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams, TabTooltipContent},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -528,23 +528,33 @@ impl Item for AgentDiffPane {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Agent Diff".into())
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let label_content = self.tab_content_text(params.detail.unwrap_or_default(), cx);
+
+        Label::new(label_content)
+            .when(!params.selected, |this| this.color(Color::Muted))
+            .into_any_element()
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let title = self.thread.read(cx).title();
-        Label::new(if let Some(title) = title {
-            format!("Review: {}", title)
-        } else {
-            "Review".to_string()
-        })
-        .color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        })
-        .into_any_element()
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            let title = title.map(|title| title.to_string());
+
+            move |_, _| {
+                v_flex()
+                    .child(Label::new(
+                        title.clone().unwrap_or_else(|| "Review".to_string()),
+                    ))
+                    .child(
+                        Label::new("Agent Diff")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            }
+        }))))
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -666,8 +676,11 @@ impl Item for AgentDiffPane {
         });
     }
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Agent Diff".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        match self.thread.read(cx).title() {
+            Some(title) => format!("Review: {}", truncate_and_trailoff(&title, 20)).into(),
+            None => "Review".into(),
+        }
     }
 }
 

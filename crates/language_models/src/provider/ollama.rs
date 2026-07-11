@@ -360,7 +360,11 @@ pub struct OllamaLanguageModel {
 }
 
 impl OllamaLanguageModel {
-    fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
+    fn to_ollama_request(&self, request: LanguageModelRequest) -> Result<ChatRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+
         let supports_vision = self.model.supports_vision.unwrap_or(false);
 
         let mut messages = Vec::with_capacity(request.messages.len());
@@ -422,7 +426,16 @@ impl OllamaLanguageModel {
                                     id: tool_use.id.to_string(),
                                     function: OllamaFunctionCall {
                                         name: tool_use.name.to_string(),
-                                        arguments: tool_use.input,
+                                        arguments: match tool_use.input {
+                                            language_model::LanguageModelToolUseInput::Json(
+                                                input,
+                                            ) => input,
+                                            language_model::LanguageModelToolUseInput::Text(_) => {
+                                                return Err(anyhow::anyhow!(
+                                                    "Ollama does not support custom tool calls"
+                                                ));
+                                            }
+                                        },
                                     },
                                 });
                             }
@@ -445,7 +458,7 @@ impl OllamaLanguageModel {
                 }),
             }
         }
-        ChatRequest {
+        Ok(ChatRequest {
             model: self.model.name.clone(),
             messages,
             keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
@@ -468,11 +481,15 @@ impl OllamaLanguageModel {
                 .supports_thinking
                 .map(|supports_thinking| supports_thinking && request.thinking_allowed),
             tools: if self.model.supports_tools.unwrap_or(false) {
-                request.tools.into_iter().map(tool_into_ollama).collect()
+                request
+                    .tools
+                    .into_iter()
+                    .map(tool_into_ollama)
+                    .collect::<Result<_>>()?
             } else {
                 vec![]
             },
-        }
+        })
     }
 }
 
@@ -536,7 +553,10 @@ impl LanguageModel for OllamaLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_ollama_request(request);
+        let request = match self.to_ollama_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
 
         let http_client = self.http_client.clone();
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -621,7 +641,9 @@ fn map_to_language_model_completion_events(
                             id: LanguageModelToolUseId::from(id),
                             name: Arc::from(function.name),
                             raw_input: function.arguments.to_string(),
-                            input: function.arguments,
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                function.arguments,
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         });
@@ -1130,14 +1152,22 @@ fn merge_settings_into_models(
     }
 }
 
-fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
-    ollama::OllamaTool::Function {
+fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool> {
+    let input_schema = match tool.input {
+        language_model::LanguageModelRequestToolInput::Function { input_schema, .. } => {
+            input_schema
+        }
+        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+    };
+    Ok(ollama::OllamaTool::Function {
         function: OllamaFunctionTool {
             name: tool.name,
             description: Some(tool.description),
-            parameters: Some(tool.input_schema),
+            parameters: Some(input_schema),
         },
-    }
+    })
 }
 
 #[cfg(test)]
