@@ -1,4 +1,5 @@
 use super::*;
+use util::rel_path::RelPath;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClipboardSelection {
@@ -281,40 +282,45 @@ impl Editor {
             };
 
             if is_markdown {
-                if let Some(working_dir) = self.working_directory(cx) {
-                    match save_clipboard_image(&image, &working_dir) {
-                        Ok(filename) => {
-                            let markdown_text = format!("![]({filename})");
-                            // "![" is 2 bytes; we want the cursor between [ and ]
-                            let move_back_by = markdown_text.len() - 2;
-                            self.do_paste(&markdown_text, None, false, window, cx);
-                            let display_map = self.display_snapshot(cx);
-                            let new_selections = self
-                                .selections
-                                .all::<MultiBufferOffset>(&display_map)
-                                .into_iter()
-                                .map(|sel| {
-                                    let pos = MultiBufferOffset(
-                                        sel.head().0.saturating_sub(move_back_by),
-                                    );
-                                    Selection {
-                                        id: sel.id,
-                                        start: pos,
-                                        end: pos,
-                                        reversed: false,
-                                        goal: SelectionGoal::None,
-                                    }
-                                })
-                                .collect::<Vec<_>>();
-                            self.change_selections(Default::default(), window, cx, |s| {
-                                s.select(new_selections);
-                            });
-                            return;
-                        }
-                        Err(err) => {
-                            log::error!("Failed to save clipboard image: {err}");
-                        }
-                    }
+                let handled = maybe!({
+                    let buffer = self.buffer().read(cx).as_singleton()?;
+                    let file = buffer.read(cx).file()?;
+                    let worktree_id = file.worktree_id(cx);
+                    let dir_rel_path = file
+                        .path()
+                        .parent()
+                        .map(|p| p.into_arc())
+                        .unwrap_or_else(RelPath::empty_arc);
+                    let worktree = self
+                        .project
+                        .as_ref()?
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)?;
+
+                    let extension = image.format.extension();
+                    let snapshot = worktree.read(cx).snapshot();
+                    let (filename, file_path) =
+                        unused_image_path(&dir_rel_path, extension, |path| {
+                            snapshot.entry_for_path(path).is_some()
+                        })?;
+
+                    let create_task = worktree.update(cx, |worktree, cx| {
+                        worktree.create_entry(file_path, false, Some(image.bytes.clone()), cx)
+                    });
+
+                    cx.spawn_in(window, async move |editor, cx| {
+                        create_task.await?;
+                        editor.update_in(cx, |editor, window, cx| {
+                            editor.insert_image_snippet(&filename, window, cx)
+                        })
+                    })
+                    .detach_and_log_err(cx);
+
+                    Some(())
+                });
+                if handled.is_some() {
+                    // stop clipboard handling when the snippet is inserted
+                    return;
                 }
             }
         }
@@ -333,6 +339,26 @@ impl Editor {
             ),
             _ => self.do_paste(&item.text().unwrap_or_default(), None, true, window, cx),
         }
+    }
+
+    fn insert_image_snippet(
+        &mut self,
+        filename: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(snippet) = Snippet::parse(&format!("![$0]({filename})")).log_err() else {
+            return;
+        };
+        let display_map = self.display_snapshot(cx);
+        let insertion_ranges: Vec<Range<MultiBufferOffset>> = self
+            .selections
+            .all::<MultiBufferOffset>(&display_map)
+            .into_iter()
+            .map(|selection| selection.start..selection.end)
+            .collect();
+        self.insert_snippet(&insertion_ranges, snippet, window, cx)
+            .log_err();
     }
 
     pub(super) fn cut_common(
@@ -707,6 +733,26 @@ fn edit_for_markdown_paste<'a>(
     (range, new_text)
 }
 
+/// Returns a filename of the form `image.{extension}` (or `image_{N}.{extension}`
+/// if taken) that does not collide with an existing entry in `dir_rel_path`,
+/// along with the full path of the candidate file.
+fn unused_image_path(
+    dir_rel_path: &RelPath,
+    extension: &str,
+    exists: impl Fn(&RelPath) -> bool,
+) -> Option<(String, Arc<RelPath>)> {
+    let mut filename = format!("image.{extension}");
+    let mut counter = 1u32;
+    loop {
+        let candidate = dir_rel_path.join(RelPath::unix(&filename).ok()?);
+        if !exists(&candidate) {
+            return Some((filename, candidate));
+        }
+        filename = format!("image_{counter}.{extension}");
+        counter += 1;
+    }
+}
+
 /// Whether `text` consists solely of a single URL, as opposed to merely
 /// starting with a scheme-like prefix (e.g. a commit message like
 /// `editor: Fix ...`, which `url::Url::parse` would accept).
@@ -717,32 +763,4 @@ fn is_standalone_url(text: &str) -> bool {
         .links(text)
         .next()
         .is_some_and(|link| link.start() == 0 && link.end() == text.len())
-}
-
-
-fn save_clipboard_image(image: &gpui::Image, directory: &Path) -> anyhow::Result<String> {
-    let extension = match image.format {
-        gpui::ImageFormat::Png => "png",
-        gpui::ImageFormat::Jpeg => "jpg",
-        gpui::ImageFormat::Webp => "webp",
-        gpui::ImageFormat::Gif => "gif",
-        gpui::ImageFormat::Svg => "svg",
-        gpui::ImageFormat::Bmp => "bmp",
-        gpui::ImageFormat::Tiff => "tiff",
-        gpui::ImageFormat::Ico => "ico",
-        gpui::ImageFormat::Pnm => "pnm",
-    };
-
-    let mut filename = format!("image.{extension}");
-    let mut path = directory.join(&filename);
-
-    let mut counter = 1u32;
-    while path.exists() {
-        filename = format!("image_{counter}.{extension}");
-        path = directory.join(&filename);
-        counter += 1;
-    }
-
-    std::fs::write(&path, &image.bytes)?;
-    Ok(filename)
 }

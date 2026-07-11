@@ -35630,22 +35630,13 @@ async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut T
         None,
     ));
 
-    // Use a real temp directory so that std::fs::write in save_clipboard_image can write
-    // the image to disk. FakeFs is used for the worktree (avoiding real inotify threads)
-    // but seeded with the real temp path so that working_directory() returns a path that
-    // actually exists on the filesystem.
-    let temp_tree = util::test::TempTree::new(serde_json::json!({
-        "test.md": "",
-    }));
-    let root_path = temp_tree.path().to_path_buf();
-
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(&root_path, serde_json::json!({"test.md": ""}))
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
         .await;
-    let project = Project::test(fs, [root_path.as_path()], cx).await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(root_path.join("test.md"), cx)
+            project.open_local_buffer("/test/test.md", cx)
         })
         .await
         .unwrap();
@@ -35674,6 +35665,7 @@ async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut T
         cx.write_to_clipboard(ClipboardItem::new_image(&image));
         editor.paste(&Paste, window, cx);
     });
+    cx.run_until_parked();
 
     let buffer_text = cx.buffer_text();
     assert!(
@@ -35687,13 +35679,8 @@ async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut T
     cx.assert_editor_state(&expected_state);
 
     let filename = &buffer_text["![](".len()..buffer_text.len() - 1];
-    let image_path = root_path.join(filename);
-    assert!(
-        image_path.exists(),
-        "expected image file to be saved at {image_path:?}"
-    );
     assert_eq!(
-        std::fs::read(&image_path).unwrap(),
+        fs.read_file_sync(format!("/test/{filename}")).unwrap(),
         png_bytes,
         "image file contents should match clipboard bytes"
     );
@@ -35711,18 +35698,13 @@ async fn test_paste_multiple_images_in_markdown_increments_filename(cx: &mut Tes
         None,
     ));
 
-    let temp_tree = util::test::TempTree::new(serde_json::json!({
-        "test.md": "",
-    }));
-    let root_path = temp_tree.path().to_path_buf();
-
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(&root_path, serde_json::json!({"test.md": ""}))
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
         .await;
-    let project = Project::test(fs, [root_path.as_path()], cx).await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(root_path.join("test.md"), cx)
+            project.open_local_buffer("/test/test.md", cx)
         })
         .await
         .unwrap();
@@ -35756,48 +35738,39 @@ async fn test_paste_multiple_images_in_markdown_increments_filename(cx: &mut Tes
         cx.write_to_clipboard(ClipboardItem::new_image(&image_1));
         editor.paste(&Paste, window, cx);
     });
+    cx.run_until_parked();
     let text_after_first = cx.buffer_text();
     assert_eq!(
         text_after_first, "![](image.png)",
         "first paste should produce image.png"
     );
-    assert!(root_path.join("image.png").exists());
-    assert_eq!(
-        std::fs::read(root_path.join("image.png")).unwrap(),
-        png_bytes_1
-    );
+    assert_eq!(fs.read_file_sync("/test/image.png").unwrap(), png_bytes_1);
 
     // Paste second image at end — should produce image_1.png
     cx.update_editor(|editor, window, cx| {
         cx.write_to_clipboard(ClipboardItem::new_image(&image_2));
         editor.paste(&Paste, window, cx);
     });
+    cx.run_until_parked();
     let text_after_second = cx.buffer_text();
     assert!(
         text_after_second.contains("![](image_1.png)"),
         "second paste should produce image_1.png, got: {text_after_second:?}"
     );
-    assert!(root_path.join("image_1.png").exists());
-    assert_eq!(
-        std::fs::read(root_path.join("image_1.png")).unwrap(),
-        png_bytes_2
-    );
+    assert_eq!(fs.read_file_sync("/test/image_1.png").unwrap(), png_bytes_2);
 
     // Paste third image — should produce image_2.png
     cx.update_editor(|editor, window, cx| {
         cx.write_to_clipboard(ClipboardItem::new_image(&image_3));
         editor.paste(&Paste, window, cx);
     });
+    cx.run_until_parked();
     let text_after_third = cx.buffer_text();
     assert!(
         text_after_third.contains("![](image_2.png)"),
         "third paste should produce image_2.png, got: {text_after_third:?}"
     );
-    assert!(root_path.join("image_2.png").exists());
-    assert_eq!(
-        std::fs::read(root_path.join("image_2.png")).unwrap(),
-        png_bytes_3
-    );
+    assert_eq!(fs.read_file_sync("/test/image_2.png").unwrap(), png_bytes_3);
 }
 
 #[gpui::test]
