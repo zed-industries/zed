@@ -1746,6 +1746,23 @@ mod test {
                 }"},
             Mode::Insert,
         );
+
+        // Inserting a line above should auto-indent the newly added line and leave the previous
+        // line unchanged
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                        println!(ˇ);
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    ˇ
+                        println!();
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
