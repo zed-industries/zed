@@ -15,7 +15,7 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    TaskState, TaskStatus, Terminal, TerminalBuilder, TerminalSource, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
 use util::{
@@ -64,6 +64,15 @@ impl Project {
     pub fn create_terminal_task(
         &mut self,
         spawn_task: SpawnInTerminal,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_task_with_origin(spawn_task, None, cx)
+    }
+
+    pub fn create_terminal_task_with_origin(
+        &mut self,
+        spawn_task: SpawnInTerminal,
+        terminal_source: Option<TerminalSource>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
@@ -254,6 +263,7 @@ impl Project {
                         settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
+                        terminal_source,
                         Some(completion_tx),
                         cx,
                         activation_script,
@@ -292,7 +302,16 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_with_origin(cwd, None, cx)
+    }
+
+    pub fn create_terminal_shell_with_origin(
+        &mut self,
+        cwd: Option<PathBuf>,
+        terminal_source: Option<TerminalSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, false, terminal_source, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -302,6 +321,14 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_local_terminal_with_origin(None, cx)
+    }
+
+    pub fn create_local_terminal_with_origin(
+        &mut self,
+        terminal_source: Option<TerminalSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let working_directory = if self.remote_client.is_some() {
             // Remote project: don't use remote paths, let shell use Zed's cwd
             None
@@ -309,7 +336,7 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, true, terminal_source, cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -319,6 +346,7 @@ impl Project {
         &mut self,
         cwd: Option<PathBuf>,
         force_local: bool,
+        terminal_source: Option<TerminalSource>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
@@ -424,6 +452,7 @@ impl Project {
                         settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
+                        terminal_source,
                         None,
                         cx,
                         activation_script,
@@ -463,10 +492,20 @@ impl Project {
         cx: &mut Context<'_, Project>,
         cwd: Option<PathBuf>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.clone_terminal_with_origin(terminal, cx, cwd, None)
+    }
+
+    pub fn clone_terminal_with_origin(
+        &mut self,
+        terminal: &Entity<Terminal>,
+        cx: &mut Context<'_, Project>,
+        cwd: Option<PathBuf>,
+        terminal_source: Option<TerminalSource>,
+    ) -> Task<Result<Entity<Terminal>>> {
         // We cannot clone the task's terminal, as it will effectively re-spawn the task, which might not be desirable.
         // For now, create a new shell instead.
         if terminal.read(cx).task().is_some() {
-            return self.create_terminal_shell(cwd, cx);
+            return self.create_terminal_shell_with_origin(cwd, terminal_source, cx);
         }
         let local_path = if self.is_via_remote_server() {
             None
@@ -474,7 +513,9 @@ impl Project {
             cwd
         };
 
-        let builder = terminal.read(cx).clone_builder(cx, local_path);
+        let builder = terminal
+            .read(cx)
+            .clone_builder(cx, local_path, terminal_source);
         cx.spawn(async |project, cx| {
             let terminal = builder.await?;
             project.update(cx, |project, cx| {
@@ -619,7 +660,7 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
+    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx), None);
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),

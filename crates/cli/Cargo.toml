@@ -38,6 +38,7 @@ util.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
 walkdir = "2.5"
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

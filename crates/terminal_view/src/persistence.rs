@@ -6,6 +6,7 @@ use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use terminal::TerminalSource;
 use ui::{App, Context, Window};
 use util::ResultExt as _;
 
@@ -244,9 +245,19 @@ async fn deserialize_pane_group(
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
+                        let terminal_source = pane
+                            .update_in(cx, |_, window, _| TerminalSource {
+                                window_id: window.window_handle().window_id().as_u64(),
+                                workspace_id: workspace.entity_id().as_u64(),
+                            })
+                            .ok();
                         let terminal = project
                             .update(cx, |project, cx| {
-                                project.create_terminal_shell(working_directory, cx)
+                                project.create_terminal_shell_with_origin(
+                                    working_directory,
+                                    terminal_source,
+                                    cx,
+                                )
                             })
                             .await
                             .log_err();

@@ -9788,6 +9788,24 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
+    if open_options.workspace_matching == WorkspaceMatching::MatchSubdirectory {
+        if let Some(requesting_window) = open_options.requesting_window {
+            existing = cx.update(|cx| {
+                workspace_windows_for_location(location, cx)
+                    .contains(&requesting_window)
+                    .then(|| {
+                        requesting_window.read(cx).ok().map(|multi_workspace| {
+                            let workspace =
+                                requesting_workspace_in_window(open_options, multi_workspace)
+                                    .unwrap_or_else(|| multi_workspace.workspace().clone());
+                            (requesting_window, workspace)
+                        })
+                    })
+                    .flatten()
+            });
+        }
+    }
+
     if open_options.workspace_matching != WorkspaceMatching::None {
         cx.update(|cx| {
             for window in workspace_windows_for_location(location, cx) {
@@ -9809,7 +9827,8 @@ pub async fn find_existing_workspace(
                         if m > best_match {
                             existing = Some((window, workspace.clone()));
                             best_match = m;
-                        } else if best_match.is_none()
+                        } else if existing.is_none()
+                            && best_match.is_none()
                             && open_options.workspace_matching
                                 == WorkspaceMatching::MatchSubdirectory
                         {
@@ -9845,15 +9864,21 @@ pub async fn find_existing_workspace(
         if open_options.wait && existing.is_some() && all_paths_are_files {
             cx.update(|cx| {
                 let windows = workspace_windows_for_location(location, cx);
-                let window = cx
-                    .active_window()
-                    .and_then(|window| window.downcast::<MultiWorkspace>())
+                let window = open_options
+                    .requesting_window
                     .filter(|window| windows.contains(window))
-                    .or_else(|| windows.into_iter().next());
+                    .or_else(|| {
+                        cx.active_window()
+                            .and_then(|window| window.downcast::<MultiWorkspace>())
+                            .filter(|window| windows.contains(window))
+                            .or_else(|| windows.into_iter().next())
+                    });
                 if let Some(window) = window {
                     if let Ok(multi_workspace) = window.read(cx) {
-                        let active_workspace = multi_workspace.workspace().clone();
-                        existing = Some((window, active_workspace));
+                        let workspace =
+                            requesting_workspace_in_window(open_options, multi_workspace)
+                                .unwrap_or_else(|| multi_workspace.workspace().clone());
+                        existing = Some((window, workspace));
                         open_visible = OpenVisible::None;
                     }
                 }
@@ -9894,6 +9919,7 @@ pub struct OpenOptions {
     pub add_dirs_to_sidebar: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
+    pub requesting_workspace: Option<WeakEntity<Workspace>>,
     pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
     pub open_in_dev_container: bool,
@@ -9908,6 +9934,7 @@ impl Default for OpenOptions {
             add_dirs_to_sidebar: true,
             wait: false,
             requesting_window: None,
+            requesting_workspace: None,
             open_mode: OpenMode::default(),
             env: None,
             open_in_dev_container: false,
@@ -9922,6 +9949,17 @@ impl OpenOptions {
             WorkspaceMatching::None | WorkspaceMatching::MatchSubpaths
         ) && self.open_mode != OpenMode::NewWindow
     }
+}
+
+fn requesting_workspace_in_window(
+    open_options: &OpenOptions,
+    multi_workspace: &MultiWorkspace,
+) -> Option<Entity<Workspace>> {
+    let requesting_workspace = open_options.requesting_workspace.as_ref()?.upgrade()?;
+    multi_workspace
+        .workspaces()
+        .find(|workspace| **workspace == requesting_workspace)
+        .cloned()
 }
 
 /// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
@@ -10084,15 +10122,22 @@ pub fn open_paths(
                         &SerializedWorkspaceLocation::Local,
                         cx,
                     );
-                    let window = cx
+                    let window = open_options
+                        .requesting_window
+                        .filter(|window| windows.contains(window))
+                        .or_else(|| cx
                         .active_window()
                         .and_then(|window| window.downcast::<MultiWorkspace>())
                         .filter(|window| windows.contains(window))
-                        .or_else(|| windows.into_iter().next());
+                        .or_else(|| windows.into_iter().next()));
                     if let Some(window) = window {
                         if let Ok(multi_workspace) = window.read(cx) {
-                            let active_workspace = multi_workspace.workspace().clone();
-                            existing = Some((window, active_workspace));
+                            let workspace = requesting_workspace_in_window(
+                                &open_options,
+                                multi_workspace,
+                            )
+                            .unwrap_or_else(|| multi_workspace.workspace().clone());
+                            existing = Some((window, workspace));
                             open_visible = OpenVisible::None;
                         }
                     }
