@@ -2194,6 +2194,10 @@ impl BufferSnapshot {
         self.visible_text.to_string()
     }
 
+    pub fn text_with_line_endings(&self) -> String {
+        self.line_ending.apply(self.text())
+    }
+
     pub fn line_ending(&self) -> LineEnding {
         self.line_ending
     }
@@ -3641,6 +3645,25 @@ impl LineEnding {
             replaced.into()
         } else {
             text
+        }
+    }
+
+    /// Converts `text` to use this line ending.
+    ///
+    /// Detects the existing line ending of `text` first; if it already matches
+    /// `self`, the string is returned unchanged. Mixed line endings are not
+    /// supported: detection is based on the first newline found.
+    pub fn apply(&self, text: String) -> String {
+        match (LineEnding::detect(&text), self) {
+            (LineEnding::Unix, LineEnding::Unix) | (LineEnding::Windows, LineEnding::Windows) => {
+                text
+            }
+            (LineEnding::Unix, LineEnding::Windows) => text.replace('\n', "\r\n"),
+            (LineEnding::Windows, LineEnding::Unix) => {
+                let mut result = text;
+                LineEnding::normalize(&mut result);
+                result
+            }
         }
     }
 }
