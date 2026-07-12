@@ -82,7 +82,6 @@ use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
-use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
@@ -374,8 +373,13 @@ pub fn init(cx: &mut App) {
             workspace
                 .register_action(|workspace, _: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        let selection_context =
+                            active_context_selection(&panel, workspace, window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.new_thread_with_workspace(Some(workspace), window, cx)
+                            panel.new_thread_with_workspace(Some(workspace), window, cx);
+                            if let Some((source, selection)) = selection_context {
+                                panel.defer_insert_active_selection(source, selection, window, cx);
+                            }
                         });
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
@@ -417,9 +421,14 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        let selection_context =
+                            active_context_selection(&panel, workspace, window, cx);
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.new_external_agent_thread(action, window, cx);
+                            if let Some((source, selection)) = selection_context {
+                                panel.defer_insert_active_selection(source, selection, window, cx);
+                            }
                         });
                     }
                 })
@@ -641,108 +650,22 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let active_editor = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx));
-                        let has_editor_selection = active_editor.is_some_and(|editor| {
-                            editor.update(cx, |editor, cx| {
-                                editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                            })
-                        });
-
-                        let has_terminal_selection = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<TerminalView>(cx))
-                            .is_some_and(|terminal_view| {
-                                terminal_view
-                                    .read(cx)
-                                    .terminal()
-                                    .read(cx)
-                                    .last_content
-                                    .selection_text
-                                    .as_ref()
-                                    .is_some_and(|text| !text.is_empty())
-                            });
-
-                        let has_terminal_panel_selection =
-                            workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
-                                let position = match TerminalSettings::get_global(cx).dock {
-                                    TerminalDockPosition::Left => DockPosition::Left,
-                                    TerminalDockPosition::Bottom => DockPosition::Bottom,
-                                    TerminalDockPosition::Right => DockPosition::Right,
-                                };
-                                let dock_is_open =
-                                    workspace.dock_at_position(position).read(cx).is_open();
-                                dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
-                            });
-
-                        if !has_editor_selection
-                            && !has_terminal_selection
-                            && !has_terminal_panel_selection
-                        {
+                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+                        if !panel.read(cx).enabled(cx) {
                             return;
                         }
 
-                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
+                        let Some((source, selection)) =
+                            active_context_selection(&panel, workspace, window, cx)
+                        else {
                             return;
                         };
 
-                        let source = AgentContextSource::from_focused(workspace, window, cx);
-                        let source = source.or_else(|| {
-                            let cached = agent_panel.read(cx).last_context_source.clone()?;
-                            cached.exists(workspace, cx).then_some(cached)
-                        });
-                        let source =
-                            source.or_else(|| AgentContextSource::from_active(workspace, cx));
-
-                        let Some(source) = source else {
-                            return;
-                        };
-
-                        let Some(selection) = source.read_selection(workspace, true, cx) else {
-                            return;
-                        };
-
-                        if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
-                            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
-                        }
-
-                        agent_panel.update(cx, |panel, cx| {
-                            panel.last_context_source = Some(source);
-                            cx.defer_in(window, move |panel, window, cx| {
-                                if let Some(conversation_view) = panel.active_conversation_view() {
-                                    conversation_view.update(cx, |conversation_view, cx| {
-                                        conversation_view.insert_selection(selection, window, cx);
-                                    });
-                                } else if let Some(terminal_id) = panel.active_terminal_id()
-                                    && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
-                                {
-                                    // Resolve mentions against the cwd: live cwd, else spawn dir.
-                                    let working_directory = agent_terminal
-                                        .view
-                                        .read(cx)
-                                        .terminal()
-                                        .read(cx)
-                                        .working_directory()
-                                        .or_else(|| agent_terminal.working_directory.clone());
-                                    let text = format_selection_for_terminal(
-                                        &selection,
-                                        &panel.project,
-                                        working_directory.as_deref(),
-                                        cx,
-                                    );
-                                    if !text.is_empty() {
-                                        let view = agent_terminal.view.clone();
-                                        view.update(cx, |view, cx| {
-                                            view.terminal().update(cx, |terminal, _| {
-                                                terminal.paste(&text);
-                                            });
-                                            window.focus(&view.focus_handle(cx), cx);
-                                        });
-                                    }
-                                }
-                            });
-                        });
+                        open_agent_panel_with_selection(
+                            workspace, &panel, source, selection, window, cx,
+                        );
                     },
                 )
                 .register_action(|workspace, _: &menu::Cancel, _window, cx| {
@@ -758,6 +681,86 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+}
+
+fn has_active_context_selection(workspace: &Workspace, cx: &mut App) -> bool {
+    let has_editor_selection = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx))
+        .is_some_and(|editor| {
+            editor.update(cx, |editor, cx| {
+                editor.has_non_empty_selection(&editor.display_snapshot(cx))
+            })
+        });
+
+    let has_terminal_selection = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+        .is_some_and(|terminal_view| {
+            terminal_view
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .last_content
+                .selection_text
+                .as_ref()
+                .is_some_and(|text| !text.is_empty())
+        });
+
+    let has_terminal_panel_selection = workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
+        let position = TerminalSettings::get_global(cx).dock.into();
+        let dock_is_open = workspace.dock_at_position(position).read(cx).is_open();
+        dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
+    });
+
+    has_editor_selection || has_terminal_selection || has_terminal_panel_selection
+}
+
+fn active_context_selection(
+    panel: &Entity<AgentPanel>,
+    workspace: &Workspace,
+    window: &Window,
+    cx: &mut App,
+) -> Option<(AgentContextSource, AgentContextSelection)> {
+    if !has_active_context_selection(workspace, cx) {
+        return None;
+    }
+
+    let last_context_source = panel.read(cx).last_context_source.clone();
+    let source = AgentContextSource::from_focused(workspace, window, cx)
+        .or_else(|| last_context_source.filter(|cached| cached.exists(workspace, cx)))
+        .or_else(|| AgentContextSource::from_active(workspace, cx))?;
+
+    let selection = source.read_selection(workspace, true, cx)?;
+    Some((source, selection))
+}
+
+fn open_agent_panel_with_selection(
+    workspace: &mut Workspace,
+    panel: &Entity<AgentPanel>,
+    source: AgentContextSource,
+    selection: AgentContextSelection,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace.reveal_panel::<AgentPanel>(window, cx);
+    workspace.focus_panel::<AgentPanel>(window, cx);
+
+    panel.update(cx, |panel, cx| {
+        let agent = panel.selected_agent(cx);
+        if !agent.is_native() {
+            panel.new_external_agent_thread(
+                &NewExternalAgentThread { agent: agent.id() },
+                window,
+                cx,
+            );
+        } else if panel.active_conversation_view().is_none()
+            && panel.active_terminal_id().is_none()
+        {
+            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        }
+        panel.defer_insert_active_selection(source, selection, window, cx);
+    });
 }
 
 fn format_selection_for_terminal(
@@ -1601,12 +1604,22 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if workspace
-            .panel::<Self>(cx)
-            .is_some_and(|panel| panel.read(cx).enabled(cx))
-        {
-            workspace.toggle_panel_focus::<Self>(window, cx);
+        let Some(panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+        if !panel.read(cx).enabled(cx) {
+            return;
         }
+
+        if !panel.read(cx).focus_handle(cx).contains_focused(window, cx)
+            && let Some((source, selection)) =
+                active_context_selection(&panel, workspace, window, cx)
+        {
+            open_agent_panel_with_selection(workspace, &panel, source, selection, window, cx);
+            return;
+        }
+
+        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
     pub fn focus(
@@ -1919,6 +1932,85 @@ impl AgentPanel {
 
         self.selected_agent = action.agent.clone().into();
         self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+    }
+
+    fn defer_insert_active_selection(
+        &mut self,
+        source: AgentContextSource,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_context_source = Some(source);
+        cx.defer_in(window, move |panel, window, cx| {
+            panel.insert_active_selection(selection, window, cx);
+        });
+    }
+
+    fn insert_active_selection(
+        &mut self,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_conversation_view().is_none() && self.active_terminal_id().is_none() {
+            self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+        }
+
+        if let Some(conversation_view) = self.active_conversation_view().cloned() {
+            if conversation_view.read(cx).active_thread().is_some() {
+                conversation_view.update(cx, |conversation_view, cx| {
+                    conversation_view.insert_selection(selection, window, cx);
+                });
+                return;
+            }
+
+            // The thread may still be loading; insert once it becomes active.
+            let mut selection = Some(selection);
+            cx.observe_in(
+                &conversation_view,
+                window,
+                move |_, conversation_view, window, cx| {
+                    if conversation_view.read(cx).active_thread().is_some()
+                        && let Some(selection) = selection.take()
+                    {
+                        conversation_view.update(cx, |conversation_view, cx| {
+                            conversation_view.insert_selection(selection, window, cx);
+                        });
+                    }
+                },
+            )
+            .detach();
+            return;
+        }
+
+        if let Some(terminal_id) = self.active_terminal_id()
+            && let Some(agent_terminal) = self.terminals.get(&terminal_id)
+        {
+            // Resolve mentions against the cwd: live cwd, else spawn dir.
+            let working_directory = agent_terminal
+                .view
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .working_directory()
+                .or_else(|| agent_terminal.working_directory.clone());
+            let text = format_selection_for_terminal(
+                &selection,
+                &self.project,
+                working_directory.as_deref(),
+                cx,
+            );
+            if !text.is_empty() {
+                let view = agent_terminal.view.clone();
+                view.update(cx, |view, cx| {
+                    view.terminal().update(cx, |terminal, _| {
+                        terminal.paste(&text);
+                    });
+                    window.focus(&view.focus_handle(cx), cx);
+                });
+            }
+        }
     }
 
     fn set_selected_agent_and_persist(&mut self, agent: Agent, cx: &mut Context<Self>) {
@@ -5933,6 +6025,10 @@ impl AgentPanel {
                                                     if let Some(panel) =
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
+                                                        let selection_context =
+                                                            active_context_selection(
+                                                                &panel, workspace, window, cx,
+                                                            );
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_external_agent_thread(
                                                                 &NewExternalAgentThread {
@@ -5941,6 +6037,15 @@ impl AgentPanel {
                                                                 window,
                                                                 cx,
                                                             );
+                                                            if let Some((source, selection)) =
+                                                                selection_context
+                                                            {
+                                                                panel
+                                                                    .defer_insert_active_selection(
+                                                                        source, selection, window,
+                                                                        cx,
+                                                                    );
+                                                            }
                                                         });
                                                     }
                                                 });
@@ -9090,6 +9195,112 @@ mod tests {
         // Lines are 1-based and inclusive; the path is presented as
         // `<rel-path>:<start>-<end>`, with a trailing space.
         assert_eq!(pasted, "file.rs:2-3 ");
+    }
+
+    /// Opens a workspace with a single file whose editor has a non-empty,
+    /// focused selection, ready for actions that capture the active selection.
+    async fn setup_panel_with_editor_selection(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, Entity<AgentPanel>, VisualTestContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+        fs.insert_tree("/project", json!({ "file.rs": "let a = 10 + 10;\n" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from("/project/file.rs")],
+                    workspace::OpenOptions::default(),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        let editor = workspace.update(&mut cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .expect("opened file should be an editor")
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections
+                    .select_ranges([editor::MultiBufferOffset(8)..editor::MultiBufferOffset(15)]);
+            });
+        });
+        cx.focus(&editor);
+        cx.run_until_parked();
+
+        (workspace, panel, cx)
+    }
+
+    fn assert_message_editor_contains_selection(
+        panel: &Entity<AgentPanel>,
+        cx: &VisualTestContext,
+    ) {
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "selection ");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_external_agent_thread_adds_editor_selection(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_panel_with_editor_selection(cx).await;
+
+        workspace.update_in(&mut cx, |_, window, cx| {
+            window.dispatch_action(
+                NewExternalAgentThread {
+                    agent: Agent::Stub.id(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_message_editor_contains_selection(&panel, &cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_selection_to_thread_opens_panel_with_selection(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_panel_with_editor_selection(cx).await;
+
+        panel.update_in(&mut cx, |panel, _window, _cx| {
+            panel.selected_agent = Agent::Stub;
+        });
+
+        workspace.update_in(&mut cx, |_, window, cx| {
+            window.dispatch_action(AddSelectionToThread.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_message_editor_contains_selection(&panel, &cx);
     }
 
     async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {
