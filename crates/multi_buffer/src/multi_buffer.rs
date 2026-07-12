@@ -142,7 +142,7 @@ pub struct MultiBufferDiffHunk {
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
     pub excerpt_range: ExcerptRange<text::Anchor>,
     pub multi_buffer_range: Range<Anchor>,
-    pub staged_added: Vec<Range<MultiBufferRow>>,
+    pub staged_added: Vec<Range<Anchor>>,
     pub staged_deleted: Vec<Range<u32>>,
 }
 
@@ -3475,12 +3475,14 @@ impl MultiBufferSnapshot {
             let staged_added = if is_inverted {
                 vec![]
             } else {
-                let hunk_start_row = hunk.range.start.row;
                 hunk.staged_added
                     .iter()
                     .map(|r| {
-                        MultiBufferRow(range.start.row + (r.start - hunk_start_row))
-                            ..MultiBufferRow(range.start.row + (r.end - hunk_start_row))
+                        Anchor::range_in_buffer(
+                            excerpt.path_key_index,
+                            buffer_snapshot
+                                .anchor_range_inside(Point::new(r.start, 0)..Point::new(r.end, 0)),
+                        )
                     })
                     .collect()
             };

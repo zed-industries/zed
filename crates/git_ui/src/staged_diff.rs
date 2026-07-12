@@ -47,6 +47,17 @@ impl DiffHunkDelegate for StagedDiffDelegate {
         self.stage_or_unstage(false, hunks, editor, window, cx);
     }
 
+    fn toggle_lines(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<editor::Anchor>>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.stage_or_unstage_lines(false, hunks, ranges, editor, window, cx);
+    }
+
     fn stage_or_unstage(
         &self,
         stage: bool,
@@ -76,6 +87,18 @@ impl DiffHunkDelegate for StagedDiffDelegate {
                 })
                 .log_err();
         }
+    }
+
+    fn stage_or_unstage_lines(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<editor::Anchor>>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        todo!()
     }
 
     fn render_hunk_controls(

@@ -2405,7 +2405,7 @@ impl BufferDiff {
 /// Absolute buffer row span of a hunk's point range. A point range that ends
 /// mid-line (`column > 0`, e.g. a final line with no trailing newline) still
 /// covers that last row, so the end row is bumped by one in that case.
-fn buffer_row_span(range: &Range<Point>) -> Range<u32> {
+pub fn buffer_row_span(range: &Range<Point>) -> Range<u32> {
     let end_row = if range.end.column > 0 {
         range.end.row + 1
     } else {

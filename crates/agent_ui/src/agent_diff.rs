@@ -759,10 +759,31 @@ impl DiffHunkDelegate for AgentDiffDelegate {
     ) {
     }
 
+    fn toggle_lines(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _ranges: Vec<Range<editor::Anchor>>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
     fn stage_or_unstage(
         &self,
         _stage: bool,
         _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage_lines(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _ranges: Vec<Range<editor::Anchor>>,
         _editor: &mut Editor,
         _window: &mut Window,
         _cx: &mut Context<Editor>,

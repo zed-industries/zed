@@ -173,6 +173,24 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
             .log_err();
     }
 
+    fn toggle_lines(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<Anchor>>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.toggle_lines(hunks, ranges, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
     fn stage_or_unstage(
         &self,
         stage: bool,
@@ -186,6 +204,25 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
                 splittable.rhs_editor.update(cx, |editor, cx| {
                     let delegate = editor.diff_hunk_delegate();
                     delegate.stage_or_unstage(stage, hunks, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
+    fn stage_or_unstage_lines(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<Anchor>>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.stage_or_unstage_lines(stage, hunks, ranges, editor, window, cx);
                 });
             })
             .log_err();
