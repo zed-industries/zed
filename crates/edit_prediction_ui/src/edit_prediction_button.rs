@@ -37,8 +37,8 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
-    notifications::NotificationId,
+    HideStatusItem, StatusBarSettings, StatusItemView, Toast, Workspace,
+    create_and_open_local_file, item::ItemHandle, notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
@@ -72,13 +72,25 @@ pub struct EditPredictionButton {
     project: WeakEntity<Project>,
 }
 
+fn hidden_status_popover(popover_menu: PopoverMenu<ContextMenu>) -> Div {
+    div().w(px(0.)).h(px(0.)).overflow_hidden().child(
+        popover_menu.trigger(
+            IconButton::new("edit-prediction-hidden-anchor", IconName::ZedPredict)
+                .shape(IconButtonShape::Square)
+                .alpha(0.),
+        ),
+    )
+}
+
 impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
+            self.popover_menu_handle.clear(cx);
             return div().hidden();
         }
 
+        let show_status_button = StatusBarSettings::get_global(cx).edit_prediction_button;
         let language_settings = all_language_settings(None, cx);
 
         match language_settings.edit_predictions.provider {
@@ -86,6 +98,7 @@ impl Render for EditPredictionButton {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
                     .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
                 else {
+                    self.popover_menu_handle.clear(cx);
                     return div().hidden();
                 };
                 let status = copilot.read(cx).status();
@@ -105,6 +118,11 @@ impl Render for EditPredictionButton {
                 };
 
                 if let Status::Error(e) = status {
+                    self.popover_menu_handle.clear(cx);
+                    if !show_status_button {
+                        return div().hidden();
+                    }
+
                     return div().child(
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
@@ -141,42 +159,43 @@ impl Render for EditPredictionButton {
                 let project = self.project.clone();
                 let file = self.file.clone();
                 let language = self.language.clone();
-                div().child(
-                    PopoverMenu::new("copilot")
-                        .on_open({
-                            let file = file.clone();
-                            let language = language;
-                            let project = project.clone();
-                            Rc::new(move |_window, cx| {
-                                emit_edit_prediction_menu_opened(
-                                    "copilot", &file, &language, &project, cx,
-                                );
-                            })
+                let popover_menu = PopoverMenu::new("copilot")
+                    .on_open({
+                        let file = file.clone();
+                        let language = language;
+                        let project = project.clone();
+                        Rc::new(move |_window, cx| {
+                            emit_edit_prediction_menu_opened(
+                                "copilot", &file, &language, &project, cx,
+                            );
                         })
-                        .menu(move |window, cx| {
-                            let current_status = EditPredictionStore::try_global(cx)
-                                .and_then(|store| {
-                                    store.read(cx).copilot_for_project(&project.upgrade()?)
-                                })?
-                                .read(cx)
-                                .status();
-                            match current_status {
-                                Status::Authorized => this.update(cx, |this, cx| {
-                                    this.build_copilot_context_menu(window, cx)
-                                }),
-                                _ => this.update(cx, |this, cx| {
-                                    this.build_copilot_start_menu(window, cx)
-                                }),
-                            }
-                            .ok()
-                        })
-                        .anchor(Anchor::BottomRight)
-                        .trigger_with_tooltip(
-                            IconButton::new("copilot-icon", icon),
-                            |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
+                    })
+                    .menu(move |window, cx| {
+                        let current_status = EditPredictionStore::try_global(cx)
+                            .and_then(|store| {
+                                store.read(cx).copilot_for_project(&project.upgrade()?)
+                            })?
+                            .read(cx)
+                            .status();
+                        match current_status {
+                            Status::Authorized => this
+                                .update(cx, |this, cx| this.build_copilot_context_menu(window, cx)),
+                            _ => this
+                                .update(cx, |this, cx| this.build_copilot_start_menu(window, cx)),
+                        }
+                        .ok()
+                    })
+                    .anchor(Anchor::BottomRight)
+                    .with_handle(self.popover_menu_handle.clone());
+
+                if show_status_button {
+                    div().child(popover_menu.trigger_with_tooltip(
+                        IconButton::new("copilot-icon", icon),
+                        |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
+                    ))
+                } else {
+                    hidden_status_popover(popover_menu)
+                }
             }
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
@@ -192,30 +211,31 @@ impl Render for EditPredictionButton {
                     "Missing API key for Codestral"
                 };
 
-                div().child(
-                    PopoverMenu::new("codestral")
-                        .on_open({
-                            let file = file.clone();
-                            let language = language;
-                            let project = project;
-                            Rc::new(move |_window, cx| {
-                                emit_edit_prediction_menu_opened(
-                                    "codestral",
-                                    &file,
-                                    &language,
-                                    &project,
-                                    cx,
-                                );
-                            })
+                let popover_menu = PopoverMenu::new("codestral")
+                    .on_open({
+                        let file = file.clone();
+                        let language = language;
+                        let project = project;
+                        Rc::new(move |_window, cx| {
+                            emit_edit_prediction_menu_opened(
+                                "codestral",
+                                &file,
+                                &language,
+                                &project,
+                                cx,
+                            );
                         })
-                        .menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_codestral_context_menu(window, cx)
-                            })
+                    })
+                    .menu(move |window, cx| {
+                        this.update(cx, |this, cx| this.build_codestral_context_menu(window, cx))
                             .ok()
-                        })
-                        .anchor(Anchor::BottomRight)
-                        .trigger_with_tooltip(
+                    })
+                    .anchor(Anchor::BottomRight)
+                    .with_handle(self.popover_menu_handle.clone());
+
+                if show_status_button {
+                    div().child(
+                        popover_menu.trigger_with_tooltip(
                             IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
                                 .when(!has_api_key, |this| {
@@ -238,28 +258,33 @@ impl Render for EditPredictionButton {
                                     cx,
                                 )
                             },
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
+                        ),
+                    )
+                } else {
+                    hidden_status_popover(popover_menu)
+                }
             }
             EditPredictionProvider::OpenAiCompatibleApi => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
 
-                div().child(
-                    PopoverMenu::new("openai-compatible-api")
-                        .menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_edit_prediction_context_menu(
-                                    EditPredictionProvider::OpenAiCompatibleApi,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok()
+                let popover_menu = PopoverMenu::new("openai-compatible-api")
+                    .menu(move |window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.build_edit_prediction_context_menu(
+                                EditPredictionProvider::OpenAiCompatibleApi,
+                                window,
+                                cx,
+                            )
                         })
-                        .anchor(Anchor::BottomRight)
-                        .trigger(
+                        .ok()
+                    })
+                    .anchor(Anchor::BottomRight)
+                    .with_handle(self.popover_menu_handle.clone());
+
+                if show_status_button {
+                    div().child(
+                        popover_menu.trigger(
                             IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
                                 .shape(IconButtonShape::Square)
                                 .when(!enabled, |this| {
@@ -268,28 +293,33 @@ impl Render for EditPredictionButton {
                                             cx.theme().colors().status_bar_background,
                                         ))
                                 }),
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
+                        ),
+                    )
+                } else {
+                    hidden_status_popover(popover_menu)
+                }
             }
             EditPredictionProvider::Ollama => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
 
-                div().child(
-                    PopoverMenu::new("ollama")
-                        .menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_edit_prediction_context_menu(
-                                    EditPredictionProvider::Ollama,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok()
+                let popover_menu = PopoverMenu::new("ollama")
+                    .menu(move |window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.build_edit_prediction_context_menu(
+                                EditPredictionProvider::Ollama,
+                                window,
+                                cx,
+                            )
                         })
-                        .anchor(Anchor::BottomRight)
-                        .trigger_with_tooltip(
+                        .ok()
+                    })
+                    .anchor(Anchor::BottomRight)
+                    .with_handle(self.popover_menu_handle.clone());
+
+                if show_status_button {
+                    div().child(
+                        popover_menu.trigger_with_tooltip(
                             IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
                                 .when(!enabled, |this| {
@@ -317,9 +347,11 @@ impl Render for EditPredictionButton {
                                     cx,
                                 )
                             },
-                        )
-                        .with_handle(self.popover_menu_handle.clone()),
-                )
+                        ),
+                    )
+                } else {
+                    hidden_status_popover(popover_menu)
+                }
             }
             provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
@@ -366,6 +398,11 @@ impl Render for EditPredictionButton {
                 };
 
                 if edit_prediction::should_show_upsell_modal(cx) {
+                    self.popover_menu_handle.clear(cx);
+                    if !show_status_button {
+                        return div().hidden();
+                    }
+
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
@@ -489,7 +526,9 @@ impl Render for EditPredictionButton {
                     .as_ref()
                     .is_some_and(|provider| provider.is_refreshing(cx));
 
-                if is_refreshing {
+                if !show_status_button {
+                    return hidden_status_popover(popover_menu);
+                } else if is_refreshing {
                     popover_menu = popover_menu.trigger(
                         icon_button.with_animation(
                             "pulsating-label",
@@ -506,7 +545,10 @@ impl Render for EditPredictionButton {
                 div().child(popover_menu.into_any_element())
             }
 
-            EditPredictionProvider::None => div().hidden(),
+            EditPredictionProvider::None => {
+                self.popover_menu_handle.clear(cx);
+                div().hidden()
+            }
         }
     }
 }
@@ -1354,10 +1396,12 @@ impl StatusItemView for EditPredictionButton {
     }
 
     fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
-        // This button is already gated on having a non-disabled edit
-        // prediction provider, which the user manages through provider/AI
-        // settings.
-        None
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .status_bar
+                .get_or_insert_default()
+                .edit_prediction_button = Some(false);
+        }))
     }
 }
 
