@@ -101,6 +101,7 @@ impl CommandPalette {
         cx: &mut Context<Self>,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
+        let action_keywords = cx.action_keywords();
 
         let commands = window
             .available_actions(cx)
@@ -112,6 +113,12 @@ impl CommandPalette {
 
                 Some(Command {
                     name: humanize_action_name(action.name()),
+                    keywords: action_keywords
+                        .get(action.name())
+                        .map(|keywords| {
+                            keywords.iter().map(|keyword| keyword.to_string()).collect()
+                        })
+                        .unwrap_or_default(),
                     action,
                 })
             })
@@ -176,6 +183,7 @@ pub struct CommandPaletteDelegate {
 struct Command {
     name: String,
     action: Box<dyn Action>,
+    keywords: Vec<String>,
 }
 
 #[derive(Default)]
@@ -268,6 +276,7 @@ impl Clone for Command {
         Self {
             name: self.name.clone(),
             action: self.action.boxed_clone(),
+            keywords: self.keywords.clone(),
         }
     }
 }
@@ -321,6 +330,7 @@ impl CommandPaletteDelegate {
             commands.push(Command {
                 name: string.clone(),
                 action,
+                keywords: Vec::new(),
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
@@ -476,7 +486,14 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| {
+                        let searchable = if command.keywords.is_empty() {
+                            command.name.clone()
+                        } else {
+                            format!("{} {}", command.name, command.keywords.join(" "))
+                        };
+                        StringMatchCandidate::new(ix, &searchable)
+                    })
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy_nucleo::match_strings_async(
@@ -623,6 +640,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
 
+        let name_positions = matching_command
+            .positions
+            .iter()
+            .copied()
+            .filter(|position| *position < command.name.len())
+            .collect();
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -633,10 +657,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .w_full()
                         .py_px()
                         .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            matching_command.positions.clone(),
-                        ))
+                        .child(HighlightedLabel::new(command.name.clone(), name_positions))
                         .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,

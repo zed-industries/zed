@@ -10,6 +10,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let struct_name = &input.ident;
     let mut name_argument = None;
     let mut deprecated_aliases = Vec::new();
+    let mut keywords = Vec::new();
     let mut no_json = false;
     let mut no_register = false;
     let mut namespace = None;
@@ -72,10 +73,14 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     deprecated = Some(lit.value());
+                } else if meta.path.is_ident("keywords") {
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitStr = meta.input.parse()?;
+                    keywords = lit.value().split_whitespace().map(|s| s.to_string()).collect();
                 } else {
                     return Err(meta.error(format!(
                         "'{:?}' argument not recognized, expected \
-                        'namespace', 'no_json', 'no_register, 'deprecated_aliases', or 'deprecated'",
+                        'namespace', 'no_json', 'no_register', 'deprecated_aliases', 'deprecated', or 'keywords'",
                         meta.path
                     )));
                 }
@@ -153,6 +158,13 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
+    let keywords_fn_body = if keywords.is_empty() {
+        quote! { &[] }
+    } else {
+        let keywords = keywords.iter();
+        quote! { &[#(#keywords),*] }
+    };
+
     let registration = if no_register {
         quote! {}
     } else {
@@ -201,6 +213,10 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
 
             fn deprecation_message() -> Option<&'static str> {
                 #deprecation_fn_body
+            }
+
+            fn keywords() -> &'static [&'static str] {
+                #keywords_fn_body
             }
 
             fn documentation() -> Option<&'static str> {
