@@ -1,0 +1,120 @@
+# When a guild member opens a PR while already having another open PR in
+# zed-industries/zed, post a heads-up to #zed-guild-internal. PRs opened before
+# CUTOFF_DATE (the cohort start) don't count as "already open".
+
+name: Guild New PR Notification
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guild-new-pr-notify-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  CUTOFF_DATE: "2026-07-01"
+
+jobs:
+  notify-slack:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Notify on an additional open PR by a guild member
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          SLACK_WEBHOOK_GUILD_INTERNAL: ${{ secrets.SLACK_WEBHOOK_GUILD_INTERNAL }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            // Guild cohort members are outside collaborators holding this custom
+            // repository role, not members of an org team.
+            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            const isGuildMember = async (username) => {
+              try {
+                const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: 'zed-industries',
+                  repo: 'zed',
+                  username
+                });
+                // role_name is the effective (highest) role; for cohort outside
+                // collaborators that is the custom role. Built-in roles come back
+                // lowercased and won't match.
+                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
+              } catch (error) {
+                if (error.status === 404) {
+                  return false;
+                }
+                throw error;
+              }
+            };
+
+            if (!(await isGuildMember(author))) {
+              console.log(`${author} is not a guild member, skipping`);
+              return;
+            }
+
+            const cutoff = process.env.CUTOFF_DATE;
+            const query = `repo:zed-industries/zed is:pr is:open author:${author} created:>=${cutoff}`;
+            const result = await github.rest.search.issuesAndPullRequests({ q: query, per_page: 100 });
+            const others = result.data.items.filter((item) => item.number !== pr.number);
+
+            if (others.length === 0) {
+              console.log(`${author} has no other qualifying open PRs, skipping`);
+              return;
+            }
+
+            const webhook = process.env.SLACK_WEBHOOK_GUILD_INTERNAL;
+            if (!webhook) {
+              core.setFailed('SLACK_WEBHOOK_GUILD_INTERNAL secret is not set');
+              return;
+            }
+
+            // Escape Slack's control characters so PR titles render literally
+            // instead of being read as links or @-mentions.
+            const esc = (text) =>
+              (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            const quips = [
+              'Deep into the queue they wander.',
+              'Nevermore just one open PR.',
+            ];
+            const quip = quips[Math.floor(Math.random() * quips.length)];
+            const otherList = others
+              .map((item) => `<${item.html_url}|#${item.number}> ${esc(item.title)}`)
+              .join('\n• ');
+            const message =
+              `${quip} @${author} just opened <${pr.html_url}|${esc(pr.title)}> ` +
+              `while still having open PR(s):\n• ${otherList}\n` +
+              'A gentle nudge to help them land one before spreading thin might be in order.';
+
+            const response = await fetch(webhook, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: `${author} opened another PR while others are still open`,
+                blocks: [{ type: 'section', text: { type: 'mrkdwn', text: message } }],
+              }),
+            });
+            if (!response.ok) {
+              const body = await response.text();
+              core.setFailed(`Slack notification failed with status ${response.status}: ${body}`);
+              return;
+            }
+            console.log(`Notified: ${author} has ${others.length} other open PR(s)`);

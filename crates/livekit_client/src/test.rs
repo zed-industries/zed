@@ -56,15 +56,26 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
-    revoked_identities: Mutex<HashSet<String>>,
-    /// Log of `(room, identity)` pairs passed to `remove_participant`, for
-    /// tests that need to assert whether a participant was forcibly removed.
-    removed_participants: Mutex<Vec<(String, String)>>,
-    /// When set, `remove_participant` revokes the identity's tokens, mirroring
-    /// LiveKit Cloud (whose docs state removal "immediately revokes their
-    /// access token"). Off by default so unrelated tests are unaffected.
-    revoke_tokens_on_removal: AtomicBool,
     executor: BackgroundExecutor,
+    timestamp_source: Arc<dyn token::UnixTimestampSource>,
+}
+
+pub struct ManualUnixTimestampSource(AtomicU64);
+
+impl ManualUnixTimestampSource {
+    pub fn new(timestamp: u64) -> Self {
+        Self(AtomicU64::new(timestamp))
+    }
+
+    pub fn advance(&self) {
+        self.0.fetch_add(1, SeqCst);
+    }
+}
+
+impl token::UnixTimestampSource for ManualUnixTimestampSource {
+    fn unix_timestamp(&self) -> Result<u64> {
+        Ok(self.0.load(SeqCst))
+    }
 }
 
 impl TestServer {
@@ -74,6 +85,22 @@ impl TestServer {
         secret_key: String,
         executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
+        Self::create_with_timestamp_source(
+            url,
+            api_key,
+            secret_key,
+            executor,
+            Arc::new(token::SystemUnixTimestampSource),
+        )
+    }
+
+    pub fn create_with_timestamp_source(
+        url: String,
+        api_key: String,
+        secret_key: String,
+        executor: BackgroundExecutor,
+        timestamp_source: Arc<dyn token::UnixTimestampSource>,
+    ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
         if let BTreeEntry::Vacant(e) = servers.entry(url.clone()) {
             let server = Arc::new(TestServer {
@@ -81,10 +108,8 @@ impl TestServer {
                 api_key,
                 secret_key,
                 rooms: Default::default(),
-                revoked_identities: Default::default(),
-                removed_participants: Default::default(),
-                revoke_tokens_on_removal: AtomicBool::new(false),
                 executor,
+                timestamp_source,
             });
             e.insert(server.clone());
             Ok(server)
@@ -115,18 +140,18 @@ impl TestServer {
         }
     }
 
-    /// Makes `remove_participant` revoke the removed identity's tokens, as
-    /// LiveKit Cloud does. Used to reproduce the revoked-token failure.
-    pub fn set_revoke_tokens_on_removal(&self, revoke: bool) {
-        self.revoke_tokens_on_removal.store(revoke, SeqCst);
+    #[cfg(any(test, feature = "test-support"))]
+    fn validate_token<'a>(&self, token: &'a str) -> Result<token::ClaimGrants<'a>> {
+        token::validate_with_timestamp_source(
+            token,
+            &self.secret_key,
+            self.timestamp_source.as_ref(),
+        )
     }
 
-    /// Whether `remove_participant` was ever called for the given identity.
-    pub fn participant_was_removed(&self, identity: &str) -> bool {
-        self.removed_participants
-            .lock()
-            .iter()
-            .any(|(_, removed_identity)| removed_identity == identity)
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn validate_token<'a>(&self, token: &'a str) -> Result<token::ClaimGrants<'a>> {
+        token::validate(token, &self.secret_key)
     }
 
     pub async fn create_room(&self, room: String) -> Result<()> {
@@ -154,18 +179,19 @@ impl TestServer {
     async fn join_room(&self, token: String, client_room: Room) -> Result<ParticipantIdentity> {
         self.simulate_random_delay().await;
 
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
-        let room_name = claims.video.room.unwrap();
-
-        if self.revoked_identities.lock().contains(&identity.0) {
-            anyhow::bail!(
-                "signal failure: client error: 401 Unauthorized - invalid token: revoked"
-            );
-        }
-
+        let claims = self.validate_token(&token)?;
+        let identity = ParticipantIdentity(
+            claims
+                .sub
+                .context("missing participant identity")?
+                .to_string(),
+        );
+        let room_name = claims.video.room.context("missing room name")?.to_string();
         let mut server_rooms = self.rooms.lock();
-        let room = (*server_rooms).entry(room_name.to_string()).or_default();
+        let room = (*server_rooms).entry(room_name.clone()).or_default();
+        if let Some(revoked_before) = room.token_revocations.get(&identity) {
+            anyhow::ensure!(claims.nbf >= *revoked_before, "invalid token: revoked");
+        }
 
         if let Entry::Vacant(e) = room.client_rooms.entry(identity.clone()) {
             for server_track in &room.video_tracks {
@@ -224,7 +250,7 @@ impl TestServer {
     async fn leave_room(&self, token: String) -> Result<()> {
         self.simulate_random_delay().await;
 
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -241,7 +267,7 @@ impl TestServer {
         &self,
         token: String,
     ) -> Result<HashMap<ParticipantIdentity, RemoteParticipant>> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap().to_string();
 
@@ -276,22 +302,25 @@ impl TestServer {
         identity: ParticipantIdentity,
     ) -> Result<()> {
         self.simulate_random_delay().await;
-
-        self.removed_participants
-            .lock()
-            .push((room_name.clone(), identity.0.clone()));
-
-        if self.revoke_tokens_on_removal.load(SeqCst) {
-            self.revoked_identities.lock().insert(identity.0.clone());
-        }
+        let revoked_before = self.timestamp_source.unix_timestamp()?;
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
             .with_context(|| format!("room {room_name} does not exist"))?;
-        room.client_rooms
+        let removed_room = room
+            .client_rooms
             .remove(&identity)
             .with_context(|| format!("participant {identity:?} did not join room {room_name:?}"))?;
+        room.token_revocations.insert(identity, revoked_before);
+        let mut removed_room = removed_room.0.lock();
+        removed_room.connection_state = ConnectionState::Disconnected;
+        removed_room
+            .updates_tx
+            .blocking_send(RoomEvent::Disconnected {
+                reason: "PARTICIPANT_REMOVED",
+            })
+            .ok();
         Ok(())
     }
 
@@ -302,13 +331,18 @@ impl TestServer {
         permission: proto::ParticipantPermission,
     ) -> Result<()> {
         self.simulate_random_delay().await;
+        let revoked_before = self.timestamp_source.unix_timestamp()?;
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
             .with_context(|| format!("room {room_name} does not exist"))?;
+        let identity = ParticipantIdentity(identity);
         room.participant_permissions
-            .insert(ParticipantIdentity(identity), permission);
+            .insert(identity.clone(), permission);
+        // Permission changes in LiveKit Cloud invalidate existing participant
+        // tokens, so the mock needs to reject tokens minted before the update.
+        room.token_revocations.insert(identity, revoked_before);
         Ok(())
     }
 
@@ -338,7 +372,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.simulate_random_delay().await;
 
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -402,7 +436,7 @@ impl TestServer {
     ) -> Result<TrackSid> {
         self.simulate_random_delay().await;
 
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -461,7 +495,7 @@ impl TestServer {
     }
 
     pub(crate) async fn unpublish_track(&self, token: String, track_sid: &TrackSid) -> Result<()> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
 
@@ -543,7 +577,7 @@ impl TestServer {
         track_sid: &TrackSid,
         muted: bool,
     ) -> Result<()> {
-        let claims = livekit_api::token::validate(token, &self.secret_key)?;
+        let claims = self.validate_token(token)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let mut server_rooms = self.rooms.lock();
@@ -597,7 +631,7 @@ impl TestServer {
     }
 
     pub(crate) fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
-        let claims = livekit_api::token::validate(token, &self.secret_key).ok()?;
+        let claims = self.validate_token(token).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -612,7 +646,7 @@ impl TestServer {
     }
 
     pub(crate) fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -635,7 +669,7 @@ impl TestServer {
     }
 
     pub(crate) fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
-        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let claims = self.validate_token(&token)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
 
@@ -669,6 +703,7 @@ struct TestServerRoom {
     video_tracks: Vec<Arc<TestServerVideoTrack>>,
     audio_tracks: Vec<Arc<TestServerAudioTrack>>,
     participant_permissions: HashMap<ParticipantIdentity, proto::ParticipantPermission>,
+    token_revocations: HashMap<ParticipantIdentity, u64>,
 }
 
 #[derive(Debug)]
@@ -730,21 +765,23 @@ impl livekit_api::Client for TestApiClient {
 
     fn room_token(&self, room: &str, identity: &str) -> Result<String> {
         let server = TestServer::get(&self.url)?;
-        token::create(
+        token::create_with_timestamp_source(
             &server.api_key,
             &server.secret_key,
             Some(identity),
             token::VideoGrant::to_join(room),
+            server.timestamp_source.as_ref(),
         )
     }
 
     fn guest_token(&self, room: &str, identity: &str) -> Result<String> {
         let server = TestServer::get(&self.url)?;
-        token::create(
+        token::create_with_timestamp_source(
             &server.api_key,
             &server.secret_key,
             Some(identity),
             token::VideoGrant::for_guest(room),
+            server.timestamp_source.as_ref(),
         )
     }
 }
@@ -891,5 +928,170 @@ impl Drop for RoomState {
 impl WeakRoom {
     pub(crate) fn upgrade(&self) -> Option<Room> {
         self.0.upgrade().map(Room)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use livekit_api::Client as _;
+    use std::{ops::Deref, sync::atomic::AtomicUsize};
+
+    struct TestServerGuard {
+        server: Arc<TestServer>,
+        timestamp_source: Arc<ManualUnixTimestampSource>,
+    }
+
+    impl TestServerGuard {
+        fn advance_timestamp(&self) {
+            self.timestamp_source.advance();
+        }
+    }
+
+    impl Deref for TestServerGuard {
+        type Target = TestServer;
+
+        fn deref(&self) -> &Self::Target {
+            self.server.as_ref()
+        }
+    }
+
+    impl Drop for TestServerGuard {
+        fn drop(&mut self) {
+            self.server.teardown().ok();
+        }
+    }
+
+    fn create_test_server(name: &str, executor: BackgroundExecutor) -> TestServerGuard {
+        static NEXT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
+        let server_id = NEXT_SERVER_ID.fetch_add(1, SeqCst);
+        let timestamp_source = Arc::new(ManualUnixTimestampSource::new(1_234_567));
+        let server = TestServer::create_with_timestamp_source(
+            format!("http://livekit-{name}-{server_id}.test"),
+            format!("api-key-{server_id}"),
+            format!("secret-key-{server_id}"),
+            executor,
+            timestamp_source.clone(),
+        )
+        .expect("create LiveKit test server");
+        TestServerGuard {
+            server,
+            timestamp_source,
+        }
+    }
+
+    async fn assert_token_was_revoked(server: &TestServer, token: String, cx: &mut TestAppContext) {
+        match Room::connect(server.url.clone(), token, &mut cx.to_async()).await {
+            Ok(_) => panic!("revoked token unexpectedly connected"),
+            Err(error) => {
+                let error = format!("{error:#}");
+                assert!(
+                    error.contains("invalid token: revoked"),
+                    "expected revoked token error, got {error}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn token_created_after_participant_removal_can_join(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let server = create_test_server("room-token", executor);
+        server
+            .create_room("room".into())
+            .await
+            .expect("create LiveKit test room");
+        let api_client = server.create_api_client();
+
+        let initial_token = api_client
+            .room_token("room", "participant")
+            .expect("create initial room token");
+        let (initial_room, _) = Room::connect(
+            server.url.clone(),
+            initial_token.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("connect with initial room token");
+
+        server.advance_timestamp();
+        api_client
+            .remove_participant("room".into(), "participant".into())
+            .await
+            .expect("remove participant");
+
+        assert_eq!(
+            initial_room.connection_state(),
+            ConnectionState::Disconnected
+        );
+        assert_token_was_revoked(&server, initial_token, cx).await;
+
+        let fresh_token = api_client
+            .room_token("room", "participant")
+            .expect("create fresh room token");
+        let (fresh_room, _) = Room::connect(server.url.clone(), fresh_token, &mut cx.to_async())
+            .await
+            .expect("connect with fresh room token");
+
+        assert_eq!(fresh_room.connection_state(), ConnectionState::Connected);
+    }
+
+    #[gpui::test]
+    async fn guest_token_created_after_permission_update_can_join(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let server = create_test_server("guest-token", executor);
+        server
+            .create_room("room".into())
+            .await
+            .expect("create LiveKit test room");
+        let api_client = server.create_api_client();
+
+        let initial_token = api_client
+            .guest_token("room", "participant")
+            .expect("create initial guest token");
+        let (initial_room, _) = Room::connect(
+            server.url.clone(),
+            initial_token.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("connect with initial guest token");
+
+        server.advance_timestamp();
+        api_client
+            .update_participant(
+                "room".into(),
+                "participant".into(),
+                proto::ParticipantPermission {
+                    can_subscribe: true,
+                    can_publish: true,
+                    can_publish_data: true,
+                    hidden: false,
+                    recorder: false,
+                },
+            )
+            .await
+            .expect("update participant permissions");
+        assert_token_was_revoked(&server, initial_token, cx).await;
+
+        server.disconnect_client("participant".into()).await;
+        assert_eq!(
+            initial_room.connection_state(),
+            ConnectionState::Disconnected
+        );
+
+        let fresh_token = api_client
+            .guest_token("room", "participant")
+            .expect("create fresh guest token");
+        let (fresh_room, _) = Room::connect(server.url.clone(), fresh_token, &mut cx.to_async())
+            .await
+            .expect("connect with fresh guest token");
+
+        assert_eq!(fresh_room.connection_state(), ConnectionState::Connected);
     }
 }
