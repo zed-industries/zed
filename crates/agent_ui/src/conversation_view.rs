@@ -102,6 +102,26 @@ use crate::{
     ToggleThinkingMode, UndoLastReject,
 };
 
+// #region agent log
+pub(crate) fn debug_log(location: &str, hypothesis: &str, message: &str, data: String) {
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/code/zed-wt-bugfix-dupe-notifications/.cursor/debug-80956d.log")
+    {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(
+            file,
+            "{{\"sessionId\":\"80956d\",\"timestamp\":{timestamp},\"location\":\"{location}\",\"hypothesisId\":\"{hypothesis}\",\"message\":\"{message}\",\"data\":{data}}}"
+        );
+    }
+}
+// #endregion
+
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
@@ -1578,6 +1598,30 @@ impl ConversationView {
             return;
         };
         let is_subagent = thread.read(cx).parent_session_id().is_some();
+        // #region agent log
+        {
+            let event_name = match event {
+                AcpThreadEvent::ToolAuthorizationRequested(_) => Some("ToolAuthorizationRequested"),
+                AcpThreadEvent::Stopped(_) => Some("Stopped"),
+                AcpThreadEvent::Refusal => Some("Refusal"),
+                AcpThreadEvent::Error => Some("Error"),
+                _ => None,
+            };
+            if let Some(event_name) = event_name {
+                debug_log(
+                    "conversation_view.rs:handle_thread_event",
+                    "B,D",
+                    "notification-relevant thread event",
+                    format!(
+                        "{{\"event\":\"{event_name}\",\"session_id\":\"{}\",\"is_subagent\":{is_subagent},\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\"}}",
+                        session_id.0,
+                        cx.entity_id(),
+                        self.thread_id
+                    ),
+                );
+            }
+        }
+        // #endregion
         if !is_subagent && affects_thread_metadata(event) {
             cx.emit(RootThreadUpdated);
         }
@@ -2834,6 +2878,29 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // #region agent log
+        {
+            let displays: Vec<String> = cx
+                .displays()
+                .iter()
+                .map(|display| format!("{:?}@{:?}", display.id(), display.bounds()))
+                .collect();
+            debug_log(
+                "conversation_view.rs:show_notification",
+                "A,B,C",
+                "show_notification entered",
+                format!(
+                    "{{\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\",\"existing_notifications\":{},\"display_count\":{},\"displays\":{:?},\"agent_status_visible\":{}}}",
+                    cx.entity_id(),
+                    self.thread_id,
+                    self.notifications.len(),
+                    displays.len(),
+                    displays,
+                    self.agent_status_visible(window, cx)
+                ),
+            );
+        }
+        // #endregion
         if !self.notifications.is_empty() {
             return;
         }
@@ -2908,6 +2975,9 @@ impl ConversationView {
         screen: Rc<dyn PlatformDisplay>,
         cx: &mut Context<Self>,
     ) {
+        // #region agent log
+        let screen_id_for_log = screen.id();
+        // #endregion
         let options = AgentNotification::window_options(screen, cx);
 
         let project_name = self.workspace.upgrade().and_then(|workspace| {
@@ -2929,6 +2999,20 @@ impl ConversationView {
             .log_err()
             && let Some(pop_up) = screen_window.entity(cx).log_err()
         {
+            // #region agent log
+            debug_log(
+                "conversation_view.rs:pop_up",
+                "A,B",
+                "notification window opened",
+                format!(
+                    "{{\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\",\"caption\":\"{}\",\"screen\":\"{screen_id_for_log:?}\",\"total_notifications_after\":{}}}",
+                    cx.entity_id(),
+                    self.thread_id,
+                    caption,
+                    self.notifications.len() + 1
+                ),
+            );
+            // #endregion
             self.notification_subscriptions
                 .entry(screen_window)
                 .or_insert_with(Vec::new)
@@ -3054,6 +3138,19 @@ impl ConversationView {
 
     pub(crate) fn dismiss_notifications(&mut self, cx: &mut Context<Self>) -> bool {
         let had_notifications = !self.notifications.is_empty();
+        // #region agent log
+        debug_log(
+            "conversation_view.rs:dismiss_notifications",
+            "C",
+            "dismissing notifications",
+            format!(
+                "{{\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\",\"count\":{}}}",
+                cx.entity_id(),
+                self.thread_id,
+                self.notifications.len()
+            ),
+        );
+        // #endregion
         for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {
