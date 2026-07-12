@@ -178,8 +178,8 @@ impl SelectionLayout {
                 map.isomorphic_display_point_ranges_for_buffer_range(offset_range);
             // taking the start and end of the range means that inlays fully in
             // the range will be highlighted, but inlays that are outside of the
-            // range will not be, this prevents inlays that are not actually
-            // inside the range from being highlighted.
+            // range will not be, this prevents inlays that are not *actually*
+            // inside the range from being highlighted. #48141
             if let (Some(first), Some(last)) = (isomorphic_ranges.first(), isomorphic_ranges.last())
             {
                 range = first.start..last.end;
