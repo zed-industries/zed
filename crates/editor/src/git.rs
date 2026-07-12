@@ -5,7 +5,7 @@ use ::git::{
     Oid, Restore, blame::BlameEntry, commit::ParsedCommitMessage, repository::RepoPath,
     status::FileStatus,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind, base_row_span, buffer_row_span};
 use project::git_store::Repository;
 
 #[derive(Clone)]
@@ -13,11 +13,14 @@ struct ResolvedDiffHunk {
     buffer_range: Range<text::Anchor>,
     diff_base_byte_range: Range<usize>,
     status: DiffHunkStatus,
+    staged_added: Vec<Range<text::Anchor>>,
+    staged_deleted: Vec<Range<u32>>,
 }
 
 #[derive(Clone)]
 struct ResolvedDiffHunks {
     diff: Entity<BufferDiff>,
+    buffer_id: BufferId,
     buffer: Option<Entity<Buffer>>,
     hunks: Vec<ResolvedDiffHunk>,
 }
@@ -266,6 +269,7 @@ impl Editor {
         cx: &App,
     ) -> Vec<ResolvedDiffHunks> {
         let multibuffer = self.buffer().read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
         let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
         let mut resolved = Vec::new();
 
@@ -283,12 +287,25 @@ impl Editor {
             let mut resolved_hunks = Vec::new();
 
             for hunk in hunks {
+                let staged_added = hunk
+                    .staged_added
+                    .iter()
+                    .filter_map(|range| {
+                        Some(
+                            multibuffer_snapshot.anchor_to_buffer_anchor(range.start)?.0
+                                ..multibuffer_snapshot.anchor_to_buffer_anchor(range.end)?.0,
+                        )
+                    })
+                    .collect();
+                let staged_deleted = hunk.staged_deleted.clone();
                 if hunk.buffer_id == main_buffer_id {
                     resolved_hunks.push(ResolvedDiffHunk {
                         buffer_range: hunk.buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         status: hunk.status,
+                        staged_added,
+                        staged_deleted,
                     });
                 } else {
                     let diff_base_byte_range =
@@ -316,6 +333,8 @@ impl Editor {
                             kind,
                             secondary: hunk.secondary_status,
                         },
+                        staged_added,
+                        staged_deleted,
                     });
                 }
             }
@@ -323,6 +342,7 @@ impl Editor {
             if !resolved_hunks.is_empty() {
                 resolved.push(ResolvedDiffHunks {
                     diff,
+                    buffer_id: main_buffer_id,
                     buffer,
                     hunks: resolved_hunks,
                 });
@@ -1638,7 +1658,7 @@ impl Editor {
             this.update_in(cx, |this, window, cx| {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 let hunks = this.diff_hunks_in_ranges(&ranges, &snapshot).collect();
-                this.apply_toggle(hunks, window, cx);
+                this.apply_toggle_lines(hunks, ranges, window, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1715,6 +1735,158 @@ impl Editor {
         }
     }
 
+    pub fn apply_toggle_lines(
+        &mut self,
+        hunks: Vec<MultiBufferDiffHunk>,
+        ranges: Vec<Range<Anchor>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        if let Some(target) = self.diff_hunk_action_target.clone() {
+            target
+                .update(cx, |editor, cx| {
+                    editor.toggle_resolved_diff_hunk_lines(hunks, ranges, cx);
+                })
+                .log_err();
+            return;
+        }
+        self.toggle_resolved_diff_hunk_lines(hunks, ranges, cx);
+    }
+
+    fn toggle_resolved_diff_hunk_lines(
+        &mut self,
+        hunks: Vec<ResolvedDiffHunks>,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let any_selected_line_unstaged =
+            self.selected_lines_contain_unstaged(&hunks, &ranges, cx);
+        for hunks in hunks {
+            let Some(operations) = hunks.diff.read(cx).operations() else {
+                continue;
+            };
+            let stage = if !operations.supports_unstaging() {
+                true
+            } else if !operations.supports_staging() {
+                false
+            } else {
+                any_selected_line_unstaged
+            };
+            self.stage_or_unstage_resolved_diff_hunk_lines(stage, vec![hunks], &ranges, cx);
+        }
+    }
+
+    /// Whether any line covered by `ranges` within `hunks` is not already staged. This decides
+    /// which direction a line-level toggle goes: if anything selected is unstaged, stage;
+    /// otherwise unstage.
+    fn selected_lines_contain_unstaged(
+        &self,
+        hunks: &[ResolvedDiffHunks],
+        ranges: &[Range<Anchor>],
+        cx: &App,
+    ) -> bool {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+
+        let selections = ranges
+            .iter()
+            .map(|range| range.to_point(&snapshot))
+            .flat_map(|range| snapshot.range_to_buffer_ranges_with_deleted_hunks(range))
+            .map(|(snapshot, range, deleted_anchor)| {
+                if let Some(buffer_id) = deleted_anchor
+                    .and_then(|anchor| anchor.raw_text_anchor())
+                    .map(|anchor| anchor.buffer_id)
+                {
+                    // buffer_id and snapshot differ in source here because
+                    // we want to key to the hunks in the real buffer
+                    // but want the points from the base
+                    (buffer_id, range.to_point(&snapshot), true)
+                } else {
+                    (snapshot.remote_id(), range.to_point(&snapshot), false)
+                }
+            })
+            .fold(
+                HashMap::default(),
+                |mut acc: HashMap<BufferId, Vec<(Range<u32>, bool)>>,
+                 (buffer_id, range, is_deleted)| {
+                    let span = if range.start == range.end {
+                        range.start.row..range.start.row + 1
+                    } else {
+                        buffer_row_span(&range)
+                    };
+                    acc.entry(buffer_id).or_default().push((span, is_deleted));
+                    acc
+                },
+            );
+
+        hunks
+            .chunk_by(|a, b| a.buffer_id == b.buffer_id)
+            .any(|hunks| {
+                let Some(buffer_id) = hunks.first().map(|hunks| hunks.buffer_id) else {
+                    return false;
+                };
+                let (Some(snapshot), Some(selections)) = (
+                    snapshot.buffer_for_id(buffer_id),
+                    selections.get(&buffer_id),
+                ) else {
+                    return false;
+                };
+                hunks.iter().any(|hunks| {
+                    let base_text = &hunks.diff.read(cx).base_text(cx);
+                    hunks.hunks.iter().any(|hunk| {
+                        let deleted_buffer_lines = base_row_span(
+                            base_text,
+                            &hunk.diff_base_byte_range,
+                            &hunk.diff_base_byte_range.to_point(base_text),
+                        );
+                        let added_buffer_lines =
+                            buffer_row_span(&hunk.buffer_range.to_point(snapshot));
+                        let staged_added = hunk
+                            .staged_added
+                            .iter()
+                            .map(|range| range.to_point(snapshot))
+                            .map(|range| buffer_row_span(&range))
+                            .collect_vec();
+                        let staged_deleted = hunk.staged_deleted.clone();
+                        selections
+                            .iter()
+                            .filter_map(|(selection, is_deleted)| {
+                                let overlap = if *is_deleted {
+                                    let overlap_start =
+                                        selection.start.max(deleted_buffer_lines.start);
+                                    let overlap_end = selection.end.min(deleted_buffer_lines.end);
+                                    if overlap_start >= overlap_end {
+                                        return None;
+                                    }
+                                    // staged_deleted is relative
+                                    (overlap_start - deleted_buffer_lines.start)
+                                        ..(overlap_end - deleted_buffer_lines.start)
+                                } else {
+                                    let overlap_start =
+                                        selection.start.max(added_buffer_lines.start);
+                                    let overlap_end = selection.end.min(added_buffer_lines.end);
+                                    overlap_start..overlap_end
+                                };
+                                (!overlap.is_empty()).then(|| (overlap, is_deleted))
+                            })
+                            .any(|(selection, is_deleted)| {
+                                let staged_lines = if *is_deleted {
+                                    &staged_deleted
+                                } else {
+                                    &staged_added
+                                };
+                                !staged_lines.iter().any(|staged| {
+                                    selection.start >= staged.start && selection.end <= staged.end
+                                })
+                            })
+                    })
+                })
+            })
+    }
+
     pub fn apply_stage_or_unstage(
         &mut self,
         stage: bool,
@@ -1763,6 +1935,38 @@ impl Editor {
                 operations.unstage(hunks.diff, hunks.buffer, ranges, cx);
             }
         }
+    }
+
+    pub fn apply_stage_or_unstage_lines(
+        &mut self,
+        stage: bool,
+        ranges: Vec<Range<Anchor>>,
+        hunks: Vec<MultiBufferDiffHunk>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.resolve_diff_hunks(hunks, cx);
+        if hunks.is_empty() {
+            return;
+        }
+        if let Some(target) = self.diff_hunk_action_target.clone() {
+            target
+                .update(cx, |editor, cx| {
+                    editor.stage_or_unstage_resolved_diff_hunk_lines(stage, hunks, &ranges, cx);
+                })
+                .log_err();
+            return;
+        }
+        self.stage_or_unstage_resolved_diff_hunk_lines(stage, hunks, &ranges, cx);
+    }
+
+    fn stage_or_unstage_resolved_diff_hunk_lines(
+        &mut self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _ranges: &[Range<Anchor>],
+        _cx: &mut Context<Self>,
+    ) {
     }
 
     pub fn apply_restore(
@@ -3032,17 +3236,8 @@ impl EditorSnapshot {
                         .staged_added
                         .iter()
                         .map(|range| {
-                            self.point_to_display_point(
-                                MultiBufferPoint::new(range.start.0, 0),
-                                Bias::Left,
-                            )
-                            .row()
-                                ..self
-                                    .point_to_display_point(
-                                        MultiBufferPoint::new(range.end.0, 0),
-                                        Bias::Left,
-                                    )
-                                    .row()
+                            range.start.to_display_point(&self.display_snapshot).row()
+                                ..range.end.to_display_point(&self.display_snapshot).row()
                         })
                         .collect();
 
