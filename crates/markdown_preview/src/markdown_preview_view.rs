@@ -596,9 +596,10 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn move_cursor_to_source_index(
+    fn change_selection_to_source_index(
         editor: &Entity<Editor>,
         source_index: usize,
+        move_focus: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -610,7 +611,9 @@ impl MarkdownPreviewView {
                 cx,
                 |selections| selections.select_ranges(vec![selection]),
             );
-            window.focus(&editor.focus_handle(cx), cx);
+            if move_focus {
+                window.focus(&editor.focus_handle(cx), cx);
+            }
         });
     }
 
@@ -882,12 +885,16 @@ impl MarkdownPreviewView {
             let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
                 .on_source_click(move |source_index, click_count, window, cx| {
-                    if click_count == 2 {
-                        Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
-                        true
-                    } else {
-                        false
+                    if click_count == 1 {
+                        Self::change_selection_to_source_index(
+                            &active_editor,
+                            source_index,
+                            false,
+                            window,
+                            cx,
+                        );
                     }
+                    false
                 })
                 .on_checkbox_toggle(move |source_range, new_checked, window, cx| {
                     Self::apply_checkbox_toggle_to_editor(
@@ -976,9 +983,10 @@ fn handle_url_click(
 
                     if let Some(source_index) = source_index {
                         if let Some(editor) = active_editor {
-                            MarkdownPreviewView::move_cursor_to_source_index(
+                            MarkdownPreviewView::change_selection_to_source_index(
                                 &editor,
                                 source_index,
+                                true,
                                 window,
                                 cx,
                             );
