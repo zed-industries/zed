@@ -75,6 +75,67 @@ pub fn current_headless_renderer() -> Option<Box<dyn gpui::PlatformHeadlessRende
     }
 }
 
+#[cfg(all(test, target_os = "macos", feature = "test-support"))]
+mod pixel_tests {
+    use super::*;
+    use gpui::{
+        AppContext, Context, HeadlessAppContext, IntoElement, ParentElement, Render, Styled,
+        Window, div, px, size,
+    };
+    use std::sync::Arc;
+
+    struct RoundedClipView;
+
+    impl Render for RoundedClipView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().bg(gpui::black()).child(
+                div()
+                    .size(px(100.))
+                    .rounded(px(30.))
+                    .overflow_hidden()
+                    .child(div().size_full().bg(gpui::red())),
+            )
+        }
+    }
+
+    #[test]
+    fn rounded_overflow_hidden_clips_rendered_pixels() {
+        let text_system = Arc::new(gpui::NoopTextSystem);
+        let mut cx =
+            HeadlessAppContext::with_platform(text_system, Arc::new(()), current_headless_renderer);
+        let window = cx
+            .open_window(size(px(200.), px(200.)), |_, cx| {
+                cx.new(|_| RoundedClipView)
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        let image = cx.capture_screenshot(window.into()).unwrap();
+
+        let scale = image.width() as f32 / 200.;
+        let pixel = |x: f32, y: f32| image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
+        let is_red = |p: [u8; 4]| p[0] > 200 && p[1] < 50 && p[2] < 50;
+
+        // Center of the rounded container is the child's red fill.
+        assert!(is_red(pixel(50., 50.)), "center: {:?}", pixel(50., 50.));
+        // Edge midpoints are inside the rounded rect.
+        assert!(is_red(pixel(50., 2.)), "top edge: {:?}", pixel(50., 2.));
+        // Corner pixels are outside the 30px arcs and must be clipped to the black
+        // background.
+        for (x, y) in [(2., 2.), (98., 2.), (98., 98.), (2., 98.)] {
+            let p = pixel(x, y);
+            assert!(!is_red(p), "corner ({x}, {y}) should be clipped: {p:?}");
+        }
+        // Points inside the arcs are red.
+        for (x, y) in [(12., 12.), (88., 12.), (88., 88.), (12., 88.)] {
+            let p = pixel(x, y);
+            assert!(is_red(p), "inside arc ({x}, {y}) should be red: {p:?}");
+        }
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;

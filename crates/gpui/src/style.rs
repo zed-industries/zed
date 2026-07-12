@@ -645,17 +645,19 @@ impl Style {
                 let mut min = bounds.origin;
                 let mut max = bounds.bottom_right();
 
+                let mut border_widths = Edges::<Pixels>::default();
                 if self
                     .border_color
                     .is_some_and(|color| !color.is_transparent())
                 {
-                    min.x += self.border_widths.left.to_pixels(rem_size);
-                    max.x -= self.border_widths.right.to_pixels(rem_size);
-                    min.y += self.border_widths.top.to_pixels(rem_size);
-                    max.y -= self.border_widths.bottom.to_pixels(rem_size);
+                    border_widths = self.border_widths.to_pixels(rem_size);
+                    min.x += border_widths.left;
+                    max.x -= border_widths.right;
+                    min.y += border_widths.top;
+                    max.y -= border_widths.bottom;
                 }
 
-                let bounds = match (
+                let mask_bounds = match (
                     self.overflow.x == Overflow::Visible,
                     self.overflow.y == Overflow::Visible,
                 ) {
@@ -675,7 +677,33 @@ impl Style {
                     (false, false) => Bounds::from_corners(min, max),
                 };
 
-                Some(ContentMask { bounds })
+                // Clip overflowing content to the element's rounded corners, matching
+                // the radii used to paint its background. When the mask is inset by a
+                // visible border, the corner radii shrink by the border width like the
+                // border's inner edge does (CSS's inner-radius rule), approximating the
+                // elliptical inner edge with a circular arc.
+                let corner_radii = self
+                    .corner_radii
+                    .to_pixels(rem_size)
+                    .clamp_radii_for_quad_size(bounds.size);
+                let corner_radii = Corners {
+                    top_left: (corner_radii.top_left - border_widths.left.max(border_widths.top))
+                        .max(Pixels::ZERO),
+                    top_right: (corner_radii.top_right
+                        - border_widths.right.max(border_widths.top))
+                    .max(Pixels::ZERO),
+                    bottom_right: (corner_radii.bottom_right
+                        - border_widths.right.max(border_widths.bottom))
+                    .max(Pixels::ZERO),
+                    bottom_left: (corner_radii.bottom_left
+                        - border_widths.left.max(border_widths.bottom))
+                    .max(Pixels::ZERO),
+                };
+
+                Some(ContentMask {
+                    bounds: mask_bounds,
+                    corner_radii,
+                })
             }
         }
     }
@@ -1326,11 +1354,69 @@ impl From<Position> for taffy::style::Position {
 
 #[cfg(test)]
 mod tests {
-    use crate::{blue, green, px, red, yellow};
+    use crate::{blue, green, point, px, red, size, yellow};
 
     use super::*;
 
     use util_macros::perf;
+
+    #[test]
+    fn overflow_mask_carries_corner_radii() {
+        let mut style = Style::default();
+        style.overflow.x = Overflow::Hidden;
+        style.overflow.y = Overflow::Hidden;
+        style.corner_radii = Corners {
+            top_left: px(10.).into(),
+            top_right: px(10.).into(),
+            bottom_right: px(10.).into(),
+            bottom_left: px(10.).into(),
+        };
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(50.)));
+
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        assert_eq!(mask.bounds, bounds);
+        assert_eq!(mask.corner_radii, Corners::all(px(10.)));
+    }
+
+    #[test]
+    fn overflow_mask_radii_are_clamped_like_painted_quads() {
+        let mut style = Style::default();
+        style.overflow.x = Overflow::Hidden;
+        style.overflow.y = Overflow::Hidden;
+        style.corner_radii = Corners {
+            top_left: px(100.).into(),
+            top_right: px(100.).into(),
+            bottom_right: px(100.).into(),
+            bottom_left: px(100.).into(),
+        };
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(50.)));
+
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        assert_eq!(mask.corner_radii, Corners::all(px(25.)));
+    }
+
+    #[test]
+    fn overflow_mask_insets_radii_by_visible_borders() {
+        let mut style = Style::default();
+        style.overflow.x = Overflow::Hidden;
+        style.overflow.y = Overflow::Hidden;
+        style.corner_radii = Corners {
+            top_left: px(10.).into(),
+            top_right: px(10.).into(),
+            bottom_right: px(10.).into(),
+            bottom_left: px(10.).into(),
+        };
+        style.border_widths = Edges::all(px(4.).into());
+        style.border_color = Some(crate::black());
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(50.)));
+
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        assert_eq!(
+            mask.bounds,
+            Bounds::new(point(px(4.), px(4.)), size(px(92.), px(42.)))
+        );
+        assert_eq!(mask.corner_radii, Corners::all(px(6.)));
+    }
 
     #[perf]
     fn test_basic_highlight_style_combination() {

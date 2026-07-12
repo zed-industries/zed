@@ -2125,6 +2125,7 @@ impl Editor {
         window.with_content_mask(
             Some(gpui::ContentMask {
                 bounds: *text_bounds,
+                ..Default::default()
             }),
             |window| {
                 window.defer_draw(element, origin, 1, Some(window.content_mask()));

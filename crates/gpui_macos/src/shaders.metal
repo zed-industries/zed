@@ -20,6 +20,8 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds);
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation);
+float clip_chain_alpha(float2 position, uint rounded_head,
+                       constant ClipNode *clips);
 float corner_dash_velocity(float dv1, float dv2);
 float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
@@ -51,6 +53,7 @@ struct QuadVertexOutput {
   float4 background_solid [[flat]];
   float4 background_color0 [[flat]];
   float4 background_color1 [[flat]];
+  uint rounded_head [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -61,6 +64,7 @@ struct QuadFragmentInput {
   float4 background_solid [[flat]];
   float4 background_color0 [[flat]];
   float4 background_color1 [[flat]];
+  uint rounded_head [[flat]];
 };
 
 vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
@@ -70,13 +74,16 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     constant Quad *quads
                                     [[buffer(QuadInputIndex_Quads)]],
                                     constant Size_DevicePixels *viewport_size
-                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
+                                    [[buffer(QuadInputIndex_ViewportSize)]],
+                                    constant ClipNode *clips
+                                    [[buffer(ClipsInputIndex_Clips)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
+  ClipNode clip = clips[quad.clip_id];
   float4 device_position =
       to_device_position(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
-                                                 quad.content_mask.bounds);
+                                                 clip.folded_bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
   GradientColor gradient = prepare_fill_color(
@@ -94,13 +101,18 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
       gradient.solid,
       gradient.color0,
       gradient.color1,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+                              [[buffer(QuadInputIndex_Quads)]],
+                              constant ClipNode *clips
+                              [[buffer(ClipsInputIndex_Clips)]]) {
   Quad quad = quads[input.quad_id];
+  float clip_alpha =
+      clip_chain_alpha(input.position.xy, input.rounded_head, clips);
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
@@ -115,7 +127,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       quad.border_widths.right == 0.0 &&
       quad.border_widths.bottom == 0.0 &&
       unrounded) {
-    return background_color;
+    return background_color * float4(1.0, 1.0, 1.0, clip_alpha);
   }
 
   float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
@@ -175,7 +187,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Fast path for points that must be part of the background
   if (is_within_inner_straight_border && !is_near_rounded_corner) {
-    return background_color;
+    return background_color * float4(1.0, 1.0, 1.0, clip_alpha);
   }
 
   // Signed distance of the point to the outside edge of the quad's border
@@ -393,7 +405,9 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                 saturate(antialias_threshold - inner_sdf));
   }
 
-  return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+  return color *
+         float4(1.0, 1.0, 1.0,
+                saturate(antialias_threshold - outer_sdf) * clip_alpha);
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
@@ -450,6 +464,7 @@ struct ShadowVertexOutput {
   float4 position [[position]];
   float4 color [[flat]];
   uint shadow_id [[flat]];
+  uint rounded_head [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -457,6 +472,7 @@ struct ShadowFragmentInput {
   float4 position [[position]];
   float4 color [[flat]];
   uint shadow_id [[flat]];
+  uint rounded_head [[flat]];
 };
 
 vertex ShadowVertexOutput shadow_vertex(
@@ -464,9 +480,11 @@ vertex ShadowVertexOutput shadow_vertex(
     constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+    [[buffer(ShadowInputIndex_ViewportSize)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
+  ClipNode clip = clips[shadow.clip_id];
 
   Bounds_ScaledPixels bounds;
   if (shadow.inset != 0u) {
@@ -484,19 +502,22 @@ vertex ShadowVertexOutput shadow_vertex(
   float4 device_position =
       to_device_position(unit_vertex, bounds, viewport_size);
   float4 clip_distance =
-      distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+      distance_from_clip_rect(unit_vertex, bounds, clip.folded_bounds);
   float4 color = hsla_to_rgba(shadow.color);
 
   return ShadowVertexOutput{
       device_position,
       color,
       shadow_id,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 constant Shadow *shadows
-                                [[buffer(ShadowInputIndex_Shadows)]]) {
+                                [[buffer(ShadowInputIndex_Shadows)]],
+                                constant ClipNode *clips
+                                [[buffer(ClipsInputIndex_Clips)]]) {
   Shadow shadow = shadows[input.shadow_id];
 
   float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
@@ -551,6 +572,8 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     alpha *= saturate(0.5 - element_distance);
   }
 
+  alpha *= clip_chain_alpha(input.position.xy, input.rounded_head, clips);
+
   return input.color * float4(1., 1., 1., alpha);
 }
 
@@ -558,6 +581,7 @@ struct UnderlineVertexOutput {
   float4 position [[position]];
   float4 color [[flat]];
   uint underline_id [[flat]];
+  uint rounded_head [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -565,6 +589,7 @@ struct UnderlineFragmentInput {
   float4 position [[position]];
   float4 color [[flat]];
   uint underline_id [[flat]];
+  uint rounded_head [[flat]];
 };
 
 vertex UnderlineVertexOutput underline_vertex(
@@ -572,28 +597,35 @@ vertex UnderlineVertexOutput underline_vertex(
     constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+    [[buffer(ShadowInputIndex_ViewportSize)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
+  ClipNode clip = clips[underline.clip_id];
   float4 device_position =
       to_device_position(unit_vertex, underline.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
-                                                 underline.content_mask.bounds);
+                                                 clip.folded_bounds);
   float4 color = hsla_to_rgba(underline.color);
   return UnderlineVertexOutput{
       device_position,
       color,
       underline_id,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
                                    constant Underline *underlines
-                                   [[buffer(UnderlineInputIndex_Underlines)]]) {
+                                   [[buffer(UnderlineInputIndex_Underlines)]],
+                                   constant ClipNode *clips
+                                   [[buffer(ClipsInputIndex_Clips)]]) {
   const float WAVE_FREQUENCY = 2.0;
   const float WAVE_HEIGHT_RATIO = 0.8;
 
   Underline underline = underlines[input.underline_id];
+  float clip_alpha =
+      clip_chain_alpha(input.position.xy, input.rounded_head, clips);
   if (underline.wavy) {
     float half_thickness = underline.thickness * 0.5;
     float2 origin =
@@ -612,9 +644,9 @@ fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
     float distance_from_bottom_border = distance_in_pixels + half_thickness;
     float alpha = saturate(
         0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return input.color * float4(1., 1., 1., alpha);
+    return input.color * float4(1., 1., 1., alpha * clip_alpha);
   } else {
-    return input.color;
+    return input.color * float4(1., 1., 1., clip_alpha);
   }
 }
 
@@ -622,6 +654,7 @@ struct MonochromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  uint rounded_head [[flat]];
   float4 clip_distance;
 };
 
@@ -629,6 +662,7 @@ struct MonochromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   float4 color [[flat]];
+  uint rounded_head [[flat]];
   float4 clip_distance;
 };
 
@@ -639,26 +673,30 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     constant Size_DevicePixels *viewport_size
     [[buffer(SpriteInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
-    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
+  ClipNode clip = clips[sprite.clip_id];
   float4 device_position =
       to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
-                                                 sprite.content_mask.bounds, sprite.transformation);
+                                                 clip.folded_bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{
       device_position,
       tile_position,
       color,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 monochrome_sprite_fragment(
     MonochromeSpriteFragmentInput input [[stage_in]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
-    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   if (any(input.clip_distance < float4(0.0))) {
     return float4(0.0);
   }
@@ -668,7 +706,8 @@ fragment float4 monochrome_sprite_fragment(
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float4 color = input.color;
-  color.a *= sample.a;
+  color.a *= sample.a *
+             clip_chain_alpha(input.position.xy, input.rounded_head, clips);
   return color;
 }
 
@@ -676,6 +715,7 @@ struct PolychromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   uint sprite_id [[flat]];
+  uint rounded_head [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -683,6 +723,7 @@ struct PolychromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   uint sprite_id [[flat]];
+  uint rounded_head [[flat]];
 };
 
 vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
@@ -692,26 +733,30 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
     constant Size_DevicePixels *viewport_size
     [[buffer(SpriteInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
-    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
+  ClipNode clip = clips[sprite.clip_id];
   float4 device_position =
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
-                                                 sprite.content_mask.bounds);
+                                                 clip.folded_bounds);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{
       device_position,
       tile_position,
       sprite_id,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 polychrome_sprite_fragment(
     PolychromeSpriteFragmentInput input [[stage_in]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
-    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
@@ -727,7 +772,8 @@ fragment float4 polychrome_sprite_fragment(
     color.g = grayscale;
     color.b = grayscale;
   }
-  color.a *= sprite.opacity * saturate(0.5 - distance);
+  color.a *= sprite.opacity * saturate(0.5 - distance) *
+             clip_chain_alpha(input.position.xy, input.rounded_head, clips);
   return color;
 }
 
@@ -771,7 +817,8 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]
 ) {
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
@@ -791,6 +838,8 @@ fragment float4 path_rasterization_fragment(
     float distance = f / length(gradient);
     alpha = saturate(0.5 - distance);
   }
+
+  alpha *= clip_chain_alpha(input.position.xy, v.rounded_head, clips);
 
   GradientColor gradient_color = prepare_fill_color(
     background.tag,
@@ -850,12 +899,14 @@ fragment float4 path_sprite_fragment(
 struct SurfaceVertexOutput {
   float4 position [[position]];
   float2 texture_position;
+  uint rounded_head [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
 struct SurfaceFragmentInput {
   float4 position [[position]];
   float2 texture_position;
+  uint rounded_head [[flat]];
 };
 
 vertex SurfaceVertexOutput surface_vertex(
@@ -865,19 +916,22 @@ vertex SurfaceVertexOutput surface_vertex(
     constant Size_DevicePixels *viewport_size
     [[buffer(SurfaceInputIndex_ViewportSize)]],
     constant Size_DevicePixels *texture_size
-    [[buffer(SurfaceInputIndex_TextureSize)]]) {
+    [[buffer(SurfaceInputIndex_TextureSize)]],
+    constant ClipNode *clips [[buffer(ClipsInputIndex_Clips)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   SurfaceBounds surface = surfaces[surface_id];
+  ClipNode clip = clips[surface.clip_id];
   float4 device_position =
       to_device_position(unit_vertex, surface.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds,
-                                                 surface.content_mask.bounds);
+                                                 clip.folded_bounds);
   // We are going to copy the whole texture, so the texture position corresponds
   // to the current vertex of the unit triangle.
   float2 texture_position = unit_vertex;
   return SurfaceVertexOutput{
       device_position,
       texture_position,
+      clip.rounded_head,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -885,7 +939,9 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
                                  texture2d<float> y_texture
                                  [[texture(SurfaceInputIndex_YTexture)]],
                                  texture2d<float> cb_cr_texture
-                                 [[texture(SurfaceInputIndex_CbCrTexture)]]) {
+                                 [[texture(SurfaceInputIndex_CbCrTexture)]],
+                                 constant ClipNode *clips
+                                 [[buffer(ClipsInputIndex_Clips)]]) {
   constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear);
   const float4x4 ycbcrToRGBTransform =
       float4x4(float4(+1.0000f, +1.0000f, +1.0000f, +0.0000f),
@@ -896,7 +952,9 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
       y_texture.sample(texture_sampler, input.texture_position).r,
       cb_cr_texture.sample(texture_sampler, input.texture_position).rg, 1.0);
 
-  return ycbcrToRGBTransform * ycbcr;
+  float4 color = ycbcrToRGBTransform * ycbcr;
+  color.a *= clip_chain_alpha(input.position.xy, input.rounded_head, clips);
+  return color;
 }
 
 float4 hsla_to_rgba(Hsla hsla) {
@@ -1087,6 +1145,26 @@ float quad_sdf_impl(float2 corner_center_to_point, float corner_radius) {
 
         return signed_distance_to_inset_quad - corner_radius;
     }
+}
+
+// Walks the rounded-clip chain starting at `rounded_head`, multiplying in one
+// antialiased rounded-rect coverage term per node. `rounded_head` is
+// `ClipNode_NONE` for purely rectangular clipping (the common case), making this a
+// zero-iteration loop; the chain only contains nodes with nonzero corner radii, so
+// its length is the number of rounded clips actually in effect (typically 0 or 1).
+// Rectangular clipping is handled separately via interpolated clip distances
+// computed in the vertex stage.
+float clip_chain_alpha(float2 position, uint rounded_head,
+                       constant ClipNode *clips) {
+  float alpha = 1.0;
+  uint clip_id = rounded_head;
+  while (clip_id != 0xFFFFFFFFu) {
+    ClipNode node = clips[clip_id];
+    float distance = quad_sdf(position, node.rounded_bounds, node.corner_radii);
+    alpha *= saturate(0.5 - distance);
+    clip_id = node.parent_rounded;
+  }
+  return alpha;
 }
 
 // A standard gaussian function, used for weighting samples

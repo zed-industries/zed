@@ -43,6 +43,8 @@ mod macos_build {
             "PointF".into(),
             "Hsla".into(),
             "ContentMask".into(),
+            "ClipNode".into(),
+            "ClipsInputIndex".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
             "PathRasterizationInputIndex".into(),

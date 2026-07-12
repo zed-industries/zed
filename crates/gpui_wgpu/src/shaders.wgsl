@@ -167,6 +167,23 @@ struct TransformationMatrix {
     translation: vec2<f32>,
 }
 
+// A node in the scene's clip tree. Rectangular clipping uses `folded_bounds` (the
+// intersection of all rectangular clips along the ancestor chain), evaluated in the
+// vertex stage as interpolated clip distances. Rounded clips are retained
+// individually and linked through `parent_rounded`; fragments walk that chain via
+// `clip_chain_alpha`.
+struct ClipNode {
+    folded_bounds: Bounds,
+    rounded_bounds: Bounds,
+    corner_radii: Corners,
+    rounded_head: u32,
+    parent_rounded: u32,
+}
+
+const CLIP_NODE_NONE: u32 = 0xffffffffu;
+
+@group(0) @binding(2) var<storage, read> b_clips: array<ClipNode>;
+
 fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
     let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
     return vec4<f32>(device_position, 0.0, 1.0);
@@ -369,6 +386,23 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
     return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
+// Walks the rounded-clip chain starting at `rounded_head`, multiplying in one
+// antialiased rounded-rect coverage term per node. `rounded_head` is
+// `CLIP_NODE_NONE` for purely rectangular clipping (the common case), making this
+// a zero-iteration loop; the chain only contains nodes with nonzero corner radii,
+// so its length is the number of rounded clips actually in effect (typically 0 or 1).
+fn clip_chain_alpha(position: vec2<f32>, rounded_head: u32) -> f32 {
+    var alpha = 1.0;
+    var clip_id = rounded_head;
+    while (clip_id != CLIP_NODE_NONE) {
+        let node = b_clips[clip_id];
+        let distance = quad_sdf(position, node.rounded_bounds, node.corner_radii);
+        alpha *= saturate(0.5 - distance);
+        clip_id = node.parent_rounded;
+    }
+    return alpha;
+}
+
 fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
     if (corner_radius == 0.0) {
         // Fast path for unrounded corners.
@@ -520,7 +554,8 @@ struct Quad {
     order: u32,
     border_style: u32,
     bounds: Bounds,
-    content_mask: Bounds,
+    clip_id: u32,
+    pad: u32,
     background: Background,
     border_color: Hsla,
     corner_radii: Corners,
@@ -537,6 +572,7 @@ struct QuadVarying {
     @location(3) @interpolate(flat) background_solid: vec4<f32>,
     @location(4) @interpolate(flat) background_color0: vec4<f32>,
     @location(5) @interpolate(flat) background_color1: vec4<f32>,
+    @location(6) @interpolate(flat) rounded_head: u32,
 }
 
 @vertex
@@ -558,7 +594,9 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
+    let clip = b_clips[quad.clip_id];
+    out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, clip.folded_bounds);
+    out.rounded_head = clip.rounded_head;
     return out;
 }
 
@@ -568,6 +606,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
+    let clip_alpha = clip_chain_alpha(input.position.xy, input.rounded_head);
 
     let quad = b_quads[input.quad_id];
 
@@ -585,7 +624,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             quad.border_widths.right == 0.0 &&
             quad.border_widths.bottom == 0.0 &&
             unrounded) {
-        return blend_color(background_color, 1.0);
+        return blend_color(background_color, clip_alpha);
     }
 
     let size = quad.bounds.size;
@@ -651,7 +690,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // However, that might negatively impact performance in the case of
     // reasonable sizes for rounded corners.
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
-        return blend_color(background_color, 1.0);
+        return blend_color(background_color, clip_alpha);
     }
 
     // Signed distance of the point to the outside edge of the quad's border. It
@@ -890,7 +929,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                     saturate(antialias_threshold - inner_sdf));
     }
 
-    return blend_color(color, saturate(antialias_threshold - outer_sdf));
+    return blend_color(color, saturate(antialias_threshold - outer_sdf) * clip_alpha);
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
@@ -954,7 +993,6 @@ struct Shadow {
     // The shadow rect for drop shadows; the "hole" rect for inset shadows.
     bounds: Bounds,
     corner_radii: Corners,
-    content_mask: Bounds,
     color: Hsla,
     // Only consulted when `inset == 1u`: the element's own bounds, used as a rounded-rect
     // clip so the shadow never escapes the element.
@@ -962,7 +1000,7 @@ struct Shadow {
     element_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    pad: u32, // align to 8 bytes
+    clip_id: u32,
 }
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
@@ -970,6 +1008,7 @@ struct ShadowVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) shadow_id: u32,
+    @location(2) @interpolate(flat) rounded_head: u32,
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
 }
@@ -994,7 +1033,9 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     out.position = to_device_position(unit_vertex, geometry);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
+    let clip = b_clips[shadow.clip_id];
+    out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, clip.folded_bounds);
+    out.rounded_head = clip.rounded_head;
     return out;
 }
 
@@ -1044,6 +1085,8 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         alpha *= saturate(0.5 - element_distance);
     }
 
+    alpha *= clip_chain_alpha(input.position.xy, input.rounded_head);
+
     return blend_color(input.color, alpha);
 }
 
@@ -1054,6 +1097,8 @@ struct PathRasterizationVertex {
     st_position: vec2<f32>,
     color: Background,
     bounds: Bounds,
+    rounded_head: u32,
+    pad: u32,
 }
 
 @group(1) @binding(0) var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
@@ -1106,6 +1151,8 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         background.solid,
         background.colors,
     );
+    alpha *= clip_chain_alpha(input.position.xy, v.rounded_head);
+
     let color = gradient_color(background, input.position.xy, bounds,
         prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
@@ -1150,9 +1197,8 @@ fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
 
 struct Underline {
     order: u32,
-    pad: u32,
+    clip_id: u32,
     bounds: Bounds,
-    content_mask: Bounds,
     color: Hsla,
     thickness: f32,
     wavy: u32,
@@ -1163,6 +1209,7 @@ struct UnderlineVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) underline_id: u32,
+    @location(2) @interpolate(flat) rounded_head: u32,
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
 }
@@ -1176,7 +1223,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     out.position = to_device_position(unit_vertex, underline.bounds);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
+    let clip = b_clips[underline.clip_id];
+    out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, clip.folded_bounds);
+    out.rounded_head = clip.rounded_head;
     return out;
 }
 
@@ -1190,10 +1239,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
+    let clip_alpha = clip_chain_alpha(input.position.xy, input.rounded_head);
     let underline = b_underlines[input.underline_id];
     if (underline.wavy == 0u)
     {
-        return blend_color(input.color, input.color.a);
+        return blend_color(input.color, input.color.a * clip_alpha);
     }
 
     let half_thickness = underline.thickness * 0.5;
@@ -1209,16 +1259,15 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     let distance_from_top_border = distance_in_pixels - half_thickness;
     let distance_from_bottom_border = distance_in_pixels + half_thickness;
     let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return blend_color(input.color, alpha * input.color.a);
+    return blend_color(input.color, alpha * input.color.a * clip_alpha);
 }
 
 // --- monochrome sprites --- //
 
 struct MonochromeSprite {
     order: u32,
-    pad: u32,
+    clip_id: u32,
     bounds: Bounds,
-    content_mask: Bounds,
     color: Hsla,
     tile: AtlasTile,
     transformation: TransformationMatrix,
@@ -1229,6 +1278,7 @@ struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(2) @interpolate(flat) rounded_head: u32,
     @location(3) clip_distances: vec4<f32>,
 }
 
@@ -1242,7 +1292,9 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    let clip = b_clips[sprite.clip_id];
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, clip.folded_bounds, sprite.transformation);
+    out.rounded_head = clip.rounded_head;
     return out;
 }
 
@@ -1255,19 +1307,19 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
+    let clip_alpha = clip_chain_alpha(input.position.xy, input.rounded_head);
 
-    return blend_color(input.color, alpha_corrected);
+    return blend_color(input.color, alpha_corrected * clip_alpha);
 }
 
 // --- polychrome sprites --- //
 
 struct PolychromeSprite {
     order: u32,
-    pad: u32,
+    clip_id: u32,
     grayscale: u32,
     opacity: f32,
     bounds: Bounds,
-    content_mask: Bounds,
     corner_radii: Corners,
     tile: AtlasTile,
 }
@@ -1277,6 +1329,7 @@ struct PolySpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
+    @location(2) @interpolate(flat) rounded_head: u32,
     @location(3) clip_distances: vec4<f32>,
 }
 
@@ -1289,7 +1342,9 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    let clip = b_clips[sprite.clip_id];
+    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, clip.folded_bounds);
+    out.rounded_head = clip.rounded_head;
     return out;
 }
 
@@ -1309,7 +1364,8 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+    let clip_alpha = clip_chain_alpha(input.position.xy, input.rounded_head);
+    return blend_color(color, sprite.opacity * saturate(0.5 - distance) * clip_alpha);
 }
 
 // --- surfaces --- //

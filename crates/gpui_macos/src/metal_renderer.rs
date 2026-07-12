@@ -7,7 +7,7 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
+    AtlasTextureId, Background, Bounds, ClipNode, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Surface, Underline, point, size,
 };
@@ -145,6 +145,9 @@ pub struct PathRasterizationVertex {
     pub st_position: Point<f32>,
     pub color: Background,
     pub bounds: Bounds<ScaledPixels>,
+    /// The nearest rounded clip node for this path, or [`ClipNode::NONE`].
+    pub rounded_head: u32,
+    pub pad: u32,
 }
 
 impl MetalRenderer {
@@ -837,6 +840,24 @@ impl MetalRenderer {
         let alpha = if self.opaque { 1. } else { 0. };
         let mut instance_offset = 0;
 
+        // Upload the scene's clip nodes once; they are bound on every command encoder
+        // so all pipelines can evaluate rounded clips.
+        let clips_bytes_len = mem::size_of_val(scene.clips.as_slice());
+        anyhow::ensure!(
+            clips_bytes_len <= instance_buffer.size,
+            "clip nodes exceed instance buffer size: {} clips",
+            scene.clips.len()
+        );
+        let clips_offset = instance_offset;
+        unsafe {
+            ptr::copy_nonoverlapping(
+                scene.clips.as_ptr() as *const u8,
+                (instance_buffer.metal_buffer.contents() as *mut u8).add(clips_offset),
+                clips_bytes_len,
+            );
+        }
+        instance_offset += clips_bytes_len;
+
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
             texture,
@@ -846,6 +867,7 @@ impl MetalRenderer {
                 color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
             },
         );
+        bind_clips(command_encoder, instance_buffer, clips_offset);
 
         for batch in scene.batches() {
             let ok = match batch {
@@ -869,8 +891,10 @@ impl MetalRenderer {
 
                     let did_draw = self.draw_paths_to_intermediate(
                         paths,
+                        &scene.clips,
                         instance_buffer,
                         &mut instance_offset,
+                        clips_offset,
                         viewport_size,
                         command_buffer,
                     );
@@ -883,6 +907,7 @@ impl MetalRenderer {
                             color_attachment.set_load_action(metal::MTLLoadAction::Load);
                         },
                     );
+                    bind_clips(command_encoder, instance_buffer, clips_offset);
 
                     if did_draw {
                         self.draw_paths_from_intermediate(
@@ -961,8 +986,10 @@ impl MetalRenderer {
     fn draw_paths_to_intermediate(
         &self,
         paths: &[Path<ScaledPixels>],
+        clips: &[ClipNode],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
+        clips_offset: usize,
         viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
     ) -> bool {
@@ -992,15 +1019,21 @@ impl MetalRenderer {
 
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
         command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
+        bind_clips(command_encoder, instance_buffer, clips_offset);
 
         align_offset(instance_offset);
         let mut vertices = Vec::new();
         for path in paths {
+            let rounded_head = clips
+                .get(path.clip_id as usize)
+                .map_or(ClipNode::NONE, |node| node.rounded_head);
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
                 bounds: path.bounds.intersect(&path.content_mask.bounds),
+                rounded_head,
+                pad: 0,
             }));
         }
         let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
@@ -1555,7 +1588,8 @@ impl MetalRenderer {
                     buffer_contents,
                     SurfaceBounds {
                         bounds: surface.bounds,
-                        content_mask: surface.content_mask,
+                        clip_id: surface.clip_id,
+                        pad: 0,
                     },
                 );
             }
@@ -1706,6 +1740,26 @@ fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
 }
 
+/// Bind the scene's clip nodes (uploaded at the start of the frame) to the given
+/// command encoder. Buffer bindings persist across pipeline changes within an
+/// encoder, so this only needs to happen once per encoder.
+fn bind_clips(
+    command_encoder: &metal::RenderCommandEncoderRef,
+    instance_buffer: &InstanceBuffer,
+    clips_offset: usize,
+) {
+    command_encoder.set_vertex_buffer(
+        ClipsInputIndex::Clips as u64,
+        Some(&instance_buffer.metal_buffer),
+        clips_offset as u64,
+    );
+    command_encoder.set_fragment_buffer(
+        ClipsInputIndex::Clips as u64,
+        Some(&instance_buffer.metal_buffer),
+        clips_offset as u64,
+    );
+}
+
 #[repr(C)]
 enum ShadowInputIndex {
     Vertices = 0,
@@ -1752,6 +1806,13 @@ enum PathRasterizationInputIndex {
     ViewportSize = 1,
 }
 
+/// The scene's clip nodes are bound once per command encoder at a fixed index that
+/// no pipeline uses for anything else, so every pipeline can read them.
+#[repr(C)]
+enum ClipsInputIndex {
+    Clips = 8,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct PathSprite {
@@ -1762,7 +1823,8 @@ pub struct PathSprite {
 #[repr(C)]
 pub struct SurfaceBounds {
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip_id: u32,
+    pub pad: u32,
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -4178,6 +4178,62 @@ mod tests {
         }
     }
 
+    struct RoundedClipView;
+
+    impl Render for RoundedClipView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .size(px(100.))
+                    .rounded(px(24.))
+                    .overflow_hidden()
+                    .child(div().size_full().occlude().bg(crate::blue())),
+            )
+        }
+    }
+
+    #[test]
+    fn rounded_overflow_hidden_clips_hit_testing_and_scene_primitives() {
+        let mut test_app = TestAppContext::single();
+        let window = test_app.add_window(|_, _| RoundedClipView);
+        let any_window: AnyWindowHandle = window.into();
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        test_app
+            .update_window(any_window, |_, window, _| {
+                // The center of the rounded container hits the occluding child.
+                let center = window.rendered_frame.hit_test(point(px(50.), px(50.)));
+                assert!(!center.ids.is_empty());
+
+                // A corner point within the bounding rect but outside the corner arc
+                // is visually clipped away, so it doesn't hit. The point (3, 3) is
+                // ~29.7px from the arc center (24, 24), beyond the 24px radius.
+                let corner = window.rendered_frame.hit_test(point(px(3.), px(3.)));
+                assert!(corner.ids.is_empty());
+
+                // A point in the corner square but inside the arc still hits. The
+                // point (12, 12) is ~17px from the arc center, within the radius.
+                let inside_arc = window.rendered_frame.hit_test(point(px(12.), px(12.)));
+                assert!(!inside_arc.ids.is_empty());
+
+                // The child's background quad references a clip node whose rounded
+                // chain contains the container's rounded mask.
+                let scene = &window.rendered_frame.scene;
+                assert_eq!(scene.quads.len(), 1);
+                let quad = &scene.quads[0];
+                let node = scene.clips[quad.clip_id as usize];
+                assert_ne!(node.rounded_head, crate::ClipNode::NONE);
+                let head = scene.clips[node.rounded_head as usize];
+                assert!(head.corner_radii.top_left.0 > 0.);
+                assert_eq!(head.parent_rounded, crate::ClipNode::NONE);
+            })
+            .unwrap();
+    }
+
     #[test]
     fn scroll_handle_aligns_wide_children_to_left_edge() {
         let handle = ScrollHandle::new();

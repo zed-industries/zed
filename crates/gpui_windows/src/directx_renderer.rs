@@ -90,6 +90,45 @@ struct DirectXRenderPipelines {
     mono_sprites: PipelineState<MonochromeSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
+    clips: ClipsBuffer,
+}
+
+/// The scene's clip nodes, uploaded once per frame and bound at `t2` for all
+/// pipelines.
+struct ClipsBuffer {
+    buffer: ID3D11Buffer,
+    buffer_size: usize,
+    view: Option<ID3D11ShaderResourceView>,
+}
+
+impl ClipsBuffer {
+    fn new(device: &ID3D11Device) -> Result<Self> {
+        let buffer_size = 64;
+        let buffer = create_buffer(device, std::mem::size_of::<ClipNode>(), buffer_size)?;
+        let view = create_buffer_view(device, &buffer)?;
+        Ok(ClipsBuffer {
+            buffer,
+            buffer_size,
+            view,
+        })
+    }
+
+    fn update(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        clips: &[ClipNode],
+    ) -> Result<()> {
+        if self.buffer_size < clips.len() {
+            let new_buffer_size = clips.len().next_power_of_two();
+            let buffer = create_buffer(device, std::mem::size_of::<ClipNode>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+            self.buffer_size = new_buffer_size;
+        }
+        update_buffer(device_context, &self.buffer, clips)
+    }
 }
 
 struct DirectXGlobalElements {
@@ -324,7 +363,7 @@ impl DirectXRenderer {
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
-                    self.draw_paths_to_intermediate(paths)?;
+                    self.draw_paths_to_intermediate(paths, &scene.clips)?;
                     self.draw_paths_from_intermediate(paths)
                 }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
@@ -401,6 +440,22 @@ impl DirectXRenderer {
 
     fn upload_scene_buffers(&mut self, scene: &Scene) -> Result<()> {
         let devices = self.devices.as_ref().context("devices missing")?;
+
+        if !scene.clips.is_empty() {
+            self.pipelines
+                .clips
+                .update(&devices.device, &devices.device_context, &scene.clips)?;
+        }
+        // Bind the clip nodes once for the whole frame; slot t2 isn't touched by any
+        // per-draw state changes.
+        unsafe {
+            devices
+                .device_context
+                .VSSetShaderResources(2, Some(slice::from_ref(&self.pipelines.clips.view)));
+            devices
+                .device_context
+                .PSSetShaderResources(2, Some(slice::from_ref(&self.pipelines.clips.view)));
+        }
 
         if !scene.shadows.is_empty() {
             self.pipelines.shadow_pipeline.update_buffer(
@@ -497,7 +552,11 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_paths_to_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+    fn draw_paths_to_intermediate(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        clips: &[ClipNode],
+    ) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -521,11 +580,16 @@ impl DirectXRenderer {
         let mut vertices = Vec::new();
 
         for path in paths {
+            let rounded_head = clips
+                .get(path.clip_id as usize)
+                .map_or(ClipNode::NONE, |node| node.rounded_head);
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationSprite {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
                 color: path.color,
                 bounds: path.clipped_bounds(),
+                rounded_head,
+                pad: 0,
             }));
         }
 
@@ -881,6 +945,7 @@ impl DirectXRenderPipelines {
             16,
             create_blend_state(device)?,
         )?;
+        let clips = ClipsBuffer::new(device)?;
 
         Ok(Self {
             shadow_pipeline,
@@ -891,6 +956,7 @@ impl DirectXRenderPipelines {
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
+            clips,
         })
     }
 }
@@ -1154,6 +1220,9 @@ struct PathRasterizationSprite {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+    /// The nearest rounded clip node for this path, or [`ClipNode::NONE`].
+    rounded_head: u32,
+    pad: u32,
 }
 
 #[derive(Clone, Copy)]

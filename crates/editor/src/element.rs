@@ -5496,6 +5496,7 @@ impl EditorElement {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: layout.position_map.text_hitbox.bounds,
+                ..Default::default()
             }),
             |window| {
                 let editor = self.editor.read(cx);
@@ -6482,7 +6483,11 @@ impl EditorElement {
         for mut block in layout.spacer_blocks.drain(..) {
             let mut bounds = layout.hitbox.bounds;
             bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let content_mask = ContentMask {
+                bounds,
+                ..Default::default()
+            };
+            window.with_content_mask(Some(content_mask), |window| {
                 block.element.paint(window, cx);
             })
         }
@@ -6500,7 +6505,11 @@ impl EditorElement {
             } else {
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let content_mask = ContentMask {
+                    bounds,
+                    ..Default::default()
+                };
+                window.with_content_mask(Some(content_mask), |window| {
                     block.element.paint(window, cx);
                 })
             }
@@ -7957,7 +7966,11 @@ impl Element for EditorElement {
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let content_mask = ContentMask {
+                    bounds,
+                    ..Default::default()
+                };
+                window.with_content_mask(Some(content_mask), |window| {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
                     });
@@ -9440,7 +9453,11 @@ impl Element for EditorElement {
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                let content_mask = ContentMask {
+                    bounds,
+                    ..Default::default()
+                };
+                window.with_content_mask(Some(content_mask), |window| {
                     self.paint_mouse_listeners(layout, window, cx);
 
                     // Mask the editor behind sticky scroll headers. Important
@@ -9463,6 +9480,7 @@ impl Element for EditorElement {
                                         .max(Pixels::ZERO),
                                 ),
                             },
+                            ..Default::default()
                         });
 
                     window.with_content_mask(below_sticky_headers_mask, |window| {
@@ -10732,7 +10750,14 @@ mod tests {
             bounds: zero_bounds,
             content_mask: ContentMask {
                 bounds: zero_bounds,
+                corner_radii: Corners {
+                    top_left: Pixels::ZERO,
+                    top_right: Pixels::ZERO,
+                    bottom_right: Pixels::ZERO,
+                    bottom_left: Pixels::ZERO,
+                },
             },
+            rounded_masks: Vec::new(),
             behavior: HitboxBehavior::Normal,
         }
     }
@@ -10770,7 +10795,9 @@ mod tests {
             row_info(5),
         ];
 
-        const HITBOX: Hitbox = placeholder_hitbox();
+        // `static` rather than `const`: `Hitbox` now contains a `Vec`, which prevents
+        // promotion of `&HITBOX` to a `'static` borrow of a constant.
+        static HITBOX: Hitbox = placeholder_hitbox();
         Gutter {
             line_height,
             range: DisplayRow(0)..DisplayRow(6),

@@ -1309,7 +1309,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
         };
 
         let bounds = Bounds::new(self.origin + origin, size);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let content_mask = ContentMask {
+            bounds,
+            ..Default::default()
+        };
+        window.with_content_mask(Some(content_mask), |window| {
             let colors = cx.theme().colors();
 
             let capture_phase;

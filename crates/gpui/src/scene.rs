@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point, size,
 };
+use collections::FxHashMap;
 use std::{
     fmt::Debug,
     iter::Peekable,
@@ -36,12 +37,44 @@ impl From<bool> for PaddedBool32 {
     }
 }
 
+/// A node in the scene's clip tree. Every primitive references one of these via its
+/// `clip_id`. Rectangular clips along a primitive's ancestor chain are folded eagerly
+/// into `folded_bounds`, so the common rect-only case costs a single bounds test.
+/// Rounded-rect clips can't be folded (the intersection of two rounded rects is not a
+/// rounded rect), so each one is retained as a node and linked through
+/// `parent_rounded`; shaders walk that chain evaluating one rounded-rect SDF per node.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct ClipNode {
+    /// Intersection of all rectangular clip bounds along the ancestor chain,
+    /// including the bounding rects of rounded clips.
+    pub folded_bounds: Bounds<ScaledPixels>,
+    /// The bounds this node's own corner radii apply to. Only meaningful when
+    /// `corner_radii` is nonzero.
+    pub rounded_bounds: Bounds<ScaledPixels>,
+    /// This node's own corner radii. All zeros for purely rectangular clips.
+    pub corner_radii: Corners<ScaledPixels>,
+    /// The nearest node in the ancestor chain (including this node itself) that
+    /// has nonzero corner radii, or [`ClipNode::NONE`]. This is where the
+    /// fragment shader starts its rounded-clip walk.
+    pub rounded_head: u32,
+    /// The nearest strict ancestor with nonzero corner radii, or
+    /// [`ClipNode::NONE`]. Links the rounded-clip chain.
+    pub parent_rounded: u32,
+}
+
+impl ClipNode {
+    /// Sentinel indicating the absence of a clip node reference.
+    pub const NONE: u32 = u32::MAX;
+}
+
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    pub clips: Vec<ClipNode>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -58,6 +91,7 @@ impl Scene {
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();
+        self.clips.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -84,11 +118,30 @@ impl Scene {
         self.paint_operations.push(PaintOperation::EndLayer);
     }
 
+    pub fn insert_clip(&mut self, node: ClipNode) -> u32 {
+        let id = self.clips.len() as u32;
+        self.clips.push(node);
+        id
+    }
+
+    pub fn clip_folded_bounds(&self, clip_id: u32) -> Bounds<ScaledPixels> {
+        debug_assert!((clip_id as usize) < self.clips.len(), "invalid clip id");
+        self.clips
+            .get(clip_id as usize)
+            .map(|node| node.folded_bounds)
+            // Fall back to an effectively unbounded rect (no clipping) rather than
+            // panicking on an invalid id.
+            .unwrap_or_else(|| Bounds {
+                origin: point(ScaledPixels(-1e15), ScaledPixels(-1e15)),
+                size: size(ScaledPixels(2e15), ScaledPixels(2e15)),
+            })
+    }
+
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
-            .intersect(&primitive.content_mask().bounds);
+            .intersect(&self.clip_folded_bounds(primitive.clip_id()));
 
         if clipped_bounds.is_empty() {
             return;
@@ -139,13 +192,54 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        // Clip ids in the previous scene's primitives point into `prev_scene.clips`,
+        // so the referenced nodes (and their rounded-clip chains) must be copied into
+        // this scene and the ids rewritten.
+        let mut clip_id_map = FxHashMap::default();
         for operation in &prev_scene.paint_operations[range] {
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    let clip_id =
+                        self.import_clip(prev_scene, primitive.clip_id(), &mut clip_id_map);
+                    *primitive.clip_id_mut() = clip_id;
+                    self.insert_primitive(primitive);
+                }
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    /// Copy a clip node (and, transitively, its rounded-clip chain) from another scene
+    /// into this one, returning the node's id in this scene.
+    fn import_clip(
+        &mut self,
+        prev_scene: &Scene,
+        clip_id: u32,
+        clip_id_map: &mut FxHashMap<u32, u32>,
+    ) -> u32 {
+        if clip_id == ClipNode::NONE {
+            return ClipNode::NONE;
+        }
+        if let Some(&new_id) = clip_id_map.get(&clip_id) {
+            return new_id;
+        }
+        let Some(node) = prev_scene.clips.get(clip_id as usize).copied() else {
+            debug_assert!(false, "replayed primitive references invalid clip id");
+            return ClipNode::NONE;
+        };
+        // Insert the node before resolving its links so that a `rounded_head`
+        // pointing back at the node itself terminates via the map.
+        let new_id = self.insert_clip(node);
+        clip_id_map.insert(clip_id, new_id);
+        let rounded_head = self.import_clip(prev_scene, node.rounded_head, clip_id_map);
+        let parent_rounded = self.import_clip(prev_scene, node.parent_rounded, clip_id_map);
+        if let Some(node) = self.clips.get_mut(new_id as usize) {
+            node.rounded_head = rounded_head;
+            node.parent_rounded = parent_rounded;
+        }
+        new_id
     }
 
     pub fn finish(&mut self) {
@@ -245,16 +339,29 @@ impl Primitive {
         }
     }
 
-    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
+    pub fn clip_id(&self) -> u32 {
         match self {
-            Primitive::Shadow(shadow) => &shadow.content_mask,
-            Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::Path(path) => &path.content_mask,
-            Primitive::Underline(underline) => &underline.content_mask,
-            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
-            Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
-            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
-            Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::Shadow(shadow) => shadow.clip_id,
+            Primitive::Quad(quad) => quad.clip_id,
+            Primitive::Path(path) => path.clip_id,
+            Primitive::Underline(underline) => underline.clip_id,
+            Primitive::MonochromeSprite(sprite) => sprite.clip_id,
+            Primitive::SubpixelSprite(sprite) => sprite.clip_id,
+            Primitive::PolychromeSprite(sprite) => sprite.clip_id,
+            Primitive::Surface(surface) => surface.clip_id,
+        }
+    }
+
+    pub fn clip_id_mut(&mut self) -> &mut u32 {
+        match self {
+            Primitive::Shadow(shadow) => &mut shadow.clip_id,
+            Primitive::Quad(quad) => &mut quad.clip_id,
+            Primitive::Path(path) => &mut path.clip_id,
+            Primitive::Underline(underline) => &mut underline.clip_id,
+            Primitive::MonochromeSprite(sprite) => &mut sprite.clip_id,
+            Primitive::SubpixelSprite(sprite) => &mut sprite.clip_id,
+            Primitive::PolychromeSprite(sprite) => &mut sprite.clip_id,
+            Primitive::Surface(surface) => &mut surface.clip_id,
         }
     }
 }
@@ -502,7 +609,8 @@ pub struct Quad {
     pub order: DrawOrder,
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip_id: u32,
+    pub pad: u32, // keep size a multiple of 8 bytes for WGSL struct layout
     pub background: Background,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
@@ -520,9 +628,8 @@ impl From<Quad> for Primitive {
 #[expect(missing_docs)]
 pub struct Underline {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub clip_id: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub thickness: ScaledPixels,
     pub wavy: PaddedBool32,
@@ -542,13 +649,12 @@ pub struct Shadow {
     pub blur_radius: ScaledPixels,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub element_bounds: Bounds<ScaledPixels>,
     pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub pad: u32, // align to 8 bytes
+    pub clip_id: u32,
 }
 
 impl From<Shadow> for Primitive {
@@ -676,9 +782,8 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    pub clip_id: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
     pub transformation: TransformationMatrix,
@@ -695,9 +800,8 @@ impl From<MonochromeSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct SubpixelSprite {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub clip_id: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
     pub transformation: TransformationMatrix,
@@ -714,11 +818,10 @@ impl From<SubpixelSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    pub clip_id: u32,
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
 }
@@ -734,7 +837,7 @@ impl From<PolychromeSprite> for Primitive {
 pub struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
-    pub content_mask: ContentMask<ScaledPixels>,
+    pub clip_id: u32,
     #[cfg(target_os = "macos")]
     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
 }
@@ -756,7 +859,12 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub id: PathId,
     pub order: DrawOrder,
     pub bounds: Bounds<P>,
+    /// The folded rectangular clip that was active when the path was painted. Paths
+    /// aren't uploaded to the GPU as-is, so unlike other primitives they retain their
+    /// rectangular mask inline in addition to referencing a clip node via `clip_id`
+    /// (which carries the rounded-clip chain, if any).
     pub content_mask: ContentMask<P>,
+    pub clip_id: u32,
     pub vertices: Vec<PathVertex<P>>,
     pub color: Background,
     start: Point<P>,
@@ -778,6 +886,7 @@ impl Path<Pixels> {
                 size: Default::default(),
             },
             content_mask: Default::default(),
+            clip_id: 0,
             color: Default::default(),
             contour_count: 0,
         }
@@ -790,6 +899,7 @@ impl Path<Pixels> {
             order: self.order,
             bounds: self.bounds.scale(factor),
             content_mask: self.content_mask.scale(factor),
+            clip_id: self.clip_id,
             vertices: self
                 .vertices
                 .iter()
@@ -862,17 +972,14 @@ impl Path<Pixels> {
         self.vertices.push(PathVertex {
             xy_position: xy.0,
             st_position: st.0,
-            content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.1,
             st_position: st.1,
-            content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.2,
             st_position: st.2,
-            content_mask: Default::default(),
         });
     }
 }
@@ -900,7 +1007,6 @@ impl From<Path<ScaledPixels>> for Primitive {
 pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
     pub xy_position: Point<P>,
     pub st_position: Point<f32>,
-    pub content_mask: ContentMask<P>,
 }
 
 #[expect(missing_docs)]
@@ -909,7 +1015,84 @@ impl PathVertex<Pixels> {
         PathVertex {
             xy_position: self.xy_position.scale(factor),
             st_position: self.st_position,
-            content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: point(ScaledPixels(x), ScaledPixels(y)),
+            size: crate::size(ScaledPixels(width), ScaledPixels(height)),
+        }
+    }
+
+    fn quad(clip_id: u32, quad_bounds: Bounds<ScaledPixels>) -> Quad {
+        Quad {
+            order: 0,
+            border_style: Default::default(),
+            bounds: quad_bounds,
+            clip_id,
+            pad: 0,
+            background: Default::default(),
+            border_color: Default::default(),
+            corner_radii: Default::default(),
+            border_widths: Default::default(),
+        }
+    }
+
+    #[test]
+    fn replay_remaps_clip_chains() {
+        let mut prev_scene = Scene::default();
+        // A rectangular root and a rounded child clip, forming a chain.
+        let root = prev_scene.insert_clip(ClipNode {
+            folded_bounds: bounds(0., 0., 100., 100.),
+            rounded_bounds: Default::default(),
+            corner_radii: Default::default(),
+            rounded_head: ClipNode::NONE,
+            parent_rounded: ClipNode::NONE,
+        });
+        let rounded = prev_scene.insert_clip(ClipNode {
+            folded_bounds: bounds(10., 10., 50., 50.),
+            rounded_bounds: bounds(10., 10., 50., 50.),
+            corner_radii: Corners::all(ScaledPixels(8.)),
+            rounded_head: 1,
+            parent_rounded: ClipNode::NONE,
+        });
+        assert_eq!(rounded, 1);
+        prev_scene.insert_primitive(quad(root, bounds(0., 0., 100., 100.)));
+        prev_scene.insert_primitive(quad(rounded, bounds(10., 10., 50., 50.)));
+
+        // Replaying into a scene that already has clip nodes must rewrite the
+        // replayed primitives' clip ids.
+        let mut next_scene = Scene::default();
+        for _ in 0..3 {
+            next_scene.insert_clip(ClipNode {
+                folded_bounds: bounds(0., 0., 1., 1.),
+                rounded_bounds: Default::default(),
+                corner_radii: Default::default(),
+                rounded_head: ClipNode::NONE,
+                parent_rounded: ClipNode::NONE,
+            });
+        }
+        next_scene.replay(0..prev_scene.len(), &prev_scene);
+
+        assert_eq!(next_scene.quads.len(), 2);
+        let replayed_root_quad = &next_scene.quads[0];
+        let replayed_rounded_quad = &next_scene.quads[1];
+
+        let root_node = next_scene.clips[replayed_root_quad.clip_id as usize];
+        assert_eq!(root_node.folded_bounds, bounds(0., 0., 100., 100.));
+        assert_eq!(root_node.rounded_head, ClipNode::NONE);
+
+        let rounded_node = next_scene.clips[replayed_rounded_quad.clip_id as usize];
+        assert_eq!(rounded_node.folded_bounds, bounds(10., 10., 50., 50.));
+        assert_eq!(rounded_node.corner_radii, Corners::all(ScaledPixels(8.)));
+        // The self-referential rounded head must point at the node's new id.
+        assert_eq!(rounded_node.rounded_head, replayed_rounded_quad.clip_id);
+        assert_eq!(rounded_node.parent_rounded, ClipNode::NONE);
     }
 }

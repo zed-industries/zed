@@ -527,6 +527,7 @@ impl StickyHeaderLine {
                         + point(Pixels::ZERO, self.offset),
                     size(available_text_width, line_height),
                 ),
+                ..Default::default()
             }),
             |window| {
                 self.line.draw_with_custom_offset(
