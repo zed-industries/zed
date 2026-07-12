@@ -2305,20 +2305,7 @@ impl MultiBuffer {
     }
 
     pub fn single_hunk_is_expanded(&self, range: Range<Anchor>, cx: &App) -> bool {
-        let snapshot = self.read(cx);
-        let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
-        let offset_range = range.to_offset(&snapshot);
-        cursor.seek(&offset_range.start, Bias::Left);
-        while let Some(item) = cursor.item() {
-            if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
-                break;
-            }
-            if item.hunk_info().is_some() {
-                return true;
-            }
-            cursor.next();
-        }
-        false
+        self.read(cx).single_hunk_is_expanded(range)
     }
 
     pub fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<Anchor>], cx: &App) -> bool {
@@ -3488,11 +3475,12 @@ impl MultiBufferSnapshot {
             let staged_added = if is_inverted {
                 vec![]
             } else {
-                let row_offset = range.start.row - hunk.range.start.row;
+                let hunk_start_row = hunk.range.start.row;
                 hunk.staged_added
                     .iter()
                     .map(|r| {
-                        MultiBufferRow(r.start + row_offset)..MultiBufferRow(r.end + row_offset)
+                        MultiBufferRow(range.start.row + (r.start - hunk_start_row))
+                            ..MultiBufferRow(range.start.row + (r.end - hunk_start_row))
                     })
                     .collect()
             };
@@ -6510,6 +6498,22 @@ impl MultiBufferSnapshot {
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
         self.all_diff_hunks_expanded
+    }
+
+    pub fn single_hunk_is_expanded(&self, range: Range<Anchor>) -> bool {
+        let mut cursor = self.diff_transforms.cursor::<MultiBufferOffset>(());
+        let offset_range = range.to_offset(self);
+        cursor.seek(&offset_range.start, Bias::Left);
+        while let Some(item) = cursor.item() {
+            if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
+                break;
+            }
+            if item.hunk_info().is_some() {
+                return true;
+            }
+            cursor.next();
+        }
+        false
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. The

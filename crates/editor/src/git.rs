@@ -251,6 +251,10 @@ pub(super) enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         word_diffs: Vec<Range<MultiBufferOffset>>,
+        staged_added: Vec<Range<DisplayRow>>,
+        staged_deleted: Vec<Range<u32>>,
+        deleted_lines: u32,
+        is_expanded: bool,
     },
 }
 
@@ -2904,6 +2908,46 @@ impl EditorSnapshot {
                     }
                     let is_created_file = hunk.is_created_file();
                     let multi_buffer_range = hunk.multi_buffer_range.clone();
+                    let is_expanded = self
+                        .buffer_snapshot()
+                        .single_hunk_is_expanded(multi_buffer_range.clone());
+                    let deleted_lines = if let Some(base) = self
+                        .buffer_snapshot()
+                        .diff_for_buffer_id(hunk.buffer_id)
+                        .map(|diff| diff.base_text())
+                    {
+                        let start = hunk.diff_base_byte_range.start.0;
+                        let end = hunk.diff_base_byte_range.end.0;
+                        let start_point = base.offset_to_point(start);
+                        let end_point = base.offset_to_point(end);
+
+                        let span = buffer_diff::base_row_span(
+                            &base.text,
+                            &(start..end),
+                            &(start_point..end_point),
+                        );
+                        span.end - span.start
+                    } else {
+                        0
+                    };
+
+                    let staged_added = hunk
+                        .staged_added
+                        .iter()
+                        .map(|range| {
+                            self.point_to_display_point(
+                                MultiBufferPoint::new(range.start.0, 0),
+                                Bias::Left,
+                            )
+                            .row()
+                                ..self
+                                    .point_to_display_point(
+                                        MultiBufferPoint::new(range.end.0, 0),
+                                        Bias::Left,
+                                    )
+                                    .row()
+                        })
+                        .collect();
 
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
@@ -2913,6 +2957,10 @@ impl EditorSnapshot {
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range,
                         is_created_file,
+                        staged_added,
+                        staged_deleted: hunk.staged_deleted.clone(),
+                        deleted_lines,
+                        is_expanded,
                     }
                 };
 

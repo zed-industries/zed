@@ -2417,7 +2417,7 @@ fn buffer_row_span(range: &Range<Point>) -> Range<u32> {
 /// Absolute base-text row span of a hunk's deleted range. The base text is
 /// offset-addressed, so "does this end on a line boundary" is a trailing-newline
 /// test rather than the buffer side's column check.
-fn base_row_span(
+pub fn base_row_span(
     base_text: &text::BufferSnapshot,
     bytes: &Range<usize>,
     points: &Range<Point>,
