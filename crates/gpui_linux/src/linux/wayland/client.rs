@@ -843,6 +843,10 @@ impl LinuxClient for WaylandClient {
         None
     }
 
+    fn can_position_windows(&self) -> bool {
+        false
+    }
+
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,

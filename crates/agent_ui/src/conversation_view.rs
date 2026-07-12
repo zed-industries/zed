@@ -2927,7 +2927,12 @@ impl ConversationView {
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
-                if let Some(primary) = cx.primary_display() {
+                // There is no primary display on Wayland; fall back to any display so the
+                // default setting still produces a notification there.
+                if let Some(screen) = cx
+                    .primary_display()
+                    .or_else(|| cx.displays().into_iter().next())
+                {
                     self.pop_up(
                         icon,
                         caption.into(),
@@ -2936,14 +2941,22 @@ impl ConversationView {
                         root_work_dirs,
                         root_title,
                         window,
-                        primary,
+                        screen,
                         cx,
                     );
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
                 let caption = caption.into();
-                for screen in cx.displays() {
+                // When the platform doesn't let us choose which display a window opens on
+                // (Wayland), per-screen popups would all land on the same screen and appear
+                // as duplicate notifications, so only open one.
+                let screens = if cx.can_position_windows() {
+                    cx.displays()
+                } else {
+                    cx.displays().into_iter().take(1).collect()
+                };
+                for screen in screens {
                     self.pop_up(
                         icon,
                         caption.clone(),

@@ -137,6 +137,13 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    /// Whether the platform honors `WindowOptions::display_id` and the requested window bounds,
+    /// allowing windows to be programmatically placed on a chosen display. On Wayland the
+    /// compositor controls placement of regular windows, so windows opened for a specific
+    /// display may all end up on the same screen.
+    fn can_position_windows(&self) -> bool {
+        true
+    }
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None

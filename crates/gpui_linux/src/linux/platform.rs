@@ -54,6 +54,9 @@ pub(crate) trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn can_position_windows(&self) -> bool {
+        true
+    }
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
@@ -349,6 +352,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.inner.displays()
+    }
+
+    fn can_position_windows(&self) -> bool {
+        self.inner.can_position_windows()
     }
 
     #[cfg(feature = "screen-capture")]
