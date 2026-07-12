@@ -796,13 +796,9 @@ impl EditorElement {
         }
 
         let point_for_position = position_map.point_for_position(event.position);
-        mouse_context_menu::deploy_context_menu(
-            editor,
-            Some(event.position),
-            point_for_position.nearest_valid,
-            window,
-            cx,
-        );
+        // Dispatch as an action so keybindings (including mouse bindings from PR #55216)
+        // can intercept or layer on top of the default right-click context menu.
+        window.dispatch_action(Box::new(ShowContextMenuAtMouse), cx);
         cx.stop_propagation();
     }
 

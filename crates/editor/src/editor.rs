@@ -10359,6 +10359,33 @@ impl Editor {
         mouse_context_menu::deploy_context_menu(self, None, position, window, cx);
     }
 
+    /// Shows the context menu at the current mouse position.
+    /// This is the action dispatched by right-click in the editor, so users can
+    /// remap or layer additional actions on right-click via keybindings
+    /// (e.g. `rightclick: ["editor::ShowContextMenuAtMouse", "workspace::Save"]`).
+    pub fn show_context_menu_at_mouse(
+        &mut self,
+        _: &ShowContextMenuAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return;
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return;
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        mouse_context_menu::deploy_context_menu(
+            self,
+            Some(mouse_position),
+            point_for_position.nearest_valid,
+            window,
+            cx,
+        );
+    }
+
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
     }

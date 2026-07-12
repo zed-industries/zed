@@ -711,6 +711,9 @@ actions!(
         ViewBookmarks,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
+        /// Opens the context menu at mouse position. Intended for right-click binding
+        /// so users can remap or layer actions on right-click via keybindings.
+        ShowContextMenuAtMouse,
         /// Opens excerpts from the current file.
         OpenExcerpts,
         /// Opens excerpts in a split pane.
