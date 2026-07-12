@@ -22,8 +22,8 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    ExternalPaths, FocusHandle, Focusable, FontWeight, Global, Hsla, InteractiveElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
@@ -90,6 +90,7 @@ use crate::{
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
+const PROJECT_PANEL_CLIPBOARD_METADATA: &str = "zed-project-panel-clipboard-v1";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 struct VisibleEntriesForWorktree {
@@ -149,7 +150,6 @@ pub struct ProjectPanel {
     selection: Option<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
-    clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
@@ -235,11 +235,27 @@ impl EditState {
     }
 }
 
-#[derive(Clone, Debug)]
-enum ClipboardEntry {
-    Copied(BTreeSet<SelectedEntry>),
-    Cut(BTreeSet<SelectedEntry>),
+#[derive(Clone, Copy, Debug)]
+enum ClipboardOperation {
+    Copy,
+    Cut,
 }
+
+#[derive(Clone, Debug)]
+struct ClipboardEntry {
+    operation: ClipboardOperation,
+    source_project: WeakEntity<Project>,
+    items: BTreeSet<SelectedEntry>,
+    source_paths: Vec<PathBuf>,
+    system_clipboard_text: String,
+}
+
+#[derive(Default)]
+struct ProjectPanelClipboard {
+    entry: Option<ClipboardEntry>,
+}
+
+impl Global for ProjectPanelClipboard {}
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 struct DiagnosticCount {
@@ -461,6 +477,8 @@ impl FoldedAncestors {
 }
 
 pub fn init(cx: &mut App) {
+    cx.set_global(ProjectPanelClipboard::default());
+
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
@@ -809,6 +827,11 @@ impl ProjectPanel {
             })
             .detach();
 
+            cx.observe_global::<ProjectPanelClipboard>(|_, cx| {
+                cx.notify();
+            })
+            .detach();
+
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
@@ -852,7 +875,6 @@ impl ProjectPanel {
                 selection: None,
                 context_menu: None,
                 filename_editor,
-                clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 diagnostics: Default::default(),
@@ -3267,19 +3289,23 @@ impl ProjectPanel {
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries_excluding_roots(cx);
-        if !entries.is_empty() {
-            self.write_entries_to_system_clipboard(&entries, cx);
-            self.clipboard = Some(ClipboardEntry::Cut(entries));
-            cx.notify();
+        if let Some(clipboard_entry) =
+            self.build_clipboard_entry(entries, ClipboardOperation::Cut, cx)
+        {
+            cx.update_global::<ProjectPanelClipboard, _>(|clipboard, _| {
+                clipboard.entry = Some(clipboard_entry);
+            });
         }
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_effective_entries_excluding_roots(cx);
-        if !entries.is_empty() {
-            self.write_entries_to_system_clipboard(&entries, cx);
-            self.clipboard = Some(ClipboardEntry::Copied(entries));
-            cx.notify();
+        if let Some(clipboard_entry) =
+            self.build_clipboard_entry(entries, ClipboardOperation::Copy, cx)
+        {
+            cx.update_global::<ProjectPanelClipboard, _>(|clipboard, _| {
+                clipboard.entry = Some(clipboard_entry);
+            });
         }
     }
 
@@ -3348,7 +3374,11 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
+        let system_clipboard = cx.read_from_clipboard();
+        if let Some(external_paths) = system_clipboard
+            .as_ref()
+            .and_then(Self::external_paths_from_clipboard)
+        {
             let target_entry_id = self
                 .selection
                 .map(|s| s.entry_id)
@@ -3359,14 +3389,38 @@ impl ProjectPanel {
             return;
         }
 
+        let Some(clipboard_entries) = self
+            .current_project_panel_clipboard_entry(system_clipboard.as_ref(), cx)
+            .filter(|clipboard| !clipboard.items().is_empty())
+            .cloned()
+        else {
+            return;
+        };
+
+        let clipboard_entries = if clipboard_entries.is_from_project(&self.project) {
+            clipboard_entries
+        } else if let Some(remapped_entries) = clipboard_entries.remap_to_project(&self.project, cx)
+        {
+            remapped_entries
+        } else {
+            if clipboard_entries.is_cut() {
+                return;
+            }
+            let target_entry_id = self
+                .selection
+                .map(|selection| selection.entry_id)
+                .or(self.state.last_worktree_root_id);
+            let source_paths = clipboard_entries.resolve_source_paths(cx);
+            if let (Some(target_entry_id), Some(source_paths)) = (target_entry_id, source_paths) {
+                self.drop_external_files(&source_paths, target_entry_id, window, cx);
+            }
+            return;
+        };
+
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self
-                .clipboard
-                .as_ref()
-                .filter(|clipboard| !clipboard.items().is_empty())?;
 
             enum PasteTask {
                 Rename {
@@ -3484,7 +3538,7 @@ impl ProjectPanel {
 
             if clip_is_cut {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
+                Self::convert_project_panel_clipboard_to_copy(cx);
             }
 
             self.expand_entry(worktree_id, entry.id, cx);
@@ -4095,30 +4149,49 @@ impl ProjectPanel {
         Some(worktree.absolutize(&root_entry.path))
     }
 
-    fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
-        let project = self.project.read(cx);
-        let paths: Vec<String> = entries
-            .iter()
-            .filter_map(|entry| {
-                let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                let worktree = worktree.read(cx);
-                let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
-                Some(
-                    worktree
-                        .abs_path()
-                        .join(worktree_entry.path.as_std_path())
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            })
-            .collect();
-        if !paths.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
+    fn build_clipboard_entry(
+        &self,
+        entries: BTreeSet<SelectedEntry>,
+        operation: ClipboardOperation,
+        cx: &mut App,
+    ) -> Option<ClipboardEntry> {
+        if entries.is_empty() {
+            return None;
         }
+
+        let source_paths = {
+            let project = self.project.read(cx);
+            entries
+                .iter()
+                .map(|entry| {
+                    let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                    let worktree = worktree.read(cx);
+                    let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
+                    Some(worktree.abs_path().join(worktree_entry.path.as_std_path()))
+                })
+                .collect::<Option<Vec<_>>>()?
+        };
+
+        let system_clipboard_text = source_paths
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            system_clipboard_text.clone(),
+            PROJECT_PANEL_CLIPBOARD_METADATA.to_string(),
+        ));
+
+        Some(ClipboardEntry {
+            operation,
+            source_project: self.project.downgrade(),
+            items: entries,
+            source_paths,
+            system_clipboard_text,
+        })
     }
 
-    fn external_paths_from_system_clipboard(&self, cx: &App) -> Option<ExternalPaths> {
-        let clipboard_item = cx.read_from_clipboard()?;
+    fn external_paths_from_clipboard(clipboard_item: &ClipboardItem) -> Option<ExternalPaths> {
         for entry in clipboard_item.entries() {
             if let GpuiClipboardEntry::ExternalPaths(paths) = entry {
                 if !paths.paths().is_empty() {
@@ -4130,14 +4203,30 @@ impl ProjectPanel {
     }
 
     fn has_pasteable_content(&self, cx: &App) -> bool {
-        if self
-            .clipboard
-            .as_ref()
-            .is_some_and(|c| !c.items().is_empty())
-        {
-            return true;
-        }
-        self.external_paths_from_system_clipboard(cx).is_some()
+        let system_clipboard = cx.read_from_clipboard();
+        self.current_project_panel_clipboard_entry(system_clipboard.as_ref(), cx)
+            .is_some_and(|entry| entry.can_paste_in_project(&self.project, cx))
+            || system_clipboard
+                .as_ref()
+                .and_then(Self::external_paths_from_clipboard)
+                .is_some()
+    }
+
+    fn current_project_panel_clipboard_entry<'a>(
+        &self,
+        system_clipboard: Option<&ClipboardItem>,
+        cx: &'a App,
+    ) -> Option<&'a ClipboardEntry> {
+        let entry = cx.global::<ProjectPanelClipboard>().entry.as_ref()?;
+        entry
+            .matches_system_clipboard(system_clipboard?)
+            .then_some(entry)
+    }
+
+    fn convert_project_panel_clipboard_to_copy(cx: &mut App) {
+        cx.update_global::<ProjectPanelClipboard, _>(|clipboard, _| {
+            clipboard.entry = clipboard.entry.take().map(ClipboardEntry::into_copy_entry);
+        });
     }
 
     fn selected_entry_handle<'a>(
@@ -6515,10 +6604,15 @@ impl ProjectPanel {
         let filename_text_color =
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
-        let is_cut = self
-            .clipboard
+        let is_cut = cx
+            .global::<ProjectPanelClipboard>()
+            .entry
             .as_ref()
-            .is_some_and(|e| e.is_cut() && e.items().contains(&selection));
+            .is_some_and(|entry| {
+                entry.is_from_project(&self.project)
+                    && entry.is_cut()
+                    && entry.items().contains(&selection)
+            });
 
         EntryDetails {
             filename,
@@ -7618,20 +7712,77 @@ impl Focusable for ProjectPanel {
 
 impl ClipboardEntry {
     fn is_cut(&self) -> bool {
-        matches!(self, Self::Cut { .. })
+        matches!(self.operation, ClipboardOperation::Cut)
     }
 
     fn items(&self) -> &BTreeSet<SelectedEntry> {
-        match self {
-            ClipboardEntry::Copied(entries) | ClipboardEntry::Cut(entries) => entries,
-        }
+        &self.items
     }
 
-    fn into_copy_entry(self) -> Self {
-        match self {
-            ClipboardEntry::Copied(_) => self,
-            ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),
+    fn is_from_project(&self, project: &Entity<Project>) -> bool {
+        self.source_project.entity_id() == project.entity_id()
+    }
+
+    fn can_paste_in_project(&self, project: &Entity<Project>, cx: &App) -> bool {
+        !self.is_cut()
+            || self.is_from_project(project)
+            || self.remap_to_project(project, cx).is_some()
+    }
+
+    fn matches_system_clipboard(&self, clipboard_item: &ClipboardItem) -> bool {
+        if clipboard_item.text().as_deref() != Some(self.system_clipboard_text.as_str()) {
+            return false;
         }
+
+        clipboard_item.metadata().map(String::as_str) == Some(PROJECT_PANEL_CLIPBOARD_METADATA)
+    }
+
+    fn remap_to_project(&self, target_project: &Entity<Project>, cx: &App) -> Option<Self> {
+        let source_paths = self.resolve_source_paths(cx)?;
+        let items = {
+            let project = target_project.read(cx);
+            let mut items = BTreeSet::new();
+            for source_path in &source_paths {
+                let project_path = project.project_path_for_absolute_path(source_path, cx)?;
+                let entry = project.entry_for_path(&project_path, cx)?;
+                items.insert(SelectedEntry {
+                    worktree_id: project_path.worktree_id,
+                    entry_id: entry.id,
+                });
+            }
+            items
+        };
+        if items.len() != source_paths.len() {
+            return None;
+        }
+
+        Some(Self {
+            operation: self.operation,
+            source_project: target_project.downgrade(),
+            items,
+            source_paths,
+            system_clipboard_text: self.system_clipboard_text.clone(),
+        })
+    }
+
+    fn resolve_source_paths(&self, cx: &App) -> Option<Vec<PathBuf>> {
+        let Some(source_project) = self.source_project.upgrade() else {
+            return Some(self.source_paths.clone());
+        };
+
+        let project = source_project.read(cx);
+        self.items
+            .iter()
+            .map(|item| {
+                let project_path = project.path_for_entry(item.entry_id, cx)?;
+                project.absolute_path(&project_path, cx)
+            })
+            .collect()
+    }
+
+    fn into_copy_entry(mut self) -> Self {
+        self.operation = ClipboardOperation::Copy;
+        self
     }
 }
 
