@@ -1062,7 +1062,7 @@ fn open_preview_path_with_position(
                 workspace.open_abs_path(
                     path_with_position.path.clone(),
                     OpenOptions {
-                        visible: Some(OpenVisible::OnlyDirectories),
+                        visible: Some(OpenVisible::None),
                         ..Default::default()
                     },
                     window,
@@ -1832,21 +1832,29 @@ mod tests {
         let scala_text = (1..=45)
             .map(|line| format!("line {line}\n"))
             .collect::<String>();
-        let multi_workspace = open_markdown_link_test_workspace(
-            json!({
-                "docs": {
-                    "readme.md": "[source](../src/Foo.scala:42)\n"
-                },
-                "src": {
-                    "Foo.scala": scala_text,
-                    "Bar.scala": "first\naéøbc\nlast\n"
-                },
-                "tel": "not a phone number\n",
-                "tel:123": "literal filename\n"
-            }),
-            cx,
-        )
-        .await;
+        let files = json!({
+            "docs": {
+                "readme.md": "[source](../src/Foo.scala:42)\n"
+            },
+            "src": {
+                "Foo.scala": scala_text,
+                "Bar.scala": "first\naéøbc\nlast\n"
+            },
+            "tel": "not a phone number\n"
+        });
+        #[cfg(not(target_os = "windows"))]
+        let files = {
+            let mut files = files;
+            assert!(
+                files
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("tel:123".to_string(), json!("literal filename\n"))
+                    .is_none()
+            );
+            files
+        };
+        let multi_workspace = open_markdown_link_test_workspace(files, cx).await;
 
         open_markdown_link(&multi_workspace, "tel:123", cx);
         assert_eq!(cx.opened_url(), Some("tel:123".to_string()));
