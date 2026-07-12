@@ -277,6 +277,7 @@ actions!(
     [
         /// Toggles Vim mode on or off.
         ToggleVimMode,
+        // --- FIX BY Ludwig AC ---
         /// Toggles Helix mode on or off.
         ToggleHelixMode,
     ]

@@ -24,6 +24,7 @@ impl VimModeSetting {
     }
 }
 
+// --- FIX BY Ludwig AC ---
 #[derive(RegisterSetting)]
 pub struct HelixModeSetting(pub bool);
 
