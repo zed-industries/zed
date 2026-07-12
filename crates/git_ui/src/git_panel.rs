@@ -3477,7 +3477,9 @@ impl GitPanel {
                         FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
                     };
                     match remote_message {
-                        Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                        Ok(remote_message) => {
+                            this.show_remote_output(action, remote_message, false, cx)
+                        }
                         Err(e) => {
                             log::error!("Error while fetching {:?}", e);
                             this.show_error_toast(action.name(), e, cx)
@@ -3637,7 +3639,7 @@ impl GitPanel {
 
             let action = RemoteAction::Pull(remote);
             this.update(cx, |this, cx| match remote_message {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                Ok(remote_message) => this.show_remote_output(action, remote_message, false, cx),
                 Err(e) => {
                     log::error!("Error while pulling {:?}", e);
                     this.show_error_toast(action.name(), e, cx)
@@ -3716,17 +3718,18 @@ impl GitPanel {
                 this.askpass_delegate(format!("git push {}", remote.name), window, cx)
             })?;
 
+            let remote_branch_name: SharedString = branch
+                .upstream
+                .as_ref()
+                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .and_then(|upstream| upstream.branch_name())
+                .unwrap_or_else(|| branch.name())
+                .to_owned()
+                .into();
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
                     branch.name().to_owned().into(),
-                    branch
-                        .upstream
-                        .as_ref()
-                        .filter(|u| matches!(u.tracking, UpstreamTracking::Tracked(_)))
-                        .and_then(|u| u.branch_name())
-                        .unwrap_or_else(|| branch.name())
-                        .to_owned()
-                        .into(),
+                    remote_branch_name.clone(),
                     remote.name.clone(),
                     options,
                     askpass_delegate,
@@ -3735,10 +3738,25 @@ impl GitPanel {
             });
 
             let remote_output = push.await?;
+            let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
+            let pushed_to_default = default_branch
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                .is_some_and(|default_branch| {
+                    is_pushed_to_default_branch(
+                        &default_branch,
+                        &remote.name,
+                        &remote_branch_name,
+                    )
+                });
 
             let action = RemoteAction::Push(branch.name().to_owned().into(), remote);
             this.update(cx, |this, cx| match remote_output {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                Ok(remote_message) => {
+                    this.show_remote_output(action, remote_message, pushed_to_default, cx)
+                }
                 Err(e) => {
                     log::error!("Error while pushing {:?}", e);
                     this.show_error_toast(action.name(), e, cx)
@@ -4953,6 +4971,7 @@ impl GitPanel {
         &mut self,
         action: RemoteAction,
         info: RemoteCommandOutput,
+        pushed_to_default: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
@@ -4973,7 +4992,7 @@ impl GitPanel {
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 );
-                match (style, is_push) {
+                match (style, is_push && !pushed_to_default) {
                     (PushPrLink { label, url }, _) => {
                         this.action(label, move |_window, cx| cx.open_url(&url))
                     }
@@ -8564,6 +8583,14 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
     max_length > 0 && title.chars().count() > max_length
 }
 
+fn is_pushed_to_default_branch(
+    default_branch: &str,
+    remote_name: &str,
+    remote_branch_name: &str,
+) -> bool {
+    default_branch == format!("{remote_name}/{remote_branch_name}")
+}
+
 #[cfg(test)]
 mod tests {
     use git::{
@@ -8648,6 +8675,17 @@ mod tests {
         assert!(matches!(
             new_entries.first(),
             Some((GitListEntry::Directory(entry), _)) if entry.expanded
+        ));
+    }
+
+    #[test]
+    fn test_is_pushed_to_default_branch() {
+        assert!(is_pushed_to_default_branch("origin/main", "origin", "main"));
+        assert!(!is_pushed_to_default_branch("main", "origin", "main"));
+        assert!(!is_pushed_to_default_branch(
+            "origin/main",
+            "origin",
+            "feature"
         ));
     }
 
