@@ -1745,25 +1745,32 @@ mod tests {
             Picker::uniform_list(delegate, window, cx)
         });
 
-        // While the mode is off, clicks confirm just like in any picker,
-        // including secondary clicks.
+        // A plain click confirms just like in any picker.
         picker.update_in(cx, |picker, window, cx| {
             picker.handle_click(1, false, window, cx);
         });
         assert_eq!(confirmed_index.take(), Some(1));
-        picker.update_in(cx, |picker, window, cx| {
-            picker.handle_click(2, true, window, cx);
-        });
-        assert_eq!(confirmed_index.take(), Some(2));
         picker.update(cx, |picker, _cx| {
             assert_eq!(picker.delegate.selected_item_count(), 0);
         });
 
-        // While the mode is on, clicks toggle items instead of confirming.
+        // A secondary (cmd) click starts multi-select mode and toggles the
+        // clicked item into the selection instead of confirming.
         picker.update_in(cx, |picker, window, cx| {
-            picker.toggle_multi_select(&ToggleMultiSelect, window, cx);
+            picker.handle_click(2, true, window, cx);
+        });
+        assert_eq!(confirmed_index.take(), None, "cmd+click must not confirm");
+        picker.update(cx, |picker, _cx| {
+            assert!(
+                picker.select_instead_of_open,
+                "cmd+click should start multi-select mode"
+            );
+            assert!(picker.delegate.is_item_selected(2));
+        });
+
+        // While the mode is on, plain clicks toggle items too.
+        picker.update_in(cx, |picker, window, cx| {
             picker.handle_click(0, false, window, cx);
-            picker.handle_click(2, false, window, cx);
         });
         assert_eq!(
             confirmed_index.take(),
@@ -1780,7 +1787,7 @@ mod tests {
         picker.update_in(cx, |picker, window, cx| {
             picker.do_confirm(false, window, cx);
         });
-        assert_eq!(multi_confirmed.take(), Some(vec![0, 2]));
+        assert_eq!(multi_confirmed.take(), Some(vec![2, 0]));
         picker.update_in(cx, |picker, window, cx| {
             picker.handle_click(1, false, window, cx);
         });
