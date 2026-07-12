@@ -116,6 +116,8 @@ Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/p
 export const ZedBell = async () => {
   return {
     event: async ({ event }) => {
+      if (process.env.OPENCODE_CLIENT === "acp") return;
+
       if (event.type === "session.idle" || event.type === "permission.asked") {
         process.stdout.write("\x07");
       }
