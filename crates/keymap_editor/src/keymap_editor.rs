@@ -3668,7 +3668,7 @@ async fn save_keybinding_update(
         keyboard_mapper,
         deprecated_aliases,
     )
-    .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
+    .map_err(|err| err.context("Could not save updated keybinding"))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),

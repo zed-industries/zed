@@ -94,6 +94,8 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
+    pub(crate) is_resizable: bool,
+    pub(crate) is_minimizable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -262,6 +264,8 @@ impl WindowsWindowInner {
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
+            is_resizable: context.is_resizable,
+            is_minimizable: context.is_minimizable,
             executor: context.executor.clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
@@ -384,6 +388,8 @@ struct WindowCreateContext {
     hide_title_bar: bool,
     display: WindowsDisplay,
     is_movable: bool,
+    is_resizable: bool,
+    is_minimizable: bool,
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
@@ -405,6 +411,12 @@ impl WindowsWindow {
         params: WindowParams,
         creation_info: WindowCreationInfo,
     ) -> Result<Self> {
+        // Native popups are not implemented on Windows yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(popup::PopupNotSupportedError.into());
+        }
+
         let WindowCreationInfo {
             icon,
             executor,
@@ -487,6 +499,8 @@ impl WindowsWindow {
             hide_title_bar,
             display,
             is_movable: params.is_movable,
+            is_resizable: params.is_resizable,
+            is_minimizable: params.is_minimizable,
             min_size: params.window_min_size,
             executor,
             current_cursor,
@@ -1531,8 +1545,12 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             .log_err()
         {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
+            let Some(raw_set_window_composition_attribute) = GetProcAddress(user32, func_name)
+            else {
+                return;
+            };
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32, func_name));
+                std::mem::transmute(raw_set_window_composition_attribute);
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {
