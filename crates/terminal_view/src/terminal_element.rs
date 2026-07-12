@@ -1033,6 +1033,10 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     if matches!(self.terminal_view.read(cx).mode, TerminalMode::Standalone) {
+                        let should_anchor_to_bottom = {
+                            let content = self.terminal.read(cx).last_content();
+                            content.scrolled_to_bottom && content.bottom_row_occupied
+                        };
                         let scale_factor = window.scale_factor();
                         let line_height_pixels = px(line_height);
                         let line_height_device_px = (f32::from(line_height_pixels) * scale_factor)
@@ -1054,7 +1058,7 @@ impl Element for TerminalElement {
                         let padding = px(padding_device_px as f32 / scale_factor.max(1.0));
 
                         size.height = snapped_height;
-                        if self.terminal.read(cx).scrolled_to_bottom() {
+                        if should_anchor_to_bottom {
                             origin.y += padding;
                         }
                     }
