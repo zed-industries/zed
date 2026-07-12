@@ -206,6 +206,11 @@ fn git_panel_context_menu(
             .context(focus_handle.clone())
             .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
             .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
+            .action_disabled_when(
+                !has_tracked_changes,
+                "Restore All Changes",
+                RestoreTrackedFiles.boxed_clone(),
+            )
             .separator()
             .action_disabled_when(
                 !(has_new_changes || has_tracked_changes),
