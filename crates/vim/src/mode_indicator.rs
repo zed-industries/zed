@@ -145,8 +145,16 @@ impl Render for ModeIndicator {
             };
             (pending.into(), Some(mode))
         };
+
+        // A red recording dot in the status bar while a native macro (qa…q) records.
+        let is_recording = Vim::globals(cx).recording_register.is_some();
+        let recording_color = Color::Error.color(cx);
+
         h_flex()
             .gap_1()
+            .when(is_recording, |el| {
+                el.child(div().size_2().rounded_full().bg(recording_color))
+            })
             .when(!label.is_empty(), |el| {
                 el.child(
                     Label::new(label)
