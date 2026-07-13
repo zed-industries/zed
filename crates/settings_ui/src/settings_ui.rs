@@ -73,6 +73,9 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
 
+const SIDEBAR_WIDTH: Pixels = px(226.);
+const CONTENT_MIN_WIDTH: Pixels = px(400.);
+
 actions!(
     settings_editor,
     [
@@ -870,10 +873,11 @@ fn open_settings_editor_with(
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
                 window_min_size: Some(gpui::Size {
-                    // Don't make the settings window thinner than this,
-                    // otherwise, it gets unusable. Users with smaller res monitors
-                    // can customize the height, but not the width.
-                    width: px(900.0),
+                    // Do not make the settings window thinner than this,
+                    // otherwise, the space used to display the actual content
+                    // gets so small that certain sections grow too tall due
+                    // to intense text wrapping.
+                    width: SIDEBAR_WIDTH + CONTENT_MIN_WIDTH,
                     height: px(240.0),
                 }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
@@ -3134,7 +3138,7 @@ impl SettingsWindow {
                     cx,
                 );
             }))
-            .w_56()
+            .w(SIDEBAR_WIDTH)
             .h_full()
             .p_2p5()
             .when(cfg!(target_os = "macos"), |this| this.pt_10())
