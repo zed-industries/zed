@@ -105,6 +105,8 @@ extend-ignore-re = [
     # Abbreviation for foreignObject in mermaid SVG processing
     "fo",
     # Mermaid CSS class name for state diagram composites
-    "composit"
+    "composit",
+    # Used in truncating tests to ensure byte-length vs char like in café
+    "caf…"
 ]
 check-filename = true
