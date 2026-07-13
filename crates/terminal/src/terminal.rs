@@ -4571,10 +4571,7 @@ mod tests {
             ctrl_mouse_up_at(terminal, click_position, cx);
 
             assert!(
-                terminal
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
                 "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position in mouse mode"
             );
             assert!(
@@ -4612,10 +4609,7 @@ mod tests {
             ctrl_mouse_up_at(terminal, up_position, cx);
 
             assert!(
-                !terminal
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
                 "Should NOT open a link when press and release land on different hyperlinks"
             );
             let pty_writes = terminal.take_pty_write_log();
@@ -4639,10 +4633,7 @@ mod tests {
                 left_mouse_up_at(terminal, click_position, cx);
 
                 assert!(
-                    !terminal
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
                     "a plain click must not open a link"
                 );
                 let pty_writes = terminal.take_pty_write_log();
@@ -4670,10 +4661,7 @@ mod tests {
                 ctrl_mouse_up_at(terminal, click_position, cx);
 
                 assert!(
-                    !terminal
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
                     "a secondary click off a link must not open anything"
                 );
                 let pty_writes = terminal.take_pty_write_log();
@@ -4708,10 +4696,7 @@ mod tests {
                 ctrl_mouse_up_at(terminal, click_position, cx);
 
                 assert!(
-                    !terminal
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
                     "with the setting disabled, ctrl+click must not open links in mouse mode"
                 );
                 let pty_writes = terminal.take_pty_write_log();
@@ -4739,10 +4724,7 @@ mod tests {
                 ctrl_mouse_up_at(terminal, up_position, cx);
 
                 assert!(
-                    !terminal
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
                     "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
                 );
             });
