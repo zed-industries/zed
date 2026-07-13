@@ -8,7 +8,7 @@ use language_model_core::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
     LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
     TokenUsage,
-    util::{fix_streamed_json,is_context_window_exceeded_message, parse_tool_arguments},
+    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
