@@ -1222,7 +1222,7 @@ impl PickerDelegate for BranchListDelegate {
                 div().p_1p5().child(
                     Banner::new()
                         .severity(Severity::Warning)
-                        .child(div().min_w_0().flex_1().child(Label::new(message.clone()))),
+                        .child(div().min_w_0().flex_1().child(Label::new(message))),
                 )
             })
         };
