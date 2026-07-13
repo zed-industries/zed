@@ -10708,6 +10708,99 @@ mod tests {
     const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
         NavigationOverlayKey::unique::<PrimaryNavigationOverlay>();
 
+
+    fn navigation_overlay(
+        label_text: &'static str,
+        target_range: Range<Anchor>,
+        covered_text_range: Option<Range<Anchor>>,
+    ) -> NavigationTargetOverlay {
+        NavigationTargetOverlay {
+            target_range,
+            label: NavigationOverlayLabel {
+                text: SharedString::from(label_text),
+                text_color: Hsla::black(),
+                x_offset: Pixels::ZERO,
+                scale_factor: 1.0,
+            },
+            covered_text_range,
+        }
+    }
+
+    fn navigation_label_layouts(state: &EditorLayout) -> Vec<&NavigationLabelLayout> {
+        state
+            .navigation_overlay_paint_commands
+            .iter()
+            .map(|command| match command {
+                NavigationOverlayPaintCommand::Label(label) => label,
+            })
+            .collect()
+    }
+
+    const fn placeholder_hitbox() -> Hitbox {
+        use gpui::HitboxId;
+        let zero_bounds = Bounds {
+            origin: point(Pixels::ZERO, Pixels::ZERO),
+            size: Size {
+                width: Pixels::ZERO,
+                height: Pixels::ZERO,
+            },
+        };
+
+        Hitbox {
+            id: HitboxId::placeholder(),
+            bounds: zero_bounds,
+            content_mask: ContentMask {
+                bounds: zero_bounds,
+            },
+            behavior: HitboxBehavior::Normal,
+        }
+    }
+
+    fn test_gutter(line_height: Pixels, snapshot: &EditorSnapshot) -> Gutter<'_> {
+        const DIMENSIONS: GutterDimensions = GutterDimensions {
+            left_padding: Pixels::ZERO,
+            right_padding: Pixels::ZERO,
+            width: px(30.0),
+            margin: Pixels::ZERO,
+            git_blame_entries_width: None,
+        };
+        const EMPTY_ROW_INFO: RowInfo = RowInfo {
+            buffer_id: None,
+            buffer_row: None,
+            multibuffer_row: None,
+            diff_status: None,
+            expand_info: None,
+            wrapped_buffer_row: None,
+        };
+
+        const fn row_info(row: u32) -> RowInfo {
+            RowInfo {
+                buffer_row: Some(row),
+                ..EMPTY_ROW_INFO
+            }
+        }
+
+        const ROW_INFOS: [RowInfo; 6] = [
+            row_info(0),
+            row_info(1),
+            row_info(2),
+            row_info(3),
+            row_info(4),
+            row_info(5),
+        ];
+
+        const HITBOX: Hitbox = placeholder_hitbox();
+        Gutter {
+            line_height,
+            range: DisplayRow(0)..DisplayRow(6),
+            scroll_position: gpui::Point::default(),
+            dimensions: &DIMENSIONS,
+            hitbox: &HITBOX,
+            snapshot: snapshot,
+            row_infos: &ROW_INFOS,
+        }
+    }
+
     // Regression test for https://github.com/zed-industries/zed/issues/48141.
     #[gpui::test]
     fn test_selection_layout_around_inlay(cx: &mut TestAppContext) {
@@ -10821,98 +10914,6 @@ mod tests {
             display_point(10)..display_point(11)
         );
         assert_eq!(vim_reversed_at_right_anchored_inlay.head, display_point(10));
-    }
-
-    fn navigation_overlay(
-        label_text: &'static str,
-        target_range: Range<Anchor>,
-        covered_text_range: Option<Range<Anchor>>,
-    ) -> NavigationTargetOverlay {
-        NavigationTargetOverlay {
-            target_range,
-            label: NavigationOverlayLabel {
-                text: SharedString::from(label_text),
-                text_color: Hsla::black(),
-                x_offset: Pixels::ZERO,
-                scale_factor: 1.0,
-            },
-            covered_text_range,
-        }
-    }
-
-    fn navigation_label_layouts(state: &EditorLayout) -> Vec<&NavigationLabelLayout> {
-        state
-            .navigation_overlay_paint_commands
-            .iter()
-            .map(|command| match command {
-                NavigationOverlayPaintCommand::Label(label) => label,
-            })
-            .collect()
-    }
-
-    const fn placeholder_hitbox() -> Hitbox {
-        use gpui::HitboxId;
-        let zero_bounds = Bounds {
-            origin: point(Pixels::ZERO, Pixels::ZERO),
-            size: Size {
-                width: Pixels::ZERO,
-                height: Pixels::ZERO,
-            },
-        };
-
-        Hitbox {
-            id: HitboxId::placeholder(),
-            bounds: zero_bounds,
-            content_mask: ContentMask {
-                bounds: zero_bounds,
-            },
-            behavior: HitboxBehavior::Normal,
-        }
-    }
-
-    fn test_gutter(line_height: Pixels, snapshot: &EditorSnapshot) -> Gutter<'_> {
-        const DIMENSIONS: GutterDimensions = GutterDimensions {
-            left_padding: Pixels::ZERO,
-            right_padding: Pixels::ZERO,
-            width: px(30.0),
-            margin: Pixels::ZERO,
-            git_blame_entries_width: None,
-        };
-        const EMPTY_ROW_INFO: RowInfo = RowInfo {
-            buffer_id: None,
-            buffer_row: None,
-            multibuffer_row: None,
-            diff_status: None,
-            expand_info: None,
-            wrapped_buffer_row: None,
-        };
-
-        const fn row_info(row: u32) -> RowInfo {
-            RowInfo {
-                buffer_row: Some(row),
-                ..EMPTY_ROW_INFO
-            }
-        }
-
-        const ROW_INFOS: [RowInfo; 6] = [
-            row_info(0),
-            row_info(1),
-            row_info(2),
-            row_info(3),
-            row_info(4),
-            row_info(5),
-        ];
-
-        const HITBOX: Hitbox = placeholder_hitbox();
-        Gutter {
-            line_height,
-            range: DisplayRow(0)..DisplayRow(6),
-            scroll_position: gpui::Point::default(),
-            dimensions: &DIMENSIONS,
-            hitbox: &HITBOX,
-            snapshot: snapshot,
-            row_infos: &ROW_INFOS,
-        }
     }
 
     #[gpui::test]
