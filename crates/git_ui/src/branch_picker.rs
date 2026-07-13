@@ -42,7 +42,9 @@ actions!(
         /// Show only remote branches.
         ShowRemoteBranches,
         /// Cycle through branch filters.
-        CycleBranchFilter
+        CycleBranchFilter,
+        /// Toggles the branch filter menu.
+        ToggleFilterMenu
     ]
 );
 
@@ -488,6 +490,17 @@ impl Render for BranchList {
             .on_action(
                 cx.listener(|this, _: &branch_picker::CycleBranchFilter, window, cx| {
                     this.cycle_branch_filter(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &branch_picker::ToggleFilterMenu, window, cx| {
+                    let menu_handle = this
+                        .picker
+                        .read(cx)
+                        .delegate
+                        .branch_filter_menu_handle
+                        .clone();
+                    menu_handle.toggle(window, cx);
                 }),
             )
             .child(self.picker.clone())
