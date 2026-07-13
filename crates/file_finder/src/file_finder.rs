@@ -2,13 +2,14 @@
 mod file_finder_tests;
 #[cfg(test)]
 mod multi_select_tests;
+mod persistence;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use channel::ChannelStore;
 use client::ChannelId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -23,6 +24,7 @@ use open_path_prompt::{
     OpenPathPrompt,
     file_finder_settings::{FileFinderSettings, FileFinderWidth},
 };
+use persistence::FileFinderDb;
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
@@ -49,7 +51,7 @@ use util::{
 };
 use workspace::{
     ModalView, OpenChannelNotesById, OpenOptions, OpenVisible, SplitDirection, Workspace,
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
+    WorkspaceId, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -117,6 +119,7 @@ impl FileFinder {
     ) -> Task<()> {
         let project = workspace.project().read(cx);
         let fs = project.fs();
+        let workspace_id = workspace.database_id();
 
         let currently_opened_path = workspace.active_item(cx).and_then(|item| {
             let project_path = item.project_path(cx)?;
@@ -150,19 +153,34 @@ impl FileFinder {
             })
             .collect::<Vec<_>>();
         cx.spawn_in(window, async move |workspace, cx| {
-            let history_items = join_all(history_items).await.into_iter().flatten();
+            let mut history_items: Vec<FoundPath> = join_all(history_items)
+                .await
+                .into_iter()
+                .flatten()
+                .collect();
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
+
+                    if let Some(ws_id) = workspace_id {
+                        history_items.extend(fetch_persisted_items(
+                            &history_items,
+                            &project,
+                            ws_id,
+                            cx,
+                        ));
+                    }
+
                     workspace.toggle_modal(window, cx, |window, cx| {
                         let delegate = FileFinderDelegate::new(
                             cx.entity().downgrade(),
                             weak_workspace,
                             project,
                             currently_opened_path,
-                            history_items.collect(),
+                            history_items,
+                            workspace_id,
                             separate_history,
                             include_ignored,
                             window,
@@ -339,6 +357,37 @@ impl FileFinder {
     }
 }
 
+fn fetch_persisted_items(
+    history_items: &Vec<FoundPath>,
+    project: &Entity<Project>,
+    ws_id: WorkspaceId,
+    cx: &mut Context<'_, Workspace>,
+) -> Vec<FoundPath> {
+    let db = FileFinderDb::global(cx);
+    let additional = if let Some(db_paths) = db.recent_files(ws_id).log_err() {
+        let known_abs_paths: HashSet<PathBuf> =
+            history_items.iter().map(|fp| fp.absolute.clone()).collect();
+        let remaining = MAX_RECENT_SELECTIONS.saturating_sub(history_items.len());
+        db_paths
+            .into_iter()
+            .filter_map(|path_str| {
+                let abs_path = PathBuf::from(&path_str);
+                if known_abs_paths.contains(&abs_path) || !abs_path.exists() {
+                    return None;
+                }
+                let project_path = project
+                    .read(cx)
+                    .project_path_for_absolute_path(&abs_path, cx)?;
+                Some(FoundPath::new(project_path, abs_path))
+            })
+            .take(remaining)
+            .collect()
+    } else {
+        vec![]
+    };
+    additional
+}
+
 impl EventEmitter<DismissEvent> for FileFinder {}
 
 impl Focusable for FileFinder {
@@ -382,6 +431,7 @@ pub struct FileFinderDelegate {
     cancel_flag: Arc<AtomicBool>,
     search_in_flight: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
+    workspace_id: Option<WorkspaceId>,
     separate_history: bool,
     first_update: bool,
     focus_handle: FocusHandle,
@@ -963,6 +1013,7 @@ impl FileFinderDelegate {
         project: Entity<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
+        workspace_id: Option<WorkspaceId>,
         separate_history: bool,
         include_ignored: Option<bool>,
         window: &mut Window,
@@ -991,6 +1042,7 @@ impl FileFinderDelegate {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             search_in_flight: Arc::new(AtomicBool::new(false)),
             history_items,
+            workspace_id,
             separate_history,
             first_update: true,
             focus_handle: cx.focus_handle(),
@@ -1581,6 +1633,20 @@ impl FileFinderDelegate {
         // Focus the new item only when dismissing — this avoids stealing focus from the modal.
         // Always activate (make the tab current) so every opened file is visually reflected.
         let focus_item = dismiss_after_open;
+
+        // Persist the opened file so it survives restarts
+        if let (Some(workspace_id), Some(abs_path)) =
+            (self.workspace_id, m.abs_path(&self.project, cx))
+        {
+            let db = FileFinderDb::global(cx);
+            let path_str = abs_path.to_string_lossy().into_owned();
+            cx.background_spawn(async move {
+                db.record_file_access(workspace_id, path_str)
+                    .await
+                    .log_err();
+            })
+            .detach();
+        }
 
         let open_task = workspace.update(cx, |workspace, cx| {
             let split_or_open = |workspace: &mut Workspace,
