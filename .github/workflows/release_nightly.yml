@@ -8,6 +8,8 @@ on:
   schedule:
   - cron: 0 */4 * * *
   workflow_dispatch: {}
+permissions:
+  contents: read
 jobs:
   check_nightly_tag:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

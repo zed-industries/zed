@@ -1389,7 +1389,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_text("Hello!\nHow are you?\nBye", cx);
+        buffer.edit([(10..10, " are you?")], None, cx);
     });
 
     let mut response = model_response(&request, SIMPLE_DIFF);
@@ -1412,7 +1412,6 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         assert!(shown_predictions[0].editable_range.is_some());
     });
 
-    // prediction is reported as rejected
     let (reject_request, _) = requests.reject.next().await.unwrap();
 
     assert_eq!(
@@ -1422,6 +1421,75 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: Some("zeta2:test-interpolated-empty".to_string()),
+            e2e_latency_ms: Some(0),
+        }]
+    );
+}
+
+#[gpui::test]
+async fn test_interpolate_failed(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            EditPredictionRequestTrigger::Other,
+            cx,
+        );
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(10..10, " is it?")], None, cx);
+    });
+
+    let mut response = model_response(&request, SIMPLE_DIFF);
+    response.model_version = Some("zeta2:test-interpolate-failed".to_string());
+    let id = response.request_id.clone();
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        assert!(
+            ep_store
+                .prediction_at(&buffer, None, &project, cx)
+                .is_none()
+        );
+        assert!(ep_store.rateable_predictions().next().is_none());
+    });
+
+    let (reject_request, _) = requests.reject.next().await.unwrap();
+
+    assert_eq!(
+        &reject_request.rejections,
+        &[EditPredictionRejection {
+            request_id: id,
+            reason: EditPredictionRejectReason::InterpolateFailed,
+            was_shown: false,
+            model_version: Some("zeta2:test-interpolate-failed".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );

@@ -35,7 +35,8 @@ use futures::{
 };
 use futures::{StreamExt, stream};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, ReadGlobal as _, SharedString, Task,
+    WeakEntity,
 };
 use heck::ToSnakeCase as _;
 use language_model::{
@@ -606,7 +607,7 @@ impl AgentMessage {
                         "{}\n",
                         MarkdownCodeBlock {
                             tag: "json",
-                            text: &format!("{:#}", tool_use.input)
+                            text: &format!("{:#}", tool_use.input.to_display_json())
                         }
                     ));
                 }
@@ -1181,7 +1182,7 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub(crate) enum ThreadModel {
+pub enum ThreadModel {
     Ready(Arc<dyn LanguageModel>),
     Unresolved(SelectedModel),
     Unset,
@@ -1357,7 +1358,11 @@ impl Thread {
             .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
-        let model = model.map_or(ThreadModel::Unset, ThreadModel::Ready);
+        let model = match model {
+            Some(model) => ThreadModel::Ready(model),
+            None => Self::user_configured_model_selection(cx)
+                .map_or(ThreadModel::Unset, ThreadModel::Unresolved),
+        };
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -1588,7 +1593,7 @@ impl Thread {
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
                         .status(status)
-                        .raw_input(tool_use.input.clone()),
+                        .raw_input(tool_use.input.to_display_json()),
                 )))
                 .ok();
             let mut fields = acp::ToolCallUpdateFields::new()
@@ -1601,15 +1606,12 @@ impl Thread {
             return;
         };
 
-        let title = tool.initial_title(tool_use.input.clone(), cx);
+        let Ok(input) = tool_use.input.clone().into_json() else {
+            return;
+        };
+        let title = tool.initial_title(input.clone(), cx);
         let kind = tool.kind();
-        stream.send_tool_call(
-            &tool_use.id,
-            &tool_use.name,
-            title,
-            kind,
-            tool_use.input.clone(),
-        );
+        stream.send_tool_call(&tool_use.id, &tool_use.name, title, kind, input.clone());
 
         if let Some(content) = replay_content {
             stream.update_tool_call_fields(
@@ -1630,8 +1632,7 @@ impl Thread {
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
             );
-            tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
-                .log_err();
+            tool.replay(input, output, tool_event_stream, cx).log_err();
         }
 
         stream.update_tool_call_fields(
@@ -1845,12 +1846,12 @@ impl Thread {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
     }
 
-    /// Whether sandboxing is *applicable* for this thread's project (feature on,
-    /// local project, supported platform), regardless of whether it's been
-    /// turned off in settings. The UI shows the sandbox indicator whenever this
-    /// is true, drawing it struck-out when sandboxing is disabled.
+    /// Whether sandboxing is *applicable* for this thread's project (local
+    /// project, supported platform), regardless of whether it's been turned off
+    /// in settings. The UI shows the sandbox indicator whenever this is true,
+    /// drawing it struck-out when sandboxing is disabled.
     pub fn sandboxing_available(&self, cx: &App) -> bool {
-        sandboxing_available_for_project(self.project.read(cx), cx)
+        sandboxing_available_for_project(self.project.read(cx))
     }
 
     /// The directory subtrees the sandbox always grants write access to for this
@@ -1946,6 +1947,10 @@ impl Thread {
         self.model.as_model()
     }
 
+    pub fn thread_model(&self) -> &ThreadModel {
+        &self.model
+    }
+
     pub(crate) fn ensure_model(
         &mut self,
         default_model: Option<&Arc<dyn LanguageModel>>,
@@ -1977,6 +1982,7 @@ impl Thread {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+        cx.emit(ModelChanged);
 
         for subagent in &self.running_subagents {
             subagent
@@ -2308,6 +2314,31 @@ impl Thread {
         cx.notify();
     }
 
+    /// Records that the last request overflowed the model's context window so
+    /// the token usage indicator reports `Exceeded` instead of the stale usage
+    /// from the last successful request. Providers don't report usage for
+    /// failed requests, so we synthesize one from the reported overflow (when
+    /// available) or the model's context size.
+    fn mark_token_limit_exceeded(&mut self, tokens: Option<u64>, cx: &mut Context<Self>) {
+        let Some(model) = self.model() else {
+            return;
+        };
+        let input_tokens = tokens.unwrap_or(0).max(model.max_token_count());
+        let Some(last_user_message) = self.last_user_message() else {
+            return;
+        };
+
+        self.request_token_usage.insert(
+            last_user_message.id.clone(),
+            language_model::TokenUsage {
+                input_tokens,
+                ..Default::default()
+            },
+        );
+        cx.emit(TokenUsageUpdated(self.latest_token_usage()));
+        cx.notify();
+    }
+
     pub fn truncate(
         &mut self,
         client_user_message_id: ClientUserMessageId,
@@ -2393,6 +2424,20 @@ impl Thread {
             .default_model
             .clone()?;
         Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    fn user_configured_model_selection(cx: &App) -> Option<SelectedModel> {
+        let selection = SettingsStore::global(cx)
+            .raw_user_settings()?
+            .content
+            .agent
+            .as_ref()?
+            .default_model
+            .as_ref()?;
+        Some(SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        })
     }
 
     /// Translate a stored model selection into the configured model from the registry.
@@ -3018,7 +3063,7 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let retry = this.update(cx, |this, cx| {
             let user_store = this.user_store.read(cx);
-            this.handle_completion_error(error, attempt, user_store.plan())
+            this.handle_completion_error(error, attempt, user_store.plan(), cx)
         })??;
         let timer = cx.background_executor().timer(retry.duration);
         event_stream.send_retry(retry);
@@ -3208,7 +3253,12 @@ impl Thread {
         error: LanguageModelCompletionError,
         attempt: u8,
         plan: Option<Plan>,
+        cx: &mut Context<Self>,
     ) -> Result<acp_thread::RetryStatus> {
+        if let LanguageModelCompletionError::PromptTooLarge { tokens } = &error {
+            self.mark_token_limit_exceeded(*tokens, cx);
+        }
+
         let Some(model) = self.model() else {
             return Err(anyhow!(error));
         };
@@ -3394,7 +3444,9 @@ impl Thread {
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
-            title = tool.initial_title(tool_use.input.clone(), cx);
+            if let Ok(input) = tool_use.input.clone().into_json() {
+                title = tool.initial_title(input, cx);
+            }
             kind = tool.kind();
         }
 
@@ -3411,16 +3463,33 @@ impl Thread {
             }));
         };
 
+        // Agent tools are JSON-schema tools. Custom text-tool deltas are rejected
+        // before considering partial-vs-complete input for these local tools.
+        let input = match tool_use.input.clone().into_json() {
+            Ok(input) => input,
+            Err(error) => {
+                return Some(Task::ready(LanguageModelToolResult {
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        error.to_string(),
+                    ))],
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    output: None,
+                }));
+            }
+        };
+
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
                 if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
-                    sender.send_partial(tool_use.input);
+                    sender.send_partial(input);
                     return None;
                 }
 
                 let (mut sender, tool_input) = ToolInputSender::channel();
-                sender.send_partial(tool_use.input);
+                sender.send_partial(input);
                 running_turn
                     .streaming_tool_inputs
                     .insert(tool_use.id.clone(), sender);
@@ -3447,12 +3516,12 @@ impl Thread {
             .streaming_tool_inputs
             .remove(&tool_use.id)
         {
-            sender.send_full(tool_use.input);
+            sender.send_full(input);
             return None;
         }
 
         log::debug!("Running tool {}", tool_use.name);
-        let tool_input = ToolInput::ready(tool_use.input);
+        let tool_input = ToolInput::ready(input);
         Some(self.run_tool(
             tool,
             tool_input,
@@ -3576,7 +3645,7 @@ impl Thread {
             id: tool_use_id,
             name: tool_name,
             raw_input: raw_input.to_string(),
-            input: serde_json::json!({}),
+            input: language_model::LanguageModelToolUseInput::Json(serde_json::json!({})),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -3652,7 +3721,7 @@ impl Thread {
                 &tool_use.name,
                 title,
                 kind,
-                tool_use.input.clone(),
+                tool_use.input.to_display_json(),
             );
             last_message
                 .content
@@ -3663,7 +3732,7 @@ impl Thread {
                 acp::ToolCallUpdateFields::new()
                     .title(title.as_str())
                     .kind(kind)
-                    .raw_input(tool_use.input.clone()),
+                    .raw_input(tool_use.input.to_display_json()),
                 None,
             );
         }
@@ -3903,12 +3972,12 @@ impl Thread {
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
-                    Some(LanguageModelRequestTool {
-                        name: tool_name.to_string(),
-                        description: tool.description().to_string(),
-                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
-                        use_input_streaming: tool.supports_input_streaming(),
-                    })
+                    Some(LanguageModelRequestTool::function(
+                        tool_name.to_string(),
+                        tool.description().to_string(),
+                        tool.input_schema(model.tool_input_format()).log_err()?,
+                        tool.supports_input_streaming(),
+                    ))
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -4766,6 +4835,10 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub struct TitleUpdated;
 
 impl EventEmitter<TitleUpdated> for Thread {}
+
+pub struct ModelChanged;
+
+impl EventEmitter<ModelChanged> for Thread {}
 
 /// A channel-based wrapper that delivers tool input to a running tool.
 ///
@@ -5883,10 +5956,15 @@ impl ToolCallEventStream {
         &self,
         command: Option<String>,
         reason: String,
+        docs_section: Option<String>,
         retries: usize,
         cx: &mut App,
     ) -> Task<Result<SandboxFallbackDecision>> {
-        let details = acp_thread::SandboxFallbackAuthorizationDetails { command, reason };
+        let details = acp_thread::SandboxFallbackAuthorizationDetails {
+            command,
+            reason,
+            docs_section,
+        };
         let retry_label = if retries == 0 {
             "Retry".to_string()
         } else {
@@ -7643,6 +7721,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "bwrap not found on PATH".to_string(),
+                Some("installing-bubblewrap".to_string()),
                 0,
                 cx,
             )
@@ -7654,6 +7733,10 @@ mod tests {
         .expect("fallback authorization should include details");
         assert_eq!(details.command.as_deref(), Some("cargo build"));
         assert_eq!(details.reason, "bwrap not found on PATH");
+        assert_eq!(
+            details.docs_section.as_deref(),
+            Some("installing-bubblewrap")
+        );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat fallback permission options");
@@ -7694,6 +7777,7 @@ mod tests {
                 event_stream.authorize_sandbox_fallback(
                     None,
                     "probe failed".to_string(),
+                    None,
                     retries,
                     cx,
                 )
@@ -7738,6 +7822,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "user namespaces are disabled".to_string(),
+                None,
                 0,
                 cx,
             )
@@ -7767,7 +7852,13 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox_fallback(None, "bwrap probe failed".to_string(), 0, cx)
+            event_stream.authorize_sandbox_fallback(
+                None,
+                "bwrap probe failed".to_string(),
+                None,
+                0,
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         authorization
@@ -7842,7 +7933,7 @@ mod tests {
                     id: registered_tool_use_id.clone(),
                     name: ReplayImageTool::NAME.into(),
                     raw_input: "null".to_string(),
-                    input: json!(null),
+                    input: language_model::LanguageModelToolUseInput::Json(json!(null)),
                     is_input_complete: true,
                     thought_signature: None,
                 };
@@ -7850,7 +7941,7 @@ mod tests {
                     id: missing_tool_use_id.clone(),
                     name: "missing_image_tool".into(),
                     raw_input: "{}".to_string(),
-                    input: json!({}),
+                    input: language_model::LanguageModelToolUseInput::Json(json!({})),
                     is_input_complete: true,
                     thought_signature: None,
                 };
@@ -8157,7 +8248,10 @@ mod tests {
                         assert_eq!(tool_use.raw_input, raw_input.to_string());
                         assert!(tool_use.is_input_complete);
                         // Should fall back to empty object for invalid JSON
-                        assert_eq!(tool_use.input, json!({}));
+                        assert_eq!(
+                            tool_use.input,
+                            language_model::LanguageModelToolUseInput::Json(json!({}))
+                        );
                     }
                     _ => panic!("Expected ToolUse content"),
                 }
