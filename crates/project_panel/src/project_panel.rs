@@ -242,6 +242,12 @@ enum ClipboardEntry {
     Cut(BTreeSet<SelectedEntry>),
 }
 
+#[derive(Clone, Copy)]
+enum EntryTransferOperation {
+    Copy,
+    Move,
+}
+
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 struct DiagnosticCount {
     error_count: usize,
@@ -3308,14 +3314,14 @@ impl ProjectPanel {
         }
     }
 
-    fn create_paste_path(
+    fn create_transfer_path(
         &self,
         source: &SelectedEntry,
         (worktree, target_entry): (Entity<Worktree>, &Entry),
         cx: &App,
     ) -> Option<(Arc<RelPath>, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_rel_path_buf();
-        // If we're pasting into a file, or a directory into itself, go up one level.
+        // Files and directories copied onto themselves must be placed alongside the source.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
             new_path.pop();
         }
@@ -3326,8 +3332,8 @@ impl ProjectPanel {
             .worktree_for_entry(source.entry_id, cx)?;
         let source_entry = source_worktree.read(cx).entry_for_id(source.entry_id)?;
 
-        let clipboard_entry_file_name = source_entry.path.file_name()?.to_string();
-        new_path.push(RelPath::from_unix_str(&clipboard_entry_file_name).unwrap());
+        let source_file_name = source_entry.path.file_name()?.to_string();
+        new_path.push(RelPath::from_unix_str(&source_file_name).unwrap());
 
         let (extension, file_name_without_extension) = if source_entry.is_file() {
             (
@@ -3335,7 +3341,7 @@ impl ProjectPanel {
                 new_path.file_stem()?.to_string(),
             )
         } else {
-            (None, clipboard_entry_file_name.clone())
+            (None, source_file_name)
         };
 
         let file_name_len = file_name_without_extension.len();
@@ -3384,16 +3390,38 @@ impl ProjectPanel {
             return;
         }
 
+        self.paste_from_internal_clipboard(window, cx);
+    }
+
+    fn paste_from_internal_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard_entry) = self
+            .clipboard
+            .clone()
+            .filter(|clipboard_entry| !clipboard_entry.items().is_empty())
+        else {
+            return;
+        };
+
+        let (entries, operation) = match clipboard_entry {
+            ClipboardEntry::Copied(entries) => (entries, EntryTransferOperation::Copy),
+            ClipboardEntry::Cut(entries) => (entries, EntryTransferOperation::Move),
+        };
+        self.transfer_entries(entries, operation, window, cx);
+    }
+
+    fn transfer_entries(
+        &mut self,
+        entries: BTreeSet<SelectedEntry>,
+        operation: EntryTransferOperation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
-            let clipboard_entries = self
-                .clipboard
-                .as_ref()
-                .filter(|clipboard| !clipboard.items().is_empty())?;
 
-            enum PasteTask {
+            enum EntryTransferTask {
                 Rename {
                     task: Task<Result<CreatedEntry>>,
                     from: ProjectPath,
@@ -3405,44 +3433,47 @@ impl ProjectPanel {
                 },
             }
 
-            let mut paste_tasks = Vec::new();
+            let mut transfer_tasks = Vec::new();
             let mut disambiguation_range = None;
-            let clip_is_cut = clipboard_entries.is_cut();
-            for clipboard_entry in clipboard_entries.items() {
+            for source_entry in &entries {
                 let (new_path, new_disambiguation_range) =
-                    self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
-                let clip_entry_id = clipboard_entry.entry_id;
+                    self.create_transfer_path(source_entry, self.selected_sub_entry(cx)?, cx)?;
+                let source_entry_id = source_entry.entry_id;
                 let destination: ProjectPath = (worktree_id, new_path).into();
-                let task = if clipboard_entries.is_cut() {
-                    let original_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
-                    let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, destination.clone(), cx)
-                    });
-                    PasteTask::Rename {
-                        task,
-                        from: original_path,
-                        to: destination,
+                let task = match operation {
+                    EntryTransferOperation::Copy => {
+                        let task = self.project.update(cx, |project, cx| {
+                            project.copy_entry(source_entry_id, destination.clone(), cx)
+                        });
+                        EntryTransferTask::Copy { task, destination }
                     }
-                } else {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clip_entry_id, destination.clone(), cx)
-                    });
-                    PasteTask::Copy { task, destination }
+                    EntryTransferOperation::Move => {
+                        let original_path =
+                            self.project.read(cx).path_for_entry(source_entry_id, cx)?;
+                        let task = self.project.update(cx, |project, cx| {
+                            project.rename_entry(source_entry_id, destination.clone(), cx)
+                        });
+                        EntryTransferTask::Rename {
+                            task,
+                            from: original_path,
+                            to: destination,
+                        }
+                    }
                 };
-                paste_tasks.push(task);
+                transfer_tasks.push(task);
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
             }
 
-            let item_count = paste_tasks.len();
+            let item_count = transfer_tasks.len();
             let workspace = self.workspace.clone();
 
             cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
                 let mut changes = Vec::new();
 
-                for task in paste_tasks {
+                for task in transfer_tasks {
                     match task {
-                        PasteTask::Rename { task, from, to } => {
+                        EntryTransferTask::Rename { task, from, to } => {
                             if let Some(CreatedEntry::Included(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
@@ -3451,7 +3482,7 @@ impl ProjectPanel {
                                 last_succeed = Some(entry);
                             }
                         }
-                        PasteTask::Copy { task, destination } => {
+                        EntryTransferTask::Copy { task, destination } => {
                             if let Some(Some(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
@@ -3492,7 +3523,6 @@ impl ProjectPanel {
                                     }
                                 }
 
-                                // if only one entry was pasted and it was disambiguated, open the rename editor
                                 if disambiguation_range.is_some() {
                                     cx.defer_in(window, |this, window, cx| {
                                         this.rename_impl(disambiguation_range, window, cx);
@@ -3507,7 +3537,7 @@ impl ProjectPanel {
             })
             .detach_and_log_err(cx);
 
-            if clip_is_cut {
+            if matches!(operation, EntryTransferOperation::Move) {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
                 self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
             }
@@ -4789,7 +4819,7 @@ impl ProjectPanel {
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
                 for selection in &entries {
-                    let (new_path, new_disambiguation_range) = self.create_paste_path(
+                    let (new_path, new_disambiguation_range) = self.create_transfer_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
                         cx,
