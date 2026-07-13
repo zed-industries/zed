@@ -266,7 +266,7 @@ impl BranchList {
             .map(|repo| {
                 process_branches(
                     &repo.read(cx).branch_list,
-                    branch_selection_behavior.selected_branch(),
+                    !branch_selection_behavior.is_select_only(),
                 )
             })
             .unwrap_or_default();
@@ -320,7 +320,7 @@ impl BranchList {
                                 .and_then(|entry| entry.as_branch().map(|b| b.ref_name.clone()));
                             picker.delegate.all_branches = process_branches(
                                 &branch_list,
-                                picker.delegate.branch_selection_behavior.selected_branch(),
+                                !picker.delegate.branch_selection_behavior.is_select_only(),
                             );
                             picker.delegate.branch_list_error = branch_list_error;
                             picker.refresh(window, cx);
@@ -907,31 +907,30 @@ fn sort_branch_entries(
     });
 }
 
-fn process_branches(
-    branches: &Arc<[Branch]>,
-    preserved_branch: Option<&SharedString>,
-) -> Vec<Branch> {
-    let remote_upstreams: HashSet<_> = branches
-        .iter()
-        .filter_map(|branch| {
-            branch
-                .upstream
-                .as_ref()
-                .filter(|upstream| upstream.is_remote())
-                .map(|upstream| upstream.ref_name.clone())
-        })
-        .collect();
-
-    let mut result: Vec<Branch> = branches
-        .iter()
-        .filter(|branch| {
-            !remote_upstreams.contains(&branch.ref_name)
-                || preserved_branch
+// Tracked remote branches are:
+// - collapsed when checking out to avoid detaching HEAD.
+// - kept when selecting a diff base because they may point to a different commit.
+fn process_branches(branches: &Arc<[Branch]>, collapse_tracked_remotes: bool) -> Vec<Branch> {
+    let mut result: Vec<Branch> = if collapse_tracked_remotes {
+        let remote_upstreams: HashSet<_> = branches
+            .iter()
+            .filter_map(|branch| {
+                branch
+                    .upstream
                     .as_ref()
-                    .is_some_and(|preserved_branch| branch_matches_ref(branch, preserved_branch))
-        })
-        .cloned()
-        .collect();
+                    .filter(|upstream| upstream.is_remote())
+                    .map(|upstream| upstream.ref_name.clone())
+            })
+            .collect();
+
+        branches
+            .iter()
+            .filter(|branch| !remote_upstreams.contains(&branch.ref_name))
+            .cloned()
+            .collect()
+    } else {
+        branches.to_vec()
+    };
 
     result.sort_by_key(|branch| {
         (
@@ -1212,16 +1211,33 @@ impl PickerDelegate for BranchListDelegate {
         editor: &Arc<dyn ErasedEditor>,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
-    ) -> Div {
+    ) -> Option<Div> {
         let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
         let editor_start = matches!(self.editor_position(), PickerEditorPosition::Start);
         let editor_bottom = matches!(self.editor_position(), PickerEditorPosition::End);
 
-        v_flex()
-            .when(editor_bottom, |this| this.child(Divider::horizontal()))
-            .when_some(self.branch_list_error.clone(), |this, error| {
-                let message = format!("Some branches could not be loaded: {error}");
-                this.child(
+        Some(
+            v_flex()
+                .when(editor_bottom, |this| this.child(Divider::horizontal()))
+                .when_some(self.branch_list_error.clone(), |this, error| {
+                    let message = format!("Some branches could not be loaded: {error}");
+                    this.child(
+                        div()
+                            .id("branch-list-error")
+                            .p_1p5()
+                            .child(
+                                Banner::new().severity(Severity::Warning).child(
+                                    Label::new(message.clone())
+                                        .size(LabelSize::Small)
+                                        .single_line()
+                                        .truncate(),
+                                ),
+                            )
+                            .tooltip(Tooltip::text(message)),
+                    )
+                })
+                .child({
+                    let message = "Some branches could not be loaded: fatal: bad object refs/heads/feature-broken".to_string();
                     div()
                         .id("branch-list-error")
                         .p_1p5()
@@ -1233,56 +1249,56 @@ impl PickerDelegate for BranchListDelegate {
                                     .truncate(),
                             ),
                         )
-                        .tooltip(Tooltip::text(message)),
-                )
-            })
-            .child(
-                h_flex()
-                    .h_9()
-                    .px_2p5()
-                    .flex_none()
-                    .overflow_hidden()
-                    .child(editor.clone())
-                    .map(|this| {
-                        let branch_filter = self.branch_filter;
-                        let focus_handle = self.focus_handle.clone();
+                        .tooltip(Tooltip::text(message))
+                })
+                .child(
+                    h_flex()
+                        .h_9()
+                        .px_2p5()
+                        .flex_none()
+                        .overflow_hidden()
+                        .child(editor.clone())
+                        .map(|this| {
+                            let branch_filter = self.branch_filter;
+                            let focus_handle = self.focus_handle.clone();
 
-                        this.gap_1().justify_between().child(
-                            PopoverMenu::new("branch-filter-menu")
-                                .with_handle(self.branch_filter_menu_handle.clone())
-                                .trigger_with_tooltip(
-                                    self.branch_filter_trigger(),
-                                    self.branch_filter_tooltip(),
-                                )
-                                .menu(move |window, cx| {
-                                    Some(branch_filter_menu(
-                                        branch_filter,
-                                        focus_handle.clone(),
-                                        window,
-                                        cx,
-                                    ))
-                                })
-                                .map(|this| {
-                                    if editor_bottom {
-                                        this.anchor(gpui::Anchor::BottomRight)
-                                            .attach(gpui::Anchor::TopRight)
-                                            .offset(gpui::Point {
-                                                x: px(0.0),
-                                                y: px(-1.0),
-                                            })
-                                    } else {
-                                        this.anchor(gpui::Anchor::TopRight)
-                                            .attach(gpui::Anchor::BottomRight)
-                                            .offset(gpui::Point {
-                                                x: px(1.0),
-                                                y: px(1.0),
-                                            })
-                                    }
-                                }),
-                        )
-                    }),
-            )
-            .when(editor_start, |this| this.child(Divider::horizontal()))
+                            this.gap_1().justify_between().child(
+                                PopoverMenu::new("branch-filter-menu")
+                                    .with_handle(self.branch_filter_menu_handle.clone())
+                                    .trigger_with_tooltip(
+                                        self.branch_filter_trigger(),
+                                        self.branch_filter_tooltip(),
+                                    )
+                                    .menu(move |window, cx| {
+                                        Some(branch_filter_menu(
+                                            branch_filter,
+                                            focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        ))
+                                    })
+                                    .map(|this| {
+                                        if editor_bottom {
+                                            this.anchor(gpui::Anchor::BottomRight)
+                                                .attach(gpui::Anchor::TopRight)
+                                                .offset(gpui::Point {
+                                                    x: px(0.0),
+                                                    y: px(-1.0),
+                                                })
+                                        } else {
+                                            this.anchor(gpui::Anchor::TopRight)
+                                                .attach(gpui::Anchor::BottomRight)
+                                                .offset(gpui::Point {
+                                                    x: px(1.0),
+                                                    y: px(1.0),
+                                                })
+                                        }
+                                    }),
+                            )
+                        }),
+                )
+                .when(editor_start, |this| this.child(Divider::horizontal())),
+        )
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -2118,8 +2134,7 @@ mod tests {
     }
 
     #[test]
-    fn test_select_branch_preserves_selected_remote_upstream_and_prioritizes_active_remote_branches()
-     {
+    fn test_select_branch_shows_tracked_remotes_and_prioritizes_active_remote_branches() {
         let selected_branch = SharedString::from("origin/main");
         let branches: Arc<[Branch]> = Arc::from([
             create_test_branch_with_upstream(
@@ -2141,18 +2156,25 @@ mod tests {
             create_test_branch("main", false, Some("fork"), Some(800)),
         ]);
 
-        let processed_branches = process_branches(&branches, Some(&selected_branch));
+        let checkout_branches = process_branches(&branches, true);
         assert!(
-            processed_branches
+            checkout_branches
                 .iter()
-                .any(|branch| branch.name() == "origin/main"),
-            "the selected remote branch should be preserved even when a local branch tracks it"
+                .all(|branch| branch.name() != "origin/main" && branch.name() != "origin/feature"),
+            "remote branches tracked by a local branch should be collapsed when checking out"
+        );
+
+        let processed_branches = process_branches(&branches, false);
+        assert_eq!(
+            processed_branches.len(),
+            branches.len(),
+            "no branches should be filtered out when selecting a branch"
         );
         assert!(
             processed_branches
                 .iter()
-                .all(|branch| branch.name() != "origin/feature"),
-            "the active branch's unselected remote upstream should still be collapsed"
+                .any(|branch| branch.name() == "origin/main"),
+            "remote branches should be selectable even when a local branch tracks them"
         );
 
         let mut entries = processed_branches
@@ -2876,6 +2898,105 @@ mod tests {
         assert!(BranchFilter::All.next() == BranchFilter::Local);
         assert!(BranchFilter::Local.next() == BranchFilter::Remote);
         assert!(BranchFilter::Remote.next() == BranchFilter::All);
+    }
+
+    #[gpui::test]
+    async fn test_select_picker_lists_remote_branch_tracked_by_local_branch(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (project, repository) = init_fake_repository(cx).await;
+        cx.run_until_parked();
+
+        // Local `main` tracks `origin/main`; the two can point to different
+        // commits, so both must be offered when picking a diff base.
+        let branches = vec![
+            create_test_branch_with_upstream(
+                "main",
+                true,
+                None,
+                Some(1000),
+                Some("refs/remotes/origin/main"),
+            ),
+            create_test_branch("main", false, Some("origin"), Some(900)),
+        ];
+        repository.update(cx, |repository, cx| {
+            repository.set_branch_list_for_test(branches, cx);
+        });
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let checkout_list = window_handle
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    BranchList::new(
+                        workspace.downgrade(),
+                        Some(repository.clone()),
+                        BranchListStyle::Modal,
+                        rems(34.),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+        let select_list = window_handle
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    BranchList::new_select(
+                        workspace.downgrade(),
+                        Some(repository.clone()),
+                        BranchListStyle::Modal,
+                        rems(34.),
+                        Some("main".into()),
+                        Arc::new(|_: Branch, _: &mut Window, _: &mut App| {}),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        let mut ctx = VisualTestContext::from_window(window_handle.into(), cx);
+        let cx = &mut ctx;
+
+        update_branch_list_matches_with_empty_query(&checkout_list, cx).await;
+        checkout_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                let names = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(Entry::name)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    names,
+                    vec!["main"],
+                    "the checkout picker should collapse remote branches tracked by a local branch"
+                );
+            })
+        });
+
+        update_branch_list_matches_with_empty_query(&select_list, cx).await;
+        select_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                let names = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(Entry::name)
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    names,
+                    ["main", "origin/main"].into_iter().collect::<HashSet<_>>(),
+                    "the select picker should offer both a local branch and its remote upstream"
+                );
+            })
+        });
     }
 
     #[gpui::test]
