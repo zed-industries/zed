@@ -5,9 +5,14 @@ use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
-use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language::{
+    ZetaVersion,
+    language_settings::{
+        EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
+    },
+};
 
-use settings::{EditPredictionPromptFormat, SettingsStore};
+use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use ui::Window;
 
@@ -132,10 +137,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 }
             }
 
-            if matches!(
-                format,
-                EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2
-            ) {
+            if matches!(format, EditPredictionPromptFormat::Zeta(_)) {
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
@@ -147,7 +149,6 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
-        EditPredictionProvider::Experimental(_) => None,
     }
 }
 
@@ -155,6 +156,8 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
     let model_base = model.split(':').next().unwrap_or(model);
 
     Some(match model_base {
+        "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
+        "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
         "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
         "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
@@ -258,9 +261,7 @@ fn assign_edit_prediction_provider(
                 ep_store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx));
 
             if let Some(copilot) = copilot {
-                if let Some(buffer) = singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                {
+                if let Some(buffer) = singleton_buffer {
                     copilot.update(cx, |copilot, cx| {
                         copilot.register_buffer(&buffer, cx);
                     });

@@ -1,8 +1,8 @@
-use std::{num::NonZeroU32, path::Path};
+use std::num::NonZeroU32;
 
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
@@ -54,10 +54,32 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 
         // A user's global settings override the default global settings and
         // all default language-specific settings.
-        //
         self.defaults.merge_from(&other.defaults);
+        let globally_disabled_servers = other.defaults.language_servers.as_ref().map(|servers| {
+            servers
+                .iter()
+                .filter(|entry| entry.starts_with('!'))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
         for language_settings in self.languages.0.values_mut() {
+            let language_server_overrides = language_settings.language_servers.clone();
             language_settings.merge_from(&other.defaults);
+            if let Some(mut language_server_overrides) = language_server_overrides {
+                if let Some(disabled) = &globally_disabled_servers {
+                    let insert_before = language_server_overrides
+                        .iter()
+                        .position(|entry| entry == REST_OF_LANGUAGE_SERVERS)
+                        .unwrap_or(language_server_overrides.len());
+                    for disabled_server in disabled {
+                        if !language_server_overrides.contains(disabled_server) {
+                            language_server_overrides
+                                .insert(insert_before, disabled_server.clone());
+                        }
+                    }
+                }
+                language_settings.language_servers = Some(language_server_overrides);
+            }
         }
 
         // A user's language-specific settings override default language-specific settings.
@@ -75,7 +97,9 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -86,50 +110,6 @@ pub enum EditPredictionProvider {
     Ollama,
     OpenAiCompatibleApi,
     Mercury,
-    Experimental(&'static str),
-}
-
-const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
-
-impl<'de> Deserialize<'de> for EditPredictionProvider {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        pub enum Content {
-            None,
-            Copilot,
-            Zed,
-            Codestral,
-            Ollama,
-            OpenAiCompatibleApi,
-            Mercury,
-            Experimental(String),
-        }
-
-        Ok(match Content::deserialize(deserializer)? {
-            Content::None => EditPredictionProvider::None,
-            Content::Copilot => EditPredictionProvider::Copilot,
-            Content::Zed => EditPredictionProvider::Zed,
-            Content::Codestral => EditPredictionProvider::Codestral,
-            Content::Ollama => EditPredictionProvider::Ollama,
-            Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
-            Content::Mercury => EditPredictionProvider::Mercury,
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Zed
-            }
-            Content::Experimental(name) => {
-                return Err(D::Error::custom(format!(
-                    "Unknown experimental edit prediction provider: {}",
-                    name
-                )));
-            }
-        })
-    }
 }
 
 impl EditPredictionProvider {
@@ -141,8 +121,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
-            | EditPredictionProvider::Mercury
-            | EditPredictionProvider::Experimental(_) => false,
+            | EditPredictionProvider::Mercury => false,
         }
     }
 
@@ -152,7 +131,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
+            EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
@@ -180,8 +159,14 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// The directory where manually captured edit prediction examples are stored.
-    pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    /// Data is only ever captured for files in projects that are detected as open source.
+    ///
+    /// - `"default"`: use the preference previously set via the status-bar toggle,
+    ///   or false if no preference has been stored.
+    /// - `"yes"`: allow data collection for files in open-source projects.
+    /// - `"no"`: never allow data collection.
+    pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
 
 #[with_fallible_options]
@@ -194,7 +179,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
     /// The name of the model.
     ///
     /// Default: ""
@@ -220,11 +205,12 @@ pub struct CustomEditPredictionProviderSettingsContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum EditPredictionPromptFormat {
+pub enum EditPredictionPromptFormatContent {
     #[default]
     Infer,
     Zeta,
     Zeta2,
+    Zeta2_1,
     CodeLlama,
     StarCoder,
     DeepseekCoder,
@@ -315,7 +301,34 @@ pub struct OllamaEditPredictionSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
+}
+
+/// Controls whether Zed collects training data when using Zed's Edit Predictions.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionDataCollectionChoice {
+    /// Use the preference previously set via the status-bar toggle, or false
+    /// if no preference has been stored.
+    #[default]
+    Default,
+    /// Allow Zed to collect training data from open-source projects.
+    Yes,
+    /// Never allow training data collection.
+    No,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -398,6 +411,8 @@ pub enum SoftWrap {
     #[serde(alias = "preferred_line_length")]
     Bounded,
 }
+
+pub const REST_OF_LANGUAGE_SERVERS: &str = "...";
 
 /// The settings for a particular language.
 #[with_fallible_options]
@@ -908,12 +923,22 @@ pub struct PrettierSettingsContent {
     strum::VariantArray,
     strum::VariantNames,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
+    /// Only lines with unstaged changes are formatted on save.
+    /// Requires source control and LSP range formatting support.
+    /// If no git diff is available or if the LSP doesn't support
+    /// range formatting, formatting is skipped.
+    Modifications,
+    /// Only lines with unstaged changes are formatted on save.
+    /// If no git diff is available (e.g., when source control is
+    /// unavailable) or if the LSP doesn't support range formatting,
+    /// falls back to formatting the whole file.
+    ModificationsIfAvailable,
 }
 
 /// Controls how line endings are normalized when a buffer is saved.
@@ -1166,7 +1191,7 @@ pub enum IndentGuideBackgroundColoring {
 #[cfg(test)]
 mod test {
 
-    use crate::{ParseStatus, fallible_options};
+    use crate::{ParseStatus, fallible_options, merge_from::MergeFrom};
 
     use super::*;
 
@@ -1235,6 +1260,231 @@ mod test {
         let raw_auto = "{\"formatter\": {}}";
         let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
         assert!(matches!(result, ParseStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn test_language_servers_merge_preserves_per_language_config() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![
+                    "!tailwindcss-language-server".into(),
+                    "!eslint".into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
+                ]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "!typescript-language-server".to_string(),
+                "vtsls".to_string(),
+                "!eslint".to_string(),
+                "!tailwindcss-language-server".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+
+        let default_servers = base.defaults.language_servers.as_ref().unwrap();
+        assert_eq!(
+            default_servers,
+            &vec![
+                "!tailwindcss-language-server".to_string(),
+                "!eslint".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_no_per_language_config_uses_global() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "Rust".into(),
+                    LanguageSettingsContent {
+                        tab_size: Some(std::num::NonZeroU32::new(4).unwrap()),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let rust_servers = base.languages.0["Rust"].language_servers.as_ref().unwrap();
+        assert_eq!(
+            rust_servers,
+            &vec!["!eslint".to_string(), REST_OF_LANGUAGE_SERVERS.to_string(),]
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_user_per_language_overrides() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "deno".into(),
+                            "!vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "deno".to_string(),
+                "!vtsls".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_user_per_language_config_overrides_default_disables() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "typescript-language-server".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "typescript-language-server".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
     }
 
     #[test]

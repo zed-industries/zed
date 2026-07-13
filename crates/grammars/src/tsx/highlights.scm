@@ -98,6 +98,26 @@
       (shorthand_property_identifier_pattern)
     ]) @variable.parameter))
 
+(required_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(required_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
+
 (optional_parameter
   (identifier) @variable.parameter)
 
@@ -393,6 +413,18 @@
     (member_expression
       object: (identifier) @type @tag.component.jsx
       property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_closing_element
@@ -401,6 +433,18 @@
     (member_expression
       object: (identifier) @type @tag.component.jsx
       property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_self_closing_element
@@ -408,6 +452,18 @@
     (identifier) @type @tag.component.jsx
     (member_expression
       object: (identifier) @type @tag.component.jsx
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
       property: (property_identifier) @type @tag.component.jsx)
   ])
 

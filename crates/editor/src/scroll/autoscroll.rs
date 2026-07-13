@@ -2,6 +2,7 @@ use crate::{
     DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, LineWithInvisibles, RowExt,
     SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
+    editor_settings::GoToDefinitionScrollStrategy,
     scroll::{ScrollOffset, WasScrolled},
 };
 use gpui::{App, Bounds, Context, Pixels, Window};
@@ -33,15 +34,29 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center, None)
     }
 
+    /// Returns the autoscroll strategy configured for navigation to definitions
+    /// and references, based on `go_to_definition_scroll_strategy`.
+    pub fn for_go_to_definition(offset: Option<ScrollOffset>, cx: &App) -> Self {
+        match EditorSettings::get_global(cx).go_to_definition_scroll_strategy {
+            GoToDefinitionScrollStrategy::Center => Self::center(),
+            GoToDefinitionScrollStrategy::Minimum => Self::fit(),
+            GoToDefinitionScrollStrategy::Top => Self::focused(),
+            GoToDefinitionScrollStrategy::Preserve => {
+                offset.map(Self::top_relative).unwrap_or_else(Self::center)
+            }
+        }
+    }
+
     /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused, None)
     }
 
-    /// Scrolls so that the newest cursor is roughly an n-th line from the top.
-    pub fn top_relative(n: usize) -> Self {
-        Self::Strategy(AutoscrollStrategy::TopRelative(n), None)
+    /// Scrolls so that the newest cursor is the given offset (in display rows)
+    /// from the top of the viewport.
+    pub fn top_relative(offset: ScrollOffset) -> Self {
+        Self::Strategy(AutoscrollStrategy::TopRelative(offset), None)
     }
 
     /// Scrolls so that the newest cursor is at the top.
@@ -49,9 +64,10 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Top, None)
     }
 
-    /// Scrolls so that the newest cursor is roughly an n-th line from the bottom.
-    pub fn bottom_relative(n: usize) -> Self {
-        Self::Strategy(AutoscrollStrategy::BottomRelative(n), None)
+    /// Scrolls so that the newest cursor is the given offset (in display rows)
+    /// from the bottom of the viewport.
+    pub fn bottom_relative(offset: ScrollOffset) -> Self {
+        Self::Strategy(AutoscrollStrategy::BottomRelative(offset), None)
     }
 
     /// Scrolls so that the newest cursor is at the bottom.
@@ -80,7 +96,7 @@ impl Into<SelectionEffects> for Option<Autoscroll> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
+#[derive(Debug, PartialEq, Default, Clone, Copy)]
 pub enum AutoscrollStrategy {
     Fit,
     Newest,
@@ -89,9 +105,11 @@ pub enum AutoscrollStrategy {
     Focused,
     Top,
     Bottom,
-    TopRelative(usize),
-    BottomRelative(usize),
+    TopRelative(ScrollOffset),
+    BottomRelative(ScrollOffset),
 }
+
+impl Eq for AutoscrollStrategy {}
 
 impl AutoscrollStrategy {
     fn next(&self) -> Self {
@@ -153,17 +171,16 @@ impl Editor {
             target_top = target_point.row().as_f64();
             target_bottom = target_top + 1.;
         } else {
-            let selections = self.selections.all::<Point>(&display_map);
-
-            target_point = selections
-                .first()
-                .unwrap()
+            // Autoscroll only needs the first, last, and newest selections.
+            target_point = self
+                .selections
+                .first::<Point>(&display_map)
                 .head()
                 .to_display_point(&display_map);
             target_top = target_point.row().as_f64();
-            target_bottom = selections
-                .last()
-                .unwrap()
+            target_bottom = self
+                .selections
+                .last::<Point>(&display_map)
                 .head()
                 .to_display_point(&display_map)
                 .row()
@@ -177,10 +194,9 @@ impl Editor {
             ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
                 && !selections_fit)
             {
-                target_point = selections
-                    .iter()
-                    .max_by_key(|s| s.id)
-                    .unwrap()
+                target_point = self
+                    .selections
+                    .newest::<Point>(&display_map)
                     .head()
                     .to_display_point(&display_map);
                 target_top = target_point.row().as_f64();
@@ -343,7 +359,18 @@ impl Editor {
         let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all::<Point>(&display_map);
+        // Horizontal autoscroll only needs selections whose head is visible.
+        let visible_end_row = DisplayRow(start_row.0 + layouts.len() as u32);
+        let visible_range = display_map
+            .buffer_snapshot()
+            .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&display_map, Bias::Left))
+            ..display_map.buffer_snapshot().anchor_after(
+                DisplayPoint::new(visible_end_row, 0).to_offset(&display_map, Bias::Right),
+            );
+        let mut selections = self
+            .selections
+            .disjoint_in_range::<Point>(visible_range, &display_map);
+        selections.extend(self.selections.pending::<Point>(&display_map));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map, cx);
 
         let mut target_left;

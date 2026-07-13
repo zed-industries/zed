@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, named},
+    steps::{self, CommonPermissionSets, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -17,6 +17,7 @@ pub fn bump_zed_version() -> Workflow {
     let stable_job = promote_to_stable(&target, &versions_job, &outputs);
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(target.name, target.input())))
         .add_job(versions_job.name, versions_job.job)
@@ -142,6 +143,11 @@ fn bump_main(
                 target.expr(),
                 target.expr(),
             )))
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Write)
+                    .pull_requests(Level::Write),
+            )
             .needs(vec![versions_job.name.clone()])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
@@ -175,7 +181,10 @@ fn create_preview_branch(
     let main_sha = StepOutput::new(&main_sha_step, "main_sha");
 
     let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!("{} preview", outputs.preview_branch),
+        format!(
+            "{} preview for @${{{{ github.actor }}}}",
+            outputs.preview_branch
+        ),
         &outputs.preview_branch,
         &token,
     )
@@ -190,6 +199,7 @@ fn create_preview_branch(
                 target.expr(),
                 target.expr(),
             )))
+            .permissions(Permissions::default().contents(Level::Write))
             .needs(vec![versions_job.name.clone()])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
@@ -229,7 +239,10 @@ fn promote_to_stable(
     let write_channel = named::bash("echo -n stable > crates/zed/RELEASE_CHANNEL");
 
     let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!("{} stable", outputs.stable_branch),
+        format!(
+            "{} stable for @${{{{ github.actor }}}}",
+            outputs.stable_branch
+        ),
         &outputs.stable_branch,
         &token,
     )
@@ -244,6 +257,7 @@ fn promote_to_stable(
                 target.expr(),
                 target.expr(),
             )))
+            .permissions(Permissions::default().contents(Level::Write))
             .needs(vec![versions_job.name.clone()])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)

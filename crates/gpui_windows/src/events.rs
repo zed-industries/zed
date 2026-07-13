@@ -1,7 +1,7 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::atomic::Ordering};
 
-use ::util::ResultExt;
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use windows::{
     Win32::{
         Foundation::*,
@@ -112,6 +112,7 @@ impl WindowsWindowInner {
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
+            WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -143,9 +144,9 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && self.state.display.get().handle != monitor {
                 // we will get the same monitor if we only have one
-                self.state
-                    .display
-                    .set(WindowsDisplay::new_with_handle(monitor).log_err()?);
+                self.state.display.set(WindowsDisplay::new(
+                    WindowsDisplay::display_id_for_monitor(monitor),
+                )?);
             }
         }
         if let Some(mut callback) = self.state.callbacks.moved.take() {
@@ -297,6 +298,7 @@ impl WindowsWindowInner {
 
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
+        self.restore_cursor_after_hide();
 
         let Some(mut func) = self.state.callbacks.input.take() else {
             return Some(1);
@@ -330,6 +332,9 @@ impl WindowsWindowInner {
 
     fn handle_mouse_leave_msg(&self) -> Option<isize> {
         self.state.hovered.set(false);
+        // The next window's `WM_SETCURSOR` picks its own cursor, so we just clear
+        // the flag for tight `is_cursor_visible()` semantics.
+        self.state.cursor_visible.store(true, Ordering::Relaxed);
         if let Some(mut callback) = self.state.callbacks.hovered_status_change.take() {
             callback(false);
             self.state
@@ -724,7 +729,22 @@ impl WindowsWindowInner {
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
+
+        let events = self
+            .state
+            .a11y
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut a11y| a11y.as_mut()?.adapter.update_window_focus_state(activated));
+        if let Some(events) = events {
+            events.raise();
+        }
+
         let this = self.clone();
+
+        if !activated {
+            this.state.cursor_visible.store(true, Ordering::Relaxed);
+        }
 
         // When the window is activated (gains focus), reset the modifier tracking state.
         // This fixes the issue where Alt-Tab away and back leaves stale modifier state
@@ -754,6 +774,23 @@ impl WindowsWindowInner {
             .detach();
 
         None
+    }
+
+    fn handle_wm_getobject(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let result = {
+            let mut a11y = self.state.a11y.borrow_mut();
+            let a11y = a11y.as_mut()?;
+            a11y.adapter.handle_wm_getobject(
+                accesskit_windows::WPARAM(wparam.0),
+                accesskit_windows::LPARAM(lparam.0),
+                &mut a11y.activation_handler,
+            )?
+        };
+        // The borrow above must be dropped before calling `.into()`, because
+        // it calls `UiaReturnRawElementProvider` which may send a nested
+        // `WM_GETOBJECT` back into this window procedure.
+        let lresult: accesskit_windows::LRESULT = result.into();
+        Some(lresult.0)
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
@@ -845,13 +882,13 @@ impl WindowsWindowInner {
             log::error!("No monitor detected!");
             return None;
         }
-        let new_display = WindowsDisplay::new_with_handle(new_monitor).log_err()?;
+        let new_display = WindowsDisplay::new(WindowsDisplay::display_id_for_monitor(new_monitor))?;
         self.state.display.set(new_display);
         Some(0)
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        if !self.is_movable || self.state.is_fullscreen() {
+        if self.state.is_fullscreen() {
             return None;
         }
 
@@ -862,16 +899,17 @@ impl WindowsWindowInner {
                 .callbacks
                 .hit_test_window_control
                 .set(Some(callback));
-            if let Some(area) = area {
-                match area {
-                    WindowControlArea::Drag => Some(HTCAPTION as _),
-                    WindowControlArea::Close => return Some(HTCLOSE as _),
-                    WindowControlArea::Max => return Some(HTMAXBUTTON as _),
-                    WindowControlArea::Min => return Some(HTMINBUTTON as _),
-                }
-            } else {
-                None
-            }
+            area.and_then(|area| match area {
+                WindowControlArea::Drag if self.is_movable => Some(HTCAPTION as _),
+                WindowControlArea::Drag => None,
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max if self.is_resizable => Some(HTMAXBUTTON as _),
+                WindowControlArea::Max if self.is_movable => Some(HTCAPTION as _),
+                WindowControlArea::Max => Some(HTNOWHERE as _),
+                WindowControlArea::Min if self.is_minimizable => Some(HTMINBUTTON as _),
+                WindowControlArea::Min if self.is_movable => Some(HTCAPTION as _),
+                WindowControlArea::Min => Some(HTNOWHERE as _),
+            })
         } else {
             None
         };
@@ -892,7 +930,11 @@ impl WindowsWindowInner {
         };
 
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        if !self.state.is_maximized() && 0 <= cursor_point.y && cursor_point.y <= frame_y {
+        if self.is_resizable
+            && !self.state.is_maximized()
+            && 0 <= cursor_point.y
+            && cursor_point.y <= frame_y
+        {
             // x-axis actually goes from -frame_x to 0
             return Some(if cursor_point.x <= 0 {
                 HTTOPLEFT
@@ -901,7 +943,7 @@ impl WindowsWindowInner {
                 unsafe { GetWindowRect(handle, &mut rect) }.log_err();
                 // right and bottom bounds of RECT are exclusive, thus `-1`
                 let right = rect.right - rect.left - 1;
-                // the bounds include the padding frames, so accomodate for both of them
+                // the bounds include the padding frames, so accommodate for both of them
                 if right - 2 * frame_x <= cursor_point.x {
                     HTTOPRIGHT
                 } else {
@@ -915,6 +957,7 @@ impl WindowsWindowInner {
 
     fn handle_nc_mouse_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE | TME_NONCLIENT);
+        self.restore_cursor_after_hide();
 
         let mut func = self.state.callbacks.input.take()?;
         let scale_factor = self.state.scale_factor.get();
@@ -1017,11 +1060,12 @@ impl WindowsWindowInner {
             && let Some(last_pressed) = last_pressed
         {
             let handled = match (wparam.0 as u32, last_pressed) {
-                (HTMINBUTTON, HTMINBUTTON) => {
+                (HTMINBUTTON, HTMINBUTTON) if self.is_minimizable => {
                     unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
                     true
                 }
-                (HTMAXBUTTON, HTMAXBUTTON) => {
+                (HTMINBUTTON, HTMINBUTTON) => true,
+                (HTMAXBUTTON, HTMAXBUTTON) if self.is_resizable => {
                     if self.state.is_maximized() {
                         unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
                     } else {
@@ -1029,6 +1073,7 @@ impl WindowsWindowInner {
                     }
                     true
                 }
+                (HTMAXBUTTON, HTMAXBUTTON) => true,
                 (HTCLOSE, HTCLOSE) => {
                     unsafe {
                         PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
@@ -1078,8 +1123,13 @@ impl WindowsWindowInner {
         {
             return None;
         }
+        let cursor = if self.state.cursor_visible.load(Ordering::Relaxed) {
+            self.state.current_cursor.get()
+        } else {
+            None
+        };
         unsafe {
-            SetCursor(self.state.current_cursor.get());
+            SetCursor(cursor);
         };
         Some(0)
     }
@@ -1160,6 +1210,11 @@ impl WindowsWindowInner {
         {
             panic!("Device lost: {err}");
         }
+        // Make sure the first `draw_window` after recovery (whether it comes
+        // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
+        // between) is treated as a forced render so it both clears
+        // `skip_draws` and bypasses the view cache.
+        self.state.force_render_after_recovery.set(true);
         Some(0)
     }
 
@@ -1184,6 +1239,7 @@ impl WindowsWindowInner {
             }
         }
 
+        let force_render = force_render || self.state.force_render_after_recovery.take();
         if force_render {
             // Re-enable drawing after a device loss recovery. The forced render
             // will rebuild the scene with fresh atlas textures.
@@ -1229,6 +1285,15 @@ impl WindowsWindowInner {
                 char::from_u32(code_point as u32)
                     .filter(|c| !c.is_control())
                     .map(|c| c.to_string())
+            }
+        }
+    }
+
+    /// Clear the hidden flag and restore the cursor immediately
+    fn restore_cursor_after_hide(&self) {
+        if !self.state.cursor_visible.swap(true, Ordering::Relaxed) {
+            unsafe {
+                SetCursor(self.state.current_cursor.get());
             }
         }
     }

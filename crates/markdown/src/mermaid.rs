@@ -1,17 +1,20 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, ImageSource, RenderImage, StyledText, Task, img,
-    pulsating_between,
+    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
+    StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::prelude::*;
+use ui::{CopyButton, TintColor, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
+use settings::Settings as _;
+use theme_settings::ThemeSettings;
 
-use super::{Markdown, MarkdownStyle, ParsedMarkdown};
+use super::{CopyButtonVisibility, Markdown, MarkdownStyle, ParsedMarkdown};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -99,11 +102,13 @@ impl CachedMermaidDiagram {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
         let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
+        let mermaid_theme = build_mermaid_theme(cx);
 
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    let svg_string =
+                        mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -141,6 +146,73 @@ impl CachedMermaidDiagram {
     }
 }
 
+/// Merman has somewhat limited text measurement capabilities.
+///
+/// When it doesn't have metrics for any of the specified fonts, it chooses a
+/// fairly narrow width, which causes visible overflow. Adding `sans-serif`
+/// allows it to fall back to a more conservative (i.e. wider) measurement.
+///
+/// This isn't perfect - very wide fonts will likely still cause overflow. A
+/// proper fix would involve somehow piping `resvg`'s actual measurements into
+/// `merman`, but that is a lot of work for a fairly uncommon edge case.
+fn mermaid_font_family(font_family: &str) -> String {
+    let font_family = gpui::font_name_with_fallbacks(font_family, "system-ui");
+    if font_family
+        .split(',')
+        .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
+    {
+        font_family.to_string()
+    } else {
+        format!("{font_family}, sans-serif")
+    }
+}
+
+fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
+    let colors = cx.theme().colors();
+    let theme_settings = ThemeSettings::get_global(cx);
+    let is_dark = !cx.theme().appearance.is_light();
+
+    let players = cx.theme().players();
+    let git_branch_colors = std::array::from_fn(|i| players.0[i % players.0.len()].cursor);
+    let git_branch_label_colors = git_branch_colors.map(mermaid_render::text_color_for_background);
+
+    mermaid_render::MermaidTheme {
+        dark_mode: is_dark,
+        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()),
+        background: colors.editor_background,
+        primary_color: colors.surface_background,
+        primary_text_color: colors.text,
+        primary_border_color: colors.border,
+        secondary_color: colors.element_background,
+        tertiary_color: colors.ghost_element_hover,
+        line_color: colors.border,
+        text_color: colors.text,
+        edge_label_background: colors.editor_background,
+        cluster_background: colors.panel_background,
+        cluster_border: colors.border_variant,
+        note_background: colors.surface_background,
+        note_border: colors.border_variant,
+        actor_background: colors.element_background,
+        actor_border: colors.border,
+        activation_background: colors.ghost_element_hover,
+        activation_border: colors.border,
+        git_branch_colors,
+        git_branch_label_colors,
+        er_attr_bg_odd: colors.surface_background,
+        er_attr_bg_even: colors.element_background,
+        error_color: cx.theme().status().error,
+        warning_color: cx.theme().status().warning,
+        accent_colors: players
+            .0
+            .iter()
+            .map(|player| mermaid_render::AccentColor {
+                foreground: player.cursor,
+                background: player.background,
+            })
+            .collect(),
+    }
+}
+
 fn parse_mermaid_info(info: &str) -> Option<u32> {
     let mut parts = info.split_whitespace();
     if parts.next()? != "mermaid" {
@@ -156,6 +228,38 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+/// We deliberately block rendering of some diagram types, even though `merman`
+/// supports them, because we have not yet written custom CSS to ensure text is
+/// readable.
+fn is_supported_diagram_type(source: &str) -> bool {
+    /// If updating this list, also update the system prompt!
+    const SUPPORTED_PREFIXES: &[&str] = &[
+        "flowchart",
+        "graph",
+        "sequenceDiagram",
+        "classDiagram",
+        "stateDiagram",
+        "stateDiagram-v2",
+        "erDiagram",
+        "gantt",
+        "pie",
+        "gitGraph",
+        "mindmap",
+        "timeline",
+        "quadrantChart",
+        "xychart-beta",
+        "journey",
+    ];
+    let first_token = source
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || c == '\n')
+        .next()
+        .unwrap_or("");
+    SUPPORTED_PREFIXES
+        .iter()
+        .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
+}
+
 pub(crate) fn extract_mermaid_diagrams(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -166,17 +270,31 @@ pub(crate) fn extract_mermaid_diagrams(
         let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, metadata }) = event else {
             continue;
         };
-        let CodeBlockKind::FencedLang(info) = kind else {
+        if !metadata.is_fenced_closed {
             continue;
-        };
-        let Some(scale) = parse_mermaid_info(info.as_ref()) else {
-            continue;
+        }
+        let scale = match kind {
+            CodeBlockKind::FencedLang(info) => match parse_mermaid_info(info.as_ref()) {
+                Some(scale) => scale,
+                None => continue,
+            },
+            CodeBlockKind::FencedSrc(path_range) => {
+                let path = Path::new(path_range.path.as_ref());
+                match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("mermaid" | "mmd") => 100,
+                    _ => continue,
+                }
+            }
+            _ => continue,
         };
 
         let contents = source[metadata.content_range.clone()]
             .strip_suffix('\n')
             .unwrap_or(&source[metadata.content_range.clone()])
             .to_string();
+        if !is_supported_diagram_type(&contents) {
+            continue;
+        }
         mermaid_diagrams.insert(
             source_range.start,
             ParsedMarkdownMermaidDiagram {
@@ -196,68 +314,224 @@ pub(crate) fn render_mermaid_diagram(
     parsed: &ParsedMarkdownMermaidDiagram,
     mermaid_state: &MermaidState,
     style: &MarkdownStyle,
+    markdown: Entity<Markdown>,
+    source_offset: usize,
+    showing_code: bool,
+    copy_button_visibility: CopyButtonVisibility,
 ) -> AnyElement {
     let cached = mermaid_state.cache.get(&parsed.contents);
-    let mut container = div().w_full();
+    let render_result = cached.and_then(|cached| cached.render_image.get());
+    let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
+
+    let code = parsed.contents.contents.clone();
+
+    let mut container = div().group("code_block").relative().w_full().rounded_lg();
     container.style().refine(&style.code_block);
 
-    if let Some(result) = cached.and_then(|cached| cached.render_image.get()) {
-        match result {
-            Ok(render_image) => container
-                .child(
-                    div().w_full().child(
-                        img(ImageSource::Render(render_image.clone()))
-                            .max_w_full()
-                            .with_fallback(|| {
-                                div()
-                                    .child(Label::new("Failed to load mermaid diagram"))
-                                    .into_any_element()
-                            }),
-                    ),
-                )
-                .into_any_element(),
-            Err(_) => container
-                .child(StyledText::new(parsed.contents.contents.clone()))
-                .into_any_element(),
-        }
-    } else if let Some(fallback) = cached.and_then(|cached| cached.fallback_image.as_ref()) {
-        container
-            .child(
+    match render_result {
+        Some(Ok(render_image)) => {
+            let body = if showing_code {
+                render_mermaid_code_view(&parsed.contents.contents)
+            } else {
                 div()
                     .w_full()
                     .child(
-                        img(ImageSource::Render(fallback.clone()))
+                        img(ImageSource::Render(render_image.clone()))
                             .max_w_full()
                             .with_fallback(|| {
-                                div()
-                                    .child(Label::new("Failed to load mermaid diagram"))
-                                    .into_any_element()
+                                Label::new("Failed to Load Mermaid Diagram").into_any_element()
                             }),
                     )
-                    .with_animation(
-                        "mermaid-fallback-pulse",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.6, 1.0)),
-                        |element, delta| element.opacity(delta),
-                    ),
-            )
-            .into_any_element()
-    } else {
-        container
-            .child(
-                Label::new("Rendering mermaid diagram...")
-                    .color(Color::Muted)
-                    .with_animation(
-                        "mermaid-loading-pulse",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 0.8)),
-                        |label, delta| label.alpha(delta),
-                    ),
-            )
-            .into_any_element()
+                    .into_any_element()
+            };
+
+            container
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_tab_header(
+                        source_offset,
+                        showing_code,
+                        markdown.clone(),
+                    ))
+                })
+                .child(body)
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_copy_button(
+                        source_offset,
+                        code.to_string(),
+                        markdown,
+                    ))
+                })
+                .into_any_element()
+        }
+        Some(Err(_)) => {
+            // Render failed — show the source code without tabs
+            container
+                .child(render_mermaid_code_view(&parsed.contents.contents))
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_copy_button(
+                        source_offset,
+                        code.to_string(),
+                        markdown,
+                    ))
+                })
+                .into_any_element()
+        }
+        None => {
+            // Still rendering
+            if let Some(fallback) = cached.and_then(|cached| cached.fallback_image.as_ref()) {
+                container
+                    .child(
+                        div()
+                            .w_full()
+                            .child(
+                                img(ImageSource::Render(fallback.clone()))
+                                    .max_w_full()
+                                    .with_fallback(|| {
+                                        div()
+                                            .child(Label::new("Failed to load mermaid diagram"))
+                                            .into_any_element()
+                                    }),
+                            )
+                            .with_animation(
+                                "mermaid-fallback-pulse",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.0)),
+                                |element, delta| element.opacity(delta),
+                            ),
+                    )
+                    .when(show_interactive, |container| {
+                        container.child(render_mermaid_copy_button(
+                            source_offset,
+                            code.to_string(),
+                            markdown,
+                        ))
+                    })
+                    .into_any_element()
+            } else {
+                // No fallback — show the code so the user has something to look at
+                container
+                    .child(render_mermaid_code_view(&parsed.contents.contents))
+                    .child(
+                        div().absolute().top_1().right_2().child(
+                            Label::new("Rendering...")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .with_animation(
+                                    "mermaid-loading-pulse",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                    |label, delta| label.alpha(delta),
+                                ),
+                        ),
+                    )
+                    .when(show_interactive, |container| {
+                        container.child(render_mermaid_copy_button(
+                            source_offset,
+                            code.to_string(),
+                            markdown,
+                        ))
+                    })
+                    .into_any_element()
+            }
+        }
     }
+}
+
+fn render_mermaid_tab_header(
+    source_offset: usize,
+    showing_code: bool,
+    markdown: Entity<Markdown>,
+) -> impl IntoElement {
+    let preview_id = ElementId::NamedChild(
+        Arc::new(ElementId::from((
+            "mermaid-tab-preview",
+            markdown.entity_id(),
+        ))),
+        source_offset.to_string().into(),
+    );
+    let code_id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("mermaid-tab-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
+    let preview_markdown = markdown.clone();
+    let code_markdown = markdown;
+
+    h_flex()
+        .gap_0p5()
+        .mb_2p5()
+        .child(
+            Button::new(preview_id, "Preview")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(!showing_code)
+                .on_click(move |_event, _window, cx| {
+                    preview_markdown.update(cx, |md, cx| {
+                        if md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
+        )
+        .child(
+            Button::new(code_id, "Code")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(showing_code)
+                .on_click(move |_event, _window, cx| {
+                    code_markdown.update(cx, |md, cx| {
+                        if !md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
+        )
+}
+
+fn render_mermaid_copy_button(
+    source_offset: usize,
+    code: String,
+    markdown: Entity<Markdown>,
+) -> impl IntoElement {
+    let id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("copy-mermaid-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
+
+    div().absolute().top_1().right_1().justify_end().child(
+        CopyButton::new(id.clone(), code.clone())
+            .visible_on_hover("code_block")
+            .custom_on_click({
+                move |_window, cx| {
+                    let id = id.clone();
+                    markdown.update(cx, |this, cx| {
+                        this.copied_code_blocks.insert(id.clone());
+                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.copied_code_blocks.remove(&id);
+                                    cx.notify();
+                                })
+                            })
+                            .ok();
+                        })
+                        .detach();
+                    });
+                }
+            }),
+    )
+}
+
+fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
+    div()
+        .w_full()
+        .child(StyledText::new(contents.clone()))
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -268,7 +542,7 @@ mod tests {
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
-        MarkdownStyle,
+        MarkdownStyle, WrapButtonVisibility,
     };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
@@ -313,6 +587,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -360,6 +635,31 @@ mod tests {
     }
 
     #[test]
+    fn test_mermaid_font_family_resolves_zed_virtual_fonts() {
+        assert_eq!(
+            super::mermaid_font_family(".ZedSans"),
+            "IBM Plex Sans, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Zed Plex Sans"),
+            "IBM Plex Sans, sans-serif"
+        );
+        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex, sans-serif");
+        assert_eq!(
+            super::mermaid_font_family(".SystemUIFont"),
+            "system-ui, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Custom Font"),
+            "Custom Font, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Custom Font, sans-serif"),
+            "Custom Font, sans-serif"
+        );
+    }
+
+    #[test]
     fn test_parse_mermaid_info() {
         assert_eq!(parse_mermaid_info("mermaid"), Some(100));
         assert_eq!(parse_mermaid_info("mermaid 150"), Some(150));
@@ -371,13 +671,36 @@ mod tests {
     #[test]
     fn test_extract_mermaid_diagrams_parses_scale() {
         let markdown = "```mermaid 150\ngraph TD;\n```\n\n```rust\nfn main() {}\n```";
-        let events = crate::parser::parse_markdown_with_options(markdown, false, false).events;
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
         let diagrams = extract_mermaid_diagrams(markdown, &events);
 
         assert_eq!(diagrams.len(), 1);
         let diagram = diagrams.values().next().unwrap();
         assert_eq!(diagram.contents.contents, "graph TD;");
         assert_eq!(diagram.contents.scale, 150);
+    }
+
+    #[test]
+    fn test_unsupported_diagram_types_are_skipped() {
+        let markdown = concat!(
+            "```mermaid\nsankey-beta\n```\n\n",
+            "```mermaid\nblock-beta\n```\n\n",
+            "```mermaid\nflowchart TD\n    A --> B\n```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "Only the flowchart should be extracted; sankey and block should be skipped"
+        );
+        let diagram = diagrams.values().next().unwrap();
+        assert!(
+            diagram.contents.contents.contains("flowchart"),
+            "The extracted diagram should be the flowchart"
+        );
     }
 
     #[gpui::test]
@@ -584,6 +907,7 @@ mod tests {
                 MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
                     .code_block_renderer(CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     })
             },

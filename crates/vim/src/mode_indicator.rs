@@ -1,6 +1,8 @@
-use gpui::{Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window, div};
+use gpui::{
+    App, Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window, div,
+};
 use ui::text_for_keystrokes;
-use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
+use workspace::{HideStatusItem, StatusItemView, item::ItemHandle, ui::prelude::*};
 
 use crate::{Vim, VimEvent, VimGlobals};
 
@@ -81,7 +83,7 @@ impl ModeIndicator {
                     .map(|count| format!("{}", count)),
             )
             .collect::<Vec<_>>()
-            .join("")
+            .concat()
     }
 }
 
@@ -185,5 +187,10 @@ impl StatusItemView for ModeIndicator {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // The Vim mode indicator is only visible while Vim mode is on.
+        None
     }
 }

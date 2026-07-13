@@ -423,9 +423,6 @@ message Envelope {
     OpenImageResponse open_image_response = 392;
     CreateImageForPeer create_image_for_peer = 393;
 
-    GitFileHistory git_file_history = 397;
-    GitFileHistoryResponse git_file_history_response = 398;
-
     RunGitHook run_git_hook = 399;
 
     GitDeleteBranch git_delete_branch = 400;
@@ -437,10 +434,6 @@ message Envelope {
 
     TrustWorktrees trust_worktrees = 404;
     RestrictWorktrees restrict_worktrees = 405;
-
-    ShareAgentThread share_agent_thread = 406;
-    GetSharedAgentThread get_shared_agent_thread = 407;
-    GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
 
     FindSearchCandidatesChunk find_search_candidates_chunk = 409;
     FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
@@ -483,7 +476,20 @@ message Envelope {
     GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
     GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
     GetCommitData get_commit_data = 447;
-    GetCommitDataResponse get_commit_data_response = 448; // current max
+    GetCommitDataResponse get_commit_data_response = 448;
+    SearchCommits search_commits = 449;
+    SearchCommitsResponse search_commits_response = 450;
+    GetInitialGraphData get_initial_graph_data = 451;
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
+    GetDocumentLinks get_document_links = 453;
+    GetDocumentLinksResponse get_document_links_response = 454;
+    ResolveDocumentLink resolve_document_link = 455;
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
+    GitWorktreeCreatedAt git_worktree_created_at = 457;
+    GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
+    TelemetryEvent telemetry_event = 459;
+    ResolveCodeAction resolve_code_action = 460;
+    ResolveCodeActionResponse resolve_code_action_response = 461; // current max
   }
 
   reserved 87 to 88;
@@ -510,6 +516,8 @@ message Envelope {
   reserved 394 to 396;
   reserved 429 to 430;
   reserved 211 to 216, 232 to 233;
+  reserved 397 to 398;
+  reserved 406 to 408;
 }
 
 message Hello {

@@ -1,5 +1,6 @@
 use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
+use cloud_api_types::Plan;
 use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
@@ -8,6 +9,7 @@ use gpui::{
     Subscription, Task, WeakEntity, Window, actions,
 };
 use notifications::status_toast::StatusToast;
+use project::agent_server_store::AllAgentServersSettings;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
@@ -52,7 +54,6 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     onboarding,
@@ -215,6 +216,42 @@ struct Onboarding {
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
+
+        let installed_agents = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
+        let client = Client::global(cx);
+        let status = *client.status().borrow();
+        let plan = workspace.user_store().read(cx).plan();
+        let zed_agent_state = if status.is_signed_out()
+            || matches!(
+                status,
+                client::Status::AuthenticationError | client::Status::ConnectionError
+            ) {
+            "signed_out"
+        } else if status.is_signing_in() {
+            "signing_in"
+        } else {
+            match plan {
+                Some(Plan::ZedPro) => "pro",
+                Some(Plan::ZedProTrial) => "trial",
+                Some(Plan::ZedBusiness) => "business",
+                Some(Plan::ZedVip) => "vip",
+                Some(Plan::ZedStudent) => "student",
+                Some(Plan::ZedFree) | None => "free",
+            }
+        };
+        let agents_installed = basics_page::FEATURED_AGENT_IDS
+            .iter()
+            .filter(|id| installed_agents.contains_key(**id))
+            .copied()
+            .collect::<Vec<_>>();
+        telemetry::event!(
+            "Welcome Agent Setup Viewed",
+            zed_agent = zed_agent_state,
+            agents_installed = agents_installed,
+        );
 
         cx.new(|cx| {
             cx.spawn(async move |this, cx| {
@@ -449,7 +486,7 @@ pub async fn handle_import_vscode_settings(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),
                     None,
-                    &["Ok"],
+                    &["OK"],
                 );
                 return;
             }
@@ -465,7 +502,7 @@ pub async fn handle_import_vscode_settings(
                 truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
             ),
             None,
-            &["Ok", "Cancel"],
+            &["Import", "Cancel"],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {

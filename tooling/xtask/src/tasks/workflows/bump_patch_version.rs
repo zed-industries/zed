@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, CheckoutStep, CommonJobConditions, named},
+    steps::{self, CheckoutStep, CommonJobConditions, CommonPermissionSets, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -10,6 +10,7 @@ pub fn bump_patch_version() -> Workflow {
     let branch = WorkflowInput::string("branch", None).description("Branch name to run on");
     let bump_patch_version_job = run_bump_patch_version(&branch);
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(branch.name, branch.input())))
         .concurrency(
@@ -56,18 +57,6 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
         .id("channel")
     }
 
-    fn verify_prior_release_exists() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
-            if [[ "$status" != "200" ]]; then
-                echo "::error::version $VERSION has not been released on $CHANNEL yet (HTTP $status) — bump the patch version only after the current version is released"
-                exit 1
-            fi
-        "#})
-        .add_env(("CHANNEL", "${{ steps.channel.outputs.channel }}"))
-        .add_env(("VERSION", "${{ steps.channel.outputs.version }}"))
-    }
-
     fn bump_version() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
@@ -92,11 +81,11 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
     named::job(
         Job::default()
             .with_repository_owner_guard()
+            .permissions(Permissions::default().contents(Level::Write))
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
             .add_step(channel_step)
-            .add_step(verify_prior_release_exists())
             .add_step(steps::install_cargo_edit())
             .add_step(bump_version_step)
             .add_step(commit_step)

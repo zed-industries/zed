@@ -35,15 +35,15 @@ use editor::{
 use fs::Fs;
 use futures::{FutureExt, channel::mpsc};
 use gpui::{
-    App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
-    WeakEntity, Window, point,
+    App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, TaskExt,
+    UpdateGlobal, WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{DisableAiSettings, Project};
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -228,7 +228,6 @@ impl InlineAssistant {
         };
         let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
 
         let handle_assist =
@@ -240,7 +239,6 @@ impl InlineAssistant {
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
                             thread_store,
-                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -254,7 +252,6 @@ impl InlineAssistant {
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
                             thread_store,
-                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -437,7 +434,6 @@ impl InlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -483,7 +479,6 @@ impl InlineAssistant {
                     session_id,
                     self.fs.clone(),
                     thread_store.clone(),
-                    prompt_store.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -574,7 +569,6 @@ impl InlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -592,7 +586,6 @@ impl InlineAssistant {
             workspace,
             project,
             thread_store,
-            prompt_store,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -606,51 +599,6 @@ impl InlineAssistant {
         }
 
         assist_to_focus
-    }
-
-    pub fn suggest_assist(
-        &mut self,
-        editor: &Entity<Editor>,
-        mut range: Range<Anchor>,
-        initial_prompt: String,
-        initial_transaction_id: Option<TransactionId>,
-        focus: bool,
-        workspace: Entity<Workspace>,
-        thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> InlineAssistId {
-        let buffer = editor.read(cx).buffer().clone();
-        {
-            let snapshot = buffer.read(cx).read(cx);
-            range.start = range.start.bias_left(&snapshot);
-            range.end = range.end.bias_right(&snapshot);
-        }
-
-        let project = workspace.read(cx).project().downgrade();
-
-        let assist_id = self
-            .batch_assist(
-                editor,
-                workspace.downgrade(),
-                project,
-                thread_store,
-                prompt_store,
-                Some(initial_prompt),
-                window,
-                &[range],
-                None,
-                initial_transaction_id,
-                cx,
-            )
-            .expect("batch_assist returns an id if there's only one range");
-
-        if focus {
-            self.focus_assist(assist_id, window, cx);
-        }
-
-        assist_id
     }
 
     fn insert_assist_blocks(
@@ -1406,7 +1354,7 @@ impl InlineAssistant {
             for row_range in inserted_row_ranges {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
-                    cx.theme().status().info_background,
+                    |cx| cx.theme().status().info_background,
                     Default::default(),
                     cx,
                 );
@@ -1470,12 +1418,12 @@ impl InlineAssistant {
                     editor.set_show_gutter(false, cx);
                     editor.set_offset_content(false, cx);
                     editor.disable_mouse_wheel_zoom();
-                    editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::Min..Anchor::Max,
-                        cx.theme().status().deleted_background,
+                        |cx| cx.theme().status().deleted_background,
                         Default::default(),
                         cx,
                     );
@@ -1524,6 +1472,13 @@ impl InlineAssistant {
                     .active_item()
                     .and_then(|t| t.downcast::<TerminalView>())
             })
+        {
+            return Some(InlineAssistTarget::Terminal(terminal_view));
+        }
+
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && let Some(terminal_view) = agent_panel.read(cx).visible_terminal_view().cloned()
+            && terminal_view.focus_handle(cx).contains_focused(window, cx)
         {
             return Some(InlineAssistTarget::Terminal(terminal_view));
         }
@@ -1849,12 +1804,12 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
+    use futures::stream::StreamExt as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
     use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
-    use smol::stream::StreamExt as _;
     use std::str::FromStr;
     use std::sync::Arc;
     use util::test::marked_text_ranges;
@@ -1960,7 +1915,6 @@ pub mod evals {
                         workspace.downgrade(),
                         project.downgrade(),
                         thread_store,
-                        None,
                         Some(prompt),
                         window,
                         cx,
