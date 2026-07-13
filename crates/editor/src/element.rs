@@ -10708,7 +10708,6 @@ mod tests {
     const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
         NavigationOverlayKey::unique::<PrimaryNavigationOverlay>();
 
-
     fn navigation_overlay(
         label_text: &'static str,
         target_range: Range<Anchor>,
