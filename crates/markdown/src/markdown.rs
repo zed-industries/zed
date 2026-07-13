@@ -4230,7 +4230,15 @@ fn selection_html(
         buffer.push(event);
     }
     pulldown_cmark::html::push_html(&mut html, buffer.drain(..));
-    html
+    // pulldown emits a bare `<table>`; without border attributes Word/TextEdit
+    // render cells with no separators. The legacy `border`/`cellpadding`/
+    // `cellspacing` attributes draw gridlines around every cell even in targets
+    // that ignore CSS, while `border-collapse` merges them into single lines.
+    html.replace(
+        "<table>",
+        "<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" \
+         style=\"border-collapse: collapse;\">",
+    )
 }
 
 fn escape_html_into(out: &mut String, text: &str) {
@@ -5871,8 +5879,13 @@ mod tests {
     fn test_selection_html_table() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
         let html = selection_html(source, 0..source.len(), &HashMap::default());
-        assert!(html.contains("<table>"), "expected a table element: {html}");
+        assert!(html.contains("<table "), "expected a table element: {html}");
         assert!(html.contains("<td>1</td>"), "expected table cell: {html}");
+        // Cells must have visible separators when pasted into Word/TextEdit.
+        assert!(
+            html.contains("border=\"1\"") && html.contains("border-collapse"),
+            "expected table borders: {html}"
+        );
     }
 
     #[test]
