@@ -1325,6 +1325,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "ctrl-home": "markdown::ScrollToTop",
       "ctrl-end": "markdown::ScrollToBottom",
+      "ctrl-shift-v": "markdown::CloseAndReturnToEditor",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
     },
@@ -1516,7 +1517,7 @@
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
       "ctrl-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
-      "ctrl-shift-i": "branch_picker::FilterRemotes",
+      "ctrl-shift-i": "branch_picker::CycleBranchFilter",
     },
   },
   {
