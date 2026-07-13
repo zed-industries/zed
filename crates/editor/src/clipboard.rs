@@ -266,7 +266,7 @@ impl Editor {
         }
 
         let clipboard_image = item.entries().iter().find_map(|entry| match entry {
-            ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image.clone()),
+            ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image),
             _ => None,
         });
 
