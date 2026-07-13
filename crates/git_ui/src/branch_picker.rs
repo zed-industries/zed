@@ -1216,40 +1216,24 @@ impl PickerDelegate for BranchListDelegate {
         let editor_start = matches!(self.editor_position(), PickerEditorPosition::Start);
         let editor_bottom = matches!(self.editor_position(), PickerEditorPosition::End);
 
+        let warning_banner = || {
+            self.branch_list_error.as_deref().map(|error| {
+                let message = format!("Some branches could not be loaded: {error}");
+                div().p_1p5().child(
+                    Banner::new()
+                        .severity(Severity::Warning)
+                        .child(div().min_w_0().flex_1().child(Label::new(message.clone()))),
+                )
+            })
+        };
+
         Some(
             v_flex()
-                .when(editor_bottom, |this| this.child(Divider::horizontal()))
-                .when_some(self.branch_list_error.clone(), |this, error| {
-                    let message = format!("Some branches could not be loaded: {error}");
-                    this.child(
-                        div()
-                            .id("branch-list-error")
-                            .p_1p5()
-                            .child(
-                                Banner::new().severity(Severity::Warning).child(
-                                    Label::new(message.clone())
-                                        .size(LabelSize::Small)
-                                        .single_line()
-                                        .truncate(),
-                                ),
-                            )
-                            .tooltip(Tooltip::text(message)),
-                    )
-                })
-                .child({
-                    let message = "Some branches could not be loaded: fatal: bad object refs/heads/feature-broken".to_string();
-                    div()
-                        .id("branch-list-error")
-                        .p_1p5()
-                        .child(
-                            Banner::new().severity(Severity::Warning).child(
-                                Label::new(message.clone())
-                                    .size(LabelSize::Small)
-                                    .single_line()
-                                    .truncate(),
-                            ),
-                        )
-                        .tooltip(Tooltip::text(message))
+                .w_full()
+                .min_w_0()
+                .when(editor_bottom, |this| {
+                    this.child(Divider::horizontal())
+                        .when_some(warning_banner(), |this, banner| this.child(banner))
                 })
                 .child(
                     h_flex()
@@ -1297,7 +1281,10 @@ impl PickerDelegate for BranchListDelegate {
                             )
                         }),
                 )
-                .when(editor_start, |this| this.child(Divider::horizontal())),
+                .when(editor_start, |this| {
+                    this.child(Divider::horizontal())
+                        .when_some(warning_banner(), |this, banner| this.child(banner))
+                }),
         )
     }
 
