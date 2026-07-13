@@ -511,35 +511,26 @@ pub(crate) fn new_debugger_pane(
                                     .is_some_and(|active| active.item_id() == item.item_id());
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
+                                let colors = cx.theme().colors();
+
                                 div()
+                                    .cursor_pointer()
                                     .id(format!("debugger_tab_{}", item.item_id().as_u64()))
                                     .p_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
+                                    .rounded_sm()
                                     .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
                                         this.tooltip(Tooltip::text(tooltip))
                                     })
-                                    .map(|this| {
-                                        let theme = cx.theme();
+                                    .map(|s| {
                                         if selected {
-                                            let color = theme.colors().tab_active_background;
-                                            let color = if deemphasized {
-                                                color.opacity(0.5)
-                                            } else {
-                                                color
-                                            };
-                                            this.bg(color)
+                                            s.bg(colors.text_accent.opacity(0.08))
+                                                .hover(|s| s.bg(colors.text_accent.opacity(0.25)))
+                                                .text_color(colors.text_accent)
                                         } else {
-                                            let hover_color = theme.colors().element_hover;
-                                            this.hover(|style| style.bg(hover_color))
+                                            s.hover(|s| s.bg(colors.element_hover))
                                         }
                                     })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        let index = this.index_for_item(&*item_);
-                                        if let Some(index) = index {
-                                            this.activate_item(index, true, true, window, cx);
-                                        }
-                                    }))
+                                    .when(deemphasized, |s| s.opacity(0.8))
                                     .child(item.tab_content(
                                         TabContentParams {
                                             selected,
@@ -549,6 +540,12 @@ pub(crate) fn new_debugger_pane(
                                         window,
                                         cx,
                                     ))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let index = this.index_for_item(&*item_);
+                                        if let Some(index) = index {
+                                            this.activate_item(index, true, true, window, cx);
+                                        }
+                                    }))
                                     .on_drop(cx.listener(
                                         move |this, dragged_tab: &DraggedTab, window, cx| {
                                             if dragged_tab.item.downcast::<SubView>().is_none() {
