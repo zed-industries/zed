@@ -206,6 +206,7 @@ impl VsCodeSettings {
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
             proxy: self.read_string("http.proxy"),
+            no_proxy: None,
             remote: RemoteSettingsContent::default(),
             repl: None,
             server_url: None,

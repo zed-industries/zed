@@ -215,6 +215,7 @@ pub struct SettingsContent {
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+    pub no_proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
