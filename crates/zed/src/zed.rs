@@ -1223,12 +1223,12 @@ fn register_actions(
                     return;
                 };
                 let old_group_key = workspace.project_group_key(cx);
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Ok(task) = window_handle.update(cx, |multi_workspace, window, cx| {
+                cx.spawn_in(window, async move |_, cx| {
+                    let task = window_handle.update(cx, |multi_workspace, window, cx| {
                         multi_workspace.remove_project_group(&old_group_key, window, cx)
-                    }) {
-                        task.await.log_err();
-                    }
+                    })?;
+                    task.await?;
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
