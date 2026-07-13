@@ -435,7 +435,7 @@ impl Item for SoloDiffView {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        None
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
