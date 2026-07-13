@@ -8662,11 +8662,11 @@ impl Editor {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
         if let Some(file_location) = maybe!({
-            // A selection that spans multiple buffers has no single location,
-            // so fall back to the buffer the cursor is in.
             let (buffer, range) = multi_buffer_snapshot
                 .range_to_buffer_range(selection.range())
                 .or_else(|| {
+                    // A selection that spans multiple buffers has no single location,
+                    // so fall back to the buffer the latest cursor is in.
                     let (buffer, point) =
                         multi_buffer_snapshot.point_to_buffer_point(selection.head())?;
                     Some((buffer, point..point))

@@ -9993,6 +9993,68 @@ async fn test_copy_file_location_across_buffers(cx: &mut TestAppContext) {
         Some("two.txt:2".to_string()),
         "a selection spanning buffers should report the location of the cursor"
     );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(3, 2)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("one.txt:2".to_string()),
+        "a reversed selection spanning buffers should report the cursor's location in the first buffer"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_location_with_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇaaa\nbbb\nccc");
+    cx.set_head_text("aaa\nXXX\nbbb\nccc");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Multi-buffer rows: 0 "aaa", 1 "XXX" (deleted hunk), 2 "bbb", 3 "ccc"
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(2, 2)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:2".to_string()),
+        "a selection crossing a deleted hunk should report the location of the cursor"
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:1".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 1)..Point::new(1, 1)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:1".to_string()),
+        "a cursor inside a deleted hunk has no file location, so the clipboard is unchanged"
+    );
 }
 
 #[gpui::test]
