@@ -139,12 +139,12 @@ impl LineNumberStyle {
 }
 
 #[derive(Debug)]
-pub(crate) struct SelectionLayout {
-    pub(crate) head: DisplayPoint,
+struct SelectionLayout {
+    head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
     is_local: bool,
-    pub(crate) range: Range<DisplayPoint>,
+    range: Range<DisplayPoint>,
     active_rows: Range<DisplayRow>,
     user_name: Option<SharedString>,
 }
@@ -157,7 +157,7 @@ struct InlineBlameLayout {
 }
 
 impl SelectionLayout {
-    pub(crate) fn new<T: ToPoint + ToDisplayPoint + Clone>(
+    fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
         cursor_offset: bool,
@@ -171,18 +171,13 @@ impl SelectionLayout {
         let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
-        if !line_mode && !point_selection.range().is_empty() {
+        if !line_mode {
             let offset_range = point_selection.start.to_offset(buffer_snapshot)
                 ..point_selection.end.to_offset(buffer_snapshot);
-            let isomorphic_ranges =
-                map.isomorphic_display_point_ranges_for_buffer_range(offset_range);
-            // taking the start and end of the range means that inlays fully in
-            // the range will be highlighted, but inlays that are outside of the
-            // range will not be, this prevents inlays that are not *actually*
-            // inside the range from being highlighted. #48141
-            if let (Some(first), Some(last)) = (isomorphic_ranges.first(), isomorphic_ranges.last())
+            if let Some(contiguous_range) =
+                map.contiguous_display_point_range_for_buffer_range(offset_range)
             {
-                range = first.start..last.end;
+                range = contiguous_range;
             }
         }
         let mut head = display_selection.head();
@@ -10688,13 +10683,13 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, HighlightKey, MultiBuffer, NavigationOverlayKey, NavigationOverlayLabel,
-        NavigationTargetOverlay, SelectionEffects,
-        display_map::{BlockPlacement, BlockProperties},
+        Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
+        NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
+        display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext};
-    use language::{Buffer, language_settings, tree_sitter_python};
+    use gpui::{TestAppContext, VisualTestContext, font};
+    use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
@@ -10704,6 +10699,87 @@ mod tests {
 
     const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
         NavigationOverlayKey::unique::<PrimaryNavigationOverlay>();
+
+    // Regression test for https://github.com/zed-industries/zed/issues/48141.
+    #[gpui::test]
+    fn test_selection_layout_around_inlay(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let snapshot = cx.update(|cx| {
+            let buffer = MultiBuffer::build_simple("abcd", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    buffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    project::project_settings::DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            display_map.update(cx, |display_map, cx| {
+                display_map.splice_inlays(
+                    &[],
+                    vec![Inlay::mock_hint(
+                        0,
+                        buffer_snapshot.anchor_before(MultiBufferOffset(1)),
+                        "hint ",
+                    )],
+                    cx,
+                );
+                display_map.snapshot(cx)
+            })
+        });
+
+        let layout = |range: Range<MultiBufferOffset>, reversed, cursor_offset| {
+            SelectionLayout::new(
+                Selection {
+                    id: 0,
+                    start: range.start,
+                    end: range.end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                },
+                false,
+                cursor_offset,
+                CursorShape::Bar,
+                &snapshot,
+                true,
+                true,
+                None,
+            )
+        };
+        let display_point = |column| DisplayPoint::new(DisplayRow(0), column);
+
+        let ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, false);
+        assert_eq!(ending_at_inlay.range, display_point(0)..display_point(1));
+        assert_eq!(ending_at_inlay.head, display_point(6));
+
+        let starting_at_inlay = layout(MultiBufferOffset(1)..MultiBufferOffset(2), false, false);
+        assert_eq!(starting_at_inlay.range, display_point(6)..display_point(7));
+
+        let spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, false);
+        assert_eq!(spanning_inlay.range, display_point(0)..display_point(7));
+
+        let reversed = layout(MultiBufferOffset(0)..MultiBufferOffset(2), true, false);
+        assert_eq!(reversed.range, display_point(0)..display_point(7));
+        assert_eq!(reversed.head, display_point(0));
+
+        let vim_ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, true);
+        assert_eq!(
+            vim_ending_at_inlay.range,
+            display_point(0)..display_point(1)
+        );
+        assert_eq!(vim_ending_at_inlay.head, display_point(0));
+
+        let vim_spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, true);
+        assert_eq!(vim_spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(vim_spanning_inlay.head, display_point(6));
+    }
 
     fn navigation_overlay(
         label_text: &'static str,
