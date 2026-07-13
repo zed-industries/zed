@@ -7742,7 +7742,7 @@ impl ThreadView {
 
         let header = TerminalToolHeader::new(
             terminal.entity_id().to_string(),
-            header_group.clone(),
+            header_group,
             working_dir,
             is_expanded,
         )
