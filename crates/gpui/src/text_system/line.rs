@@ -744,7 +744,7 @@ fn aligned_origin_x(
 
     match align {
         TextAlign::Left => origin.x,
-        TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
+        TextAlign::Center => ((origin.x * 2.0 + align_width - line_width) / 2.0).max(origin.x),
         TextAlign::Right => origin.x + align_width - line_width,
     }
 }
@@ -787,6 +787,37 @@ mod tests {
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
+    }
+
+    #[test]
+    fn test_centered_line_origin_does_not_overflow_to_the_left() {
+        let origin = point(px(10.0), px(0.0));
+        let short_line = make_shaped_line("short", &[(0, 0.0)], 40.0, &[]);
+        let long_line = make_shaped_line("long line", &[(0, 0.0)], 120.0, &[]);
+
+        assert_eq!(
+            aligned_origin_x(
+                origin,
+                px(100.0),
+                Pixels::ZERO,
+                &TextAlign::Center,
+                &short_line.layout,
+                None,
+            ),
+            px(40.0)
+        );
+
+        assert_eq!(
+            aligned_origin_x(
+                origin,
+                px(100.0),
+                Pixels::ZERO,
+                &TextAlign::Center,
+                &long_line.layout,
+                None,
+            ),
+            origin.x
+        );
     }
 
     #[test]

@@ -3114,6 +3114,7 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
+        content_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[AnyElement; 1]> {
@@ -3126,6 +3127,8 @@ impl EditorElement {
                 scroll_pixel_position,
                 row,
                 content_origin,
+                self.style.text.text_align,
+                content_width,
                 &mut line_elements,
                 window,
                 cx,
@@ -7349,6 +7352,8 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         row: DisplayRow,
         content_origin: gpui::Point<Pixels>,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
@@ -7359,6 +7364,8 @@ impl LineWithInvisibles {
             scroll_pixel_position,
             content_origin,
             line_y,
+            text_align,
+            content_width,
             line_elements,
             window,
             cx,
@@ -7371,12 +7378,18 @@ impl LineWithInvisibles {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         line_y: Pixels,
+        text_align: TextAlign,
+        content_width: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut fragment_origin =
-            content_origin + gpui::point(Pixels::from(-scroll_pixel_position.x), line_y);
+        let mut fragment_origin = content_origin
+            + gpui::point(
+                self.aligned_x(Pixels::ZERO, text_align, content_width)
+                    - Pixels::from(scroll_pixel_position.x),
+                line_y,
+            );
         for fragment in &mut self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
@@ -7436,7 +7449,8 @@ impl LineWithInvisibles {
         let line_height = layout.position_map.line_height;
         let mut fragment_origin = content_origin
             + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+                self.aligned_x(Pixels::ZERO, layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
 
@@ -7446,8 +7460,8 @@ impl LineWithInvisibles {
                     line.paint(
                         fragment_origin,
                         line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
+                        TextAlign::Left,
+                        None,
                         window,
                         cx,
                     )
@@ -7486,7 +7500,8 @@ impl LineWithInvisibles {
 
         let mut fragment_origin = content_origin
             + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+                self.aligned_x(Pixels::ZERO, layout.text_align, layout.content_width)
+                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
                 line_y,
             );
 
@@ -7496,8 +7511,8 @@ impl LineWithInvisibles {
                     line.paint_background(
                         fragment_origin,
                         line_height,
-                        layout.text_align,
-                        Some(layout.content_width),
+                        TextAlign::Left,
+                        None,
                         window,
                         cx,
                     )
@@ -7548,9 +7563,11 @@ impl LineWithInvisibles {
                 ((glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0).into();
             let origin = content_origin
                 + gpui::point(
-                    Pixels::from(
-                        x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
-                    ),
+                    self.aligned_x(
+                        Pixels::from(x_offset + invisible_offset),
+                        layout.text_align,
+                        layout.content_width,
+                    ) - Pixels::from(layout.position_map.scroll_pixel_position.x),
                     line_y,
                 );
 
@@ -7724,9 +7741,13 @@ impl LineWithInvisibles {
         let line_width = self.width;
         match text_align {
             TextAlign::Left => px(0.0),
-            TextAlign::Center => (content_width - line_width) / 2.0,
+            TextAlign::Center => ((content_width - line_width) / 2.0).max(Pixels::ZERO),
             TextAlign::Right => content_width - line_width,
         }
+    }
+
+    fn aligned_x(&self, x: Pixels, text_align: TextAlign, content_width: Pixels) -> Pixels {
+        self.alignment_offset(text_align, content_width) + x
     }
 }
 
@@ -7997,7 +8018,13 @@ impl Element for EditorElement {
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
 
-                    let extended_right = 2 * em_width + right_margin;
+                    let extended_right = if snapshot.mode.is_single_line()
+                        && style.text.text_align == TextAlign::Center
+                    {
+                        BAR_CURSOR_WIDTH + right_margin
+                    } else {
+                        2 * em_width + right_margin
+                    };
                     let editor_width = text_width - gutter_dimensions.margin - extended_right;
                     let editor_margins = EditorMargins {
                         gutter: gutter_dimensions,
@@ -8924,6 +8951,7 @@ impl Element for EditorElement {
                         scroll_position,
                         scroll_pixel_position,
                         content_origin,
+                        text_hitbox.size.width,
                         window,
                         cx,
                     );
@@ -10292,6 +10320,7 @@ struct NavigationOverlayLayoutContext<'a> {
 }
 
 const LABEL_LINE_HEIGHT_PADDING_PX: f32 = 2.0;
+const BAR_CURSOR_WIDTH: Pixels = px(2.0);
 
 pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
@@ -10341,7 +10370,7 @@ impl CursorLayout {
         match self.shape {
             CursorShape::Bar => Bounds {
                 origin: self.origin + origin,
-                size: size(px(2.0), self.line_height),
+                size: size(BAR_CURSOR_WIDTH, self.line_height),
             },
             CursorShape::Block | CursorShape::Hollow => Bounds {
                 origin: self.origin + origin,
@@ -10780,6 +10809,169 @@ mod tests {
             snapshot: snapshot,
             row_infos: &ROW_INFOS,
         }
+    }
+
+    #[test]
+    fn test_centered_alignment_does_not_overflow_to_the_left() {
+        let short_line = LineWithInvisibles {
+            fragments: SmallVec::new(),
+            invisibles: Vec::new(),
+            len: 0,
+            width: px(40.0),
+            font_size: px(16.0),
+        };
+        let long_line = LineWithInvisibles {
+            fragments: SmallVec::new(),
+            invisibles: Vec::new(),
+            len: 0,
+            width: px(120.0),
+            font_size: px(16.0),
+        };
+
+        assert_eq!(
+            short_line.alignment_offset(TextAlign::Center, px(100.0)),
+            px(30.0)
+        );
+        assert_eq!(
+            long_line.alignment_offset(TextAlign::Center, px(100.0)),
+            Pixels::ZERO
+        );
+        assert_eq!(
+            long_line.aligned_x(px(60.0), TextAlign::Center, px(100.0)),
+            px(60.0)
+        );
+    }
+
+    #[gpui::test]
+    fn test_centered_single_line_editor_scrolls_overflowing_text(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let editor_origin = point(Pixels::ZERO, Pixels::ZERO);
+        let editor_size = size(px(100.0), px(30.0));
+        let short_text = "1234";
+        let short_window = cx.open_window(editor_size, |window, cx| {
+            let buffer = MultiBuffer::build_simple(short_text, cx);
+            Editor::new(EditorMode::SingleLine, buffer, None, window, cx)
+        });
+        let long_text = "12345678901234567890";
+        let long_window = cx.open_window(editor_size, |window, cx| {
+            let buffer = MultiBuffer::build_simple(long_text, cx);
+            Editor::new(EditorMode::SingleLine, buffer, None, window, cx)
+        });
+
+        {
+            let cx = &mut VisualTestContext::from_window(*short_window, cx);
+            let editor = short_window
+                .root(cx)
+                .expect("editor window should have a root view");
+            let mut style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+            style.text.text_align = TextAlign::Center;
+
+            let (_, layout) = cx.draw(editor_origin, editor_size, |_, _| {
+                EditorElement::new(&editor, style)
+            });
+            let line = layout
+                .position_map
+                .line_layouts
+                .first()
+                .expect("single-line editor should have a line layout");
+            assert!(line.alignment_offset(TextAlign::Center, layout.content_width) > Pixels::ZERO);
+
+            let hit_index = 2;
+            let hit_position = layout.position_map.text_hitbox.origin
+                + point(
+                    line.aligned_x(
+                        line.x_for_index(hit_index),
+                        TextAlign::Center,
+                        layout.content_width,
+                    ),
+                    layout.position_map.line_height / 2.0,
+                );
+            assert_eq!(
+                layout
+                    .position_map
+                    .point_for_position(hit_position)
+                    .nearest_valid,
+                DisplayPoint::new(DisplayRow(0), hit_index as u32)
+            );
+        }
+
+        let cx = &mut VisualTestContext::from_window(*long_window, cx);
+        let editor = long_window
+            .root(cx)
+            .expect("editor window should have a root view");
+        let mut style = long_window
+            .update(cx, |editor, window, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+                let style = editor.style(cx).clone();
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    let start = Point::new(0, 0);
+                    selections.select_ranges([start..start]);
+                });
+                style
+            })
+            .expect("editor window should exist");
+        style.text.text_align = TextAlign::Center;
+
+        cx.draw(editor_origin, editor_size, |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        long_window
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let end = Point::new(0, long_text.len() as u32);
+                    selections.select_ranges([end..end]);
+                });
+            })
+            .expect("editor window should exist");
+
+        let (_, end_layout) = cx.draw(editor_origin, editor_size, |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        let long_line = end_layout
+            .position_map
+            .line_layouts
+            .first()
+            .expect("single-line editor should have a line layout");
+        assert!(long_line.width > end_layout.content_width);
+        assert_eq!(
+            long_line.alignment_offset(TextAlign::Center, end_layout.content_width),
+            Pixels::ZERO
+        );
+        assert!(end_layout.position_map.scroll_pixel_position.x > 0.0);
+
+        let text_bounds = end_layout.position_map.text_hitbox.bounds;
+        let end_cursor_bounds = end_layout
+            .visible_cursors
+            .first()
+            .expect("focused editor should show its cursor")
+            .bounds(end_layout.content_origin);
+        assert!(end_cursor_bounds.left() >= text_bounds.left());
+        assert!(end_cursor_bounds.right() <= text_bounds.right());
+        assert!(f32::from(text_bounds.right() - end_cursor_bounds.right()).abs() < 0.01);
+        let painted_line_right = end_layout.content_origin.x + long_line.width
+            - Pixels::from(end_layout.position_map.scroll_pixel_position.x);
+        assert!(f32::from(end_cursor_bounds.left() - painted_line_right).abs() < 0.01);
+
+        long_window
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let start = Point::new(0, 0);
+                    selections.select_ranges([start..start]);
+                });
+            })
+            .expect("editor window should exist");
+
+        let (_, start_layout) = cx.draw(editor_origin, editor_size, |_, _| {
+            EditorElement::new(&editor, style)
+        });
+        assert_eq!(start_layout.position_map.scroll_pixel_position.x, 0.0);
+        let start_cursor_bounds = start_layout
+            .visible_cursors
+            .first()
+            .expect("focused editor should show its cursor")
+            .bounds(start_layout.content_origin);
+        assert!(start_cursor_bounds.left() >= start_layout.position_map.text_hitbox.left());
     }
 
     #[gpui::test]
