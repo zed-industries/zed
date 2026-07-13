@@ -2825,6 +2825,175 @@ pub mod tests {
 
     #[perf]
     #[gpui::test]
+    async fn test_ignored_dot_git_directory_results_follow_include_ignored_option(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".gitignore": "log/\n",
+                "app": {
+                    "a.txt": "hello",
+                },
+                "log": {
+                    ".git": {},
+                    "b.txt": "hello",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search, window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            1
+        );
+
+        search_view
+            .update(cx, |search_view, _, cx| {
+                search_view.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+            })
+            .unwrap();
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            2
+        );
+
+        search_view
+            .update(cx, |search_view, _, cx| {
+                search_view.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+            })
+            .unwrap();
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_unignored_dot_git_directory_results_are_included(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "app": {
+                    "a.txt": "hello",
+                },
+                "log": {
+                    ".git": {},
+                    "b.txt": "hello",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search, window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            2
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_nested_gitignore_results_follow_include_ignored_option(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "app": {
+                    "a.txt": "hello",
+                },
+                "log": {
+                    ".git": {},
+                    ".gitignore": "b.txt\n",
+                    "b.txt": "hello",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search, window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            1
+        );
+
+        search_view
+            .update(cx, |search_view, _, cx| {
+                search_view.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+            })
+            .unwrap();
+        perform_search(search_view, "hello", cx);
+        assert_eq!(
+            search_view
+                .update(cx, |search_view, _, cx| {
+                    search_view.entity.read(cx).match_ranges.len()
+                })
+                .unwrap(),
+            2
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         fn dp(row: u32, col: u32) -> DisplayPoint {
             DisplayPoint::new(DisplayRow(row), col)

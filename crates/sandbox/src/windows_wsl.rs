@@ -58,6 +58,105 @@ const BWRAP_UNUSABLE_EXIT_CODE: i32 = 42;
 /// of any stdout noise printed by the login shell's profile scripts.
 const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
 
+/// Prefix of the helper-provisioning script's single result line (the absolute
+/// in-WSL path of the Linux `zed` to run as the sandbox helper), picked out of
+/// login-shell stdout noise just like [`PROBE_RESULT_PREFIX`].
+const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
+
+/// Ensures a Linux `zed` matching the running release is available inside WSL to
+/// act as the sandbox helper (`--wsl-sandbox-helper`), and prints its absolute
+/// in-WSL path on a [`HELPER_RESULT_PREFIX`] line. `$1` is the release channel,
+/// `$2` the version (`latest` for dev builds, which have no matching release and
+/// so track the latest nightly); both are passed as argv, never interpolated, so
+/// a version/channel string can't inject shell.
+///
+/// Unlike a normal Linux install, this deliberately does **not** consult the WSL
+/// `PATH`: inside WSL `zed` typically resolves to the *Windows* `zed.exe` via
+/// interop, which is not a Linux binary and so can't be the helper. It also does
+/// not use the public install script (`install.sh`), which puts `zed` on the
+/// user's `PATH` and writes desktop entries we don't want. Instead the Windows
+/// side resolves the exact channel+version (see `wsl_zed_release`) and this
+/// script downloads that release's Linux tarball straight from
+/// `cloud.zed.dev/releases` and unpacks it into a private, off-`PATH` location
+/// (`~/.local/libexec/zed/<channel>`, the conventional spot for executables run
+/// by other programs rather than directly by the user). One managed copy per
+/// channel is kept, tracked by a marker file so an exact channel+version match
+/// is reused rather than re-downloaded. The floating `latest` version (dev
+/// builds) is the exception: it always re-downloads so it tracks the newest
+/// nightly rather than pinning to the first copy fetched.
+///
+/// We ship no `zed` (nor `bwrap`) into WSL ourselves; this downloads `zed` on
+/// demand. A missing `curl`/`wget` (or a failed download) is a hard error the
+/// caller surfaces to the user, exactly like a missing `bwrap`.
+const HELPER_PROVISION_SCRIPT: &str = r#"
+set -eu
+channel="$1"
+version="$2"
+dest="$HOME/.local/libexec/zed/$channel"
+marker="$dest/.zed-wsl-helper-version"
+want="$channel $version"
+
+# Reuse an exact, already-installed channel+version — but never for the floating
+# "latest" tag (dev builds), which must always re-fetch so they track the most
+# recent nightly instead of pinning to whatever was downloaded first.
+if [ "$version" != "latest" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$want" ]; then
+    helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+    if [ -n "$helper" ] && [ -x "$helper" ]; then
+        printf 'zed-wsl-helper: %s\n' "$helper"
+        exit 0
+    fi
+fi
+
+arch=$(uname -m)
+case "$arch" in
+    x86_64 | amd64) arch="x86_64" ;;
+    aarch64 | arm64) arch="aarch64" ;;
+    *) echo "unsupported WSL architecture for the zed sandbox helper: $arch" >&2; exit 1 ;;
+esac
+url="https://cloud.zed.dev/releases/$channel/$version/download?asset=zed&arch=$arch&os=linux&source=zed-wsl-sandbox"
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/zed-wsl-helper-XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+tarball="$tmp/zed.tar.gz"
+if command -v curl >/dev/null 2>&1; then
+    curl -fL "$url" -o "$tarball"
+elif command -v wget >/dev/null 2>&1; then
+    wget -O "$tarball" "$url"
+else
+    echo 'neither curl nor wget is available in WSL to download zed' >&2
+    exit 1
+fi
+
+mkdir -p "$tmp/unpacked"
+tar -xzf "$tarball" -C "$tmp/unpacked"
+helper_src=$(find "$tmp/unpacked" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+if [ -z "$helper_src" ]; then
+    echo 'the downloaded zed tarball did not contain a libexec/zed-editor binary' >&2
+    exit 1
+fi
+app=$(dirname "$(dirname "$helper_src")")
+
+# Install atomically: stage the unpacked app next to the destination on the same
+# filesystem, then swap it into place so a concurrent run never sees (or execs) a
+# partially-written install. The whole app dir is kept so the binary's bundled
+# libraries ($ORIGIN/../lib) remain alongside it.
+mkdir -p "$(dirname "$dest")"
+rm -rf "$dest.new" "$dest.old"
+cp -a "$app" "$dest.new"
+if [ -e "$dest" ]; then mv "$dest" "$dest.old"; fi
+mv "$dest.new" "$dest"
+rm -rf "$dest.old"
+printf '%s' "$want" > "$marker"
+
+helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
+if [ -z "$helper" ] || [ ! -x "$helper" ]; then
+    echo "the installed zed sandbox helper is missing or not executable under $dest" >&2
+    exit 1
+fi
+printf 'zed-wsl-helper: %s\n' "$helper"
+exit 0
+"#;
+
 /// Marks a failure of the Windows WSL sandboxing *environment*: WSL is missing
 /// or won't start, there's no usable `bwrap`, or the probe / path-resolution
 /// stdout protocol broke down. Returned as the root of the `anyhow::Error` so
@@ -141,9 +240,9 @@ impl PathMapping {
 /// into a Linux shell invocation (typically `/bin/sh -c ...`) before calling
 /// this function.
 ///
-/// All writable paths, Git paths, and the cwd must be paths that can be mapped
-/// into WSL. The cwd and ordinary writable paths must exist; Git metadata paths
-/// may be missing because Bubblewrap cannot bind a missing source. WSL UNC paths
+/// All writable paths, protected paths, and the cwd must be paths that can be
+/// mapped into WSL. The cwd and writable paths must exist; protected paths may
+/// be missing because Bubblewrap cannot bind a missing source. WSL UNC paths
 /// may specify a distro; native drive-letter paths are translated with `wslpath`
 /// inside either that distro or the default distro (falling back to
 /// `/mnt/<drive>/...` if translation fails).
@@ -172,11 +271,17 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     program: String,
     args: Vec<String>,
     writable_paths: Vec<PathBuf>,
-    writable_git_paths: Vec<PathBuf>,
-    protected_git_paths: Vec<PathBuf>,
+    protected_paths: Vec<PathBuf>,
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
     env: HashMap<String, String, S>,
+    // `(release channel, version)` of the Linux `zed` to provision inside WSL as
+    // the `--wsl-sandbox-helper` (the version is `latest` for dev builds). When
+    // `None`, no helper is used and bwrap is exec'd directly — the legacy path,
+    // which binds writable paths by string and so carries the bind-source TOCTOU
+    // the helper closes. Callers that can determine the running release should
+    // always pass `Some`.
+    wsl_zed_release: Option<(String, String)>,
 ) -> Result<(String, Vec<String>)> {
     // Mapping failures are bad requests (a path that doesn't exist or has a
     // shape WSL can't address), not environment problems, so no
@@ -197,35 +302,18 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let writable_git_mappings = writable_git_paths
+    let protected_mappings = protected_paths
         .iter()
         .map(|path| {
             path_to_wsl_allowing_missing(path).with_context(|| {
-                format!(
-                    "failed to map writable Git metadata path `{}` into WSL",
-                    path.display()
-                )
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let protected_git_mappings = protected_git_paths
-        .iter()
-        .map(|path| {
-            path_to_wsl_allowing_missing(path).with_context(|| {
-                format!(
-                    "failed to map protected Git metadata path `{}` into WSL",
-                    path.display()
-                )
+                format!("failed to map protected path `{}` into WSL", path.display())
             })
         })
         .collect::<Result<Vec<_>>>()?;
 
     let distro = select_distro(
         cwd_mapping.as_ref(),
-        writable_mappings
-            .iter()
-            .chain(writable_git_mappings.iter())
-            .chain(protected_git_mappings.iter()),
+        writable_mappings.iter().chain(protected_mappings.iter()),
     )?;
     let wsl_exe = wsl_exe_path();
     if !wsl_exe.is_file() {
@@ -238,14 +326,11 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
     // now that the distro is known) in a single WSL round-trip. The cwd and
-    // ordinary writable paths must exist; Git paths may be missing because, as
-    // with Linux bwrap, a not-yet-created `.git` placeholder can't be overlaid.
+    // ordinary writable paths must exist; protected paths may be missing because,
+    // as with Linux bwrap, a not-yet-created path can't be overlaid.
     let has_cwd = cwd_mapping.is_some();
     let writable_path_count = writable_mappings.len();
-    let writable_git_path_count = writable_git_mappings.len();
-    let mut mappings = Vec::with_capacity(
-        writable_mappings.len() + writable_git_mappings.len() + protected_git_mappings.len() + 1,
-    );
+    let mut mappings = Vec::with_capacity(writable_mappings.len() + protected_mappings.len() + 1);
     if let Some(mapping) = cwd_mapping {
         mappings.push((mapping, "terminal cwd", true));
     }
@@ -255,22 +340,13 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             .map(|mapping| (mapping, "writable path", true)),
     );
     mappings.extend(
-        writable_git_mappings
+        protected_mappings
             .into_iter()
-            .map(|mapping| (mapping, "writable Git metadata path", false)),
-    );
-    mappings.extend(
-        protected_git_mappings
-            .into_iter()
-            .map(|mapping| (mapping, "protected Git metadata path", false)),
+            .map(|mapping| (mapping, "protected path", false)),
     );
     let resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings).await?;
-    let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
-        has_cwd,
-        writable_path_count,
-        writable_git_path_count,
-        resolved,
-    )?;
+    let (cwd, writable_paths, protected_paths) =
+        split_resolved_paths(has_cwd, writable_path_count, resolved)?;
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
@@ -279,21 +355,50 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     if let Some(cwd) = &cwd {
         wsl_args.extend(["--cd".to_string(), cwd.clone()]);
     }
-    // Use the absolute path the probe validated: `wsl --exec` searches only
-    // the default WSL PATH, which may not include a profile-managed location
-    // where the probe's login shell found `bwrap`.
-    wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
-    wsl_args.extend(build_bwrap_args(
+
+    // The bwrap *options* (everything before the trailing `-- cmd`): root bind,
+    // `/tmp` tmpfs, writable binds, interop blocking, `--setenv`s, `--chdir`,
+    // namespace flags. Identical whether or not we route through the helper.
+    let bwrap_options = build_bwrap_args(
         &writable_paths,
-        &protected_git_paths,
+        &protected_paths,
         permissions,
         cwd.as_deref(),
         environment.mask_interop_dir,
         &env,
-    ));
-    wsl_args.push("--".to_string());
-    wsl_args.push(program);
-    wsl_args.extend(args);
+    );
+
+    match wsl_zed_release {
+        // Preferred path: run the in-WSL `zed` as the sandbox helper, which
+        // captures the writable binds' inodes WSL-side and validates them after
+        // bwrap's mounts (the same in-sandbox check native Linux performs).
+        Some((channel, version)) => {
+            let helper =
+                ensure_wsl_zed_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
+            wsl_args.extend(["--exec".to_string(), helper]);
+            // Protocol (decoded by `linux_bubblewrap::decode_wsl_helper_args`):
+            //   <flag> <bwrap_path> <n_base> <base...> <n_writable> <writable...> -- <prog> <args>
+            wsl_args.push(crate::WSL_SANDBOX_HELPER_FLAG.to_string());
+            wsl_args.push(environment.bwrap_path.clone());
+            wsl_args.push(bwrap_options.len().to_string());
+            wsl_args.extend(bwrap_options);
+            wsl_args.push(writable_paths.len().to_string());
+            wsl_args.extend(writable_paths.iter().cloned());
+            wsl_args.push("--".to_string());
+            wsl_args.push(program);
+            wsl_args.extend(args);
+        }
+        // Legacy path: exec bwrap directly (no in-sandbox bind validation). Use
+        // the absolute path the probe validated, since `wsl --exec` searches
+        // only the default WSL PATH.
+        None => {
+            wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
+            wsl_args.extend(bwrap_options);
+            wsl_args.push("--".to_string());
+            wsl_args.push(program);
+            wsl_args.extend(args);
+        }
+    }
 
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
@@ -301,7 +406,6 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 fn split_resolved_paths(
     has_cwd: bool,
     writable_path_count: usize,
-    writable_git_path_count: usize,
     resolved: Vec<Option<String>>,
 ) -> Result<(Option<String>, Vec<String>, Vec<String>)> {
     let mut resolved = resolved.into_iter();
@@ -316,7 +420,7 @@ fn split_resolved_paths(
         None
     };
 
-    let mut writable_paths = Vec::with_capacity(writable_path_count + writable_git_path_count);
+    let mut writable_paths = Vec::with_capacity(writable_path_count);
     for _ in 0..writable_path_count {
         writable_paths.push(
             resolved
@@ -324,14 +428,6 @@ fn split_resolved_paths(
                 .context("bug: missing resolved writable path")?
                 .context("bug: required writable path resolved as missing")?,
         );
-    }
-    for _ in 0..writable_git_path_count {
-        if let Some(path) = resolved
-            .next()
-            .context("bug: missing resolved writable Git metadata path")?
-        {
-            writable_paths.push(path);
-        }
     }
 
     Ok((cwd, writable_paths, resolved.flatten().collect()))
@@ -507,6 +603,94 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
         mask_interop_dir,
         bwrap_path: bwrap_path.to_string(),
     })
+}
+
+/// Ensure a Linux `zed` of the given release `channel`/`version` is available
+/// inside WSL and return its absolute in-WSL path, to be `--exec`'d as the
+/// `--wsl-sandbox-helper`. Runs [`HELPER_PROVISION_SCRIPT`] (which downloads the
+/// matching release tarball into an off-`PATH` location on first use).
+///
+/// Successful resolutions are cached per `(distro, channel, version)` for the
+/// life of the process — once provisioned, the path won't change. Failures are
+/// not cached, so a user who installs `curl` (or fixes networking) after an
+/// error can retry without restarting Zed.
+async fn ensure_wsl_zed_helper(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    channel: &str,
+    version: &str,
+) -> Result<String> {
+    type HelperCache = HashMap<(Option<String>, String, String), String>;
+    static CACHE: OnceLock<Mutex<HelperCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let key = (
+        distro.map(str::to_string),
+        channel.to_string(),
+        version.to_string(),
+    );
+    if let Some(path) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+    {
+        return Ok(path.clone());
+    }
+
+    // A login shell (`-lc`) is used so a profile-managed PATH (where `zed` or
+    // `curl` may live) is honored. `channel`/`version` are passed as positional
+    // args (`$1`/`$2`), never interpolated into the script body.
+    let output = run_wsl_command(
+        wsl_exe,
+        distro,
+        [
+            "--exec",
+            "sh",
+            "-lc",
+            HELPER_PROVISION_SCRIPT,
+            "zed-wsl-sandbox-helper",
+            channel,
+            version,
+        ],
+        "provision the Linux `zed` sandbox helper",
+    )
+    .await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        return Err(unavailable(format!(
+            "failed to provision a Linux `zed` sandbox helper in {}{}",
+            wsl_distro_label(distro),
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(HELPER_RESULT_PREFIX))
+        .map(|path| path.trim().to_string())
+        .with_context(|| {
+            unavailable(format!(
+                "no helper result line in sandbox-helper provisioning output from {}: {stdout:?}",
+                wsl_distro_label(distro)
+            ))
+        })?;
+    ensure!(
+        path.starts_with('/'),
+        "the WSL `zed` sandbox helper resolved to {path:?} rather than an absolute path"
+    );
+
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, path.clone());
+    Ok(path)
 }
 
 /// Shell script that resolves and existence-checks paths in a single WSL
@@ -810,7 +994,7 @@ fn wsl_exe_path() -> PathBuf {
 
 fn build_bwrap_args<S: std::hash::BuildHasher>(
     writable_paths: &[String],
-    protected_git_paths: &[String],
+    protected_paths: &[String],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
     mask_interop_dir: bool,
@@ -826,12 +1010,12 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         for path in writable_paths {
             push_bind(&mut args, "--bind", path, path);
         }
-        // Protect Git metadata by re-binding it read-only over the writable
-        // worktree binds above (order matters: later binds win). When Git access
-        // is granted these paths are included in `writable_paths` instead.
-        for path in protected_git_paths {
-            push_bind(&mut args, "--ro-bind", path, path);
-        }
+    }
+
+    // Protect requested paths by re-binding them read-only over any writable
+    // binds above (order matters: later binds win).
+    for path in protected_paths {
+        push_bind(&mut args, "--ro-bind", path, path);
     }
 
     // Block WSL's Windows interop, regardless of the requested permissions.
@@ -1101,10 +1285,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             SandboxPermissions::default(),
             None,
             HashMap::<String, String>::new(),
+            None,
         ));
     }
 
@@ -1242,16 +1426,13 @@ mod tests {
     }
 
     #[test]
-    fn split_resolved_paths_keeps_existing_writable_git_paths_and_skips_missing_ones() {
-        let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
+    fn split_resolved_paths_keeps_existing_protected_paths_and_skips_missing_ones() {
+        let (cwd, writable_paths, protected_paths) = split_resolved_paths(
             true,
             1,
-            2,
             vec![
                 Some("/home/me/project".to_string()),
                 Some("/home/me/project".to_string()),
-                None,
-                Some("/home/me/project/.git".to_string()),
                 None,
                 Some("/mnt/c/external/.git".to_string()),
             ],
@@ -1259,22 +1440,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(cwd.as_deref(), Some("/home/me/project"));
-        assert_eq!(
-            writable_paths,
-            vec![
-                "/home/me/project".to_string(),
-                "/home/me/project/.git".to_string()
-            ]
-        );
-        assert_eq!(
-            protected_git_paths,
-            vec!["/mnt/c/external/.git".to_string()]
-        );
+        assert_eq!(writable_paths, vec!["/home/me/project".to_string()]);
+        assert_eq!(protected_paths, vec!["/mnt/c/external/.git".to_string()]);
     }
 
     #[test]
     fn split_resolved_paths_rejects_missing_required_writable_paths() {
-        let error = split_resolved_paths(false, 1, 0, vec![None]).unwrap_err();
+        let error = split_resolved_paths(false, 1, vec![None]).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -1335,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn bwrap_protects_git_paths_after_writable_paths() {
+    fn bwrap_protects_paths_after_writable_paths() {
         let args = build_bwrap_args(
             &["/home/me/project".to_string()],
             &["/home/me/project/.git".to_string()],
@@ -1358,12 +1530,12 @@ mod tests {
                         "/home/me/project/.git",
                     ]
             })
-            .expect("Git metadata should be protected read-only");
+            .expect("protected path should be bound read-only");
         assert!(protected_index > writable_index);
     }
 
     #[test]
-    fn bwrap_skips_git_protection_when_fs_writes_are_unrestricted() {
+    fn bwrap_protects_paths_when_fs_writes_are_unrestricted() {
         let args = build_bwrap_args(
             &[],
             &["/home/me/project/.git".to_string()],
@@ -1375,12 +1547,22 @@ mod tests {
             true,
             &HashMap::new(),
         );
-        assert!(!args.windows(3).any(|window| window
-            == [
-                "--ro-bind",
-                "/home/me/project/.git",
-                "/home/me/project/.git"
-            ]));
+        let unrestricted_write_index = args
+            .windows(3)
+            .position(|window| window == ["--bind", "/", "/"])
+            .expect("root should be writable");
+        let protected_index = args
+            .windows(3)
+            .position(|window| {
+                window
+                    == [
+                        "--ro-bind",
+                        "/home/me/project/.git",
+                        "/home/me/project/.git",
+                    ]
+            })
+            .expect("protected path should be bound read-only");
+        assert!(protected_index > unrestricted_write_index);
     }
 
     #[test]

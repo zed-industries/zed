@@ -41,7 +41,7 @@ agent paths and model access paths.
 
 ## API Keys and Environment Variables {#api-keys}
 
-Most API-access providers can be configured in Zed's Agent Settings panel with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
+Most API-access providers can be configured on the **Settings → AI → LLM Providers** page with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
 Zed also reads provider-specific environment variables. Non-empty environment variables take precedence over keychain values. If a key comes from an environment variable, unset the variable and restart Zed to stop using it.
 
@@ -406,8 +406,8 @@ The available configuration options for custom OpenCode models are:
 - `display_name` (optional): human-readable model name shown in the UI, such as `Custom GLM 9000`
 - `max_tokens` (required): maximum model context window size, such as `1000000`
 - `max_output_tokens` (optional): maximum tokens the model can generate, such as `64000`
-- `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
-- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["low", "medium", "high", "max"]`. The last value in the list is used as the default
+- `protocol` (optional, default `"openai_chat"`): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["none", "low", "medium", "high", "xhigh", "max"]`. The last value in the list is used as the default
 - `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
 - `subscription` (optional): `"zen"`, `"go"`, or `"free"`; defaults to `"zen"`
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
