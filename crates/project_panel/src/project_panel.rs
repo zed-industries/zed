@@ -3437,12 +3437,15 @@ impl ProjectPanel {
             let mut paste_tasks = Vec::new();
             let mut disambiguation_range = None;
             let clip_is_cut = clipboard_entries.is_cut();
+            let mut cut_destination_paths = Vec::new();
             for clipboard_entry in clipboard_entries.items() {
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let destination: ProjectPath = (worktree_id, new_path).into();
-                let task = if clipboard_entries.is_cut() {
+                let task = if clip_is_cut {
+                    cut_destination_paths
+                        .push(self.project.read(cx).absolute_path(&destination, cx)?);
                     let original_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
                     let task = self.project.update(cx, |project, cx| {
                         project.rename_entry(clip_entry_id, destination.clone(), cx)
@@ -3538,7 +3541,11 @@ impl ProjectPanel {
 
             if clip_is_cut {
                 // Convert the clipboard cut entry to a copy entry after the first paste.
-                Self::convert_project_panel_clipboard_to_copy(cx);
+                Self::convert_project_panel_clipboard_to_copy(
+                    clipboard_entries,
+                    cut_destination_paths,
+                    cx,
+                );
             }
 
             self.expand_entry(worktree_id, entry.id, cx);
@@ -4223,9 +4230,13 @@ impl ProjectPanel {
             .then_some(entry)
     }
 
-    fn convert_project_panel_clipboard_to_copy(cx: &mut App) {
+    fn convert_project_panel_clipboard_to_copy(
+        clipboard_entry: ClipboardEntry,
+        source_paths: Vec<PathBuf>,
+        cx: &mut App,
+    ) {
         cx.update_global::<ProjectPanelClipboard, _>(|clipboard, _| {
-            clipboard.entry = clipboard.entry.take().map(ClipboardEntry::into_copy_entry);
+            clipboard.entry = Some(clipboard_entry.into_copy_entry(source_paths));
         });
     }
 
@@ -7780,8 +7791,9 @@ impl ClipboardEntry {
             .collect()
     }
 
-    fn into_copy_entry(mut self) -> Self {
+    fn into_copy_entry(mut self, source_paths: Vec<PathBuf>) -> Self {
         self.operation = ClipboardOperation::Copy;
+        self.source_paths = source_paths;
         self
     }
 }
