@@ -303,6 +303,15 @@ fn normal_mouse_report(point: Point, button: u8, utf8: bool) -> Option<Vec<u8>> 
     Some(msg)
 }
 
+/// Build a single SGR (1006) left-button *press* report for `point`, e.g.
+/// `ESC [ < 0 ; col+1 ; line+1 M`. Unlike [`mouse_button_report`], this is not
+/// gated on the terminal's mouse-reporting mode: it is used for OSC 133
+/// `click_events`, a private prompt-click channel a shell opts into regardless
+/// of DECSET 1000/1006. The caller must ensure `point.line >= 0`.
+pub(crate) fn sgr_mouse_press_report(point: Point) -> Vec<u8> {
+    sgr_mouse_report(point, MouseButtonCode::LeftButton as u8, true).into_bytes()
+}
+
 fn sgr_mouse_report(point: Point, button: u8, pressed: bool) -> String {
     let c = if pressed { 'M' } else { 'm' };
 
