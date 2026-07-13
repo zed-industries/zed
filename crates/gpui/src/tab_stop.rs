@@ -196,6 +196,10 @@ impl TabStopMap {
         self.insertion_history.len()
     }
 
+    pub(crate) fn tab_stop_count(&self) -> usize {
+        self.by_id.values().filter(|node| node.tab_stop).count()
+    }
+
     fn focus_handle_for_order(&self, order: &TabStopNode) -> Option<FocusHandle> {
         let handle = self.insertion_history[order.node_insertion_index].focus_handle();
         debug_assert!(

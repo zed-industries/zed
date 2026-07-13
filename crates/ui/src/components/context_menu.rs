@@ -296,6 +296,19 @@ impl ContextMenu {
         );
         window.refresh();
 
+        // When the menu first receives focus (i.e. when it opens), move the
+        // selection onto a menu item so assistive technology announces a real
+        // item rather than the bare menu container. Per the ARIA menu button
+        // pattern, opening a menu places focus on a menu item; for select-style
+        // menus we prefer the currently-checked item. We only do this when
+        // nothing is selected yet so we don't override an existing selection.
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            if this.selected_index.is_none() {
+                this.select_toggled_or_first(window, cx);
+            }
+        })
+        .detach();
+
         f(
             Self {
                 builder: None,
@@ -372,6 +385,15 @@ impl ContextMenu {
                 },
             );
             window.refresh();
+
+            // See the note in `ContextMenu::new`: select an item when the menu
+            // opens so screen readers announce it instead of just "menu".
+            cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+                if this.selected_index.is_none() {
+                    this.select_toggled_or_first(window, cx);
+                }
+            })
+            .detach();
 
             (builder.clone())(
                 Self {
@@ -1070,6 +1092,32 @@ impl ContextMenu {
         cx.notify();
     }
 
+    /// Selects the currently-checked entry if one exists (e.g. the active value
+    /// in a single-select dropdown), otherwise the first selectable item.
+    ///
+    /// This is intended to be called when the menu opens. Per the ARIA menu
+    /// button pattern, opening a menu should place focus on a menu item rather
+    /// than the menu container, so that assistive technology immediately
+    /// announces a meaningful item (ideally the current selection) instead of
+    /// just "menu".
+    pub fn select_toggled_or_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let toggled_ix = self.items.iter().position(|item| {
+            matches!(
+                item,
+                ContextMenuItem::Entry(ContextMenuEntry {
+                    toggle: Some((_, true)),
+                    ..
+                })
+            )
+        });
+        if let Some(ix) = toggled_ix {
+            self.select_index(ix, window, cx);
+            cx.notify();
+        } else {
+            self.select_first(&SelectFirst, window, cx);
+        }
+    }
+
     pub fn select_last(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
@@ -1440,7 +1488,7 @@ impl ContextMenu {
                 .child(Label::new(label.clone()))
                 .into_any_element(),
             ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, is_active_descendant(true), cx)
+                .render_menu_entry(ix, entry, is_active_descendant(true), window, cx)
                 .into_any_element(),
             ContextMenuItem::CustomEntry {
                 entry_render,
@@ -1757,6 +1805,7 @@ impl ContextMenu {
         ix: usize,
         entry: &ContextMenuEntry,
         is_active_descendant: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -1779,6 +1828,17 @@ impl ContextMenu {
             secondary_handler: _,
         } = entry;
         let this = cx.weak_entity();
+        // Report the item's keyboard shortcut to assistive technology, resolving
+        // the action's binding the same way the visible accelerator (rendered
+        // below) is.
+        let keyboard_shortcut = action.as_ref().and_then(|action| {
+            let binding = self
+                .action_context
+                .as_ref()
+                .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+            binding.keyboard_shortcut_text(window, cx)
+        });
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -1902,8 +1962,12 @@ impl ContextMenu {
                     } else {
                         Role::MenuItem
                     })
+                    .when_some(*toggle, |item, (_, checked)| item.aria_checked(checked))
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
+                    .when_some(keyboard_shortcut, |item, keyboard_shortcut| {
+                        item.aria_keyshortcuts(keyboard_shortcut)
+                    })
                     .toggle_state(Some(ix) == self.selected_index)
                     .when(self.main_menu.is_none() && !*disabled, |item| {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {
