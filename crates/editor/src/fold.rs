@@ -59,13 +59,18 @@ impl EditorSnapshot {
             Some(
                 Disclosure::new(("gutter_crease", buffer_row.0), !folded)
                     .toggle_state(folded)
-                    .on_click(window.listener_for(&editor, move |this, _e, window, cx| {
-                        if folded {
-                            this.unfold_at(buffer_row, window, cx);
-                        } else {
-                            this.fold_at(buffer_row, window, cx);
-                        }
-                    }))
+                    .on_click(window.listener_for(
+                        &editor,
+                        move |this, event: &ClickEvent, window, cx| {
+                            if event.modifiers().shift {
+                                this.toggle_fold_at_recursive(buffer_row, window, cx);
+                            } else if folded {
+                                this.unfold_at(buffer_row, window, cx);
+                            } else {
+                                this.fold_at(buffer_row, window, cx);
+                            }
+                        },
+                    ))
                     .into_any_element(),
             )
         } else {
@@ -437,6 +442,70 @@ impl Editor {
                 .any(|selection| crease.range().overlaps(&selection.range()));
 
             self.fold_creases(vec![crease], autoscroll, window, cx);
+        }
+    }
+
+    /// Recursively toggles the fold at the given row: folds all unfolded
+    /// descendants of an unfolded region (or the region itself if there are
+    /// none), and unfolds a folded region together with all folds inside it.
+    pub fn toggle_fold_at_recursive(
+        &mut self,
+        buffer_row: MultiBufferRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if display_map.is_line_folded(buffer_row) {
+            let buffer_snapshot = display_map.buffer_snapshot();
+            let mut unfold_range = Point::new(buffer_row.0, 0)
+                ..Point::new(buffer_row.0, buffer_snapshot.line_len(buffer_row));
+            // Folds on this line start at its end, so query into the next row
+            // to include them.
+            let query_range = Point::new(buffer_row.0, 0)
+                ..buffer_snapshot.clip_point(Point::new(buffer_row.0 + 1, 0), Bias::Left);
+            for fold in display_map.folds_in_range(query_range) {
+                unfold_range.start = unfold_range
+                    .start
+                    .min(fold.range.start.to_point(buffer_snapshot));
+                unfold_range.end = unfold_range
+                    .end
+                    .max(fold.range.end.to_point(buffer_snapshot));
+            }
+
+            let autoscroll = self
+                .selections
+                .all::<Point>(&display_map)
+                .iter()
+                .any(|selection| unfold_range.overlaps(&selection.range()));
+
+            self.unfold_ranges(&[unfold_range], true, autoscroll, cx);
+        } else {
+            let Some(crease) = display_map.crease_for_buffer_row(buffer_row) else {
+                return;
+            };
+            let crease_range = crease.range().clone();
+
+            let mut to_fold = Vec::new();
+            for row in crease_range.start.row + 1..=crease_range.end.row {
+                let row = MultiBufferRow(row);
+                if !display_map.is_line_folded(row)
+                    && let Some(inner_crease) = display_map.crease_for_buffer_row(row)
+                {
+                    to_fold.push(inner_crease);
+                }
+            }
+            if to_fold.is_empty() {
+                to_fold.push(crease);
+            }
+
+            let autoscroll = self
+                .selections
+                .all::<Point>(&display_map)
+                .iter()
+                .any(|selection| crease_range.overlaps(&selection.range()));
+
+            self.fold_creases(to_fold, autoscroll, window, cx);
         }
     }
 

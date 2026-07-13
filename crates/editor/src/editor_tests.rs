@@ -1383,6 +1383,142 @@ fn test_fold_action_without_language(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_toggle_fold_at_recursive(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                impl Foo {
+                    fn a() {
+                        if x {
+                            1
+                        }
+                        if y {
+                            2
+                        }
+                    }
+                    fn b() {
+                        3
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.toggle_fold_at_recursive(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    fn a() {⋯
+                    }
+                    fn b() {⋯
+                    }
+                }
+            "
+            .unindent(),
+        );
+
+        editor.toggle_fold_at_recursive(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯
+                }
+            "
+            .unindent(),
+        );
+
+        editor.toggle_fold_at_recursive(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            editor.buffer.read(cx).read(cx).text()
+        );
+
+        editor.toggle_fold_at_recursive(MultiBufferRow(0), window, cx);
+        editor.toggle_fold_at_recursive(MultiBufferRow(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    fn a() {
+                        if x {
+                            1
+                        }
+                        if y {
+                            2
+                        }
+                    }
+                    fn b() {⋯
+                    }
+                }
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
+fn test_fold_at_preserves_nested_fold_state(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                impl Foo {
+                    fn a() {
+                        if x {
+                            1
+                        }
+                        if y {
+                            2
+                        }
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_at(MultiBufferRow(2), window, cx);
+        editor.fold_at(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯
+                }
+            "
+            .unindent(),
+        );
+
+        editor.unfold_at(MultiBufferRow(0), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    fn a() {
+                        if x {⋯
+                        }
+                        if y {
+                            2
+                        }
+                    }
+                }
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
 fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
