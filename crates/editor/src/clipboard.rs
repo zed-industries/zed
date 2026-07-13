@@ -343,7 +343,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(snippet) = Snippet::parse(&format!("![$0]({filename})")).log_err() else {
+        let Some(snippet) = Snippet::parse(&format!("![$1]({filename})$0")).log_err() else {
             return;
         };
         let display_map = self.display_snapshot(cx);
