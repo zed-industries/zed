@@ -4477,7 +4477,7 @@ async fn open_queried_buffer(
     history_items
 }
 
-fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -4507,7 +4507,7 @@ fn build_find_picker(
 }
 
 #[track_caller]
-fn open_file_picker(
+pub(crate) fn open_file_picker(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<FileFinderDelegate>> {
@@ -4529,7 +4529,7 @@ fn simulate_input(cx: &mut VisualTestContext, input: &str) {
 }
 
 #[track_caller]
-fn active_file_picker(
+pub(crate) fn active_file_picker(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<FileFinderDelegate>> {
