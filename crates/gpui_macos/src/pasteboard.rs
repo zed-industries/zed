@@ -1,5 +1,4 @@
-use core::slice;
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 use std::path::PathBuf;
 
 use cocoa::{
@@ -8,13 +7,17 @@ use cocoa::{
         NSPasteboardTypeTIFF,
     },
     base::{id, nil},
-    foundation::{NSArray, NSData, NSFastEnumeration, NSString},
+    foundation::{NSArray, NSData, NSFastEnumeration},
 };
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc::{
+    class, msg_send,
+    runtime::{BOOL, Object, YES},
+    sel, sel_impl,
+};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
-use crate::ns_string;
+use crate::{NSStringExt, ns_string};
 use gpui::{
     ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
@@ -36,26 +39,55 @@ impl Pasteboard {
 
     #[cfg(test)]
     pub fn unique() -> Self {
-        unsafe { Self::new(NSPasteboard::pasteboardWithUniqueName(nil)) }
+        unsafe {
+            // `pasteboardWithUniqueName` returns an autoreleased (+0) pasteboard.
+            // Retain it so it outlives any autorelease pool active during the test.
+            let inner = NSPasteboard::pasteboardWithUniqueName(nil);
+            let _: id = msg_send![inner, retain];
+            Self::new(inner)
+        }
     }
 
     unsafe fn new(inner: id) -> Self {
+        // `ns_string` returns autoreleased (+0) objects, but these type identifiers
+        // are stored for the lifetime of the `Pasteboard`. Retain them so they
+        // survive draining of any autorelease pool active when `new` is called.
+        let text_hash_type = unsafe { ns_string("zed-text-hash") };
+        let metadata_type = unsafe { ns_string("zed-metadata") };
+        unsafe {
+            let _: id = msg_send![text_hash_type, retain];
+            let _: id = msg_send![metadata_type, retain];
+        }
         Self {
             inner,
-            text_hash_type: unsafe { ns_string("zed-text-hash") },
-            metadata_type: unsafe { ns_string("zed-metadata") },
+            text_hash_type,
+            metadata_type,
         }
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
         unsafe {
-            // Check for file paths first
+            // Check for file paths first.
+            //
+            // The property list is supplied by whatever app last owned the
+            // pasteboard, so it may not actually be an array of strings.
+            // Messaging it as one when it isn't would raise an Objective-C
+            // exception, and unwinding an ObjC exception through these Rust
+            // frames is undefined behavior. Validate the classes before use and
+            // skip any entries that don't conform.
             let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
-            if filenames != nil && NSArray::count(filenames) > 0 {
+            let filenames_is_array = filenames != nil && {
+                let is_array: BOOL = msg_send![filenames, isKindOfClass: class!(NSArray)];
+                is_array == YES
+            };
+            if filenames_is_array && NSArray::count(filenames) > 0 {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
-                    let f = NSString::UTF8String(file);
-                    let path = CStr::from_ptr(f).to_string_lossy().into_owned();
+                    let is_string: BOOL = msg_send![file, isKindOfClass: class!(NSString)];
+                    if is_string != YES {
+                        continue;
+                    }
+                    let path = NSStringExt::to_str(&file).to_owned();
                     paths.push(PathBuf::from(path));
                 }
                 if !paths.is_empty() {
@@ -95,9 +127,9 @@ impl Pasteboard {
         unsafe {
             let types: id = self.inner.types();
             if msg_send![types, containsObject: ut_type.inner()] {
-                self.data_for_type(ut_type.inner_mut()).map(|bytes| {
-                    let bytes = bytes.to_vec();
+                self.with_data_for_type(ut_type.inner_mut(), |bytes| {
                     let id = hash(&bytes);
+                    let bytes = bytes.to_vec();
 
                     ClipboardItem {
                         entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
@@ -118,46 +150,48 @@ impl Pasteboard {
                 return None;
             }
 
-            let data = self.inner.dataForType(string_type);
-            let text_bytes: &[u8] = if data == nil {
-                return None;
-            } else if data.bytes().is_null() {
-                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                // "If the length of the NSData object is 0, this property returns nil."
-                &[]
-            } else {
-                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
-            };
+            self.with_data_for_type(string_type, |text_bytes| {
+                let text = String::from_utf8_lossy(text_bytes).into_owned();
+                let metadata = self.read_metadata(&text);
 
-            let text = String::from_utf8_lossy(text_bytes).to_string();
-            let metadata = self
-                .data_for_type(self.text_hash_type)
-                .and_then(|hash_bytes| {
-                    let hash_bytes = hash_bytes.try_into().ok()?;
-                    let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self.data_for_type(self.metadata_type)?;
-
-                    if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
-                    } else {
-                        None
-                    }
-                });
-
-            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+                ClipboardEntry::String(ClipboardString { text, metadata })
+            })
         }
     }
 
-    unsafe fn data_for_type(&self, kind: id) -> Option<&[u8]> {
+    /// Reads the metadata stored alongside a string entry, returning it only
+    /// when the stored hash matches `text` and the metadata is valid UTF-8.
+    unsafe fn read_metadata(&self, text: &str) -> Option<String> {
+        let hash = unsafe {
+            self.with_data_for_type(self.text_hash_type, |hash_bytes| {
+                let hash_bytes = hash_bytes.try_into().ok()?;
+                Some(u64::from_be_bytes(hash_bytes))
+            })
+        }??;
+
+        if hash != ClipboardString::text_hash(text) {
+            return None;
+        }
+
+        unsafe {
+            self.with_data_for_type(self.metadata_type, |metadata| {
+                String::from_utf8(metadata.to_vec()).ok()
+            })
+        }?
+    }
+
+    /// # Safety
+    ///
+    /// `kind` must be a valid pasteboard type identifier `NSString`. (`self.inner`
+    /// is already guaranteed to be a valid `NSPasteboard` by `Pasteboard::new`'s
+    /// contract.)
+    unsafe fn with_data_for_type<R>(&self, kind: id, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         unsafe {
             let data = self.inner.dataForType(kind);
             if data == nil {
                 None
             } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
+                Some(with_nsdata_bytes(data, f))
             }
         }
     }
@@ -251,6 +285,23 @@ impl Pasteboard {
 
             self.inner
                 .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+        }
+    }
+}
+
+unsafe fn with_nsdata_bytes<R>(data: id, f: impl FnOnce(&[u8]) -> R) -> R {
+    unsafe {
+        let bytes = data.bytes();
+        if bytes.is_null() {
+            // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+            // "If the length of the NSData object is 0, this property returns nil."
+            debug_assert_eq!(data.length(), 0);
+            f(&[])
+        } else {
+            f(std::slice::from_raw_parts(
+                bytes as *const u8,
+                data.length() as usize,
+            ))
         }
     }
 }
