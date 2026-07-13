@@ -64,6 +64,7 @@ impl WebWindowInner {
             self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_paste(),
             self.register_composition_start(),
             self.register_composition_update(),
             self.register_composition_end(),
@@ -424,6 +425,32 @@ impl WebWindowInner {
             };
 
             this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+        })
+    }
+
+    /// Paste is delivered through the DOM `paste` event rather than
+    /// `Platform::read_from_clipboard`: the browser's asynchronous clipboard
+    /// read API cannot fit that synchronous signature, while `ClipboardEvent`
+    /// exposes `clipboardData` synchronously inside the event. It fires for
+    /// any browser-initiated paste (keyboard, menu bar, context menu).
+    fn register_paste(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("paste", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            let Some(clipboard_data) = event.clipboard_data() else {
+                return;
+            };
+            let Ok(text) = clipboard_data.get_data("text/plain") else {
+                return;
+            };
+            if text.is_empty() {
+                return;
+            }
+
+            event.prevent_default();
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(None, &text);
+            });
         })
     }
 

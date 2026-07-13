@@ -25,6 +25,7 @@
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",
+      "tab": "picker::MultiSelectNext",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",
@@ -35,6 +36,7 @@
     "context": "TextFinder || (TextFinder > Picker > Editor) || (TextFinder > Picker > menu)",
     "bindings": {
       "ctrl-alt-f": "text_finder::ToProjectSearch",
+      "tab": "picker::MultiSelectNext",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",
