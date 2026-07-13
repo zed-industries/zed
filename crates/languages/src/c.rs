@@ -452,6 +452,70 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_c_autoindent_switch_case(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    switch (a) {
+                    case 1:
+                    b++;
+                    break;
+                    case 2:
+                    case 3:
+                    c++;
+                    break;
+                    default:
+                    d++;
+                    }
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  switch (a) {
+                    case 1:
+                      b++;
+                      break;
+                    case 2:
+                    case 3:
+                      c++;
+                      break;
+                    default:
+                      d++;
+                  }
+                }
+                "#
+                .unindent(),
+                "statements under a case label should be indented, and the next label outdented"
+            );
+
+            buffer
+        });
+    }
+
+    #[gpui::test]
     async fn test_c_autoindent_if_else(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);

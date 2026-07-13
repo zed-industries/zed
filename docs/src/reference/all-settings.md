@@ -1905,7 +1905,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-## Format On Save
+## Format On Save {#format-on-save}
 
 - Description: Whether or not to perform a buffer format before saving.
 - Setting: `format_on_save`
@@ -1928,6 +1928,26 @@ While other options may be changed at a runtime and should be placed under `sett
   "format_on_save": "off"
 }
 ```
+
+3. `modifications`, formats only lines with unstaged changes:
+
+```json [settings]
+{
+  "format_on_save": "modifications"
+}
+```
+
+This mode requires source control and LSP range formatting support. If no git diff is available or if the LSP doesn't support range formatting, formatting is skipped. This is useful for editing legacy codebases where you want to avoid formatting changes in unrelated code.
+
+4. `modifications_if_available`, formats only modified lines with fallback to full file formatting:
+
+```json [settings]
+{
+  "format_on_save": "modifications_if_available"
+}
+```
+
+Similar to `modifications`, but behaves like `on` when range formatting cannot be applied: when no git diff is available (e.g., when source control is unavailable) or when the language server does not support range formatting. When a git diff is available but contains no unstaged changes, nothing is formatted.
 
 ## Formatter
 
@@ -2740,7 +2760,7 @@ Example:
 
 **Options**
 
-Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon theme names.
 
 ### Light
 
@@ -2750,7 +2770,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 **Options**
 
-Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon theme names.
 
 ## Image Viewer
 
@@ -3279,7 +3299,7 @@ Examples:
 
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
-   There are several ways to convert a preview tab into a regular tab:
+  There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
@@ -4158,6 +4178,7 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "keep_selection_on_copy": true,
+    "open_links_in_mouse_mode": true,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -4348,6 +4369,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "keep_selection_on_copy": false
+  }
+}
+```
+
+### Terminal: Open Links In Mouse Mode
+
+- Description: Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even when the terminal application has enabled mouse reporting (e.g. vim with `mouse=a`, htop). When `false`, these clicks are forwarded to the application instead, and hyperlinks can still be opened with shift-cmd-click (shift-ctrl-click).
+- Setting: `open_links_in_mouse_mode`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json [settings]
+{
+  "terminal": {
+    "open_links_in_mouse_mode": false
   }
 }
 ```
@@ -4855,7 +4896,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid theme names.
 
 ### Light
 
@@ -4865,7 +4906,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid theme names.
 
 ## Title Bar
 

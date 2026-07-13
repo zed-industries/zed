@@ -3540,7 +3540,7 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch(false)
+                repository_handle.default_branch(envelope.payload.include_remote_name)
             })
             .await??
             .map(Into::into);
@@ -8349,6 +8349,7 @@ impl Repository {
                         .request(proto::GetDefaultBranch {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
+                            include_remote_name,
                         })
                         .await?;
 
@@ -9903,6 +9904,11 @@ async fn append_pattern_to_ignore_file(
 
 #[cfg(any(test, feature = "test-support"))]
 impl Repository {
+    pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
+        self.snapshot.branch_list = branches.into();
+        cx.emit(RepositoryEvent::BranchListChanged);
+    }
+
     pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
         self.commit_data
             .iter()

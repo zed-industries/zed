@@ -4350,7 +4350,7 @@ mod test {
             .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
                 move |_, params, _| async move {
                     assert_eq!(params.position, expected_position);
-                    Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+                    Ok(Some(lsp::PrepareRenameResponse::Range(tgt_range)))
                 },
             );
         let mut rename_request = cx.set_request_handler::<lsp::request::Rename, _, _>(

@@ -59,7 +59,7 @@ use language::{
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 
 use project::{
@@ -167,10 +167,28 @@ impl SelectionLayout {
         is_local: bool,
         user_name: Option<SharedString>,
     ) -> Self {
-        let point_selection = selection.map(|p| p.to_point(map.buffer_snapshot()));
+        let buffer_snapshot = map.buffer_snapshot();
+        let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
         let mut head = display_selection.head();
+        if !line_mode {
+            let offset_range = point_selection.start.to_offset(buffer_snapshot)
+                ..point_selection.end.to_offset(buffer_snapshot);
+            if let Some(contiguous_range) =
+                map.contiguous_display_point_range_for_buffer_range(offset_range)
+            {
+                range = contiguous_range;
+                // Keep the cursor attached to the highlight boundary; the
+                // anchor-bias display position may sit on the far side of a
+                // boundary inlay the highlight excludes.
+                head = if selection.reversed {
+                    range.start
+                } else {
+                    range.end
+                };
+            }
+        }
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
 
@@ -287,22 +305,22 @@ impl EditorElement {
         register_action(editor, window, Editor::scroll_cursor_bottom);
         register_action(editor, window, Editor::scroll_cursor_center_top_bottom);
         register_action(editor, window, |editor, _: &LineDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(1.), window, cx)
         });
         register_action(editor, window, |editor, _: &LineUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(-1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(-1.), window, cx)
         });
         register_action(editor, window, |editor, _: &HalfPageDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(0.5), window, cx)
         });
         register_action(editor, window, |editor, _: &HalfPageUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(-0.5), window, cx)
         });
         register_action(editor, window, |editor, _: &PageDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(1.), window, cx)
         });
         register_action(editor, window, |editor, _: &PageUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(-1.), window, cx)
         });
         register_action(editor, window, Editor::move_to_previous_word_start);
         register_action(editor, window, Editor::move_to_previous_subword_start);
@@ -312,6 +330,8 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_end_of_line);
         register_action(editor, window, Editor::move_to_start_of_paragraph);
         register_action(editor, window, Editor::move_to_end_of_paragraph);
+        register_action(editor, window, Editor::move_to_next_comment_paragraph);
+        register_action(editor, window, Editor::move_to_previous_comment_paragraph);
         register_action(editor, window, Editor::move_to_beginning);
         register_action(editor, window, Editor::move_to_end);
         register_action(editor, window, Editor::move_to_start_of_excerpt);
@@ -10671,13 +10691,13 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, HighlightKey, MultiBuffer, NavigationOverlayKey, NavigationOverlayLabel,
-        NavigationTargetOverlay, SelectionEffects,
-        display_map::{BlockPlacement, BlockProperties},
+        Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
+        NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
+        display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext};
-    use language::{Buffer, language_settings, tree_sitter_python};
+    use gpui::{TestAppContext, VisualTestContext, font};
+    use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
@@ -10778,6 +10798,121 @@ mod tests {
             snapshot: snapshot,
             row_infos: &ROW_INFOS,
         }
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/48141.
+    #[gpui::test]
+    fn test_selection_layout_around_inlay(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let snapshot = cx.update(|cx| {
+            let buffer = MultiBuffer::build_simple("abcd", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    buffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    project::project_settings::DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            display_map.update(cx, |display_map, cx| {
+                display_map.splice_inlays(
+                    &[],
+                    vec![
+                        Inlay::mock_hint(
+                            0,
+                            buffer_snapshot.anchor_before(MultiBufferOffset(1)),
+                            "hint ",
+                        ),
+                        Inlay::mock_hint(
+                            1,
+                            buffer_snapshot.anchor_after(MultiBufferOffset(3)),
+                            "!!",
+                        ),
+                    ],
+                    cx,
+                );
+                display_map.snapshot(cx)
+            })
+        });
+
+        let layout = |range: Range<MultiBufferOffset>, reversed, cursor_offset| {
+            SelectionLayout::new(
+                Selection {
+                    id: 0,
+                    start: range.start,
+                    end: range.end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                },
+                false,
+                cursor_offset,
+                CursorShape::Bar,
+                &snapshot,
+                true,
+                true,
+                None,
+            )
+        };
+        let display_point = |column| DisplayPoint::new(DisplayRow(0), column);
+
+        let ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, false);
+        assert_eq!(ending_at_inlay.range, display_point(0)..display_point(1));
+        assert_eq!(ending_at_inlay.head, display_point(1));
+
+        let starting_at_inlay = layout(MultiBufferOffset(1)..MultiBufferOffset(2), false, false);
+        assert_eq!(starting_at_inlay.range, display_point(6)..display_point(7));
+        assert_eq!(starting_at_inlay.head, display_point(7));
+
+        let spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, false);
+        assert_eq!(spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(spanning_inlay.head, display_point(7));
+
+        let reversed = layout(MultiBufferOffset(0)..MultiBufferOffset(2), true, false);
+        assert_eq!(reversed.range, display_point(0)..display_point(7));
+        assert_eq!(reversed.head, display_point(0));
+
+        // A reversed selection starting at a right-anchored hint: the
+        // anchor-bias cursor position would sit before the hint, detached from
+        // the highlight, so the head snaps to the highlight boundary instead.
+        let reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, false);
+        assert_eq!(
+            reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(reversed_at_right_anchored_inlay.head, display_point(10));
+
+        // An empty selection is a typing position, so it keeps the anchor-bias
+        // display position rather than snapping around boundary inlays.
+        let empty = layout(MultiBufferOffset(1)..MultiBufferOffset(1), false, false);
+        assert!(empty.range.is_empty());
+        assert_eq!(empty.head, display_point(6));
+
+        let vim_ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, true);
+        assert_eq!(
+            vim_ending_at_inlay.range,
+            display_point(0)..display_point(1)
+        );
+        assert_eq!(vim_ending_at_inlay.head, display_point(0));
+
+        let vim_spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, true);
+        assert_eq!(vim_spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(vim_spanning_inlay.head, display_point(6));
+
+        let vim_reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, true);
+        assert_eq!(
+            vim_reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(vim_reversed_at_right_anchored_inlay.head, display_point(10));
     }
 
     #[gpui::test]

@@ -1050,11 +1050,7 @@ impl Editor {
         );
     }
 
-    pub(super) fn restore_diff_hunks(
-        &mut self,
-        hunks: Vec<ResolvedDiffHunks>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn restore_diff_hunks(&mut self, hunks: Vec<ResolvedDiffHunks>, cx: &mut Context<Self>) {
         let mut revert_changes = Vec::new();
         for hunks in hunks {
             let Some(buffer) = hunks.buffer else {
@@ -2108,6 +2104,17 @@ impl Editor {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn restore_diff_hunks_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+        self.apply_restore(hunks, window, cx);
     }
 
     fn toggle_diff_hunks_in_ranges(
