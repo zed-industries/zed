@@ -4208,6 +4208,25 @@ fn selection_html(
             }
             continue;
         }
+        // pulldown emits `<del>` for strikethrough, which Word imports as a
+        // tracked-change *deletion* and hides the text; `<s>` maps to plain
+        // strikethrough formatting instead. TextEdit renders either.
+        if let Event::Start(Tag::Strikethrough) = &event {
+            buffer.push(Event::InlineHtml("<s>".into()));
+            continue;
+        }
+        if let Event::End(TagEnd::Strikethrough) = &event {
+            buffer.push(Event::InlineHtml("</s>".into()));
+            continue;
+        }
+        // pulldown emits `<input type="checkbox">`, which rich-text targets
+        // (Word, TextEdit) drop, leaving a bare bullet. Emit a literal Unicode
+        // ballot box so the checked/unchecked state survives as pasted text.
+        if let Event::TaskListMarker(checked) = &event {
+            let symbol = if *checked { "\u{2611} " } else { "\u{2610} " };
+            buffer.push(Event::Text(symbol.into()));
+            continue;
+        }
         buffer.push(event);
     }
     pulldown_cmark::html::push_html(&mut html, buffer.drain(..));
@@ -5858,9 +5877,25 @@ mod tests {
 
     #[test]
     fn test_selection_html_strikethrough() {
+        // `<s>` rather than pulldown's default `<del>`: Word imports `<del>` as a
+        // tracked-change deletion and hides the text.
         let source = "hello ~~struck~~ world";
         let html = selection_html(source, 0..source.len(), &HashMap::default());
-        assert!(html.contains("<del>struck</del>"), "expected <del>: {html}");
+        assert!(html.contains("<s>struck</s>"), "expected <s>: {html}");
+        assert!(!html.contains("<del>"), "should not emit <del>: {html}");
+    }
+
+    #[test]
+    fn test_selection_html_task_list_markers() {
+        // Task markers must serialize as literal Unicode boxes, not
+        // `<input type="checkbox">` which Word/TextEdit drop, leaving a bare
+        // bullet and losing the checked/unchecked state.
+        let source = "- [x] done\n- [ ] todo\n";
+        let html = selection_html(source, 0..source.len(), &HashMap::default());
+        assert!(!html.contains("<input"), "should not emit <input>: {html}");
+        assert!(html.contains("\u{2611}"), "expected checked box: {html}");
+        assert!(html.contains("\u{2610}"), "expected unchecked box: {html}");
+        assert!(html.contains("done"), "expected item text: {html}");
     }
 
     #[test]
