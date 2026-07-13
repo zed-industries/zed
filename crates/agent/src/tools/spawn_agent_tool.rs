@@ -4,7 +4,7 @@ use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -41,9 +41,29 @@ pub struct SpawnAgentToolInput {
     pub label: String,
     /// The prompt for the agent. For new sessions, include full context needed for the task. For follow-ups (with session_id), you can rely on the agent already having the previous message.
     pub message: String,
-    /// Session ID of an existing agent session to continue instead of creating a new one.
-    #[serde(default)]
+    /// Session ID of an existing agent session to continue instead of creating a new one. Omit, pass null, or pass an empty string to create a new subagent.
+    #[serde(default, deserialize_with = "deserialize_session_id")]
     pub session_id: Option<acp::SessionId>,
+}
+
+fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    if value
+        .as_str()
+        .is_some_and(|session_id| session_id.trim().is_empty())
+    {
+        return Ok(None);
+    }
+
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,5 +272,40 @@ impl AgentTool for SpawnAgentTool {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn deserializes_blank_session_id_as_absent() {
+        for session_id in [json!(null), json!(""), json!("   ")] {
+            let input: SpawnAgentToolInput = serde_json::from_value(json!({
+                "label": "label",
+                "message": "message",
+                "session_id": session_id,
+            }))
+            .unwrap();
+
+            assert!(input.session_id.is_none());
+        }
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+        }))
+        .unwrap();
+        assert!(input.session_id.is_none());
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "session_id": "existing-session",
+        }))
+        .unwrap();
+        assert_eq!(input.session_id.unwrap().to_string(), "existing-session");
     }
 }
