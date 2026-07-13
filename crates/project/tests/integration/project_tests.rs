@@ -8637,6 +8637,74 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            ".gitignore": ".checkouts/\n",
+            "src": {
+                "main.rs": "fn main() {}"
+            },
+            ".checkouts": {
+                "worktrees": {
+                    "foo": {
+                        "README.md": "hello"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let root = PathBuf::from(path!("/dir"));
+        let file = PathBuf::from(path!("/dir/src/main.rs"));
+        let ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo"));
+        let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
+
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            Some(true)
+        );
+
+        // Paths inside gitignored directories aren't scanned, so they aren't
+        // considered contained by the project; opening one should behave like
+        // opening an unrelated path.
+        for path in [&ignored_dir, &file_in_ignored_dir] {
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                None,
+                "{path:?} should not be considered a contained subpath"
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
