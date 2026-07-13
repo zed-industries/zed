@@ -8,6 +8,7 @@ use crate::PickerDelegate;
 use crate::SetPreviewBelow;
 use crate::SetPreviewRight;
 use crate::ToggleActionsMenu;
+use crate::ToggleMultiSelect;
 use crate::TogglePreview;
 use crate::preview;
 
@@ -97,7 +98,18 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let actions = self.delegate.actions_menu(window, cx);
+        let mut actions = self.delegate.actions_menu(window, cx);
+        // The multi-select entry is picker-owned so it can reflect the mode,
+        // which delegates don't know about.
+        if self.delegate.supports_multi_select() {
+            if !actions.is_empty() {
+                actions.push(PickerAction::separator());
+            }
+            actions.push(
+                PickerAction::button("Multi Select", ToggleMultiSelect.boxed_clone())
+                    .toggled(self.select_instead_of_open),
+            );
+        }
         if self.preview.is_none() && actions.is_empty() {
             return None;
         }

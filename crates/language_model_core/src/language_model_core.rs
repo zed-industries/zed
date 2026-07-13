@@ -25,7 +25,10 @@ pub use crate::rate_limiter::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
-pub use crate::util::{fix_streamed_json, parse_prompt_too_long, parse_tool_arguments};
+pub use crate::util::{
+    fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
+    parse_tool_arguments,
+};
 pub use gpui_shared_string::SharedString;
 
 /// A completion event from a language model.
@@ -241,7 +244,13 @@ impl LanguageModelCompletionError {
         retry_after: Option<Duration>,
     ) -> Self {
         match status_code {
-            StatusCode::BAD_REQUEST => Self::BadRequestFormat { provider, message },
+            StatusCode::BAD_REQUEST => {
+                if is_context_window_exceeded_message(&message) {
+                    Self::PromptTooLarge { tokens: None }
+                } else {
+                    Self::BadRequestFormat { provider, message }
+                }
+            }
             StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
             StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
             StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
@@ -644,6 +653,33 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn test_from_http_status_maps_context_length_exceeded_to_prompt_too_large() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again.","param":"input"}}"#.to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            "Invalid request.".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::BadRequestFormat { .. }
+        ));
     }
 
     #[test]

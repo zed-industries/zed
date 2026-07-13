@@ -15,7 +15,6 @@ use gpui::{
     WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px,
     uniform_list,
 };
-use heck::ToTitleCase as _;
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
@@ -72,6 +71,9 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
+
+const SIDEBAR_WIDTH: Pixels = px(226.);
+const CONTENT_MIN_WIDTH: Pixels = px(400.);
 
 actions!(
     settings_editor,
@@ -309,6 +311,8 @@ impl SettingFieldRenderer {
             SettingField<T>,
             SettingsUiFile,
             Option<&SettingsFieldMetadata>,
+            &'static str,
+            &'static str,
             &mut Window,
             &mut App,
         ) -> AnyElement
@@ -323,14 +327,16 @@ impl SettingFieldRenderer {
                   sub_field: bool,
                   window: &mut Window,
                   cx: &mut Context<SettingsWindow>| {
-                render_settings_item(
-                    settings_window,
-                    item,
+                let control = render_control(
+                    field,
                     settings_file.clone(),
-                    render_control(field, settings_file, metadata, window, cx),
-                    sub_field,
+                    metadata,
+                    item.title,
+                    item.description,
+                    window,
                     cx,
-                )
+                );
+                render_settings_item(settings_window, item, settings_file, control, sub_field, cx)
             },
         )
     }
@@ -870,10 +876,11 @@ fn open_settings_editor_with(
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
                 window_min_size: Some(gpui::Size {
-                    // Don't make the settings window thinner than this,
-                    // otherwise, it gets unusable. Users with smaller res monitors
-                    // can customize the height, but not the width.
-                    width: px(900.0),
+                    // Do not make the settings window thinner than this,
+                    // otherwise, the space used to display the actual content
+                    // gets so small that certain sections grow too tall due
+                    // to intense text wrapping.
+                    width: SIDEBAR_WIDTH + CONTENT_MIN_WIDTH,
                     height: px(240.0),
                 }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
@@ -1380,10 +1387,12 @@ fn render_settings_item_layout(
     sub_field: bool,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
+    // Note: the row itself is intentionally not exposed as a labeled group.
+    // Each control names and describes itself (via the setting title and
+    // description), so adding a group with the same label here would make
+    // screen readers announce the setting name twice.
     h_flex()
         .id(title)
-        .role(Role::Group)
-        .aria_label(SharedString::new_static(title))
         .min_w_0()
         .justify_between()
         .child(
@@ -3134,7 +3143,7 @@ impl SettingsWindow {
                     cx,
                 );
             }))
-            .w_56()
+            .w(SIDEBAR_WIDTH)
             .h_full()
             .p_2p5()
             .when(cfg!(target_os = "macos"), |this| this.pt_10())
@@ -4800,10 +4809,6 @@ fn update_project_setting_file(
 
 /// Derives a human-readable label for assistive technology from a setting's
 /// JSON path, e.g. `"buffer_font_size"` becomes `"Buffer Font Size"`.
-fn a11y_label_for_json_path(json_path: Option<&'static str>) -> Option<SharedString> {
-    json_path.map(|path| SharedString::from(path.to_title_case()))
-}
-
 struct CurrentSettingsValue<'a, T> {
     value: &'a T,
     disabled: bool,
@@ -4835,6 +4840,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -4856,10 +4863,10 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     // it a stable, collision-free element ID within the page.
     SettingsInputField::new(field.json_path.unwrap_or("settings-text-field"))
         .tab_index(0)
-        .when_some(
-            a11y_label_for_json_path(field.json_path),
-            |editor, label| editor.aria_label(label),
-        )
+        .aria_label(title)
+        .when(!description.is_empty(), |editor| {
+            editor.aria_description(description)
+        })
         .when_some(initial_text, |editor, text| editor.with_initial_text(text))
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
@@ -4898,6 +4905,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     field: SettingField<B>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -4914,8 +4923,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
-        .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-            this.aria_label(label)
+        .aria_label(title)
+        .when(!description.is_empty(), |this| {
+            this.aria_description(description)
         })
         .disabled(disabled)
         .on_click({
@@ -4936,6 +4946,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -4950,8 +4962,9 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     NumberField::new(id, value, window, cx)
         .mode(NumberFieldMode::Edit, cx)
         .tab_index(0_isize)
-        .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-            this.aria_label(label)
+        .aria_label(title)
+        .when(!description.is_empty(), |this| {
+            this.aria_description(description)
         })
         .on_change({
             move |value, window, cx| {
@@ -4975,6 +4988,8 @@ fn render_dropdown<T>(
     field: SettingField<T>,
     file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
@@ -5009,8 +5024,9 @@ where
             .log_err(); // todo(settings_ui) don't log err
         }
     })
-    .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-        this.aria_label(label)
+    .aria_label(title)
+    .when(!description.is_empty(), |this| {
+        this.aria_description(description)
     })
     .disabled(disabled)
     .tab_index(0)
@@ -5053,6 +5069,8 @@ fn render_font_picker(
     field: SettingField<settings::FontFamilyName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -5069,8 +5087,9 @@ fn render_font_picker(
                 "font_family_picker_trigger".into(),
                 current_value.clone(),
             )
-            .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-                this.aria_label(format!("{}: {}", label, current_value.clone()))
+            .aria_label(title)
+            .when(!description.is_empty(), |this| {
+                this.aria_description(description)
             }),
             handle.clone(),
         ))
@@ -5111,6 +5130,8 @@ fn render_theme_picker(
     field: SettingField<settings::ThemeName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -5124,8 +5145,9 @@ fn render_theme_picker(
     PopoverMenu::new("theme-picker")
         .trigger(wire_picker_trigger_a11y(
             render_picker_trigger_button("theme_picker_trigger".into(), current_value.clone())
-                .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-                    this.aria_label(format!("{}: {}", label, current_value.clone()))
+                .aria_label(title)
+                .when(!description.is_empty(), |this| {
+                    this.aria_description(description)
                 }),
             handle.clone(),
         ))
@@ -5169,6 +5191,8 @@ fn render_icon_theme_picker(
     field: SettingField<settings::IconThemeName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -5182,8 +5206,9 @@ fn render_icon_theme_picker(
     PopoverMenu::new("icon-theme-picker")
         .trigger(wire_picker_trigger_a11y(
             render_picker_trigger_button("icon_theme_picker_trigger".into(), current_value.clone())
-                .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
-                    this.aria_label(format!("{}: {}", label, current_value.clone()))
+                .aria_label(title)
+                .when(!description.is_empty(), |this| {
+                    this.aria_description(description)
                 }),
             handle.clone(),
         ))
