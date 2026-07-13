@@ -2970,10 +2970,11 @@ impl LocalSnapshot {
                 }
             }
 
-            let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-            if metadata.is_some() {
-                repo_root = Some(Arc::from(ancestor));
-                break;
+            if repo_root.is_none() {
+                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
+                if metadata.is_some() {
+                    repo_root = Some(Arc::from(ancestor));
+                }
             }
         }
 
@@ -2990,11 +2991,14 @@ impl LocalSnapshot {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
         }
         ignore_stack.repo_root = repo_root;
+        let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
+            if ancestor_ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
+                let kind = IgnoreKind::Gitignore(parent_abs_path.into());
+                ancestor_ignore_stack = ancestor_ignore_stack.append(kind, ignore.clone());
                 ignore_stack =
                     ignore_stack.append(IgnoreKind::Gitignore(parent_abs_path.into()), ignore);
             }

@@ -111,6 +111,36 @@ impl TaffyLayoutEngine {
             .into()
     }
 
+    /// Treats any `auto` dimension of the given node's style as filling `size`.
+    ///
+    /// This is applied to window roots before layout so they behave like the
+    /// root element on the web, which stretches to fill the initial containing
+    /// block (the viewport) unless given an explicit size. Explicitly styled
+    /// dimensions are preserved.
+    pub fn stretch_auto_size_to_fill(
+        &mut self,
+        id: LayoutId,
+        size: Size<Pixels>,
+        scale_factor: f32,
+    ) {
+        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let stretch_width = style.size.width.is_auto();
+        let stretch_height = style.size.height.is_auto();
+        if !stretch_width && !stretch_height {
+            return;
+        }
+        let mut style = style.clone();
+        if stretch_width {
+            style.size.width =
+                taffy::style::Dimension::length(round_to_device_pixel(size.width.0, scale_factor));
+        }
+        if stretch_height {
+            style.size.height =
+                taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
+        }
+        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+    }
+
     // Used to understand performance
     #[allow(dead_code)]
     fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {
