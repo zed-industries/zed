@@ -4,7 +4,7 @@ use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -42,8 +42,16 @@ pub struct SpawnAgentToolInput {
     /// The prompt for the agent. For new sessions, include full context needed for the task. For follow-ups (with session_id), you can rely on the agent already having the previous message.
     pub message: String,
     /// Session ID of an existing agent session to continue instead of creating a new one.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_session_id")]
     pub session_id: Option<acp::SessionId>,
+}
+
+fn deserialize_session_id<'de, D>(deserializer: D) -> Result<Option<acp::SessionId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let session_id = Option::<acp::SessionId>::deserialize(deserializer)?;
+    Ok(session_id.filter(|session_id| !session_id.0.is_empty()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,5 +260,22 @@ impl AgentTool for SpawnAgentTool {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_session_id_deserializes_as_none() {
+        let input: SpawnAgentToolInput = serde_json::from_value(serde_json::json!({
+            "label": "Minimal reproduction",
+            "message": "Reply with exactly `spawned`.",
+            "session_id": "",
+        }))
+        .expect("spawn_agent input should deserialize");
+
+        assert_eq!(input.session_id, None);
     }
 }
