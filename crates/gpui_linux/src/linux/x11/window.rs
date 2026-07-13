@@ -18,7 +18,7 @@ use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::ConnectionError,
-    properties::WmSizeHints,
+    properties::{WmHints, WmSizeHints},
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -1489,6 +1489,33 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        let mut hints = WmHints::new();
+        match WmHints::get(&*self.0.xcb, self.0.x_window) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(Some(existing_hints)) => hints = existing_hints,
+                Ok(None) => {}
+                Err(error) => {
+                    log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
+                }
+            },
+            Err(error) => {
+                log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
+            }
+        }
+        hints.urgent = true;
+        check_reply(
+            || "X11 ChangeProperty for WM_HINTS urgency failed.",
+            hints.set(&*self.0.xcb, self.0.x_window),
+        )
+        .log_err();
         xcb_flush(&self.0.xcb);
     }
 
