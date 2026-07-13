@@ -159,8 +159,27 @@ actions!(
     [
         /// Opens a prompt to enter a URL to open.
         OpenUrlPrompt,
+        /// Dumps the current accessibility tree (the last update sent to the
+        /// platform adapter) to a new buffer as JSON, for debugging what is
+        /// exposed to assistive technology.
+        DumpAccessibilityTree,
+        /// Copies the current accessibility tree to the clipboard as JSON,
+        /// without opening a buffer. See [`DumpAccessibilityTree`].
+        CopyAccessibilityTree,
     ]
 );
+
+/// Serializes the window's most recent accessibility tree to JSON for the
+/// `dev: dump/copy accessibility tree` actions, falling back to a friendly
+/// placeholder when no tree has been built yet.
+fn accessibility_tree_dump(window: &Window) -> String {
+    window.debug_a11y_tree_json().unwrap_or_else(|| {
+        "No accessibility tree has been built yet. The tree is only \
+         produced once assistive technology (e.g. a screen reader) is \
+         active for this window."
+            .to_string()
+    })
+}
 
 #[cfg(debug_assertions)]
 actions!(
@@ -909,6 +928,57 @@ fn register_actions(
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
                 workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &DumpAccessibilityTree,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let json = accessibility_tree_dump(window);
+                let language = workspace.app_state().languages.language_for_name("JSON");
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let language = language.await.log_err();
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer(&json, language, true, cx)
+                            });
+                            let title = "Accessibility Tree".to_string();
+                            let buffer = cx.new(|cx| {
+                                MultiBuffer::singleton(buffer, cx).with_title(title.clone())
+                            });
+                            let editor = cx.new(|cx| {
+                                let mut editor = Editor::for_multibuffer(
+                                    buffer,
+                                    Some(project),
+                                    window,
+                                    cx,
+                                );
+                                editor.set_breadcrumb_header(title);
+                                editor
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .log_err();
+                })
+                .detach();
+            },
+        )
+        .register_action(
+            |_workspace: &mut Workspace,
+             _: &CopyAccessibilityTree,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let json = accessibility_tree_dump(window);
+                cx.write_to_clipboard(ClipboardItem::new_string(json));
             },
         )
         .register_action(|_, _: &Minimize, window, _| {

@@ -1225,7 +1225,26 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_label = Some(label.into());
+        self.interactivity().aria.label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible description for this element. Unlike the label (which
+    /// names the element), the description provides supplementary information
+    /// that assistive technology announces after the name, role, and value -
+    /// for example a settings subtitle or a hint.
+    fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.description = Some(description.into());
+        self
+    }
+
+    /// Set the keyboard shortcut(s) that activate this element, announced by
+    /// assistive technology (maps to AccessKit's `keyboard_shortcut`).
+    ///
+    /// Note that this does not create a keymap. It simply instructs assistive
+    /// technology what the keymap is.
+    fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
@@ -1268,106 +1287,106 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
-        self.interactivity().aria_selected = Some(selected);
+        self.interactivity().aria.selected = Some(selected);
         self
     }
 
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
-        self.interactivity().aria_expanded = Some(expanded);
+        self.interactivity().aria.expanded = Some(expanded);
         self
     }
 
     /// Set the toggled state for this element.
     fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
-        self.interactivity().aria_toggled = Some(toggled);
+        self.interactivity().aria.toggled = Some(toggled);
         self
     }
 
     /// Set the numeric value for this element.
     fn aria_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_numeric_value = Some(value);
+        self.interactivity().aria.numeric_value = Some(value);
         self
     }
 
     /// Set the step by which assistive technology should expect the numeric
     /// value of this element to change (e.g. when incrementing a spin button).
     fn aria_numeric_value_step(mut self, step: f64) -> Self {
-        self.interactivity().aria_numeric_value_step = Some(step);
+        self.interactivity().aria.numeric_value_step = Some(step);
         self
     }
 
     /// Set the string value of this element, e.g. the text content of a simple
     /// text input.
     fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_value = Some(value.into());
+        self.interactivity().aria.value = Some(value.into());
         self
     }
 
     /// Set the placeholder text reported to assistive technology for this
     /// element, shown when a text input is empty.
     fn aria_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_placeholder = Some(placeholder.into());
+        self.interactivity().aria.placeholder = Some(placeholder.into());
         self
     }
 
     /// Set the minimum numeric value for this element.
     fn aria_min_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_min_numeric_value = Some(value);
+        self.interactivity().aria.min_numeric_value = Some(value);
         self
     }
 
     /// Set the maximum numeric value for this element.
     fn aria_max_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_max_numeric_value = Some(value);
+        self.interactivity().aria.max_numeric_value = Some(value);
         self
     }
 
     /// Set the orientation of this element.
     fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
-        self.interactivity().aria_orientation = Some(orientation);
+        self.interactivity().aria.orientation = Some(orientation);
         self
     }
 
     /// Set the heading level of this element.
     fn aria_level(mut self, level: usize) -> Self {
-        self.interactivity().aria_level = Some(level);
+        self.interactivity().aria.level = Some(level);
         self
     }
 
     /// Set the position in set of this element.
     fn aria_position_in_set(mut self, position: usize) -> Self {
-        self.interactivity().aria_position_in_set = Some(position);
+        self.interactivity().aria.position_in_set = Some(position);
         self
     }
 
     /// Set the size of set for this element.
     fn aria_size_of_set(mut self, size: usize) -> Self {
-        self.interactivity().aria_size_of_set = Some(size);
+        self.interactivity().aria.size_of_set = Some(size);
         self
     }
 
     /// Set the row index for this element.
     fn aria_row_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_row_index = Some(index);
+        self.interactivity().aria.row_index = Some(index);
         self
     }
 
     /// Set the column index for this element.
     fn aria_column_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_column_index = Some(index);
+        self.interactivity().aria.column_index = Some(index);
         self
     }
 
     /// Set the row count for this element.
     fn aria_row_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_row_count = Some(count);
+        self.interactivity().aria.row_count = Some(count);
         self
     }
 
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_column_count = Some(count);
+        self.interactivity().aria.column_count = Some(count);
         self
     }
 
@@ -1898,6 +1917,30 @@ impl IntoElement for Div {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct AriaProperties {
+    pub(crate) label: Option<SharedString>,
+    pub(crate) description: Option<SharedString>,
+    pub(crate) keyshortcuts: Option<SharedString>,
+    pub(crate) selected: Option<bool>,
+    pub(crate) expanded: Option<bool>,
+    pub(crate) toggled: Option<accesskit::Toggled>,
+    pub(crate) numeric_value: Option<f64>,
+    pub(crate) min_numeric_value: Option<f64>,
+    pub(crate) max_numeric_value: Option<f64>,
+    pub(crate) numeric_value_step: Option<f64>,
+    pub(crate) value: Option<SharedString>,
+    pub(crate) placeholder: Option<SharedString>,
+    pub(crate) orientation: Option<accesskit::Orientation>,
+    pub(crate) level: Option<usize>,
+    pub(crate) position_in_set: Option<usize>,
+    pub(crate) size_of_set: Option<usize>,
+    pub(crate) row_index: Option<usize>,
+    pub(crate) column_index: Option<usize>,
+    pub(crate) row_count: Option<usize>,
+    pub(crate) column_count: Option<usize>,
+}
+
 /// The interactivity struct. Powers all of the general-purpose
 /// interactivity in the `Div` element.
 #[derive(Default)]
@@ -1963,24 +2006,7 @@ pub struct Interactivity {
     pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
     pub(crate) report_active_descendant_focus: bool,
     pub(crate) override_role: Option<accesskit::Role>,
-    pub(crate) aria_label: Option<SharedString>,
-    pub(crate) aria_selected: Option<bool>,
-    pub(crate) aria_expanded: Option<bool>,
-    pub(crate) aria_toggled: Option<accesskit::Toggled>,
-    pub(crate) aria_numeric_value: Option<f64>,
-    pub(crate) aria_min_numeric_value: Option<f64>,
-    pub(crate) aria_max_numeric_value: Option<f64>,
-    pub(crate) aria_numeric_value_step: Option<f64>,
-    pub(crate) aria_value: Option<SharedString>,
-    pub(crate) aria_placeholder: Option<SharedString>,
-    pub(crate) aria_orientation: Option<accesskit::Orientation>,
-    pub(crate) aria_level: Option<usize>,
-    pub(crate) aria_position_in_set: Option<usize>,
-    pub(crate) aria_size_of_set: Option<usize>,
-    pub(crate) aria_row_index: Option<usize>,
-    pub(crate) aria_column_index: Option<usize>,
-    pub(crate) aria_row_count: Option<usize>,
-    pub(crate) aria_column_count: Option<usize>,
+    pub(crate) aria: AriaProperties,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -2110,6 +2136,13 @@ impl Interactivity {
                     if focus_handle.is_focused(window) {
                         window.a11y.set_focus(node_id);
                     }
+                } else if focus_handle.is_focused(window) {
+                    // Focusable, but with no element id it can't have an
+                    // accessibility node, so screen readers fall back to the
+                    // whole window.
+                    window
+                        .a11y
+                        .note_focus_without_node(focus_handle.id, "it has no element id");
                 }
             }
         }
@@ -2297,9 +2330,6 @@ impl Interactivity {
                 if self.tab_group {
                     tab_group = self.tab_index;
                 }
-                if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_stops.insert(focus_handle);
-                }
 
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
@@ -2308,6 +2338,17 @@ impl Interactivity {
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
                                     window.with_tab_group(tab_group, |window| {
+                                        // Register the container's own focus handle *inside* its
+                                        // tab group, so that focusing the container and then
+                                        // calling `focus_next` descends into this group's first
+                                        // item. Inserting it before `with_tab_group` would give the
+                                        // container a shallower tab path than its children; with
+                                        // sibling groups every container would then sort ahead of
+                                        // every item, and `focus_next` from a container would jump
+                                        // to the first item in the whole window instead of its own.
+                                        if let Some(focus_handle) = &self.tracked_focus_handle {
+                                            window.next_frame.tab_stops.insert(focus_handle);
+                                        }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
                                             self.paint_debug_info(
@@ -3225,58 +3266,64 @@ impl Interactivity {
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        if let Some(label) = &self.aria_label {
+        if let Some(label) = &self.aria.label {
             node.set_label(label.to_string());
         }
-        if let Some(selected) = self.aria_selected {
+        if let Some(description) = &self.aria.description {
+            node.set_description(description.to_string());
+        }
+        if let Some(keyshortcuts) = &self.aria.keyshortcuts {
+            node.set_keyboard_shortcut(keyshortcuts.to_string());
+        }
+        if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
         }
-        if let Some(expanded) = self.aria_expanded {
+        if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);
         }
-        if let Some(toggled) = self.aria_toggled {
+        if let Some(toggled) = self.aria.toggled {
             node.set_toggled(toggled);
         }
-        if let Some(value) = self.aria_numeric_value {
+        if let Some(value) = self.aria.numeric_value {
             node.set_numeric_value(value);
         }
-        if let Some(value) = self.aria_min_numeric_value {
+        if let Some(value) = self.aria.min_numeric_value {
             node.set_min_numeric_value(value);
         }
-        if let Some(value) = self.aria_max_numeric_value {
+        if let Some(value) = self.aria.max_numeric_value {
             node.set_max_numeric_value(value);
         }
-        if let Some(step) = self.aria_numeric_value_step {
+        if let Some(step) = self.aria.numeric_value_step {
             node.set_numeric_value_step(step);
         }
-        if let Some(value) = &self.aria_value {
+        if let Some(value) = &self.aria.value {
             node.set_value(value.to_string());
         }
-        if let Some(placeholder) = &self.aria_placeholder {
+        if let Some(placeholder) = &self.aria.placeholder {
             node.set_placeholder(placeholder.to_string());
         }
-        if let Some(orientation) = self.aria_orientation {
+        if let Some(orientation) = self.aria.orientation {
             node.set_orientation(orientation);
         }
-        if let Some(level) = self.aria_level {
+        if let Some(level) = self.aria.level {
             node.set_level(level);
         }
-        if let Some(position) = self.aria_position_in_set {
+        if let Some(position) = self.aria.position_in_set {
             node.set_position_in_set(position);
         }
-        if let Some(size) = self.aria_size_of_set {
+        if let Some(size) = self.aria.size_of_set {
             node.set_size_of_set(size);
         }
-        if let Some(index) = self.aria_row_index {
+        if let Some(index) = self.aria.row_index {
             node.set_row_index(index);
         }
-        if let Some(index) = self.aria_column_index {
+        if let Some(index) = self.aria.column_index {
             node.set_column_index(index);
         }
-        if let Some(count) = self.aria_row_count {
+        if let Some(count) = self.aria.row_count {
             node.set_row_count(count);
         }
-        if let Some(count) = self.aria_column_count {
+        if let Some(count) = self.aria.column_count {
             node.set_column_count(count);
         }
         if !self.click_listeners.is_empty() {
@@ -4379,13 +4426,13 @@ mod tests {
     #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();
-        interactivity.aria_label = Some("Buffer Font Size".into());
-        interactivity.aria_value = Some("15".into());
-        interactivity.aria_placeholder = Some("Search".into());
-        interactivity.aria_numeric_value = Some(15.0);
-        interactivity.aria_min_numeric_value = Some(6.0);
-        interactivity.aria_max_numeric_value = Some(72.0);
-        interactivity.aria_numeric_value_step = Some(1.0);
+        interactivity.aria.label = Some("Buffer Font Size".into());
+        interactivity.aria.value = Some("15".into());
+        interactivity.aria.placeholder = Some("Search".into());
+        interactivity.aria.numeric_value = Some(15.0);
+        interactivity.aria.min_numeric_value = Some(6.0);
+        interactivity.aria.max_numeric_value = Some(72.0);
+        interactivity.aria.numeric_value_step = Some(1.0);
 
         let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
         interactivity.write_a11y_info(&mut node);
@@ -4602,5 +4649,70 @@ mod tests {
         key_up(&mut cx, window, "cmd-enter");
 
         assert!(clicks.borrow().is_empty(), "clicks: {:?}", clicks.borrow());
+    }
+
+    /// Two sibling tab groups, each a focusable container that is *not* itself a
+    /// tab stop and holds a single tab stop. Mirrors how the title bar and
+    /// status bar expose their controls as ARIA toolbars.
+    struct TabGroupFocus {
+        group_a: FocusHandle,
+        item_a: FocusHandle,
+        group_b: FocusHandle,
+        item_b: FocusHandle,
+    }
+
+    impl Render for TabGroupFocus {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            fn group(container: &FocusHandle, item: &FocusHandle) -> Div {
+                div()
+                    .track_focus(container)
+                    .tab_group()
+                    .child(div().track_focus(item))
+            }
+            div()
+                .child(group(&self.group_a, &self.item_a))
+                .child(group(&self.group_b, &self.item_b))
+        }
+    }
+
+    /// Focusing a tab-group container and pressing Tab (`focus_next`) must move
+    /// focus to the first tab stop *inside that container*, as documented on
+    /// [`InteractiveElement::tab_stop`].
+    #[test]
+    fn focus_next_from_tab_group_container_enters_that_group() {
+        let mut cx = TestAppContext::single();
+        let (group_a, item_a, group_b, item_b) = cx.update(|cx| {
+            (
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+            )
+        });
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let (group_a, item_a, group_b, item_b) =
+                    (group_a, item_a, group_b.clone(), item_b.clone());
+                move |_, _| TabGroupFocus {
+                    group_a,
+                    item_a,
+                    group_b,
+                    item_b,
+                }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+
+        // Focus the *second* group's container, then advance like Tab would.
+        let focused = cx
+            .update_window(window, |_, window, cx| {
+                window.focus(&group_b, cx);
+                window.focus_next(cx);
+                window.focused(cx).map(|handle| handle.id)
+            })
+            .unwrap();
+
+        assert_eq!(focused, Some(item_b.id));
     }
 }

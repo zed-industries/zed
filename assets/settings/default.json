@@ -233,6 +233,9 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
