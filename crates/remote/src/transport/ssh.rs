@@ -496,7 +496,9 @@ impl RemoteConnection for SshRemoteConnection {
         {
             Ok(process) => process,
             Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                return Task::ready(Err(
+                    anyhow::Error::new(error).context("failed to spawn remote server")
+                ));
             }
         };
 

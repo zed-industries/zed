@@ -170,8 +170,9 @@ impl FileFinder {
 
         let project = delegate.project.clone();
         let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
+        let preview = picker_preview::editor_preview(project, window, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list_with_preview(delegate, project, window, cx)
+            Picker::uniform_list_with_preview(delegate, preview, window, cx)
                 .initial_width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);
@@ -1951,7 +1952,7 @@ impl<'a> PathComponentSlice<'a> {
 
     fn elision_range(&self, budget: usize, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
-            assert!(matches.windows(2).all(|w| w[0] <= w[1]));
+            assert!(matches.is_sorted());
             let mut matches = matches.iter().copied().peekable();
             let mut longest: Option<Range<usize>> = None;
             let mut cur = 0..0;

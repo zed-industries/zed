@@ -17,7 +17,7 @@ For Zed-hosted models and Zed-managed AI features, see [AI Privacy](./privacy-an
 
 The ACP Registry is the primary way to install common External Agents in Zed.
 
-Open the registry with {#action zed::AcpRegistry}, or open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, click `Add Agent`, and choose `Install from Registry`.
+Open the registry with {#action zed::AcpRegistry}, or open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, go to the **External Agents** page, click `Add Agent`, and choose `Install from Registry`.
 
 After installation, the agent appears in the new-thread menu in the Agent Panel and Threads Sidebar.
 
@@ -130,7 +130,7 @@ Zed LLM provider API keys saved in the local keychain are not automatically the 
 
 Use custom agents when you are developing an ACP-compatible agent or need to run an agent that is not in the registry.
 
-Open [Agent Settings](./agent-settings.md), click `Add Agent`, and choose `Add Custom Agent`. Zed opens your settings file with an `agent_servers` entry.
+Open [Agent Settings](./agent-settings.md), go to the **External Agents** page, click `Add Agent`, and choose `Add Custom Agent`. Zed opens your settings file with an `agent_servers` entry.
 
 ```json [settings]
 {

@@ -111,25 +111,10 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
 
-/// Moves LLM provider and MCP server configuration out of the dedicated agent
-/// panel page and into the settings UI. When enabled, the agent panel no longer
-/// shows its configuration overlay and the settings UI exposes the "LLM
-/// Providers" and "MCP Servers" sub-pages instead.
-pub struct AgentSettingsUiFeatureFlag;
+pub struct AutoWatchFeatureFlag;
 
-impl FeatureFlag for AgentSettingsUiFeatureFlag {
-    const NAME: &'static str = "agent-settings-ui";
+impl FeatureFlag for AutoWatchFeatureFlag {
+    const NAME: &'static str = "auto-watch-screens";
     type Value = PresenceFlag;
 }
-register_feature_flag!(AgentSettingsUiFeatureFlag);
-
-/// Wraps agent-run terminal commands in an OS-level sandbox where supported
-/// (currently macOS Seatbelt only). When off, terminal commands run with the
-/// agent's full ambient permissions, as they always have.
-pub struct SandboxingFeatureFlag;
-
-impl FeatureFlag for SandboxingFeatureFlag {
-    const NAME: &'static str = "sandboxing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(SandboxingFeatureFlag);
+register_feature_flag!(AutoWatchFeatureFlag);

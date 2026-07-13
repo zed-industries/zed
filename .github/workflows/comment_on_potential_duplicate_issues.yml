@@ -14,6 +14,8 @@ concurrency:
   group: potential-duplicate-check-${{ github.event.issue.number || inputs.issue_number }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   identify-duplicates:
     # For manual testing, allow running on any branch; for automatic runs, only on main repo
