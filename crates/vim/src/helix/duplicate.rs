@@ -3,7 +3,7 @@ use std::ops::Range;
 use editor::{DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot};
 use gpui::Context;
 use language::PointUtf16;
-use multi_buffer::MultiBufferRow;
+use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use text::Bias;
 use ui::Window;
 
@@ -126,8 +126,10 @@ fn find_next_valid_duplicate_space(
             .point_utf16_to_point(PointUtf16::new(end_row, end_col_utf16))
             .column;
 
-        let candidate_start = DisplayPoint::new(candidate.start.row(), start_col);
-        let candidate_end = DisplayPoint::new(candidate.end.row(), end_col);
+        let candidate_start =
+            map.point_to_display_point(MultiBufferPoint::new(start_row, start_col), Bias::Left);
+        let candidate_end =
+            map.point_to_display_point(MultiBufferPoint::new(end_row, end_col), Bias::Right);
 
         if map.clip_point(candidate_start, Bias::Left) == candidate_start
             && map.clip_point(candidate_end, Bias::Right) == candidate_end
@@ -147,6 +149,7 @@ fn display_point_range_to_offset_range(
 #[cfg(test)]
 mod tests {
     use db::indoc;
+    use editor::{Inlay, MultiBufferOffset};
 
     use crate::{state::Mode, test::VimTestContext};
 
@@ -307,6 +310,46 @@ mod tests {
             indoc! {"
             H«äˇ»llo
             H«aˇ»llo"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_duplication_with_inlay_hints(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+               let x = «1ˇ»;
+               let y = 2;"},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            let buffer = &editor.snapshot(window, cx).buffer;
+            editor.splice_inlays(
+                &[],
+                vec![
+                    Inlay::mock_hint(0, buffer.anchor_after(MultiBufferOffset(5)), ": i32"),
+                    Inlay::mock_hint(1, buffer.anchor_after(MultiBufferOffset(16)), ": i32"),
+                ],
+                cx,
+            );
+        });
+
+        cx.simulate_keystrokes("C");
+
+        assert_eq!(
+            cx.display_text(),
+            "let x: i32 = 1;
+let y: i32 = 2;",
+        );
+
+        cx.assert_state(
+            indoc! {"
+               let x = «1ˇ»;
+               let y = «2ˇ»;"},
             Mode::HelixNormal,
         );
     }

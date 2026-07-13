@@ -27,7 +27,7 @@ use language::{
     Capability::ReadWrite,
     ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
-    LanguageToolchainStore, Override, Point,
+    LanguageToolchainStore, Override, PLAIN_TEXT, Point,
     language_settings::{
         CompletionSettingsContent, FormatOnSave, FormatterList, LanguageSettingsContent,
         LspInsertMode,
@@ -9854,6 +9854,260 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_file_location_from_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file.txt": "first line\nsecond line\nthird line\nfourth line\nfifth line\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::new(2, 0)..Point::new(5, 0)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:3".to_string()),
+        "cursor on the first excerpt row should report its line in the original file"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(2, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:4".to_string()),
+        "a selection ending at the start of a row should not include that row"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(2, 3)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:3-5".to_string()),
+        "a multi-row selection should report the original file's line range"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_location_across_buffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "one.txt": "one\ntwo\nthree\n",
+            "two.txt": "four\nfive\nsix\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/one.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/two.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1,
+            [Point::new(1, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2,
+            [Point::new(1, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // The multi-buffer reads "two\nthree\n\nfive\nsix\n", so row 3 is the first
+    // row of the second buffer's excerpt. Select from the first excerpt into it.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(3, 2)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("two.txt:2".to_string()),
+        "a selection spanning buffers should report the location of the cursor"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(3, 2)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("one.txt:2".to_string()),
+        "a reversed selection spanning buffers should report the cursor's location in the first buffer"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_location_with_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇaaa\nbbb\nccc");
+    cx.set_head_text("aaa\nXXX\nbbb\nccc");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Multi-buffer rows: 0 "aaa", 1 "XXX" (deleted hunk), 2 "bbb", 3 "ccc"
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(2, 2)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:2".to_string()),
+        "a selection crossing a deleted hunk should report the location of the cursor"
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:1".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 1)..Point::new(1, 1)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file:1".to_string()),
+        "a cursor inside a deleted hunk has no file location, so the clipboard is unchanged"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_location_in_singleton_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file.txt": "first line\nsecond line\nthird line\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:2".to_string())
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(2, 4)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:1-3".to_string())
+    );
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12953,6 +13207,29 @@ async fn test_autoindent_selections(cx: &mut TestAppContext) {
             )
         });
     }
+}
+
+#[gpui::test]
+async fn test_autoclose_nested_brackets_in_plain_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = PLAIN_TEXT.clone();
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state("ˇ");
+
+    // Typing an opening bracket right before an existing closing bracket should
+    // still autoclose, not skip because the following char is `)`.
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("(", window, cx);
+        editor.handle_input("[", window, cx);
+        editor.handle_input("{", window, cx);
+    });
+    cx.assert_editor_state("([{ˇ}])");
 }
 
 #[gpui::test]
@@ -35616,6 +35893,273 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
     cx.assert_editor_state(&format!(
         "this will embed -> [link]({url})ˇ\nthis will replace -> {url}ˇ"
     ));
+}
+
+#[gpui::test]
+async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    let png_bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes.clone());
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    let buffer_text = cx.buffer_text();
+    assert!(
+        buffer_text.starts_with("![](image") && buffer_text.ends_with(".png)"),
+        "expected markdown image syntax, got: {buffer_text:?}"
+    );
+
+    // Cursor should land inside [] so the user can type alt text immediately.
+    let filename_in_parens = &buffer_text["![](".len()..buffer_text.len() - 1];
+    let expected_state = format!("![ˇ]({filename_in_parens})");
+    cx.assert_editor_state(&expected_state);
+
+    let filename = &buffer_text["![](".len()..buffer_text.len() - 1];
+    assert_eq!(
+        fs.read_file_sync(format!("/test/{filename}")).unwrap(),
+        png_bytes,
+        "image file contents should match clipboard bytes"
+    );
+}
+
+#[gpui::test]
+async fn test_paste_multiple_images_in_markdown_increments_filename(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    let png_bytes_1: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let png_bytes_2: Vec<u8> = vec![6, 7, 8, 9, 10];
+    let png_bytes_3: Vec<u8> = vec![11, 12, 13, 14, 15];
+    let image_1 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_1.clone());
+    let image_2 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_2.clone());
+    let image_3 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_3.clone());
+
+    // Paste first image — should produce image.png
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_1));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_first = cx.buffer_text();
+    assert_eq!(
+        text_after_first, "![](image.png)",
+        "first paste should produce image.png"
+    );
+    assert_eq!(fs.read_file_sync("/test/image.png").unwrap(), png_bytes_1);
+
+    // Paste second image at end — should produce image_1.png
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_2));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_second = cx.buffer_text();
+    assert!(
+        text_after_second.contains("![](image_1.png)"),
+        "second paste should produce image_1.png, got: {text_after_second:?}"
+    );
+    assert_eq!(fs.read_file_sync("/test/image_1.png").unwrap(), png_bytes_2);
+
+    // Paste third image — should produce image_2.png
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_3));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_third = cx.buffer_text();
+    assert!(
+        text_after_third.contains("![](image_2.png)"),
+        "third paste should produce image_2.png, got: {text_after_third:?}"
+    );
+    assert_eq!(fs.read_file_sync("/test/image_2.png").unwrap(), png_bytes_3);
+}
+
+#[gpui::test]
+async fn test_paste_image_in_non_markdown_does_not_insert_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let rust_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_language), cx));
+    cx.set_state("ˇ");
+
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_image_in_markdown_without_open_file_falls_through(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    // Build an editor whose buffer has no associated file path on disk.
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(markdown_language), cx);
+        });
+        let multibuffer = MultiBuffer::build_from_buffer(buffer, cx);
+        build_editor(multibuffer, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+    cx.set_state("ˇ");
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_image_in_markdown_single_file_worktree_falls_through(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/root/test.md")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/root/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    cx.set_state("ˇ");
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_editor_state("ˇ");
+    assert!(
+        fs.read_file_sync("/root/image.png").is_err(),
+        "no image file should be created for a single-file worktree"
+    );
 }
 
 #[gpui::test]
