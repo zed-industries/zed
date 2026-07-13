@@ -54,12 +54,12 @@ use settings::{
     InlayHintSettingsContent, ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent,
     SettingsContent, SettingsStore,
 };
-use std::{borrow::Cow, sync::Arc};
-use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
-    iter,
-    sync::atomic::{self, AtomicUsize},
+    borrow::Cow,
+    sync::{Arc, atomic},
 };
+use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
+use std::{iter, sync::atomic::AtomicUsize};
 use task::TaskVariables;
 use test::build_editor_with_project;
 use unindent::Unindent;
@@ -16018,14 +16018,33 @@ async fn test_explicit_formatter_failure_is_recorded(cx: &mut TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
+    let format_should_fail = Arc::new(AtomicBool::new(true));
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            initializer: Some(Box::new({
+                let format_should_fail = format_should_fail.clone();
+                move |fake_server| {
+                    let format_should_fail = format_should_fail.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |_params, _| {
+                            let format_should_fail = format_should_fail.clone();
+                            async move {
+                                if format_should_fail.load(atomic::Ordering::Acquire) {
+                                    Err(anyhow::anyhow!("Simulated formatter failure"))
+                                } else {
+                                    Ok(Some(Vec::new()))
+                                }
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -16041,22 +16060,7 @@ async fn test_explicit_formatter_failure_is_recorded(cx: &mut TestAppContext) {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
 
-    let fake_server = fake_servers.next().await.unwrap();
-
-    let format_should_fail = Arc::new(AtomicBool::new(true));
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
-        let format_should_fail = format_should_fail.clone();
-        move |_params, _| {
-            let format_should_fail = format_should_fail.clone();
-            async move {
-                if format_should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-                    Err(anyhow::anyhow!("Simulated formatter failure"))
-                } else {
-                    Ok(Some(Vec::new()))
-                }
-            }
-        }
-    });
+    fake_servers.next().await.unwrap();
 
     let format = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
         editor
@@ -16087,18 +16091,19 @@ async fn test_explicit_formatter_failure_is_recorded(cx: &mut TestAppContext) {
         "a failing explicitly configured formatter should be recorded"
     );
 
-    // A later successful format clears the recorded failure.
-    format_should_fail.store(false, std::sync::atomic::Ordering::SeqCst);
+    format_should_fail.store(false, atomic::Ordering::Release);
     format(&editor, cx).await;
-    assert_eq!(last_failure(cx), None);
+    assert_eq!(
+        last_failure(cx),
+        None,
+        "A later successful format clears the recorded failure"
+    );
 }
 
 #[gpui::test]
 async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        // `formatter: "auto"` with prettier disallowed resolves to the primary
-        // language server. An unavailable/failing auto formatter should stay
-        // silent rather than warning on every save.
+        // `formatter: "auto"` with prettier disallowed resolves to the primary language server.
         settings.defaults.formatter = Some(FormatterList::Single(Formatter::Auto));
         settings.defaults.prettier.get_or_insert_default().allowed = Some(false);
     });
@@ -16116,9 +16121,16 @@ async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            initializer: Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                    move |_params, _| async move {
+                        Err(anyhow::anyhow!("Simulated formatter failure"))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -16134,10 +16146,7 @@ async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
 
-    let fake_server = fake_servers.next().await.unwrap();
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-        move |_params, _| async move { Err(anyhow::anyhow!("Simulated formatter failure")) },
-    );
+    fake_servers.next().await.unwrap();
 
     editor
         .update_in(cx, |editor, window, cx| {

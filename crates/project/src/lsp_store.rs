@@ -1602,8 +1602,7 @@ impl LocalLspStore {
                     .insert(cx.entity(), formatting_transaction);
             });
 
-            // Keep formatting the remaining buffers even if one fails, and
-            // surface the first failure so the activity indicator reports it.
+            // Keep formatting the remaining buffers on failure, surfacing the first error.
             if let Err(error) = result {
                 format_error.get_or_insert(error);
             }
@@ -1751,11 +1750,9 @@ impl LocalLspStore {
             .flatten()
             .chain(formatters);
 
-        // Surface the first failure of an explicitly configured formatter so the
-        // activity indicator can report it, while still running the remaining
-        // formatters. Auto-resolved formatters stay silent when unavailable so a
-        // missing optional tool (e.g. `formatter: "auto"` with no prettier) is a
-        // no-op rather than a save-time warning.
+        // Only explicitly configured formatters surface their failures;
+        // auto-resolved ones stay silent so a missing optional tool
+        // (e.g. prettier) does not warn on every save.
         let mut format_error = None;
         for formatter in formatters {
             let is_auto = formatter == &Formatter::Auto;
