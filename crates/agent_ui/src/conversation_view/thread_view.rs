@@ -7850,13 +7850,11 @@ impl ThreadView {
             .into_any()
     }
 
-    /// Render the "ran without sandbox" warning shown on a terminal tool card,
-    /// tailored to *why* the sandbox wasn't applied.
-    fn render_sandbox_not_applied_warning(
+    fn sandbox_not_applied_warning(
         &self,
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
-    ) -> AnyElement {
+    ) -> TerminalSandboxWarning {
         // (title, detail line, docs section slug)
         let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
             match reason {
@@ -7885,17 +7883,11 @@ impl ThreadView {
                 }
             };
 
-        Callout::new()
-            .severity(Severity::Warning)
-            .icon(IconName::Warning)
-            .title(title)
-            .description(detail)
-            .actions_slot(self.render_sandbox_docs_link(
-                "sandbox-not-applied-docs-link",
-                docs_section,
-                cx,
-            ))
-            .into_any_element()
+        TerminalSandboxWarning {
+            title,
+            detail,
+            docs_url: zed_urls::sandboxing_docs(docs_section, cx).into(),
+        }
     }
 
     /// Find the first terminal tool call in the thread whose sandbox couldn't be
