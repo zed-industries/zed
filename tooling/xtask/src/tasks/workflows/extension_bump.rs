@@ -5,9 +5,10 @@ use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, GitHubScriptStep,
-        GitRef, NamedJob, RefSha, RepositoryTarget, cache_rust_dependencies_namespace,
-        checkout_repo, create_ref, dependant_job, generate_token, named,
+        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets,
+        DEFAULT_REPOSITORY_OWNER_GUARD, GitHubScriptStep, GitRef, NamedJob, RefSha,
+        RepositoryTarget, cache_rust_dependencies_namespace, checkout_repo, create_ref,
+        dependant_job, generate_token, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
@@ -58,6 +59,7 @@ pub(crate) fn extension_bump() -> Workflow {
     );
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()

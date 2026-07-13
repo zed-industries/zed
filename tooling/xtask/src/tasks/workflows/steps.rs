@@ -376,6 +376,16 @@ impl CommonJobConditions for Job {
     }
 }
 
+pub trait CommonPermissionSets: Sized {
+    fn with_minimal_permissions(self) -> Self;
+}
+
+impl CommonPermissionSets for Workflow {
+    fn with_minimal_permissions(self) -> Self {
+        self.permissions(Permissions::default().contents(Level::Read))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .with_repository_owner_guard()
@@ -503,6 +513,7 @@ pub mod named {
                     .collect::<Vec<_>>()
                     .join("::"),
             )
+            .permissions(Permissions::default())
             .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 

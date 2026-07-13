@@ -14,6 +14,8 @@ on:
         description: Description for the changes to be expected with this rollout
         type: string
         default: ''
+permissions:
+  contents: read
 jobs:
   fetch_extension_repos:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && (github.ref == 'refs/tags/extension-workflows' || github.ref == 'refs/heads/main')

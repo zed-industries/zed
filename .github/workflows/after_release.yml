@@ -22,6 +22,8 @@ on:
         description: body
         type: string
         default: ''
+permissions:
+  contents: read
 jobs:
   rebuild_releases_page:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

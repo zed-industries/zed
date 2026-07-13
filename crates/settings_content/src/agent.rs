@@ -812,6 +812,14 @@ pub struct SandboxPermissionsContent {
     /// to without prompting. Paths written by Zed are absolute.
     /// Default: []
     pub write_paths: Option<ExtendingVec<PathBuf>>,
+
+    /// Whether to warn when a sandbox escalation prompt requests a domain or
+    /// write path that contains potentially confusable Unicode characters
+    /// (homoglyphs, invisible characters, or bidirectional overrides). When
+    /// enabled, such prompts show a warning that must be acknowledged before
+    /// the request can be allowed.
+    /// Default: true
+    pub warn_confusable_unicode: Option<bool>,
 }
 
 #[with_fallible_options]

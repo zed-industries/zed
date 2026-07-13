@@ -502,6 +502,7 @@ pub struct Content {
     pub grid_lines_change: GridLinesChange,
     pub scrolled_to_top: bool,
     pub scrolled_to_bottom: bool,
+    pub bottom_row_occupied: bool,
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -539,6 +540,7 @@ impl Default for Content {
             grid_lines_change: Default::default(),
             scrolled_to_top: false,
             scrolled_to_bottom: false,
+            bottom_row_occupied: false,
         }
     }
 }
@@ -1021,6 +1023,8 @@ impl TerminalBuilder {
             input_log: Vec::new(),
             #[cfg(test)]
             suppress_hyperlink_throttle_once: false,
+            #[cfg(any(test, feature = "test-support"))]
+            pty_write_log: Default::default(),
         };
 
         TerminalBuilder {
@@ -1294,6 +1298,8 @@ impl TerminalBuilder {
                 input_log: Vec::new(),
                 #[cfg(test)]
                 suppress_hyperlink_throttle_once: false,
+                #[cfg(any(test, feature = "test-support"))]
+                pty_write_log: Default::default(),
             };
 
             if !activation_script.is_empty() && no_task {
@@ -1463,6 +1469,8 @@ pub struct Terminal {
     input_log: Vec<Vec<u8>>,
     #[cfg(test)]
     suppress_hyperlink_throttle_once: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    pty_write_log: std::cell::RefCell<Vec<Vec<u8>>>,
 }
 
 struct CopyTemplate {
@@ -1988,8 +1996,10 @@ impl Terminal {
     /// Write the Input payload to the PTY, if applicable.
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
+        let input = input.into();
+        #[cfg(any(test, feature = "test-support"))]
+        self.pty_write_log.borrow_mut().push(input.to_vec());
         if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            let input = input.into();
             if log::log_enabled!(log::Level::Debug) {
                 if let Ok(str) = str::from_utf8(&input) {
                     log::debug!("Writing to PTY: {:?}", str);
@@ -2119,6 +2129,11 @@ impl Terminal {
     #[cfg(any(test, feature = "test-support"))]
     pub fn take_input_log(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.input_log)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_pty_write_log(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(self.pty_write_log.get_mut())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2332,22 +2347,30 @@ impl Terminal {
     pub fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if self.mouse_mode(e.modifiers.shift) {
-            let (point, side) = grid_point_and_side(
-                position,
-                self.last_content.terminal_bounds,
-                self.last_content.display_offset,
-            );
-
-            if self.mouse_changed(point, side) {
-                let bytes = mouse_moved_report(
-                    point,
-                    e.pressed_button,
-                    e.modifiers,
-                    self.last_content.mode,
+            // A ctrl/cmd press on a link suppressed its button-press report in
+            // `mouse_down`. Since the app never saw the press, we must swallow
+            // the whole gesture rather than forward later motion/release
+            // reports, which would be a press-less (malformed) sequence.
+            // `mouse_up` resolves it: release on the same link opens it,
+            // otherwise the gesture is dropped.
+            if self.mouse_down_hyperlink.is_none() {
+                let (point, side) = grid_point_and_side(
+                    position,
+                    self.last_content.terminal_bounds,
+                    self.last_content.display_offset,
                 );
 
-                if let Some(bytes) = bytes {
-                    self.write_to_pty(bytes);
+                if self.mouse_changed(point, side) {
+                    let bytes = mouse_moved_report(
+                        point,
+                        e.pressed_button,
+                        e.modifiers,
+                        self.last_content.mode,
+                    );
+
+                    if let Some(bytes) = bytes {
+                        self.write_to_pty(bytes);
+                    }
                 }
             }
         } else {
@@ -2487,7 +2510,7 @@ impl Terminal {
         Some(scroll_lines.clamp(-3, 3))
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDownEvent, _cx: &mut Context<Self>) {
+    pub fn mouse_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         let point = grid_point(
             position,
@@ -2497,7 +2520,8 @@ impl Terminal {
 
         if e.button == MouseButton::Left
             && e.modifiers.secondary()
-            && !self.mouse_mode(e.modifiers.shift)
+            && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
+                || !self.mouse_mode(e.modifiers.shift))
         {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
@@ -2547,7 +2571,7 @@ impl Terminal {
                 }
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
-                    if let Some(item) = _cx.read_from_primary() {
+                    if let Some(item) = cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
                         self.paste(&text);
                     }
@@ -2561,6 +2585,33 @@ impl Terminal {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
+            let point = grid_point(
+                position,
+                self.last_content.terminal_bounds,
+                self.last_content.display_offset,
+            );
+
+            if self
+                .find_hyperlink_at_point(point)
+                .is_some_and(|mouse_up_hyperlink| mouse_up_hyperlink == mouse_down_hyperlink)
+            {
+                self.events
+                    .push_back(InternalEvent::ProcessHyperlink(mouse_down_hyperlink, true));
+                self.selection_phase = SelectionPhase::Ended;
+                self.last_mouse = None;
+                self.mouse_down_position = None;
+                return;
+            }
+
+            if self.mouse_mode(e.modifiers.shift) {
+                self.selection_phase = SelectionPhase::Ended;
+                self.last_mouse = None;
+                self.mouse_down_position = None;
+                return;
+            }
+        }
+
         if self.mouse_mode(e.modifiers.shift) {
             let point = grid_point(
                 position,
@@ -2577,24 +2628,6 @@ impl Terminal {
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
                 self.copy(Some(true));
-            }
-
-            if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
-                let point = grid_point(
-                    position,
-                    self.last_content.terminal_bounds,
-                    self.last_content.display_offset,
-                );
-
-                if let Some(mouse_up_hyperlink) = self.find_hyperlink_at_point(point) {
-                    if mouse_down_hyperlink == mouse_up_hyperlink {
-                        self.events
-                            .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
-                        self.selection_phase = SelectionPhase::Ended;
-                        self.last_mouse = None;
-                        return;
-                    }
-                }
             }
 
             //Hyperlinks
@@ -2685,7 +2718,8 @@ impl Terminal {
 
                 Some(new_offset - old_offset)
             }
-            TouchPhase::Ended => None,
+            // Cancellation does not commit a scroll, same as a plain end.
+            TouchPhase::Ended | TouchPhase::Cancelled => None,
         }
     }
 
@@ -3627,6 +3661,7 @@ mod tests {
             );
             terminal.last_content.terminal_bounds = terminal_bounds;
             terminal.events.clear();
+            terminal.take_pty_write_log();
         });
 
         terminal
@@ -3690,6 +3725,20 @@ mod tests {
             first_mouse: true,
         };
         terminal.mouse_down(&mouse_down, cx);
+    }
+
+    fn left_mouse_up_at(
+        terminal: &mut Terminal,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let mouse_up = MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::none(),
+            click_count: 1,
+        };
+        terminal.mouse_up(&mouse_up, cx);
     }
 
     fn left_mouse_drag_to(
@@ -4433,7 +4482,10 @@ mod tests {
     }
 
     mod hyperlinks {
-        use super::{init_terminal_test, init_terminal_test_with_window};
+        use super::{
+            init_terminal_test, init_terminal_test_with_window, left_mouse_down_at,
+            left_mouse_up_at,
+        };
         use crate::*;
         use gpui::{
             Context, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -4496,19 +4548,183 @@ mod tests {
             let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
 
             terminal.update(cx, |terminal, cx| {
+                let click_position = point(px(80.0), px(10.0));
+                ctrl_mouse_down_at(terminal, click_position, cx);
+                ctrl_mouse_up_at(terminal, click_position, cx);
+
+                assert!(
+                    any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
+                    "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_hyperlink_ctrl_click_same_position_in_mouse_mode(cx: &mut TestAppContext) {
+            let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            terminal.update(cx, |terminal, cx| {
+            terminal.last_content.mode = Modes::MOUSE_MODE;
+
             let click_position = point(px(80.0), px(10.0));
             ctrl_mouse_down_at(terminal, click_position, cx);
             ctrl_mouse_up_at(terminal, click_position, cx);
 
             assert!(
-                any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
-                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position in mouse mode"
+            );
+            assert!(
+                terminal.take_pty_write_log().is_empty(),
+                "a consumed link click must not be reported to the PTY"
             );
         });
         }
 
         #[gpui::test]
-        async fn test_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
+        async fn test_hyperlink_ctrl_click_mismatch_in_mouse_mode_consumes_gesture(
+            cx: &mut TestAppContext,
+        ) {
+            let terminal = init_terminal_test(
+                cx,
+                b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
+            );
+
+            terminal.update(cx, |terminal, cx| {
+            terminal.last_content.mode = Modes::MOUSE_MODE;
+            terminal.take_pty_write_log();
+
+            let down_position = point(px(80.0), px(10.0));
+            let up_position = point(px(10.0), px(30.0));
+
+            ctrl_mouse_down_at(terminal, down_position, cx);
+            terminal.mouse_move(
+                &MouseMoveEvent {
+                    position: up_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::secondary_key(),
+                },
+                cx,
+            );
+            ctrl_mouse_up_at(terminal, up_position, cx);
+
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                "Should NOT open a link when press and release land on different hyperlinks"
+            );
+            let pty_writes = terminal.take_pty_write_log();
+            assert!(
+                pty_writes.is_empty(),
+                "a captured press must consume the whole gesture, but reports leaked to the PTY: {pty_writes:?}"
+            );
+        });
+        }
+
+        #[gpui::test]
+        async fn test_plain_click_on_hyperlink_in_mouse_mode_is_reported(cx: &mut TestAppContext) {
+            let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.last_content.mode = Modes::MOUSE_MODE;
+                terminal.take_pty_write_log();
+
+                let click_position = point(px(80.0), px(10.0));
+                left_mouse_down_at(terminal, click_position, cx);
+                left_mouse_up_at(terminal, click_position, cx);
+
+                assert!(
+                    !terminal
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    "a plain click must not open a link"
+                );
+                let pty_writes = terminal.take_pty_write_log();
+                assert_eq!(
+                    pty_writes.len(),
+                    2,
+                    "expected press and release reports, got {pty_writes:?}"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_click_on_non_hyperlink_in_mouse_mode_is_reported(
+            cx: &mut TestAppContext,
+        ) {
+            let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.last_content.mode = Modes::MOUSE_MODE;
+                terminal.take_pty_write_log();
+
+                // Past the end of the line: nothing link-like under the cursor.
+                let click_position = point(px(370.0), px(10.0));
+                ctrl_mouse_down_at(terminal, click_position, cx);
+                ctrl_mouse_up_at(terminal, click_position, cx);
+
+                assert!(
+                    !terminal
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    "a secondary click off a link must not open anything"
+                );
+                let pty_writes = terminal.take_pty_write_log();
+                assert_eq!(
+                    pty_writes.len(),
+                    2,
+                    "expected press and release reports, got {pty_writes:?}"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_click_in_mouse_mode_forwards_when_setting_disabled(
+            cx: &mut TestAppContext,
+        ) {
+            let terminal = init_terminal_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            cx.update_global(|store: &mut settings::SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .open_links_in_mouse_mode = Some(false);
+                });
+            });
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.last_content.mode = Modes::MOUSE_MODE;
+
+                let click_position = point(px(80.0), px(10.0));
+                ctrl_mouse_down_at(terminal, click_position, cx);
+                ctrl_mouse_up_at(terminal, click_position, cx);
+
+                assert!(
+                    !terminal
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                    "with the setting disabled, ctrl+click must not open links in mouse mode"
+                );
+                let pty_writes = terminal.take_pty_write_log();
+                assert_eq!(
+                    pty_writes.len(),
+                    2,
+                    "expected press and release reports, got {pty_writes:?}"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
             let terminal = init_terminal_test(
                 cx,
                 b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
@@ -4523,7 +4739,10 @@ mod tests {
                 ctrl_mouse_up_at(terminal, up_position, cx);
 
                 assert!(
-                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
+                    !terminal
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
                     "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
                 );
             });

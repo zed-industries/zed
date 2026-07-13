@@ -414,7 +414,7 @@ impl Default for AgentProfileId {
 /// combines them with the in-memory per-thread grants. `write_paths` are
 /// stored as minimal, lexically-normalized subtrees (see
 /// [`compile_sandbox_permissions`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxPermissions {
     /// Allow sandboxed commands to reach any host over the network.
     pub allow_all_hosts: bool,
@@ -432,6 +432,24 @@ pub struct SandboxPermissions {
     /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
+    /// Whether sandbox escalation prompts warn about domains or write paths
+    /// that contain potentially confusable Unicode characters (homoglyphs,
+    /// invisible characters, or bidirectional overrides). Enabled by default.
+    pub warn_confusable_unicode: bool,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self {
+            allow_all_hosts: false,
+            network_hosts: Vec::new(),
+            allow_fs_write_all: false,
+            allow_unsandboxed: false,
+            write_paths: Vec::new(),
+            // The confusable-Unicode warning is a safety net, so it defaults on.
+            warn_confusable_unicode: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -821,6 +839,7 @@ fn compile_sandbox_permissions(
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
+        warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
     }
 }
 
@@ -1098,6 +1117,22 @@ mod tests {
     fn test_sandbox_permissions_empty() {
         let permissions = compile_sandbox_permissions(None);
         assert_eq!(permissions, SandboxPermissions::default());
+        // The confusable-Unicode warning is a safety net, so it's on by default.
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_warn_confusable_unicode_can_be_disabled() {
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({ "warn_confusable_unicode": false })).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(!permissions.warn_confusable_unicode);
+
+        // Omitting the key keeps the warning enabled.
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({})).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(permissions.warn_confusable_unicode);
     }
 
     #[test]

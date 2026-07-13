@@ -34,6 +34,7 @@ actions!(text_finder, [ToProjectSearch, Fold, Unfold, ToggleFoldAll]);
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
+    workspace_id: Option<WorkspaceId>,
     _subscription: Subscription,
 }
 
@@ -158,8 +159,9 @@ impl TextFinder {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     remove_project_search_tab(project_search_item_id, workspace, window, cx);
+                    let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, None, window, cx)
+                        Self::new(delegate, None, workspace_id, window, cx)
                     });
                 })
                 .ok();
@@ -380,8 +382,9 @@ impl TextFinder {
             let delegate = delegate_task.await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
+                    let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, seed_query, window, cx)
+                        Self::new(delegate, seed_query, workspace_id, window, cx)
                     });
                 })
                 .ok();
@@ -391,6 +394,7 @@ impl TextFinder {
     fn new(
         delegate: Delegate,
         seed_query: Option<SearchSeed>,
+        workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -418,6 +422,7 @@ impl TextFinder {
         Self {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
+            workspace_id,
             _subscription: subscription,
         }
     }
@@ -450,11 +455,7 @@ impl ModalView for TextFinder {
         let query = picker.query(cx);
         if !query.is_empty() {
             let options = picker.delegate.search_options;
-            let workspace_id = self
-                .weak_workspace(cx)
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).database_id());
-            store_last_search(workspace_id, query, options, cx);
+            store_last_search(self.workspace_id, query, options, cx);
         }
         DismissDecision::Dismiss(true)
     }
@@ -474,7 +475,77 @@ pub struct SearchMatch {
     pub buffer: Entity<Buffer>,
     pub anchor_range: Range<Anchor>,
     pub range: Range<usize>,
-    pub relative_range: Range<usize>,
-    pub line_text: String,
+    pub match_start_byte_column: u32,
     pub line_number: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    use super::*;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    /// Dismissal can be initiated from inside a workspace update: workspace-level
+    /// action handlers (e.g. buffer search's `SearchActionsRegistrar`) call
+    /// `Workspace::hide_modal` while the workspace entity is leased, which runs
+    /// `on_before_dismiss` synchronously under that lease. Reading the workspace
+    /// entity there panics with "cannot read workspace::Workspace while it is
+    /// already being updated", so this test dismisses the finder the same way.
+    #[gpui::test]
+    async fn test_dismiss_from_within_workspace_update(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        // Seed a query: the last-search persistence in `on_before_dismiss` (the
+        // code path that read the workspace entity) only runs when the query is
+        // non-empty, which is the common case in practice since the finder seeds
+        // the previous query on open.
+        let seed_query = SearchSeed {
+            query: "ONE".to_string(),
+            options: None,
+        };
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<TextFinder>(cx).is_some());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.hide_modal(window, cx));
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<TextFinder>(cx).is_none());
+        });
+    }
 }
