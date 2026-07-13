@@ -1262,6 +1262,13 @@ impl App {
         self.platform.primary_display()
     }
 
+    /// Returns whether windows can be programmatically placed on a chosen display.
+    /// On Wayland the compositor controls window placement, so windows opened for a
+    /// specific display may all end up on the same screen.
+    pub fn can_position_windows(&self) -> bool {
+        self.platform.can_position_windows()
+    }
+
     /// Returns whether `screen_capture_sources` may work.
     pub fn is_screen_capture_supported(&self) -> bool {
         self.platform.is_screen_capture_supported()

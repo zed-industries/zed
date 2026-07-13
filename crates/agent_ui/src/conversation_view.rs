@@ -102,6 +102,26 @@ use crate::{
     ToggleThinkingMode, UndoLastReject,
 };
 
+// #region agent log
+pub(crate) fn debug_log(location: &str, hypothesis: &str, message: &str, data: String) {
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/code/zed-wt-bugfix-dupe-notifications/.cursor/debug-80956d.log")
+    {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(
+            file,
+            "{{\"sessionId\":\"80956d\",\"timestamp\":{timestamp},\"location\":\"{location}\",\"hypothesisId\":\"{hypothesis}\",\"message\":\"{message}\",\"data\":{data}}}"
+        );
+    }
+}
+// #endregion
+
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
@@ -1578,6 +1598,30 @@ impl ConversationView {
             return;
         };
         let is_subagent = thread.read(cx).parent_session_id().is_some();
+        // #region agent log
+        {
+            let event_name = match event {
+                AcpThreadEvent::ToolAuthorizationRequested(_) => Some("ToolAuthorizationRequested"),
+                AcpThreadEvent::Stopped(_) => Some("Stopped"),
+                AcpThreadEvent::Refusal => Some("Refusal"),
+                AcpThreadEvent::Error => Some("Error"),
+                _ => None,
+            };
+            if let Some(event_name) = event_name {
+                debug_log(
+                    "conversation_view.rs:handle_thread_event",
+                    "B,D",
+                    "notification-relevant thread event",
+                    format!(
+                        "{{\"event\":\"{event_name}\",\"session_id\":\"{}\",\"is_subagent\":{is_subagent},\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\"}}",
+                        session_id.0,
+                        cx.entity_id(),
+                        self.thread_id
+                    ),
+                );
+            }
+        }
+        // #endregion
         if !is_subagent && affects_thread_metadata(event) {
             cx.emit(RootThreadUpdated);
         }
@@ -2834,6 +2878,82 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // #region agent log
+        {
+            let displays: Vec<String> = cx
+                .displays()
+                .iter()
+                .map(|display| format!("{:?}@{:?}", display.id(), display.bounds()))
+                .collect();
+            let workspace_details = self.workspace.upgrade().map(|workspace| {
+                let workspace_entity_id = workspace.entity_id();
+                let workspace = workspace.read(cx);
+                let workspace_paths = workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().display().to_string())
+                    .collect::<Vec<_>>();
+                serde_json::json!({
+                    "entity_id": format!("{workspace_entity_id:?}"),
+                    "database_id": workspace.database_id().map(|id| format!("{id:?}")),
+                    "session_id": workspace.session_id(),
+                    "paths": workspace_paths,
+                })
+            });
+            let multi_workspace_details =
+                window
+                    .root::<MultiWorkspace>()
+                    .flatten()
+                    .map(|multi_workspace| {
+                        let multi_workspace_entity_id = multi_workspace.entity_id();
+                        let multi_workspace = multi_workspace.read(cx);
+                        let active_workspace = multi_workspace.workspace();
+                        let active_workspace_entity_id = active_workspace.entity_id();
+                        let active_workspace_database_id =
+                            active_workspace.read(cx).database_id();
+                        let workspace_count = multi_workspace.workspaces().count();
+                        let workspace_details = multi_workspace
+                            .workspaces()
+                            .map(|workspace| {
+                                let workspace_entity_id = workspace.entity_id();
+                                let workspace = workspace.read(cx);
+                                serde_json::json!({
+                                    "entity_id": format!("{workspace_entity_id:?}"),
+                                    "database_id": workspace.database_id().map(|id| format!("{id:?}")),
+                                    "session_id": workspace.session_id(),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        serde_json::json!({
+                            "entity_id": format!("{multi_workspace_entity_id:?}"),
+                            "active_workspace_entity_id": format!("{active_workspace_entity_id:?}"),
+                            "active_workspace_database_id": active_workspace_database_id.map(|id| format!("{id:?}")),
+                            "workspace_count": workspace_count,
+                            "sidebar_open": multi_workspace.sidebar_open(),
+                            "threads_list_active": multi_workspace.is_threads_list_view_active(cx),
+                            "workspaces": workspace_details,
+                        })
+                    });
+            debug_log(
+                "conversation_view.rs:show_notification",
+                "A,B,C,E",
+                "show_notification entered",
+                serde_json::json!({
+                    "view_entity_id": format!("{:?}", cx.entity_id()),
+                    "thread_id": format!("{:?}", self.thread_id),
+                    "existing_notifications": self.notifications.len(),
+                    "display_count": displays.len(),
+                    "displays": displays,
+                    "agent_status_visible": self.agent_status_visible(window, cx),
+                    "can_position_windows": cx.can_position_windows(),
+                    "workspace": workspace_details,
+                    "multi_workspace": multi_workspace_details,
+                })
+                .to_string(),
+            );
+        }
+        // #endregion
         if !self.notifications.is_empty() {
             return;
         }
@@ -2860,7 +2980,12 @@ impl ConversationView {
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
-                if let Some(primary) = cx.primary_display() {
+                // There is no primary display on Wayland; fall back to any display so the
+                // default setting still produces a notification there.
+                if let Some(screen) = cx
+                    .primary_display()
+                    .or_else(|| cx.displays().into_iter().next())
+                {
                     self.pop_up(
                         icon,
                         caption.into(),
@@ -2869,14 +2994,40 @@ impl ConversationView {
                         root_work_dirs,
                         root_title,
                         window,
-                        primary,
+                        screen,
                         cx,
                     );
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
                 let caption = caption.into();
-                for screen in cx.displays() {
+                // When the platform doesn't let us choose which display a window opens on
+                // (Wayland), per-screen popups would all land on the same screen and appear
+                // as duplicate notifications, so only open one.
+                let screens = if cx.can_position_windows() {
+                    cx.displays()
+                } else {
+                    cx.displays().into_iter().take(1).collect()
+                };
+                // #region agent log
+                debug_log(
+                    "conversation_view.rs:show_notification",
+                    "A,E",
+                    "all_screens target screens selected",
+                    serde_json::json!({
+                        "view_entity_id": format!("{:?}", cx.entity_id()),
+                        "thread_id": format!("{:?}", self.thread_id),
+                        "can_position_windows": cx.can_position_windows(),
+                        "target_screen_count": screens.len(),
+                        "target_screens": screens
+                            .iter()
+                            .map(|screen| format!("{:?}", screen.id()))
+                            .collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                );
+                // #endregion
+                for screen in screens {
                     self.pop_up(
                         icon,
                         caption.clone(),
@@ -2908,6 +3059,9 @@ impl ConversationView {
         screen: Rc<dyn PlatformDisplay>,
         cx: &mut Context<Self>,
     ) {
+        // #region agent log
+        let screen_id_for_log = screen.id();
+        // #endregion
         let options = AgentNotification::window_options(screen, cx);
 
         let project_name = self.workspace.upgrade().and_then(|workspace| {
@@ -2929,6 +3083,20 @@ impl ConversationView {
             .log_err()
             && let Some(pop_up) = screen_window.entity(cx).log_err()
         {
+            // #region agent log
+            debug_log(
+                "conversation_view.rs:pop_up",
+                "A,B",
+                "notification window opened",
+                format!(
+                    "{{\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\",\"caption\":\"{}\",\"screen\":\"{screen_id_for_log:?}\",\"total_notifications_after\":{}}}",
+                    cx.entity_id(),
+                    self.thread_id,
+                    caption,
+                    self.notifications.len() + 1
+                ),
+            );
+            // #endregion
             self.notification_subscriptions
                 .entry(screen_window)
                 .or_insert_with(Vec::new)
@@ -3054,6 +3222,19 @@ impl ConversationView {
 
     pub(crate) fn dismiss_notifications(&mut self, cx: &mut Context<Self>) -> bool {
         let had_notifications = !self.notifications.is_empty();
+        // #region agent log
+        debug_log(
+            "conversation_view.rs:dismiss_notifications",
+            "C",
+            "dismissing notifications",
+            format!(
+                "{{\"view_entity_id\":\"{:?}\",\"thread_id\":\"{:?}\",\"count\":{}}}",
+                cx.entity_id(),
+                self.thread_id,
+                self.notifications.len()
+            ),
+        );
+        // #endregion
         for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {

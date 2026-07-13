@@ -149,6 +149,26 @@ pub struct Globals {
     pub executor: ForegroundExecutor,
 }
 
+// #region agent log
+fn debug_log(location: &str, hypothesis: &str, message: &str, data: String) {
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/code/zed-wt-bugfix-dupe-notifications/.cursor/debug-80956d.log")
+    {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(
+            file,
+            "{{\"sessionId\":\"80956d\",\"timestamp\":{timestamp},\"location\":\"{location}\",\"hypothesisId\":\"{hypothesis}\",\"message\":\"{message}\",\"data\":{data}}}"
+        );
+    }
+}
+// #endregion
+
 impl Globals {
     fn new(
         globals: GlobalList,
@@ -823,6 +843,10 @@ impl LinuxClient for WaylandClient {
         None
     }
 
+    fn can_position_windows(&self) -> bool {
+        false
+    }
+
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
@@ -1194,14 +1218,42 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         (),
                     );
 
+                    // #region agent log
+                    let bound_object_id = output.id();
+                    // #endregion
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
                     state.wl_outputs.insert(output.id(), output);
+                    // #region agent log
+                    debug_log(
+                        "wayland/client.rs:registry_global_wl_output",
+                        "A",
+                        "wl_output global announced and bound",
+                        format!(
+                            "{{\"global_name\":{name},\"object_protocol_id\":{},\"wl_outputs_len\":{},\"outputs_len\":{}}}",
+                            bound_object_id.protocol_id(),
+                            state.wl_outputs.len(),
+                            state.outputs.len()
+                        ),
+                    );
+                    // #endregion
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
+            wl_registry::Event::GlobalRemove { name } => {
+                // #region agent log
+                debug_log(
+                    "wayland/client.rs:registry_global_remove",
+                    "A",
+                    "global removed (currently unhandled TODO)",
+                    format!(
+                        "{{\"global_name\":{name},\"wl_outputs_len\":{},\"outputs_len\":{}}}",
+                        state.wl_outputs.len(),
+                        state.outputs.len()
+                    ),
+                );
+                // #endregion
                 // TODO: handle global removal
             }
             _ => {}
@@ -1319,6 +1371,28 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                     state.outputs.insert(output.id(), complete);
                 }
                 state.in_progress_outputs.remove(&output.id());
+                // #region agent log
+                debug_log(
+                    "wayland/client.rs:wl_output_done",
+                    "A",
+                    "output configuration done",
+                    format!(
+                        "{{\"object_protocol_id\":{},\"outputs_len\":{},\"outputs\":{:?}}}",
+                        output.id().protocol_id(),
+                        state.outputs.len(),
+                        state
+                            .outputs
+                            .iter()
+                            .map(|(id, output)| format!(
+                                "{}:{}@{:?}",
+                                id.protocol_id(),
+                                output.name.clone().unwrap_or_default(),
+                                output.bounds
+                            ))
+                            .collect::<Vec<_>>()
+                    ),
+                );
+                // #endregion
             }
             _ => {}
         }
