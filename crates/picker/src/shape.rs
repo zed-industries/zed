@@ -1,6 +1,6 @@
 use gpui::Window;
 use gpui::{Pixels, Rems, Size};
-use ui::{Div, Styled};
+use ui::{Div, Styled, rems_from_px};
 
 use crate::preview::Layout;
 
@@ -242,12 +242,12 @@ impl Default for SizeBounds {
             // over the lower bar so clear another 5 rems there.
             max_height: (RelativeHeight::FULL - Rems(10.0)) * 0.95,
             min_results: Size {
-                width: Rems(15.0),
-                height: Rems(20.0),
+                width: rems_from_px(280.),
+                height: rems_from_px(320.),
             },
             min_preview: Size {
-                width: Rems(8.0),
-                height: Rems(6.0),
+                width: rems_from_px(128.),
+                height: rems_from_px(96.),
             },
         }
     }

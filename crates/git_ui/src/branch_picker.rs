@@ -1201,79 +1201,81 @@ impl PickerDelegate for BranchListDelegate {
         editor: &Arc<dyn ErasedEditor>,
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
-    ) -> Div {
+    ) -> Option<Div> {
         let picker = cx.weak_entity();
         let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
 
         let show_inline_filter =
             self.editor_position() == PickerEditorPosition::End || !self.show_footer;
 
-        v_flex()
-            .when(
-                self.editor_position() == PickerEditorPosition::End,
-                |this| this.child(Divider::horizontal()),
-            )
-            .when_some(self.branch_list_error.clone(), |this, error| {
-                let message = format!("Some branches could not be loaded: {error}");
-                this.child(
-                    div()
-                        .id("branch-list-error")
-                        .p_1p5()
-                        .child(
-                            Banner::new().severity(Severity::Warning).child(
-                                Label::new(message.clone())
-                                    .size(LabelSize::Small)
-                                    .single_line()
-                                    .truncate(),
-                            ),
-                        )
-                        .tooltip(Tooltip::text(message)),
+        Some(
+            v_flex()
+                .when(
+                    self.editor_position() == PickerEditorPosition::End,
+                    |this| this.child(Divider::horizontal()),
                 )
-            })
-            .child(
-                h_flex()
-                    .overflow_hidden()
-                    .flex_none()
-                    .h_9()
-                    .px_2p5()
-                    .child(editor.clone())
-                    .when(show_inline_filter, |this| {
-                        let branch_filter = self.branch_filter;
-                        let picker_for_menu_open = picker.clone();
-                        this.gap_1().justify_between().child(
-                            PopoverMenu::new("branch-filter-menu")
-                                .with_handle(self.branch_filter_menu_handle.clone())
-                                .on_open(Rc::new(move |_, cx| {
-                                    picker_for_menu_open
-                                        .update(cx, |picker, _| {
-                                            picker.delegate.branch_filter_menu_open = true;
-                                        })
-                                        .log_err();
-                                }))
-                                .trigger(
-                                    IconButton::new("branch-filter", IconName::ListFilter)
-                                        .toggle_state(branch_filter != BranchFilter::All)
-                                        .when(branch_filter != BranchFilter::All, |this| {
-                                            this.indicator(Indicator::dot().color(Color::Info))
-                                        })
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Filter branches")),
-                                )
-                                .menu(move |window, cx| {
-                                    Some(branch_filter_menu(
-                                        branch_filter,
-                                        picker.clone(),
-                                        window,
-                                        cx,
-                                    ))
-                                }),
-                        )
-                    }),
-            )
-            .when(
-                self.editor_position() == PickerEditorPosition::Start,
-                |this| this.child(Divider::horizontal()),
-            )
+                .when_some(self.branch_list_error.clone(), |this, error| {
+                    let message = format!("Some branches could not be loaded: {error}");
+                    this.child(
+                        div()
+                            .id("branch-list-error")
+                            .p_1p5()
+                            .child(
+                                Banner::new().severity(Severity::Warning).child(
+                                    Label::new(message.clone())
+                                        .size(LabelSize::Small)
+                                        .single_line()
+                                        .truncate(),
+                                ),
+                            )
+                            .tooltip(Tooltip::text(message)),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .overflow_hidden()
+                        .flex_none()
+                        .h_9()
+                        .px_2p5()
+                        .child(editor.clone())
+                        .when(show_inline_filter, |this| {
+                            let branch_filter = self.branch_filter;
+                            let picker_for_menu_open = picker.clone();
+                            this.gap_1().justify_between().child(
+                                PopoverMenu::new("branch-filter-menu")
+                                    .with_handle(self.branch_filter_menu_handle.clone())
+                                    .on_open(Rc::new(move |_, cx| {
+                                        picker_for_menu_open
+                                            .update(cx, |picker, _| {
+                                                picker.delegate.branch_filter_menu_open = true;
+                                            })
+                                            .log_err();
+                                    }))
+                                    .trigger(
+                                        IconButton::new("branch-filter", IconName::ListFilter)
+                                            .toggle_state(branch_filter != BranchFilter::All)
+                                            .when(branch_filter != BranchFilter::All, |this| {
+                                                this.indicator(Indicator::dot().color(Color::Info))
+                                            })
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Filter branches")),
+                                    )
+                                    .menu(move |window, cx| {
+                                        Some(branch_filter_menu(
+                                            branch_filter,
+                                            picker.clone(),
+                                            window,
+                                            cx,
+                                        ))
+                                    }),
+                            )
+                        }),
+                )
+                .when(
+                    self.editor_position() == PickerEditorPosition::Start,
+                    |this| this.child(Divider::horizontal()),
+                ),
+        )
     }
 
     fn editor_position(&self) -> PickerEditorPosition {

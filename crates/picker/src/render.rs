@@ -10,12 +10,17 @@ use ui::{
 
 use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, ToggleMultiSelect,
     head::Head,
     preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
 };
 use crate::{persistence, preview};
+use gpui::Action as _;
+use gpui::Focusable as _;
+use std::sync::Arc;
+use ui::{Divider, Tooltip, prelude::*};
+use ui_input::ErasedEditor;
 
 pub mod window_controls;
 
@@ -88,6 +93,54 @@ impl<D: PickerDelegate> Render for Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        if let Some(custom) = self.delegate.render_editor(editor, window, cx) {
+            return custom;
+        }
+        let editor_position = self.delegate.editor_position();
+
+        v_flex()
+            .when(editor_position == PickerEditorPosition::End, |this| {
+                this.child(Divider::horizontal())
+            })
+            .child(
+                h_flex()
+                    .h_9()
+                    .px_2p5()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(div().flex_1().child(editor.render(window, cx)))
+                    .children(self.delegate.searchbar_trailer(window, cx))
+                    .when(self.delegate.supports_multi_select(), |this| {
+                        this.child(self.render_multi_select_toggle(cx))
+                    }),
+            )
+            .when(editor_position == PickerEditorPosition::Start, |this| {
+                this.child(Divider::horizontal())
+            })
+    }
+
+    /// The multi-select toggle is picker-owned so it can reflect the mode,
+    /// which delegates don't know about.
+    fn render_multi_select_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.select_instead_of_open;
+        let focus_handle = self.focus_handle(cx);
+        IconButton::new("picker-multi-select-toggle", IconName::FileMultiple)
+            .icon_size(IconSize::Small)
+            .toggle_state(active)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Toggle Multi Select", &ToggleMultiSelect, &focus_handle, cx)
+            })
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(ToggleMultiSelect.boxed_clone(), cx);
+            }))
+    }
+
     pub(crate) fn render_results(
         &self,
         window: &mut Window,
@@ -154,13 +207,14 @@ impl<D: PickerDelegate> Picker<D> {
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
-                        Some(h_flex().w_full().child(
-                            div().flex_1().child(self.delegate.render_editor(
-                                &editor.clone(),
-                                window,
-                                cx,
-                            )),
-                        ))
+                        let editor = editor.clone();
+                        Some(
+                            h_flex().w_full().child(
+                                div()
+                                    .flex_1()
+                                    .child(self.render_editor(&editor, window, cx)),
+                            ),
+                        )
                     } else {
                         None
                     }
@@ -220,7 +274,8 @@ impl<D: PickerDelegate> Picker<D> {
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::End {
-                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
+                        let editor = editor.clone();
+                        Some(self.render_editor(&editor, window, cx))
                     } else {
                         None
                     }
