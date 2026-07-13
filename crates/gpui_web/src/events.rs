@@ -352,8 +352,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
 
@@ -371,11 +369,13 @@ impl WebWindowInner {
 
             if let Some(result) = result {
                 if !result.propagate {
+                    event.prevent_default();
                     return;
                 }
             }
 
             if this.is_composing.get() || event.is_composing() {
+                event.prevent_default();
                 return;
             }
 
@@ -384,6 +384,11 @@ impl WebWindowInner {
                     this.with_input_handler(|handler| {
                         handler.replace_text_in_range(None, &text);
                     });
+                    // The character went into the input handler; suppress browser
+                    // side-effects for the same keystroke (space scrolling the
+                    // page, quick-find, etc.). Everything not handled above falls
+                    // through so browser shortcuts keep their defaults.
+                    event.prevent_default();
                 }
             }
         })
@@ -414,8 +419,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
@@ -424,7 +427,12 @@ impl WebWindowInner {
                 key_char,
             };
 
-            this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            if let Some(result) = result {
+                if !result.propagate {
+                    event.prevent_default();
+                }
+            }
         })
     }
 
