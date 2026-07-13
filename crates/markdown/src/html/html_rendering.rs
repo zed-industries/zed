@@ -391,9 +391,7 @@ impl MarkdownElement {
         boundaries.sort_unstable();
         boundaries.dedup();
 
-        for segment in boundaries.windows(2) {
-            let start = segment[0];
-            let end = segment[1];
+        for &[start, end] in boundaries.array_windows::<2>() {
             if start >= end {
                 continue;
             }

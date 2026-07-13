@@ -59,6 +59,7 @@ collections.workspace = true
 image.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 http_client.workspace = true
 itertools.workspace = true
@@ -72,7 +73,6 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 url.workspace = true
-util.workspace = true
 uuid.workspace = true
 
 # Always used
@@ -96,7 +96,7 @@ scap = { workspace = true, optional = true }
 
 # Wayland
 calloop-wayland-source = { version = "0.4.1", optional = true }
-wayland-backend = { version = "0.3.3", features = [
+wayland-backend = { version = "0.3.15", features = [
     "client_system",
     "dlopen",
 ], optional = true }

@@ -1,0 +1,57 @@
+# Scheduled sweep of the Guild board (https://github.com/orgs/zed-industries/projects/74).
+# For an "In Progress" issue assigned to a guild member with no linked PR: post a
+# check-in comment once the assignee goes quiet, re-nudging after any renewed
+# silence, and clear the assignment (moving the issue back to a To-Do column by
+# Type) if a check-in goes unanswered. The "guild hold" label pauses the sweep.
+
+name: Guild Stale Assignments
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guild-stale-assignments
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 15
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: |
+            script/github-guild-board.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Sweep stale assignments
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "74"
+          GUILD_MODE: stale
+          SLACK_WEBHOOK_GUILD_INTERNAL: ${{ secrets.SLACK_WEBHOOK_GUILD_INTERNAL }}
+        run: python script/github-guild-board.py

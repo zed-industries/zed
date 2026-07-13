@@ -228,12 +228,29 @@ impl SvgRenderer {
     }
 
     fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
+        // Cap the size of the rendered pixmap to avoid texture allocation panics
+        // Related issue: #56466
+        const MAX_SIZE: f32 = 8192.0;
+
         let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
         let svg_size = tree.size();
-        let scale = match size {
+        let mut scale = match size {
             SvgSize::Size(size) => size.width.0 as f32 / svg_size.width(),
             SvgSize::ScaleFactor(scale) => scale,
         };
+
+        let width = svg_size.width() * scale;
+        if width > MAX_SIZE {
+            log::warn!("Attempted to render pixmap where width ({width}) > MAX_SIZE ({MAX_SIZE})");
+            scale *= MAX_SIZE / width;
+        }
+        let height = svg_size.height() * scale;
+        if height > MAX_SIZE {
+            log::warn!(
+                "Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})"
+            );
+            scale *= MAX_SIZE / height;
+        }
 
         // Render the SVG to a pixmap with the specified width and height.
         let mut pixmap = resvg::tiny_skia::Pixmap::new(
@@ -311,6 +328,31 @@ mod tests {
         db.load_font_data(IBM_PLEX_REGULAR.to_vec());
         db.load_font_data(LILEX_REGULAR.to_vec());
         db
+    }
+
+    #[test]
+    fn text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic() {
+        let mut db = Database::new();
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(LILEX_REGULAR.to_vec());
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+
+        // A base letter followed by a stack of combining marks. Under HarfBuzz's
+        // default cluster merging every mark glyph shares the base's byte index,
+        // which is the "glyph splitting" condition that triggered the panic. The
+        // chunk must use two different fonts so the buggy merge path runs.
+        let zalgo = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}";
+        let svg = format!(
+            r#"<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><text font-family="Lilex" font-size="32">{zalgo}<tspan font-family="IBM Plex Sans">{zalgo}</tspan></text></svg>"#
+        );
+
+        // Before the fix this aborts via panic with a message like
+        // "removal index (is 5) should be < len (is 5)".
+        usvg::Tree::from_data(svg.as_bytes(), &options)
+            .expect("SVG with mixed-font text should parse");
     }
 
     #[test]
