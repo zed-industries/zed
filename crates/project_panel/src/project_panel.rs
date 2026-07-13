@@ -3720,8 +3720,12 @@ impl ProjectPanel {
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
-        self.copy(&Copy {}, window, cx);
-        self.paste(&Paste {}, window, cx);
+        let entries = self.disjoint_effective_entries_excluding_roots(cx);
+        if entries.is_empty() {
+            return;
+        }
+
+        self.transfer_entries(entries, EntryTransferOperation::Copy, window, cx);
     }
 
     fn copy_path(
