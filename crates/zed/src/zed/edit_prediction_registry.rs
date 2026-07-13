@@ -29,8 +29,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 return;
             }
 
-            register_backward_compatible_actions(editor, cx);
-
             let Some(window) = window else {
                 return;
             };
@@ -222,19 +220,6 @@ fn assign_edit_prediction_providers(
             })
         });
     }
-}
-
-fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Editor>) {
-    // We renamed some of these actions to not be copilot-specific, but that
-    // would have not been backwards-compatible. So here we are re-registering
-    // the actions with the old names to not break people's keymaps.
-    editor
-        .register_action(cx.listener(
-            |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.show_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
 }
 
 fn assign_edit_prediction_provider(

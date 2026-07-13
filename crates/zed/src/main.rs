@@ -684,7 +684,6 @@ fn main() {
                 .clone(),
         };
         copilot_chat::init(
-            app_state.fs.clone(),
             app_state.client.http_client(),
             copilot_chat_configuration,
             cx,

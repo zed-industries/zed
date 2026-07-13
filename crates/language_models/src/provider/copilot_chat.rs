@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anthropic::AnthropicModelMode;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use copilot::{GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
 use copilot_chat::{
     ChatLocation, ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat,
@@ -144,37 +143,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
-        };
+        }
 
-        let Some(copilot) = GlobalCopilotAuth::try_global(cx).cloned() else {
-            return Task::ready(Err(anyhow!(concat!(
-                "Copilot must be enabled for Copilot Chat to work. ",
-                "Please enable Copilot and try again."
-            ))
-            .into()));
-        };
-
-        let err = match copilot.0.read(cx).status() {
-            Status::Authorized => return Task::ready(Ok(())),
-            Status::Disabled => anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ),
-            Status::Error(err) => anyhow!(format!(
-                "Received the following error while signing into Copilot: {err}"
-            )),
-            Status::Starting { task: _ } => anyhow!(
-                "Copilot is still starting, please wait for Copilot to start then try again"
-            ),
-            Status::Unauthorized => anyhow!(
-                "Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."
-            ),
-            Status::SignedOut { .. } => {
-                anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again.")
-            }
-            Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
-        };
-
-        Task::ready(Err(err.into()))
+        Task::ready(Err(AuthenticateError::CredentialsNotFound))
     }
 
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
@@ -182,7 +153,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         let title = if is_authenticated {
             None
         } else {
-            Some("Configure Copilot".into())
+            Some("Configure Copilot Chat".into())
         };
         let description = if is_authenticated {
             None
@@ -213,6 +184,19 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
                 }),
             },
         ))
+    }
+
+    fn set_api_key(&self, key: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        // Copilot authenticates via an OAuth device flow rather than an API key,
+        // so the only meaningful credential change here is clearing it (which
+        // signs the user out of the agent provider).
+        if key.is_some() {
+            return Task::ready(Ok(()));
+        }
+        let Some(copilot_chat) = CopilotChat::global(cx) else {
+            return Task::ready(Ok(()));
+        };
+        copilot_chat.update(cx, |chat, cx| chat.sign_out(cx))
     }
 }
 

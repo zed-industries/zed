@@ -3882,9 +3882,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "collections",
+ "credentials_provider",
  "dirs",
- "fs",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -3893,8 +3892,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sqlez",
- "tempfile",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -3903,6 +3901,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "copilot",
+ "copilot_chat",
  "gpui",
  "language",
  "log",
@@ -9826,7 +9825,6 @@ dependencies = [
  "collections",
  "component",
  "convert_case 0.11.0",
- "copilot",
  "copilot_chat",
  "copilot_ui",
  "credentials_provider",
