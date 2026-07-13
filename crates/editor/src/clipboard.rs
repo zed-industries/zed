@@ -286,11 +286,7 @@ impl Editor {
                     let buffer = self.buffer().read(cx).as_singleton()?;
                     let file = buffer.read(cx).file()?;
                     let worktree_id = file.worktree_id(cx);
-                    let dir_rel_path = file
-                        .path()
-                        .parent()
-                        .map(|p| p.into_arc())
-                        .unwrap_or_else(RelPath::empty_arc);
+                    let dir_rel_path = file.path().parent()?.into_arc();
                     let worktree = self
                         .project
                         .as_ref()?
