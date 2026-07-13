@@ -143,19 +143,13 @@ impl RenderOnce for TerminalToolHeader {
             .justify_between()
             .rounded_t_md()
             .child(
-                div()
-                    .id(child_id("working-dir"))
-                    .w_full()
-                    .max_w_full()
-                    .overflow_hidden()
-                    .child(
-                        Label::new(working_dir.clone())
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx)
-                            .truncate(),
-                    )
-                    .tooltip(Tooltip::text(working_dir)),
+                div().w_full().min_w_0().overflow_hidden().child(
+                    Label::new(working_dir)
+                        .buffer_font(cx)
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .truncate_start(),
+                ),
             )
             .child(
                 Disclosure::new(child_id("disclosure"), is_expanded)
@@ -364,6 +358,21 @@ impl Component for TerminalToolHeader {
                         )
                         .sandbox_warning(sandbox_warning()),
                     ),
+                ),
+                single_example(
+                    "Long path (truncated from the start)",
+                    div()
+                        .w_80()
+                        .child(card(
+                            "long-path",
+                            TerminalToolHeader::new(
+                                "long-path",
+                                "preview-terminal-header-group-long-path",
+                                "/Users/you/Documents/GitHub/worktrees/some-monorepo/working-tree-three/packages/deeply/nested/service/backend/src",
+                                false,
+                            ),
+                        ))
+                        .into_any_element(),
                 ),
                 single_example(
                     "Everything at once",
