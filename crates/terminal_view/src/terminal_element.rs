@@ -178,6 +178,12 @@ impl BatchedTextRun {
     }
 }
 
+/// Block element glyphs are painted on a subcell grid: each terminal cell is
+/// divided into 8 columns (for eighth blocks) and 24 lines (LCM of the 8-way
+/// splits of eighth blocks and the 3-way splits of sextants).
+const BLOCK_SUBCELL_COLUMNS: i32 = 8;
+const BLOCK_SUBCELL_LINES: i32 = 24;
+
 #[derive(Clone, Debug)]
 pub struct BlockElementLayoutRect {
     point: LayoutPoint,
@@ -202,8 +208,8 @@ impl BlockElementLayoutRect {
         dimensions: &TerminalBounds,
         window: &mut Window,
     ) {
-        let subcell_width = dimensions.cell_width / 2.0;
-        let subcell_height = dimensions.line_height / 6.0;
+        let subcell_width = dimensions.cell_width / BLOCK_SUBCELL_COLUMNS as f32;
+        let subcell_height = dimensions.line_height / BLOCK_SUBCELL_LINES as f32;
         let position = point(
             origin.x + self.point.column as f32 * subcell_width,
             origin.y + self.point.line as f32 * subcell_height,
@@ -217,7 +223,7 @@ impl BlockElementLayoutRect {
     }
 
     pub fn line(&self) -> i32 {
-        (self.point.line + self.num_of_lines as i32 - 1) / 6
+        (self.point.line + self.num_of_lines as i32 - 1) / BLOCK_SUBCELL_LINES
     }
 }
 
@@ -677,25 +683,73 @@ impl TerminalElement {
         terminal_is_app_chosen_exact_color(*fg)
     }
 
-    /// Converts terminal cell styles to GPUI text styles and background color.
-    fn sextant_char_to_packed(ch: char) -> Option<u8> {
-        let codepoint = ch as u32;
-        if !(0x1FB00..=0x1FB3B).contains(&codepoint) {
+    /// Returns the filled subcells of a sextant character as a bitmap, where
+    /// bit `row * 2 + column` is set when that 2x3 subcell is filled.
+    ///
+    /// U+1FB00..=U+1FB3B enumerate all 2x3 fill combinations except the four
+    /// that already exist as Block Elements (empty, `▌` = 0b010101,
+    /// `▐` = 0b101010, and `█` = 0b111111), hence the gap adjustments.
+    fn sextant_char_to_filled_bits(ch: char) -> Option<u8> {
+        let offset = (ch as u32).checked_sub(0x1FB00)?;
+        if offset > 0x3B {
             return None;
         }
 
-        let offset = codepoint - 0x1FB00;
-        let sextant = (offset + 1 + u32::from(offset >= 20) + u32::from(offset >= 40)) as u8;
-        Some(Self::reverse_lower_six_bits(sextant) ^ 0b11_1111)
+        Some((offset + 1 + u32::from(offset >= 20) + u32::from(offset >= 40)) as u8)
     }
 
-    fn reverse_lower_six_bits(value: u8) -> u8 {
-        ((value & 0b00_0001) << 5)
-            | ((value & 0b00_0010) << 3)
-            | ((value & 0b00_0100) << 1)
-            | ((value & 0b00_1000) >> 1)
-            | ((value & 0b01_0000) >> 3)
-            | ((value & 0b10_0000) >> 5)
+    /// Returns the filled quadrants of a quadrant character as a bitmap, where
+    /// bit `row * 2 + column` is set when that 2x2 subcell is filled.
+    fn quadrant_char_to_filled_bits(ch: char) -> Option<u8> {
+        Some(match ch {
+            '▘' => 0b0001,
+            '▝' => 0b0010,
+            '▖' => 0b0100,
+            '▗' => 0b1000,
+            '▚' => 0b1001,
+            '▞' => 0b0110,
+            '▛' => 0b0111,
+            '▜' => 0b1011,
+            '▙' => 0b1101,
+            '▟' => 0b1110,
+            _ => return None,
+        })
+    }
+
+    /// Returns `(column, line, num_of_columns, num_of_lines)` in subcell units
+    /// for block element characters that consist of a single rectangle.
+    fn block_char_to_rect(ch: char) -> Option<(i32, i32, i32, i32)> {
+        let codepoint = ch as u32;
+        Some(match codepoint {
+            // ▀ upper half
+            0x2580 => (0, 0, 8, 12),
+            // ▁▂▃▄▅▆▇█ lower blocks of 1..=8 eighths
+            0x2581..=0x2588 => {
+                let eighths = (codepoint - 0x2580) as i32;
+                (0, 24 - eighths * 3, 8, eighths * 3)
+            }
+            // ▉▊▋▌▍▎▏ left blocks of 7..=1 eighths
+            0x2589..=0x258F => (0, 0, (0x2590 - codepoint) as i32, 24),
+            // ▐ right half
+            0x2590 => (4, 0, 4, 24),
+            // ▔ upper eighth
+            0x2594 => (0, 0, 8, 3),
+            // ▕ right eighth
+            0x2595 => (7, 0, 1, 24),
+            _ => return None,
+        })
+    }
+
+    /// Approximates the shade characters `░▒▓` with the foreground color at
+    /// reduced opacity instead of the stipple patterns fonts use, trading
+    /// pattern fidelity for seamless cell coverage.
+    fn shade_char_to_opacity(ch: char) -> Option<f32> {
+        match ch {
+            '░' => Some(0.25),
+            '▒' => Some(0.5),
+            '▓' => Some(0.75),
+            _ => None,
+        }
     }
 
     fn collect_block_element_regions(
@@ -704,55 +758,63 @@ impl TerminalElement {
         color: Hsla,
         regions: &mut Vec<BackgroundRegion>,
     ) -> bool {
-        match ch {
-            '█' => {
-                Self::push_block_element_region(point, 0, 0, 2, 6, color, regions);
-                true
-            }
-            '▀' => {
-                Self::push_block_element_region(point, 0, 0, 2, 3, color, regions);
-                true
-            }
-            '▄' => {
-                Self::push_block_element_region(point, 0, 3, 2, 3, color, regions);
-                true
-            }
-            '▌' => {
-                Self::push_block_element_region(point, 0, 0, 1, 6, color, regions);
-                true
-            }
-            '▐' => {
-                Self::push_block_element_region(point, 1, 0, 1, 6, color, regions);
-                true
-            }
-            ch => {
-                let Some(packed) = Self::sextant_char_to_packed(ch) else {
-                    return false;
-                };
+        if let Some((column, line, num_of_columns, num_of_lines)) = Self::block_char_to_rect(ch) {
+            Self::push_block_element_region(
+                point,
+                column,
+                line,
+                num_of_columns,
+                num_of_lines,
+                color,
+                regions,
+            );
+            return true;
+        }
 
-                for row in 0..3 {
-                    for column in 0..2 {
-                        let bit = 5 - (row * 2 + column);
-                        let bit_is_set = (packed & (1 << bit)) != 0;
-                        if bit_is_set {
-                            continue;
-                        }
-
+        if let Some(filled) = Self::quadrant_char_to_filled_bits(ch) {
+            for row in 0..2 {
+                for column in 0..2 {
+                    if filled & (1 << (row * 2 + column)) != 0 {
                         Self::push_block_element_region(
                             point,
-                            column,
-                            row * 2,
-                            1,
-                            2,
+                            column * 4,
+                            row * 12,
+                            4,
+                            12,
                             color,
                             regions,
                         );
                     }
                 }
-
-                true
             }
+            return true;
         }
+
+        if let Some(filled) = Self::sextant_char_to_filled_bits(ch) {
+            for row in 0..3 {
+                for column in 0..2 {
+                    if filled & (1 << (row * 2 + column)) != 0 {
+                        Self::push_block_element_region(
+                            point,
+                            column * 4,
+                            row * 8,
+                            4,
+                            8,
+                            color,
+                            regions,
+                        );
+                    }
+                }
+            }
+            return true;
+        }
+
+        if let Some(opacity) = Self::shade_char_to_opacity(ch) {
+            Self::push_block_element_region(point, 0, 0, 8, 24, color.opacity(opacity), regions);
+            return true;
+        }
+
+        false
     }
 
     fn push_block_element_region(
@@ -764,14 +826,25 @@ impl TerminalElement {
         color: Hsla,
         regions: &mut Vec<BackgroundRegion>,
     ) {
-        let start_line = point.line * 6 + line;
-        let start_col = point.column * 2 + column;
+        let start_line = point.line * BLOCK_SUBCELL_LINES + line;
+        let start_col = point.column * BLOCK_SUBCELL_COLUMNS + column;
+        let end_line = start_line + num_of_lines - 1;
+        let end_col = start_col + num_of_columns - 1;
+
+        // Extend the previous region when possible (e.g. runs of `█` in a QR
+        // code) to keep the quadratic merge pass over a small input.
+        if let Some(last_region) = regions.last_mut()
+            && last_region.color == color
+            && last_region.start_line == start_line
+            && last_region.end_line == end_line
+            && last_region.end_col + 1 == start_col
+        {
+            last_region.end_col = end_col;
+            return;
+        }
+
         regions.push(BackgroundRegion::with_extents(
-            start_line,
-            start_col,
-            start_line + num_of_lines - 1,
-            start_col + num_of_columns - 1,
-            color,
+            start_line, start_col, end_line, end_col, color,
         ));
     }
 
@@ -2039,16 +2112,32 @@ mod tests {
     }
 
     #[test]
-    fn test_sextant_char_to_packed() {
+    fn test_sextant_char_to_filled_bits() {
+        // U+1FB00 BLOCK SEXTANT-1: only the top-left subcell.
         assert_eq!(
-            TerminalElement::sextant_char_to_packed('\u{1FB00}'),
-            Some(0b01_1111)
+            TerminalElement::sextant_char_to_filled_bits('\u{1FB00}'),
+            Some(0b00_0001)
+        );
+        // U+1FB13 BLOCK SEXTANT-35 and U+1FB14 BLOCK SEXTANT-235 straddle the
+        // gap left by `▌` (0b01_0101).
+        assert_eq!(
+            TerminalElement::sextant_char_to_filled_bits('\u{1FB13}'),
+            Some(0b01_0100)
         );
         assert_eq!(
-            TerminalElement::sextant_char_to_packed('\u{1FB3B}'),
-            Some(0b10_0000)
+            TerminalElement::sextant_char_to_filled_bits('\u{1FB14}'),
+            Some(0b01_0110)
         );
-        assert_eq!(TerminalElement::sextant_char_to_packed('█'), None);
+        // U+1FB3B BLOCK SEXTANT-12356: everything except the bottom-left subcell.
+        assert_eq!(
+            TerminalElement::sextant_char_to_filled_bits('\u{1FB3B}'),
+            Some(0b11_1110)
+        );
+        assert_eq!(TerminalElement::sextant_char_to_filled_bits('█'), None);
+        assert_eq!(
+            TerminalElement::sextant_char_to_filled_bits('\u{1FB3C}'),
+            None
+        );
     }
 
     #[test]
@@ -2073,8 +2162,8 @@ mod tests {
         assert_eq!(rects.len(), 1);
         assert_eq!(rects[0].point.line(), 0);
         assert_eq!(rects[0].point.column(), 0);
-        assert_eq!(rects[0].num_of_columns, 4);
-        assert_eq!(rects[0].num_of_lines, 6);
+        assert_eq!(rects[0].num_of_columns, 16);
+        assert_eq!(rects[0].num_of_lines, 24);
         assert_eq!(rects[0].line(), 0);
     }
 
@@ -2098,17 +2187,142 @@ mod tests {
         let rects = TerminalElement::block_element_regions_to_rects(regions);
 
         assert!(rects.iter().any(|rect| {
-            rect.point.line() == 3
+            rect.point.line() == 12
                 && rect.point.column() == 0
-                && rect.num_of_columns == 2
-                && rect.num_of_lines == 3
+                && rect.num_of_columns == 8
+                && rect.num_of_lines == 12
         }));
         assert!(rects.iter().any(|rect| {
-            rect.point.line() == 6
+            rect.point.line() == 24
                 && rect.point.column() == 0
-                && rect.num_of_columns == 1
-                && rect.num_of_lines == 2
+                && rect.num_of_columns == 4
+                && rect.num_of_lines == 8
         }));
+    }
+
+    #[test]
+    fn test_block_element_rects_cover_eighth_blocks() {
+        let color = Hsla::default();
+
+        for (ch, expected_column, expected_line, expected_columns, expected_lines) in [
+            ('▁', 0, 21, 8, 3),
+            ('▇', 0, 3, 8, 21),
+            ('▉', 0, 0, 7, 24),
+            ('▏', 0, 0, 1, 24),
+            ('▔', 0, 0, 8, 3),
+            ('▕', 7, 0, 1, 24),
+        ] {
+            let mut regions = Vec::new();
+            assert!(TerminalElement::collect_block_element_regions(
+                LayoutPoint::new(0, 0),
+                ch,
+                color,
+                &mut regions,
+            ));
+            let rects = TerminalElement::block_element_regions_to_rects(regions);
+
+            assert_eq!(rects.len(), 1, "unexpected rect count for {ch}");
+            assert_eq!(rects[0].point.column(), expected_column, "column for {ch}");
+            assert_eq!(rects[0].point.line(), expected_line, "line for {ch}");
+            assert_eq!(
+                rects[0].num_of_columns, expected_columns,
+                "columns for {ch}"
+            );
+            assert_eq!(rects[0].num_of_lines, expected_lines, "lines for {ch}");
+        }
+    }
+
+    #[test]
+    fn test_block_element_rects_cover_quadrants() {
+        let color = Hsla::default();
+        let mut regions = Vec::new();
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(0, 0),
+            '▚',
+            color,
+            &mut regions,
+        ));
+
+        let rects = TerminalElement::block_element_regions_to_rects(regions);
+
+        assert_eq!(rects.len(), 2);
+        assert!(rects.iter().any(|rect| {
+            rect.point.line() == 0
+                && rect.point.column() == 0
+                && rect.num_of_columns == 4
+                && rect.num_of_lines == 12
+        }));
+        assert!(rects.iter().any(|rect| {
+            rect.point.line() == 12
+                && rect.point.column() == 4
+                && rect.num_of_columns == 4
+                && rect.num_of_lines == 12
+        }));
+    }
+
+    #[test]
+    fn test_block_element_rects_cover_shades() {
+        let color = gpui::red();
+        let mut regions = Vec::new();
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(0, 0),
+            '▒',
+            color,
+            &mut regions,
+        ));
+
+        let rects = TerminalElement::block_element_regions_to_rects(regions);
+
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].num_of_columns, 8);
+        assert_eq!(rects[0].num_of_lines, 24);
+        assert_eq!(rects[0].color, color.opacity(0.5));
+    }
+
+    #[test]
+    fn test_block_element_chars_fully_handled_within_cell() {
+        let color = Hsla::default();
+
+        for codepoint in (0x2580..=0x259F).chain(0x1FB00..=0x1FB3B) {
+            let ch = char::from_u32(codepoint).expect("valid block element codepoint");
+            let mut regions = Vec::new();
+            assert!(
+                TerminalElement::collect_block_element_regions(
+                    LayoutPoint::new(0, 0),
+                    ch,
+                    color,
+                    &mut regions,
+                ),
+                "U+{codepoint:04X} {ch} should be custom-painted"
+            );
+            assert!(
+                !regions.is_empty(),
+                "U+{codepoint:04X} {ch} should fill at least one subcell"
+            );
+
+            let mut filled =
+                [[false; BLOCK_SUBCELL_COLUMNS as usize]; BLOCK_SUBCELL_LINES as usize];
+            for region in &regions {
+                assert!(
+                    region.start_line <= region.end_line
+                        && region.start_col <= region.end_col
+                        && (0..BLOCK_SUBCELL_LINES).contains(&region.start_line)
+                        && (0..BLOCK_SUBCELL_LINES).contains(&region.end_line)
+                        && (0..BLOCK_SUBCELL_COLUMNS).contains(&region.start_col)
+                        && (0..BLOCK_SUBCELL_COLUMNS).contains(&region.end_col),
+                    "U+{codepoint:04X} {ch} paints outside its cell: {region:?}"
+                );
+                for line in region.start_line..=region.end_line {
+                    for column in region.start_col..=region.end_col {
+                        assert!(
+                            !filled[line as usize][column as usize],
+                            "U+{codepoint:04X} {ch} paints subcell ({line}, {column}) twice"
+                        );
+                        filled[line as usize][column as usize] = true;
+                    }
+                }
+            }
+        }
     }
 
     #[test]
