@@ -7013,12 +7013,7 @@ mod tests {
             .await
             .unwrap();
 
-        let project_b = Project::test(
-            app_state.fs.clone(),
-            [Path::new("/project-b")],
-            cx,
-        )
-        .await;
+        let project_b = Project::test(app_state.fs.clone(), [Path::new("/project-b")], cx).await;
 
         window
             .update(cx, |multi_workspace, window, cx| {
