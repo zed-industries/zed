@@ -73,6 +73,25 @@ pub(crate) fn render_sandbox_settings_page(
             )
             .tab_index(0),
         )
+        .child({
+            let docs_url =
+                client::zed_urls::sandboxing_docs(Some("persistent-sandbox-permissions"), cx);
+            let tooltip = format!("Opens {docs_url}");
+            // Wrap in a row so the button shrinks to its content width instead
+            // of stretching across the settings page.
+            h_flex().child(
+                Button::new("sandbox-docs-link", "Learn more about sandboxing")
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    )
+                    .tooltip(Tooltip::text(tooltip))
+                    .on_click(move |_, _, cx| cx.open_url(&docs_url)),
+            )
+        })
         .when(sandbox_enabled, |this| this
         .when_some(validation_error, |this, error| {
             this.child(
@@ -144,6 +163,27 @@ pub(crate) fn render_sandbox_settings_page(
                     add_path_input,
                     empty_border,
                 )),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_4()
+                .child(SettingsSectionHeader::new("Escalation Prompts").no_padding(true))
+                .child(
+                    SwitchField::new(
+                        "sandbox-warn-confusable-unicode",
+                        Some("Warn About Confusable Unicode"),
+                        Some(
+                            "Warn when an approval prompt requests a domain or write path that contains potentially confusable Unicode characters, such as homoglyphs (i.e. two symbols that look similar, such as a Cyrillic `а`)"
+                                .into(),
+                        ),
+                        permissions.warn_confusable_unicode,
+                        move |state, _window, cx| {
+                            set_warn_confusable_unicode(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                ),
         )
         )
         .into_any_element()
@@ -415,6 +455,12 @@ fn set_allow_all_hosts(value: bool, cx: &mut App) {
 fn set_allow_fs_write_all(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_fs_write_all = Some(value);
+    });
+}
+
+fn set_warn_confusable_unicode(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.warn_confusable_unicode = Some(value);
     });
 }
 
