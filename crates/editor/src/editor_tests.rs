@@ -35642,6 +35642,273 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
 }
 
 #[gpui::test]
+async fn test_paste_image_in_markdown_saves_file_and_inserts_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    let png_bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes.clone());
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    let buffer_text = cx.buffer_text();
+    assert!(
+        buffer_text.starts_with("![](image") && buffer_text.ends_with(".png)"),
+        "expected markdown image syntax, got: {buffer_text:?}"
+    );
+
+    // Cursor should land inside [] so the user can type alt text immediately.
+    let filename_in_parens = &buffer_text["![](".len()..buffer_text.len() - 1];
+    let expected_state = format!("![ˇ]({filename_in_parens})");
+    cx.assert_editor_state(&expected_state);
+
+    let filename = &buffer_text["![](".len()..buffer_text.len() - 1];
+    assert_eq!(
+        fs.read_file_sync(format!("/test/{filename}")).unwrap(),
+        png_bytes,
+        "image file contents should match clipboard bytes"
+    );
+}
+
+#[gpui::test]
+async fn test_paste_multiple_images_in_markdown_increments_filename(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/test")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    let png_bytes_1: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let png_bytes_2: Vec<u8> = vec![6, 7, 8, 9, 10];
+    let png_bytes_3: Vec<u8> = vec![11, 12, 13, 14, 15];
+    let image_1 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_1.clone());
+    let image_2 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_2.clone());
+    let image_3 = gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes_3.clone());
+
+    // Paste first image — should produce image.png
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_1));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_first = cx.buffer_text();
+    assert_eq!(
+        text_after_first, "![](image.png)",
+        "first paste should produce image.png"
+    );
+    assert_eq!(fs.read_file_sync("/test/image.png").unwrap(), png_bytes_1);
+
+    // Paste second image at end — should produce image_1.png
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_2));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_second = cx.buffer_text();
+    assert!(
+        text_after_second.contains("![](image_1.png)"),
+        "second paste should produce image_1.png, got: {text_after_second:?}"
+    );
+    assert_eq!(fs.read_file_sync("/test/image_1.png").unwrap(), png_bytes_2);
+
+    // Paste third image — should produce image_2.png
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image_3));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+    let text_after_third = cx.buffer_text();
+    assert!(
+        text_after_third.contains("![](image_2.png)"),
+        "third paste should produce image_2.png, got: {text_after_third:?}"
+    );
+    assert_eq!(fs.read_file_sync("/test/image_2.png").unwrap(), png_bytes_3);
+}
+
+#[gpui::test]
+async fn test_paste_image_in_non_markdown_does_not_insert_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let rust_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_language), cx));
+    cx.set_state("ˇ");
+
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_image_in_markdown_without_open_file_falls_through(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    // Build an editor whose buffer has no associated file path on disk.
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(markdown_language), cx);
+        });
+        let multibuffer = MultiBuffer::build_from_buffer(buffer, cx);
+        build_editor(multibuffer, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+    cx.set_state("ˇ");
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_image_in_markdown_single_file_worktree_falls_through(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", serde_json::json!({"test.md": ""}))
+        .await;
+    let project = Project::test(fs.clone(), [std::path::Path::new("/root/test.md")], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/root/test.md", cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(markdown_language), cx);
+    });
+
+    let editor_window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    cx.run_until_parked();
+    let mut cx = EditorTestContext::for_editor(editor_window, cx).await;
+
+    cx.set_state("ˇ");
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![1, 2, 3]);
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_editor_state("ˇ");
+    assert!(
+        fs.read_file_sync("/root/image.png").is_err(),
+        "no image file should be created for a single-file worktree"
+    );
+}
+
+#[gpui::test]
 async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
