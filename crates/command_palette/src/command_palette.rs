@@ -949,6 +949,59 @@ mod tests {
         });
     }
 
+    #[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+    #[action(namespace = test, keywords = "lsp")]
+    struct TestKeywordAction;
+
+    #[gpui::test]
+    async fn test_keyword_surfaces_action(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let editor = cx.new_window_entity(|window, cx| Editor::single_line(window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
+        });
+
+        cx.update(|_window, cx| {
+            cx.on_action::<TestKeywordAction>(|_, _| {});
+        });
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("lsp");
+        palette.read_with(cx, |palette, _| {
+            assert!(
+                palette
+                    .delegate
+                    .matches
+                    .iter()
+                    .any(|string_match| string_match
+                        .string
+                        .starts_with("test: test keyword action")),
+                "expected the \"lsp\" keyword to surface \"test: test keyword action\", got: {:?}",
+                palette
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|string_match| &string_match.string)
+                    .collect::<Vec<_>>(),
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_selected_command_none_when_no_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
