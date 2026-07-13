@@ -14,10 +14,9 @@ use std::{mem, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use theme::SyntaxTheme;
 use ui::{
-    ButtonCommon, ButtonLike, ButtonStyle, Color, ContextMenu, FluentBuilder as _, IconButton,
-    IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
-    PopoverMenuHandle, StyledExt, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, WithScrollbar, prelude::*,
 };
+
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
