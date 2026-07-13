@@ -36,7 +36,6 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
-use ui_input::ErasedEditor;
 use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
@@ -936,22 +935,6 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()
-    }
-
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
     }
 
     fn match_count(&self) -> usize {

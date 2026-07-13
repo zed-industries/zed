@@ -10,6 +10,7 @@
     "context": "Picker > Editor",
     "bindings": {
       "ctrl-shift-a": "picker::ToggleActionsMenu",
+      "ctrl-shift-s": "picker::ToggleMultiSelect",
     },
   },
   {

@@ -326,30 +326,17 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
 
+    /// Overrides the search bar entirely. Most delegates should return `None`
+    /// to get the picker-rendered default (which includes
+    /// [`Self::searchbar_trailer`] and the multi-select toggle); override for
+    /// full control over the search bar.
     fn render_editor(
         &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        v_flex()
-            .when(
-                self.editor_position() == PickerEditorPosition::End,
-                |this| this.child(Divider::horizontal()),
-            )
-            .child(
-                h_flex()
-                    .overflow_hidden()
-                    .flex_none()
-                    .h_9()
-                    .px_2p5()
-                    .child(div().flex_1().child(editor.render(window, cx)))
-                    .children(self.searchbar_trailer(window, cx)),
-            )
-            .when(
-                self.editor_position() == PickerEditorPosition::Start,
-                |this| this.child(Divider::horizontal()),
-            )
+        _editor: &Arc<dyn ErasedEditor>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Div> {
+        None
     }
 
     fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
@@ -936,6 +923,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if !self.delegate.supports_multi_select() {
+            cx.propagate();
             return;
         }
         self.select_instead_of_open = !self.select_instead_of_open;
