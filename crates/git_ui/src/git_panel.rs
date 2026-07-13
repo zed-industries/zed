@@ -5091,7 +5091,7 @@ impl GitPanel {
 
         PopoverMenu::new(id.into())
             .trigger_with_tooltip(
-                IconButton::new("view-options-menu-trigger", IconName::Sliders)
+                IconButton::new("view-options-menu-trigger", IconName::Filter)
                     .icon_size(IconSize::Small),
                 Tooltip::text("View Options"),
             )
