@@ -34,7 +34,6 @@ pub(crate) type PointF = gpui::Point<f32>;
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-#[cfg(feature = "runtime_shaders")]
 const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 // Use 4x MSAA, all devices support it.
 // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
@@ -220,6 +219,12 @@ impl MetalRenderer {
         #[cfg(not(feature = "runtime_shaders"))]
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
+            .or_else(|error| {
+                log::warn!(
+                    "failed to load precompiled Metal shaders; compiling at runtime: {error}"
+                );
+                device.new_library_with_source(&SHADERS_SOURCE_FILE, &metal::CompileOptions::new())
+            })
             .expect("error building metal library");
 
         fn to_float2_bits(point: PointF) -> u64 {

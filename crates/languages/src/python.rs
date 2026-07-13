@@ -1534,24 +1534,41 @@ impl ToolchainLister for PythonToolchainProvider {
                     }
                 }
                 Some(PythonEnvironmentKind::Pyenv) => {
-                    let Some(manager) = &toolchain.environment.manager else {
-                        return vec![];
-                    };
                     let version = toolchain.environment.version.as_deref().unwrap_or("system");
-                    let pyenv = &manager.executable;
-                    let pyenv = pyenv.display();
-                    activation_script.extend(match shell {
-                        ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                        ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                        ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                        ShellKind::PowerShell | ShellKind::Pwsh => None,
-                        ShellKind::Csh => None,
-                        ShellKind::Tcsh => None,
-                        ShellKind::Cmd => None,
-                        ShellKind::Rc => None,
-                        ShellKind::Xonsh => None,
-                        ShellKind::Elvish => None,
-                    })
+                    // Use `PYENV_VERSION` rather than `pyenv shell` so activation works in
+                    // non-interactive shells (like editor-run tasks) without requiring shell
+                    // integration. Pyenv shims respect this variable.
+                    if version == "system" {
+                        activation_script.extend(match shell {
+                            ShellKind::Fish => Some("set -e PYENV_VERSION".to_string()),
+                            ShellKind::Posix => Some("unset PYENV_VERSION".to_string()),
+                            ShellKind::Nushell => Some("hide-env PYENV_VERSION".to_string()),
+                            ShellKind::PowerShell | ShellKind::Pwsh => None,
+                            ShellKind::Csh => None,
+                            ShellKind::Tcsh => None,
+                            ShellKind::Cmd => None,
+                            ShellKind::Rc => None,
+                            ShellKind::Xonsh => None,
+                            ShellKind::Elvish => None,
+                        });
+                    } else if let Some(quoted_version) = shell.try_quote(version) {
+                        activation_script.extend(match shell {
+                            ShellKind::Fish => {
+                                Some(format!("set -gx PYENV_VERSION {quoted_version}"))
+                            }
+                            ShellKind::Posix => {
+                                Some(format!("export PYENV_VERSION={quoted_version}"))
+                            }
+                            ShellKind::Nushell => Some(format!("let-env PYENV_VERSION = {quoted_version}")),
+                            ShellKind::PowerShell | ShellKind::Pwsh => None,
+                            ShellKind::Csh => None,
+                            ShellKind::Tcsh => None,
+                            ShellKind::Cmd => None,
+                            ShellKind::Rc => None,
+                            ShellKind::Xonsh => None,
+                            ShellKind::Elvish => None,
+                        });
+                    }
                 }
                 _ => {}
             }
