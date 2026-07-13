@@ -40,7 +40,7 @@ use std::{
     },
     time::Duration,
 };
-use ui::{Checkbox, HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{Checkbox, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -1768,12 +1768,9 @@ impl PickerDelegate for FileFinderDelegate {
             "Include Ignored Files"
         };
 
-        let filter_button = IconButton::new("filter-ignored", IconName::Sliders)
+        let filter_button = IconButton::new("filter-ignored", IconName::FileIgnored)
             .icon_size(IconSize::Small)
             .toggle_state(including_ignored)
-            .when(self.include_ignored.is_some(), |this| {
-                this.indicator(Indicator::dot().color(Color::Info))
-            })
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
             })

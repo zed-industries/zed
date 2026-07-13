@@ -116,7 +116,7 @@ impl SearchOption {
         match self {
             SearchOption::WholeWord => IconName::WholeWord,
             SearchOption::CaseSensitive => IconName::CaseSensitive,
-            SearchOption::IncludeIgnored => IconName::Sliders,
+            SearchOption::IncludeIgnored => IconName::FileIgnored,
             SearchOption::Regex => IconName::Regex,
             _ => panic!("{self:?} is not a named SearchOption"),
         }

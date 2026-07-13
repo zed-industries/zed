@@ -93,8 +93,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
-    /// The search bar: the query editor plus trailing controls. Delegates can
-    /// take over entirely via [`PickerDelegate::render_editor`].
     fn render_editor(
         &self,
         editor: &Arc<dyn ErasedEditor>,
@@ -132,7 +130,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn render_multi_select_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.select_instead_of_open;
         let focus_handle = self.focus_handle(cx);
-        IconButton::new("picker-multi-select-toggle", IconName::ListTodo)
+        IconButton::new("picker-multi-select-toggle", IconName::FileMultiple)
             .icon_size(IconSize::Small)
             .toggle_state(active)
             .tooltip(move |_window, cx| {
