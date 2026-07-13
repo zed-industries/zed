@@ -157,6 +157,13 @@ mod any_view {
         cx: &mut App,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
+        // Record the view's Render type name so the accessibility debug dump can
+        // attribute nodes to the view that produced them.
+        #[cfg(debug_assertions)]
+        window
+            .a11y
+            .view_type_names
+            .insert(view.entity_id(), std::any::type_name::<V>());
         view.update(cx, |view, cx| view.render(window, cx).into_any_element())
     }
 }

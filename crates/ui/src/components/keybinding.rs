@@ -135,6 +135,50 @@ impl KeyBinding {
         self.vim_mode = vim_mode;
         self
     }
+
+    /// Resolves this keybinding's keystrokes the same way rendering does
+    /// (matching the visible accelerator). Returns `None` when there is no
+    /// binding.
+    fn resolve_keystrokes(&self, window: &Window, cx: &App) -> Option<Vec<KeybindingKeystroke>> {
+        let keystrokes = match &self.source {
+            Source::Action {
+                action,
+                focus_handle,
+            } => {
+                let binding = focus_handle
+                    .clone()
+                    .or_else(|| window.focused(cx))
+                    .and_then(|focus| {
+                        window.highest_precedence_binding_for_action_in(action.as_ref(), &focus)
+                    })
+                    .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))?;
+                binding.keystrokes().to_vec()
+            }
+            Source::Keystrokes { keystrokes } => keystrokes.to_vec(),
+        };
+        (!keystrokes.is_empty()).then_some(keystrokes)
+    }
+
+    /// Resolves this keybinding to a human-readable shortcut string in the same
+    /// platform format shown to sighted users (e.g. `"Ctrl-S"`, `"Command-S"`,
+    /// or `"Ctrl-K Ctrl-S"` for a chord), matching the visible accelerator. This
+    /// is the format AccessKit's `keyboard_shortcut` property expects. Returns
+    /// `None` when there is no binding.
+    pub fn keyboard_shortcut_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
+        let keystrokes = self.resolve_keystrokes(window, cx)?;
+        let text = keystrokes
+            .iter()
+            .map(|keystroke| {
+                keystroke_text(
+                    keystroke.modifiers(),
+                    keystroke.key(),
+                    self.platform_style,
+                    self.vim_mode,
+                )
+            })
+            .join(" ");
+        Some(text.into())
+    }
 }
 
 fn render_key(

@@ -55,6 +55,8 @@ pub struct ListItem {
     height: Option<DefiniteLength>,
     aria_role: Option<Role>,
     aria_label: Option<SharedString>,
+    aria_keyshortcuts: Option<SharedString>,
+    aria_checked: Option<bool>,
     aria_active_descendant: bool,
 }
 
@@ -89,6 +91,8 @@ impl ListItem {
             height: None,
             aria_role: None,
             aria_label: None,
+            aria_keyshortcuts: None,
+            aria_checked: None,
             aria_active_descendant: false,
         }
     }
@@ -106,6 +110,24 @@ impl ListItem {
     /// label exists.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// item, e.g. a menu item's accelerator. Requires [`Self::aria_role`] to be
+    /// set. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"`.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
+    /// Sets the checked state reported to assistive technology, independent of
+    /// the visual disclosure [`Self::toggle`]. Use this for checkable items
+    /// such as a [`Role::MenuItemCheckBox`] entry so screen readers announce
+    /// "checked"/"not checked" accurately.
+    pub fn aria_checked(mut self, checked: bool) -> Self {
+        self.aria_checked = Some(checked);
         self
     }
 
@@ -313,15 +335,20 @@ impl RenderOnce for ListItem {
                         |this| this.aria_active_descendant(),
                     )
                     .when_some(self.aria_label, |this, label| this.aria_label(label))
+                    .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                        this.aria_keyshortcuts(keyshortcuts)
+                    })
                     .when(self.aria_role.is_some(), |this| {
-                        this.aria_selected(self.selected)
-                            .when_some(self.toggle, |this, toggled| {
+                        this.aria_selected(self.selected).when_some(
+                            self.aria_checked.or(self.toggle),
+                            |this, toggled| {
                                 this.aria_toggled(if toggled {
                                     gpui::Toggled::True
                                 } else {
                                     gpui::Toggled::False
                                 })
-                            })
+                            },
+                        )
                     })
                     .group("list_item")
                     .w_full()
