@@ -1350,13 +1350,14 @@ impl DebugPanel {
         running_state: &Entity<RunningState>,
         thread_status: ThreadStatus,
         window: &mut Window,
-    ) -> IconButton {
-        IconButton::new("debug-back-in-history", IconName::HistoryRerun)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Step Back in Session History"))
+    ) -> ButtonLike {
+        ButtonLike::new_rounded_left("debug-back-in-history")
+            .layer(ElevationIndex::ModalSurface)
+            .child(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
             .disabled(
                 thread_status == ThreadStatus::Running || thread_status == ThreadStatus::Stepping,
             )
+            .tooltip(Tooltip::text("Step Back in Session History"))
             .on_click(window.listener_for(running_state, |this, _, _window, cx| {
                 this.session().update(cx, |session, cx| {
                     let ix = session
