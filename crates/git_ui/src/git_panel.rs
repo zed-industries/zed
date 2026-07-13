@@ -328,7 +328,7 @@ fn git_panel_view_options_menu(
             })
             .item({
                 let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("Status")
+                ContextMenuEntry::new("Tracked & Untracked")
                     .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::Status)
                     .handler(move |window, cx| {
                         if state.group_by != GitPanelGroupBy::Status {
@@ -342,7 +342,7 @@ fn git_panel_view_options_menu(
             })
             .item({
                 let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("Staging")
+                ContextMenuEntry::new("Staged & Unstaged")
                     .toggle(
                         IconPosition::End,
                         state.group_by == GitPanelGroupBy::Staging,
@@ -476,11 +476,57 @@ struct ProjectedChangeEntry {
     index: usize,
 }
 
-#[derive(Clone, Copy)]
-struct StagingAction {
-    stage: bool,
-    icon: IconName,
-    label: &'static str,
+/// What clicking a staging control should do.
+///
+/// In the "staged & unstaged" grouping, a partially staged file appears in both the
+/// "Staged" and "Unstaged" sections at once, so a row's meaning comes from
+/// the section it is rendered in rather than from the file's own state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StageIntent {
+    Stage,
+    Unstage,
+    Toggle,
+}
+
+impl StageIntent {
+    fn for_section(section: Section) -> Self {
+        match section {
+            Section::Staged => StageIntent::Unstage,
+            Section::Unstaged => StageIntent::Stage,
+            _ => StageIntent::Toggle,
+        }
+    }
+
+    /// Resolves to a concrete direction (`true` = stage), consulting the
+    /// current stage status only when no section dictates one.
+    fn resolve_with(self, stage_status: impl FnOnce() -> StageStatus) -> bool {
+        match self {
+            StageIntent::Stage => true,
+            StageIntent::Unstage => false,
+            StageIntent::Toggle => match stage_status() {
+                StageStatus::Staged => false,
+                StageStatus::Unstaged | StageStatus::PartiallyStaged => true,
+            },
+        }
+    }
+
+    /// The checkbox state for a row with this intent: section-relative when
+    /// the section forces a direction, otherwise the entry's own state.
+    fn checkbox_state(self, entry_state: impl FnOnce() -> ToggleState) -> ToggleState {
+        match self {
+            StageIntent::Stage => ToggleState::Unselected,
+            StageIntent::Unstage => ToggleState::Selected,
+            StageIntent::Toggle => entry_state(),
+        }
+    }
+
+    fn label(self, stage_status: impl FnOnce() -> StageStatus) -> &'static str {
+        if self.resolve_with(stage_status) {
+            "Stage"
+        } else {
+            "Unstage"
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2375,6 +2421,7 @@ impl GitPanel {
     fn toggle_staged_for_entry(
         &mut self,
         entry: &GitListEntry,
+        intent: StageIntent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2387,47 +2434,29 @@ impl GitPanel {
         let (stage, repo_paths) = {
             let repo = active_repository.read(cx);
             match entry {
-                GitListEntry::Status(status_entry) => {
+                GitListEntry::Status(status_entry)
+                | GitListEntry::TreeStatus(GitTreeStatusEntry {
+                    entry: status_entry,
+                    ..
+                }) => {
                     let repo_paths = vec![status_entry.clone()];
-                    let stage = match GitPanel::stage_status_for_entry(status_entry, &repo) {
-                        StageStatus::Staged => {
-                            if let Some(op) = self.bulk_staging.clone()
-                                && op.anchor == status_entry.repo_path
-                            {
-                                clear_anchor = Some(op.anchor);
-                            }
-                            false
-                        }
-                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
-                            set_anchor = Some(status_entry.repo_path.clone());
-                            true
-                        }
-                    };
-                    (stage, repo_paths)
-                }
-                GitListEntry::TreeStatus(status_entry) => {
-                    let repo_paths = vec![status_entry.entry.clone()];
-                    let stage = match GitPanel::stage_status_for_entry(&status_entry.entry, &repo) {
-                        StageStatus::Staged => {
-                            if let Some(op) = self.bulk_staging.clone()
-                                && op.anchor == status_entry.entry.repo_path
-                            {
-                                clear_anchor = Some(op.anchor);
-                            }
-                            false
-                        }
-                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
-                            set_anchor = Some(status_entry.entry.repo_path.clone());
-                            true
-                        }
-                    };
+                    let stage = intent
+                        .resolve_with(|| GitPanel::stage_status_for_entry(status_entry, &repo));
+
+                    if stage {
+                        set_anchor = Some(status_entry.repo_path.clone());
+                    } else if let Some(op) = self.bulk_staging.clone()
+                        && op.anchor == status_entry.repo_path
+                    {
+                        clear_anchor = Some(op.anchor);
+                    }
                     (stage, repo_paths)
                 }
                 GitListEntry::Header(section) => {
-                    let goal_staged_state = match section.header {
-                        Section::Staged => false,
-                        Section::Unstaged => true,
-                        _ => !self.header_state(section.header).selected(),
+                    let goal_staged_state = match intent {
+                        StageIntent::Stage => true,
+                        StageIntent::Unstage => false,
+                        StageIntent::Toggle => !self.header_state(section.header).selected(),
                     };
                     let entries = self
                         .change_entries_by_path()
@@ -2442,17 +2471,13 @@ impl GitPanel {
                     (goal_staged_state, entries)
                 }
                 GitListEntry::Directory(entry) => {
-                    let goal_staged_state = match entry.key.section {
-                        Section::Staged => StageStatus::Unstaged,
-                        Section::Unstaged => StageStatus::Staged,
-                        _ => match self.stage_status_for_directory(entry, repo) {
-                            StageStatus::Staged => StageStatus::Unstaged,
-                            StageStatus::Unstaged | StageStatus::PartiallyStaged => {
-                                StageStatus::Staged
-                            }
-                        },
+                    let goal_stage =
+                        intent.resolve_with(|| self.stage_status_for_directory(entry, repo));
+                    let goal_staged_state = if goal_stage {
+                        StageStatus::Staged
+                    } else {
+                        StageStatus::Unstaged
                     };
-                    let goal_stage = goal_staged_state == StageStatus::Staged;
 
                     let entries = self
                         .view_mode
@@ -2622,13 +2647,8 @@ impl GitPanel {
             return;
         };
 
-        if let Some(action) = self.staging_action_for_entry_index(selected_index)
-            && let Some(entry) = selected_entry.status_entry()
-        {
-            self.change_file_stage(action.stage, vec![entry.clone()], cx);
-        } else {
-            self.toggle_staged_for_entry(&selected_entry, window, cx);
-        }
+        let intent = self.stage_intent_for_entry_index(selected_index);
+        self.toggle_staged_for_entry(&selected_entry, intent, window, cx);
     }
 
     fn stage_range(&mut self, _: &git::StageRange, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4736,25 +4756,9 @@ impl GitPanel {
         })
     }
 
-    fn staging_action_for_section(section: Section) -> Option<StagingAction> {
-        match section {
-            Section::Staged => Some(StagingAction {
-                stage: false,
-                icon: IconName::Dash,
-                label: "Unstage",
-            }),
-            Section::Unstaged => Some(StagingAction {
-                stage: true,
-                icon: IconName::Plus,
-                label: "Stage",
-            }),
-            _ => None,
-        }
-    }
-
-    fn staging_action_for_entry_index(&self, ix: usize) -> Option<StagingAction> {
+    fn stage_intent_for_entry_index(&self, ix: usize) -> StageIntent {
         self.section_for_entry_index(ix)
-            .and_then(Self::staging_action_for_section)
+            .map_or(StageIntent::Toggle, StageIntent::for_section)
     }
 
     fn diff_target_for_section(section: Option<Section>) -> DiffTarget {
@@ -6654,7 +6658,7 @@ impl GitPanel {
                 move |_, window, cx| {
                     git_panel
                         .update(cx, |this, cx| {
-                            this.toggle_staged_for_entry(&entry, window, cx);
+                            this.toggle_staged_for_entry(&entry, StageIntent::Toggle, window, cx);
                             cx.stop_propagation();
                         })
                         .ok();
@@ -6817,10 +6821,10 @@ impl GitPanel {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
         let checkbox_id: ElementId = ElementId::Name(format!("header_{}_checkbox", ix).into());
         let group_name: SharedString = format!("header_{}", ix).into();
-        let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
-        let staging_action = Self::staging_action_for_section(section);
+        let stage_intent = StageIntent::for_section(section);
+        let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header));
         let staging_conflict = GitPanelSettings::get_global(cx).group_by
             == GitPanelGroupBy::Staging
             && section == Section::Conflict;
@@ -6845,21 +6849,23 @@ impl GitPanel {
             )
             .child(if staging_conflict {
                 div().into_any_element()
-            } else if let Some(action) = staging_action {
-                Self::staging_action_button(
-                    checkbox_id,
-                    action.icon,
-                    action.label,
-                    !has_write_access,
-                )
-                .tooltip(move |_window, cx| Tooltip::simple(format!("{} all", action.label), cx))
-                .into_any_element()
             } else {
-                Checkbox::new(checkbox_id, toggle_state)
+                let checkbox = Checkbox::new(checkbox_id, toggle_state)
                     .disabled(!has_write_access)
                     .fill()
-                    .elevation(ElevationIndex::Surface)
-                    .into_any_element()
+                    .elevation(ElevationIndex::Surface);
+                let tooltip_label = match stage_intent {
+                    StageIntent::Stage => Some("Stage All"),
+                    StageIntent::Unstage => Some("Unstage All"),
+                    StageIntent::Toggle => None,
+                };
+                if let Some(label) = tooltip_label {
+                    checkbox
+                        .tooltip(move |_window, cx| Tooltip::simple(label, cx))
+                        .into_any_element()
+                } else {
+                    checkbox.into_any_element()
+                }
             })
             .on_click(move |_, window, cx| {
                 if !has_write_access || staging_conflict {
@@ -6869,6 +6875,7 @@ impl GitPanel {
                 weak.update(cx, |this, cx| {
                     this.toggle_staged_for_entry(
                         &GitListEntry::Header(GitHeaderEntry { header: section }),
+                        stage_intent,
                         window,
                         cx,
                     );
@@ -6900,15 +6907,14 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let staging_action = self.staging_action_for_entry_index(ix);
+        let stage_intent = self.stage_intent_for_entry_index(ix);
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = match staging_action {
-            Some(StagingAction { stage: true, .. }) => "Stage File",
-            Some(StagingAction { stage: false, .. }) => "Unstage File",
-            None if entry.status.staging().is_fully_staged() => "Unstage File",
-            None => "Stage File",
+        let stage_title = if stage_intent.resolve_with(|| entry.status.staging()) {
+            "Stage File"
+        } else {
+            "Unstage File"
         };
         let restore_title = if entry.status.is_created() {
             "Trash File"
@@ -7063,15 +7069,18 @@ impl GitPanel {
         let staging_conflict = settings.group_by == GitPanelGroupBy::Staging
             && section == Some(Section::Conflict)
             && status.is_conflicted();
-        let staging_action = self.staging_action_for_entry_index(ix);
-        let mut is_staged: ToggleState = match stage_status {
-            StageStatus::Staged => ToggleState::Selected,
-            StageStatus::Unstaged => ToggleState::Unselected,
-            StageStatus::PartiallyStaged => ToggleState::Indeterminate,
-        };
-        if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
-            is_staged = ToggleState::Selected;
-        }
+        let stage_intent = self.stage_intent_for_entry_index(ix);
+        let toggle_state = stage_intent.checkbox_state(|| {
+            if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
+                ToggleState::Selected
+            } else {
+                match stage_status {
+                    StageStatus::Staged => ToggleState::Selected,
+                    StageStatus::Unstaged => ToggleState::Unselected,
+                    StageStatus::PartiallyStaged => ToggleState::Indeterminate,
+                }
+            }
+        });
 
         let handle = cx.weak_entity();
 
@@ -7199,31 +7208,8 @@ impl GitPanel {
                         })
                         .tooltip(move |_window, cx| Tooltip::simple("Mark as Resolved", cx))
                         .into_any_element()
-                    } else if let Some(action) = staging_action {
-                        Self::staging_action_button(
-                            checkbox_id,
-                            action.icon,
-                            action.label,
-                            !has_write_access,
-                        )
-                        .on_click({
-                            let entry = entry.clone();
-                            let this = cx.weak_entity();
-                            move |_, _window, cx| {
-                                this.update(cx, |this, cx| {
-                                    if !has_write_access {
-                                        return;
-                                    }
-                                    this.change_file_stage(action.stage, vec![entry.clone()], cx);
-                                    cx.stop_propagation();
-                                })
-                                .ok();
-                            }
-                        })
-                        .tooltip(move |_window, cx| Tooltip::simple(action.label, cx))
-                        .into_any_element()
                     } else {
-                        Checkbox::new(checkbox_id, is_staged)
+                        Checkbox::new(checkbox_id, toggle_state)
                             .disabled(!has_write_access)
                             .fill()
                             .elevation(ElevationIndex::Surface)
@@ -7235,7 +7221,11 @@ impl GitPanel {
                                         if !has_write_access {
                                             return;
                                         }
-                                        if click.modifiers().shift {
+                                        // `stage_bulk` only ever stages, so skip it when the
+                                        // section forces unstaging.
+                                        if click.modifiers().shift
+                                            && stage_intent != StageIntent::Unstage
+                                        {
                                             this.stage_bulk(ix, cx);
                                         } else {
                                             let list_entry =
@@ -7247,7 +7237,12 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(&list_entry, window, cx);
+                                            this.toggle_staged_for_entry(
+                                                &list_entry,
+                                                stage_intent,
+                                                window,
+                                                cx,
+                                            );
                                         }
                                         cx.stop_propagation();
                                     })
@@ -7255,13 +7250,8 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
-                                let tooltip_name = action.to_string();
-
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
+                                let action = stage_intent.label(|| stage_status);
+                                Tooltip::for_action(action, &ToggleStaged, cx)
                             })
                             .into_any_element()
                     }),
@@ -7360,16 +7350,12 @@ impl GitPanel {
             StageStatus::PartiallyStaged
         };
 
-        let toggle_state: ToggleState = match stage_status {
+        let stage_intent = StageIntent::for_section(entry.key.section);
+        let toggle_state = stage_intent.checkbox_state(|| match stage_status {
             StageStatus::Staged => ToggleState::Selected,
             StageStatus::Unstaged => ToggleState::Unselected,
             StageStatus::PartiallyStaged => ToggleState::Indeterminate,
-        };
-        let staging_action = if settings.group_by == GitPanelGroupBy::Staging {
-            Self::staging_action_for_section(entry.key.section)
-        } else {
-            None
-        };
+        });
         let staging_conflict =
             settings.group_by == GitPanelGroupBy::Staging && entry.key.section == Section::Conflict;
 
@@ -7418,32 +7404,6 @@ impl GitPanel {
                     .cursor_pointer()
                     .child(if staging_conflict {
                         div().into_any_element()
-                    } else if let Some(action) = staging_action {
-                        Self::staging_action_button(
-                            checkbox_id,
-                            action.icon,
-                            action.label,
-                            !has_write_access,
-                        )
-                        .on_click({
-                            let entry = entry.clone();
-                            let this = cx.weak_entity();
-                            move |_, window, cx| {
-                                this.update(cx, |this, cx| {
-                                    if !has_write_access {
-                                        return;
-                                    }
-                                    let list_entry = GitListEntry::Directory(entry.clone());
-                                    this.toggle_staged_for_entry(&list_entry, window, cx);
-                                    cx.stop_propagation();
-                                })
-                                .ok();
-                            }
-                        })
-                        .tooltip(move |_window, cx| {
-                            Tooltip::simple(format!("{} folder", action.label), cx)
-                        })
-                        .into_any_element()
                     } else {
                         Checkbox::new(checkbox_id, toggle_state)
                             .disabled(!has_write_access)
@@ -7459,6 +7419,7 @@ impl GitPanel {
                                         }
                                         this.toggle_staged_for_entry(
                                             &GitListEntry::Directory(entry.clone()),
+                                            stage_intent,
                                             window,
                                             cx,
                                         );
@@ -7468,10 +7429,7 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
+                                let action = stage_intent.label(|| stage_status);
                                 Tooltip::simple(format!("{action} folder"), cx)
                             })
                             .into_any_element()
@@ -9463,16 +9421,12 @@ mod tests {
                 ]
             );
             assert_eq!(
-                panel
-                    .staging_action_for_entry_index(projections[0].index)
-                    .map(|action| action.stage),
-                Some(false)
+                panel.stage_intent_for_entry_index(projections[0].index),
+                StageIntent::Unstage
             );
             assert_eq!(
-                panel
-                    .staging_action_for_entry_index(projections[1].index)
-                    .map(|action| action.stage),
-                Some(true)
+                panel.stage_intent_for_entry_index(projections[1].index),
+                StageIntent::Stage
             );
             panel.entries.clone()
         });
@@ -9989,7 +9943,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -10038,7 +9992,7 @@ mod tests {
 
         let third_status_entry = entries[4].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&third_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&third_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -10200,7 +10154,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.update(|_window, cx| {
@@ -10268,7 +10222,7 @@ mod tests {
 
         let third_status_entry = entries[4].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&third_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&third_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -11411,7 +11365,7 @@ mod tests {
 
         let first_status_entry = entries[1].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&first_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -11448,7 +11402,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -11485,7 +11439,7 @@ mod tests {
         assert!(message.is_none());
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&first_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -11521,7 +11475,7 @@ mod tests {
         assert_eq!(message, Some("Create untracked".to_string()));
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
