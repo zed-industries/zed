@@ -171,6 +171,7 @@ impl SelectionLayout {
         let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
+        let mut head = display_selection.head();
         if !line_mode {
             let offset_range = point_selection.start.to_offset(buffer_snapshot)
                 ..point_selection.end.to_offset(buffer_snapshot);
@@ -178,9 +179,16 @@ impl SelectionLayout {
                 map.contiguous_display_point_range_for_buffer_range(offset_range)
             {
                 range = contiguous_range;
+                // Keep the cursor attached to the highlight boundary; the
+                // anchor-bias display position may sit on the far side of a
+                // boundary inlay the highlight excludes.
+                head = if selection.reversed {
+                    range.start
+                } else {
+                    range.end
+                };
             }
         }
-        let mut head = display_selection.head();
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
 
@@ -10724,11 +10732,18 @@ mod tests {
             display_map.update(cx, |display_map, cx| {
                 display_map.splice_inlays(
                     &[],
-                    vec![Inlay::mock_hint(
-                        0,
-                        buffer_snapshot.anchor_before(MultiBufferOffset(1)),
-                        "hint ",
-                    )],
+                    vec![
+                        Inlay::mock_hint(
+                            0,
+                            buffer_snapshot.anchor_before(MultiBufferOffset(1)),
+                            "hint ",
+                        ),
+                        Inlay::mock_hint(
+                            1,
+                            buffer_snapshot.anchor_after(MultiBufferOffset(3)),
+                            "!!",
+                        ),
+                    ],
                     cx,
                 );
                 display_map.snapshot(cx)
@@ -10757,17 +10772,36 @@ mod tests {
 
         let ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, false);
         assert_eq!(ending_at_inlay.range, display_point(0)..display_point(1));
-        assert_eq!(ending_at_inlay.head, display_point(6));
+        assert_eq!(ending_at_inlay.head, display_point(1));
 
         let starting_at_inlay = layout(MultiBufferOffset(1)..MultiBufferOffset(2), false, false);
         assert_eq!(starting_at_inlay.range, display_point(6)..display_point(7));
+        assert_eq!(starting_at_inlay.head, display_point(7));
 
         let spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, false);
         assert_eq!(spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(spanning_inlay.head, display_point(7));
 
         let reversed = layout(MultiBufferOffset(0)..MultiBufferOffset(2), true, false);
         assert_eq!(reversed.range, display_point(0)..display_point(7));
         assert_eq!(reversed.head, display_point(0));
+
+        // A reversed selection starting at a right-anchored hint: the
+        // anchor-bias cursor position would sit before the hint, detached from
+        // the highlight, so the head snaps to the highlight boundary instead.
+        let reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, false);
+        assert_eq!(
+            reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(reversed_at_right_anchored_inlay.head, display_point(10));
+
+        // An empty selection is a typing position, so it keeps the anchor-bias
+        // display position rather than snapping around boundary inlays.
+        let empty = layout(MultiBufferOffset(1)..MultiBufferOffset(1), false, false);
+        assert!(empty.range.is_empty());
+        assert_eq!(empty.head, display_point(6));
 
         let vim_ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, true);
         assert_eq!(
@@ -10779,6 +10813,14 @@ mod tests {
         let vim_spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, true);
         assert_eq!(vim_spanning_inlay.range, display_point(0)..display_point(7));
         assert_eq!(vim_spanning_inlay.head, display_point(6));
+
+        let vim_reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, true);
+        assert_eq!(
+            vim_reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(vim_reversed_at_right_anchored_inlay.head, display_point(10));
     }
 
     fn navigation_overlay(
