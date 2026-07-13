@@ -64,7 +64,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Messages sent while the agent is in the generating state get, by default, queued.
 
-For the Zed Agent, queued messages get sent at the next turn boundary, which is usually between a tool call and a response, whereas for External Agents, the message gets sent at the end of the generation.
+By default, queued messages get sent once the agent finishes generating. If you want a queued message to reach the Zed Agent sooner—interrupting it at its next step (usually between a tool call and a response) rather than waiting for it to finish—toggle "Steer" on that message. Steering is only available for the Zed Agent, since Zed can't detect turn boundaries for external agents.
 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
@@ -106,7 +106,7 @@ You can also hold `cmd`/`ctrl` when submitting a message to automatically follow
 
 If you send a prompt to the Agent and then put Zed in the background, you can choose to be notified when its generation wraps up via:
 
-- a visual notification that appears in the top right of your screen
+- a visual desktop notification from your operating system
 - a sound notification
 
 These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.

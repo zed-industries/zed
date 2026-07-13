@@ -626,7 +626,7 @@ impl DiffState {
                     this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -660,8 +660,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::BaseTextChanged
-                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),
@@ -2115,6 +2114,9 @@ impl MultiBuffer {
         self.title.as_deref()
     }
 
+    /// The title used for buffers not backed by a file and with no title of their own.
+    pub const DEFAULT_TITLE: &str = "untitled";
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();
@@ -2132,7 +2134,7 @@ impl MultiBuffer {
             }
         };
 
-        "untitled".into()
+        Self::DEFAULT_TITLE.into()
     }
 
     fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
@@ -3610,7 +3612,7 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Vec<(
-        BufferSnapshot,
+        &BufferSnapshot,
         Range<BufferOffset>,
         ExcerptRange<text::Anchor>,
     )> {
@@ -3621,7 +3623,7 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         let mut result: Vec<(
-            BufferSnapshot,
+            &BufferSnapshot,
             Range<BufferOffset>,
             ExcerptRange<text::Anchor>,
         )> = Vec::new();
@@ -3653,7 +3655,7 @@ impl MultiBufferSnapshot {
                 {
                     prev.1.end = end;
                 } else {
-                    result.push((region.buffer.clone(), start..end, excerpt_range));
+                    result.push((region.buffer, start..end, excerpt_range));
                 }
             }
             cursor.next();
@@ -3676,11 +3678,7 @@ impl MultiBufferSnapshot {
                         || prev_excerpt.context.start != excerpt_range.context.start
                 })
             {
-                result.push((
-                    buffer_snapshot.clone(),
-                    buffer_offset..buffer_offset,
-                    excerpt_range,
-                ));
+                result.push((buffer_snapshot, buffer_offset..buffer_offset, excerpt_range));
             }
         }
 
@@ -6297,6 +6295,7 @@ impl MultiBufferSnapshot {
                 .map(|item| OutlineItem {
                     depth: item.depth,
                     range: Anchor::range_in_buffer(path_key_index, item.range),
+                    selection_range: Anchor::range_in_buffer(path_key_index, item.selection_range),
                     source_range_for_text: Anchor::range_in_buffer(
                         path_key_index,
                         item.source_range_for_text,
@@ -6339,6 +6338,10 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
+                        selection_range: Anchor::range_in_buffer(
+                            excerpt.path_key_index,
+                            item.selection_range,
+                        ),
                         source_range_for_text: Anchor::range_in_buffer(
                             excerpt.path_key_index,
                             item.source_range_for_text,
