@@ -57,6 +57,28 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 /// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
+    let name = uri
+        .to_file_path()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .or_else(|| {
+                    let path = path.to_string_lossy().into_owned();
+                    (!path.is_empty()).then_some(path)
+                })
+        })
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| uri.as_str().to_owned());
+
+    WorkspaceFolder { uri, name }
+}
+
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
@@ -747,21 +769,13 @@ impl LanguageServer {
         cx: &App,
     ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
-            || {
-                vec![WorkspaceFolder {
-                    name: Default::default(),
-                    uri: self.root_uri.clone(),
-                }]
-            },
+            || vec![workspace_folder_for_uri(self.root_uri.clone())],
             |folders| {
                 folders
                     .lock()
                     .iter()
                     .cloned()
-                    .map(|uri| WorkspaceFolder {
-                        name: Default::default(),
-                        uri,
-                    })
+                    .map(workspace_folder_for_uri)
                     .collect()
             },
         );
@@ -1625,10 +1639,7 @@ impl LanguageServer {
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
-                    added: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    added: vec![workspace_folder_for_uri(uri)],
                     removed: vec![],
                 },
             };
@@ -1660,10 +1671,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
                     added: vec![],
-                    removed: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    removed: vec![workspace_folder_for_uri(uri)],
                 },
             };
             self.notify::<DidChangeWorkspaceFolders>(params).ok();
@@ -1678,18 +1686,14 @@ impl LanguageServer {
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
             .difference(&old_workspace_folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
 
         let removed: Vec<_> = old_workspace_folders
             .difference(&folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
         *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
@@ -2321,6 +2325,51 @@ mod tests {
             root_path,
             expected_path.to_string_lossy(),
             "root_path should be derived from root_uri"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_initialize_params_has_named_workspace_folders(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, _fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "test-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+        let project_uri = Uri::from_str("file:///path/to/my%20project/")
+            .expect("workspace folder URI should be valid");
+        let root_uri = Uri::from_str("file:///").expect("root URI should be valid");
+        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone(), root_uri.clone()]));
+
+        let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+        let workspace_folders = params
+            .workspace_folders
+            .expect("workspace folders should be set");
+
+        assert_eq!(
+            workspace_folders
+                .iter()
+                .find(|folder| folder.uri == project_uri)
+                .expect("project workspace folder should be present")
+                .name,
+            "my project"
+        );
+        assert!(
+            !workspace_folders
+                .iter()
+                .find(|folder| folder.uri == root_uri)
+                .expect("root workspace folder should be present")
+                .name
+                .is_empty(),
+            "workspace folder names should remain non-empty when the URI has no basename"
         );
     }
 }
