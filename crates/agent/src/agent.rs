@@ -29,8 +29,9 @@ pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{
-    AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
+    AcpThread, AcpThreadEvent, AgentModelId, AgentModelSelector, AgentSessionInfo,
+    AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId,
+    TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
@@ -1312,6 +1313,10 @@ impl NativeAgent {
                 let task =
                     acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
                 task.await?;
+            } else {
+                acp_thread.update(cx, |_acp_thread, cx| {
+                    cx.emit(AcpThreadEvent::TitleUpdated);
+                })?;
             }
             anyhow::Ok(())
         })
@@ -6826,6 +6831,30 @@ mod internal_tests {
         });
 
         assert_eq!(*title_updated_count.borrow(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_title_update_without_title_is_forwarded(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, agent, _, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        let title_updated_count = Rc::new(std::cell::RefCell::new(0usize));
+        cx.update(|cx| {
+            let title_updated_count = title_updated_count.clone();
+            cx.subscribe(&acp_thread, move |_thread, event: &AcpThreadEvent, _cx| {
+                if matches!(event, AcpThreadEvent::TitleUpdated) {
+                    *title_updated_count.borrow_mut() += 1;
+                }
+            })
+            .detach();
+        });
+
+        thread.update(cx, |_thread, cx| cx.emit(TitleUpdated));
+        cx.run_until_parked();
+
+        assert_eq!(*title_updated_count.borrow(), 1);
     }
 
     fn thread_entries(
