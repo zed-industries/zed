@@ -49,6 +49,7 @@ pub struct BranchDiff {
     diff: Entity<DiffMultibuffer>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
+    custom_title: Option<SharedString>,
     _diff_event_subscription: Subscription,
 }
 
@@ -125,6 +126,7 @@ impl BranchDiff {
                         intended_repo,
                         base_ref,
                         branch_diff,
+                        None,
                         window,
                         cx,
                     );
@@ -172,6 +174,7 @@ impl BranchDiff {
                             repository.clone(),
                             base_ref,
                             None,
+                            None,
                             window,
                             cx,
                         );
@@ -198,6 +201,7 @@ impl BranchDiff {
         intended_repo: Entity<Repository>,
         base_ref: SharedString,
         branch_diff: Option<Entity<diff_buffer_list::DiffBufferList>>,
+        custom_title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -214,6 +218,10 @@ impl BranchDiff {
                 })
         });
         if let Some(existing) = existing {
+            existing.update(cx, |existing, cx| {
+                existing.custom_title = custom_title;
+                cx.notify();
+            });
             workspace.activate_item(&existing, true, true, window, cx);
             return;
         }
@@ -235,6 +243,10 @@ impl BranchDiff {
                         )
                     })?
                     .await?;
+                this.update(cx, |this, cx| {
+                    this.custom_title = custom_title;
+                    cx.notify();
+                });
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
@@ -368,6 +380,7 @@ impl BranchDiff {
             diff,
             project,
             workspace: workspace.downgrade(),
+            custom_title: None,
             _diff_event_subscription: diff_event_subscription,
         }
     }
@@ -486,6 +499,9 @@ impl Item for BranchDiff {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        if let Some(custom_title) = &self.custom_title {
+            return custom_title.clone();
+        }
         match self.diff_base(cx) {
             DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
             DiffBase::Head | DiffBase::Index | DiffBase::Staged => "Changes".into(),
@@ -848,6 +864,7 @@ impl Render for BranchDiffToolbar {
                                                 project.clone(),
                                                 repository,
                                                 base_ref,
+                                                None,
                                                 None,
                                                 window,
                                                 cx,
