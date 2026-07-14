@@ -206,6 +206,11 @@ fn git_panel_context_menu(
             .context(focus_handle.clone())
             .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
             .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
+            .action_disabled_when(
+                !has_tracked_changes,
+                "Restore All Changes",
+                RestoreTrackedFiles.boxed_clone(),
+            )
             .separator()
             .action_disabled_when(
                 !(has_new_changes || has_tracked_changes),
@@ -6794,7 +6799,7 @@ impl GitPanel {
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
-        Label::new(label.into()).color(color)
+        Label::new(label.into()).single_line().color(color)
     }
 
     fn list_item_height(&self) -> Rems {
@@ -8029,6 +8034,7 @@ impl GitPanelMessageTooltip {
                         remote_url.as_deref(),
                         provider_registry,
                     )),
+                    tag_names: Vec::new(),
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
