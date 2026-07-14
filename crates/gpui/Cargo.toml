@@ -196,6 +196,10 @@ name = "on_window_close_quit"
 path = "examples/on_window_close_quit.rs"
 
 [[example]]
+name = "window_movable"
+path = "examples/window_movable.rs"
+
+[[example]]
 name = "opacity"
 path = "examples/opacity.rs"
 

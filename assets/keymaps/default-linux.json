@@ -34,12 +34,6 @@
       "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
-      "shift-f5": "debugger::Stop",
-      "ctrl-shift-f5": "debugger::RerunSession",
-      "f6": "debugger::Pause",
-      "f7": "debugger::StepOver",
-      "ctrl-f11": "debugger::StepInto",
-      "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
@@ -299,13 +293,6 @@
     },
   },
   {
-    "context": "AgentTerminalThread",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-f": "agent::ToggleSearch",
-    },
-  },
-  {
     "context": "AcpThreadSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -326,6 +313,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
       "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-alt-home": "agent::ScrollOutputToTop",
@@ -635,6 +623,13 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Move focus between the major regions of the window (editor, open
+      // panels, status bar). Accessibility navigation; mirrors VS Code's
+      // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
+      // stays available even while a debug session rebinds plain `f6` to Pause.
+      "f6": "workspace::FocusNextPart",
+      "shift-f6": "workspace::FocusPreviousPart",
+      "ctrl-f6": "workspace::FocusNextPart",
       "alt-open": "projects::OpenRecent",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
@@ -1104,6 +1099,21 @@
     },
   },
   {
+    // While a debug session is live, debugger controls take over their F-keys.
+    // `f6` becomes Pause (region navigation stays on `ctrl-f6` / `shift-f6`),
+    // and step/stop/rerun are scoped here so they're inert when not debugging.
+    // `debugger::Start` stays global so a session can be started from anywhere.
+    "context": "Workspace && debugger_session",
+    "bindings": {
+      "f6": "debugger::Pause",
+      "shift-f5": "debugger::Stop",
+      "ctrl-shift-f5": "debugger::RerunSession",
+      "f7": "debugger::StepOver",
+      "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
+    },
+  },
+  {
     "context": "DebugPanel",
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
@@ -1240,6 +1250,7 @@
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
+      "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
@@ -1270,7 +1281,9 @@
   },
   {
     "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-n": "agent::NewThread",
     },
   },
@@ -1328,6 +1341,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "ctrl-home": "markdown::ScrollToTop",
       "ctrl-end": "markdown::ScrollToBottom",
+      "ctrl-shift-v": "markdown::CloseAndReturnToEditor",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
     },
@@ -1519,7 +1533,7 @@
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
       "ctrl-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
-      "ctrl-shift-i": "branch_picker::FilterRemotes",
+      "ctrl-shift-i": "branch_picker::CycleBranchFilter",
     },
   },
   {

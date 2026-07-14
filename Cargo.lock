@@ -8,6 +8,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
+ "enumn",
  "uuid",
 ]
 
@@ -494,6 +495,7 @@ dependencies = [
  "heapless",
  "html_to_markdown",
  "http_client",
+ "idna",
  "image",
  "indoc",
  "itertools 0.14.0",
@@ -548,7 +550,7 @@ dependencies = [
  "time",
  "tree-sitter-md",
  "ui",
- "ui_input",
+ "unicode-script",
  "unicode-segmentation",
  "unindent",
  "url",
@@ -5991,6 +5993,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "env_filter"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8936,7 +8949,6 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
- "rgb",
  "tiff",
  "zune-core",
  "zune-jpeg",
@@ -14947,7 +14959,6 @@ dependencies = [
  "task",
  "telemetry",
  "ui",
- "ui_input",
  "util",
  "windows-registry 0.6.1",
  "workspace",
@@ -15995,6 +16006,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "seccompiler",
  "serde",
  "serde_json",
  "smol",
@@ -16310,6 +16322,15 @@ dependencies = [
  "pkcs8 0.9.0",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -16724,6 +16745,7 @@ dependencies = [
  "agent_skills",
  "anyhow",
  "audio",
+ "client",
  "cloud_api_types",
  "codestral",
  "collections",
@@ -19265,7 +19287,7 @@ dependencies = [
 [[package]]
 name = "trash"
 version = "5.2.5"
-source = "git+https://github.com/zed-industries/trash-rs?rev=3bf27effd4eb8699f2e484d3326b852fe3e53af7#3bf27effd4eb8699f2e484d3326b852fe3e53af7"
+source = "git+https://github.com/zed-industries/trash-rs?rev=47761739192828a66b11a94ba5420b82d63c03c5#47761739192828a66b11a94ba5420b82d63c03c5"
 dependencies = [
  "chrono",
  "libc",

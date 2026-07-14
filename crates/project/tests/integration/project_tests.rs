@@ -25,7 +25,7 @@ use buffer_diff::{
 };
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
-use fs::{FakeFs, PathEventKind};
+use fs::{FakeFs, PathEventKind, RealFs};
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -15463,6 +15463,44 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
         assert!(
             !buffer.read_only(),
             "Generated files should not be read-only when read_only_files is empty"
+        );
+    });
+}
+
+#[gpui::test]
+#[cfg(not(windows))]
+async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "test.txt": "hello",
+        },
+    }));
+    let file_path = root.path().join("project/test.txt");
+    let mut permissions = std::fs::metadata(&file_path).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file_path, permissions).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "OS read-only files should open as read-only"
         );
     });
 }

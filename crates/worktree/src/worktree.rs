@@ -24,7 +24,8 @@ use fuzzy::CharBag;
 use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
     HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD,
-    REBASE_APPLY_DIR, REBASE_MERGE_DIR, REPO_EXCLUDE, SEQUENCER_DIR, status::GitSummary,
+    REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE, SEQUENCER_DIR,
+    status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -111,6 +112,7 @@ pub struct LoadedFile {
     pub text: String,
     pub encoding: &'static Encoding,
     pub has_bom: bool,
+    pub is_writable: bool,
 }
 
 pub struct LoadedBinaryFile {
@@ -1594,15 +1596,15 @@ impl LocalWorktree {
             //       if it is too large
             //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
             //       reasonable limit
+            const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
+            let metadata = fs.metadata(&abs_path).await?;
+            if let Some(metadata) = metadata.as_ref()
+                && metadata.len >= FILE_SIZE_MAX
             {
-                const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
-                if let Ok(Some(metadata)) = fs.metadata(&abs_path).await
-                    && metadata.len >= FILE_SIZE_MAX
-                {
-                    anyhow::bail!("File is too large to load");
-                }
+                anyhow::bail!("File is too large to load");
             }
             let (text, encoding, has_bom) = decode_file_text(fs.as_ref(), &abs_path).await?;
+            let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1636,6 +1638,7 @@ impl LocalWorktree {
                 text,
                 encoding,
                 has_bom,
+                is_writable,
             })
         })
     }
@@ -2967,10 +2970,11 @@ impl LocalSnapshot {
                 }
             }
 
-            let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-            if metadata.is_some() {
-                repo_root = Some(Arc::from(ancestor));
-                break;
+            if repo_root.is_none() {
+                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
+                if metadata.is_some() {
+                    repo_root = Some(Arc::from(ancestor));
+                }
             }
         }
 
@@ -2987,11 +2991,14 @@ impl LocalSnapshot {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
         }
         ignore_stack.repo_root = repo_root;
+        let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
+            if ancestor_ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
+                let kind = IgnoreKind::Gitignore(parent_abs_path.into());
+                ancestor_ignore_stack = ancestor_ignore_stack.append(kind, ignore.clone());
                 ignore_stack =
                     ignore_stack.append(IgnoreKind::Gitignore(parent_abs_path.into()), ignore);
             }
@@ -3461,14 +3468,9 @@ impl BackgroundScannerState {
             .context("failed to add repository directory to watcher")
             .log_err();
 
-        // On Linux and FreeBSD, the native watcher is non-recursive, so subdirectories inside `.git` need explicit watching.
-        // For repos using the reftable backend, watch the `.git/reftable` directory so that ref changes are detected.
-        let reftable_path = common_dir_abs_path.join("reftable");
-        if fs.is_dir(&reftable_path).await {
-            watcher
-                .add(&reftable_path)
-                .context("failed to add reftable directory to watcher")
-                .log_err();
+        watch_git_dir_subdirectories(&common_dir_abs_path, fs, watcher).await;
+        if repository_dir_abs_path != common_dir_abs_path {
+            watch_git_dir_subdirectories(&repository_dir_abs_path, fs, watcher).await;
         }
 
         let work_directory_id = work_dir_entry.id;
@@ -3489,6 +3491,55 @@ impl BackgroundScannerState {
 
         log::trace!("inserting new local git repository");
         Ok(local_repository)
+    }
+}
+
+/// Watches the directories inside a git directory that git writes ref updates to.
+///
+/// On Linux and FreeBSD the native file watcher is non-recursive, so a watch on the git
+/// directory itself does not report changes to files nested below it, such as the loose
+/// refs that git updates on commit, fetch, and branch operations. Watch the `refs` tree
+/// (its directories are watched individually because branch names may contain slashes)
+/// and, for repositories using the reftable backend, the `reftable` directory. On
+/// platforms with recursive watchers these calls are deduplicated against the existing
+/// recursive registration, making them effectively free.
+async fn watch_git_dir_subdirectories(git_dir_abs_path: &Path, fs: &dyn Fs, watcher: &dyn Watcher) {
+    let reftable_dir_abs_path = git_dir_abs_path.join(REFTABLE_DIR);
+    if fs.is_dir(&reftable_dir_abs_path).await {
+        watcher
+            .add(&reftable_dir_abs_path)
+            .context("failed to add reftable directory to watcher")
+            .log_err();
+    }
+
+    watch_dir_tree(git_dir_abs_path.join(REFS_DIR), fs, watcher).await;
+}
+
+/// Watches a directory and all of its descendant directories.
+///
+/// Each directory is watched before its children are enumerated, so that a child
+/// created concurrently is either seen by the enumeration or reported by the watch.
+async fn watch_dir_tree(root_abs_path: PathBuf, fs: &dyn Fs, watcher: &dyn Watcher) {
+    let mut dirs_to_watch = vec![root_abs_path];
+    while let Some(dir_abs_path) = dirs_to_watch.pop() {
+        if !fs.is_dir(&dir_abs_path).await {
+            continue;
+        }
+        watcher
+            .add(&dir_abs_path)
+            .with_context(|| format!("failed to watch directory {dir_abs_path:?}"))
+            .log_err();
+        let Some(mut children) = fs.read_dir(&dir_abs_path).await.log_err() else {
+            continue;
+        };
+        while let Some(child_abs_path) = children.next().await {
+            let Some(child_abs_path) = child_abs_path.log_err() else {
+                continue;
+            };
+            if fs.is_dir(&child_abs_path).await {
+                dirs_to_watch.push(child_abs_path);
+            }
+        }
     }
 }
 
@@ -4644,6 +4695,24 @@ impl BackgroundScanner {
                         );
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
+                    }
+
+                    // New directories can appear under the `refs` tree at any time, e.g. when a
+                    // remote is added or a branch name contains slashes. On platforms where the
+                    // native watcher is non-recursive they need their own watches, or subsequent
+                    // ref updates inside them would go unnoticed. The subtree is walked because
+                    // nested directories may have been created before this watch took effect.
+                    if matches!(event.kind, Some(PathEventKind::Created))
+                        && path_in_git_dir
+                            .components()
+                            .any(|component| component.as_os_str() == OsStr::new(REFS_DIR))
+                    {
+                        watch_dir_tree(
+                            abs_path.as_path().to_path_buf(),
+                            self.fs.as_ref(),
+                            self.watcher.as_ref(),
+                        )
+                        .await;
                     }
 
                     if !dot_git_abs_paths.contains(&dot_git_abs_path) {

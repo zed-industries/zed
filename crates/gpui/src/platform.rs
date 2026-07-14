@@ -36,11 +36,11 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
+    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -192,6 +192,30 @@ pub trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
+
+    // Mobile platform methods. On mobile the OS owns the application
+    // lifecycle: apps are backgrounded, foregrounded, and killed at the
+    // system's discretion, and must react rather than decide.
+
+    /// Registers a callback invoked whenever the application's lifecycle
+    /// phase changes. See [`AppLifecyclePhase`] for the phase vocabulary and
+    /// its mapping onto iOS and Android.
+    ///
+    /// Desktop platforms never invoke this.
+    fn on_app_lifecycle(&self, _callback: Box<dyn FnMut(AppLifecyclePhase)>) {}
+
+    /// Registers a callback invoked when the OS signals memory pressure
+    /// (iOS `didReceiveMemoryWarning`, Android `onTrimMemory`).
+    ///
+    /// Desktop platforms never invoke this.
+    fn on_memory_warning(&self, _callback: Box<dyn FnMut()>) {}
+
+    /// The platform's gesture recognition services, if it provides any
+    /// beyond gpui's portable recognizers. See
+    /// [`PlatformGestures`](crate::PlatformGestures).
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        None
+    }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -620,6 +644,75 @@ pub struct RequestFrameOptions {
     pub force_render: bool,
 }
 
+/// The application's lifecycle phase, as owned and reported by a mobile OS.
+///
+/// `Inactive` means visible but not receiving input (a system dialog on
+/// top), while `Background` means not visible at all, with process death
+/// possible at any time thereafter.
+///
+/// | Phase        | iOS                          | Android      |
+/// |--------------|------------------------------|--------------|
+/// | `Active`     | `didBecomeActive`            | `onResume`   |
+/// | `Inactive`   | `willResignActive`           | `onPause`    |
+/// | `Background` | `didEnterBackground`         | `onStop`     |
+/// | `Foreground` | `willEnterForeground`        | `onStart`    |
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum AppLifecyclePhase {
+    /// Foreground and receiving input.
+    Active,
+    /// Foreground (visible) but not receiving input.
+    Inactive,
+    /// Not visible. The GPU surface may be destroyed while backgrounded and
+    /// the process may be killed without further notice.
+    Background,
+    /// Becoming visible again, before input is restored.
+    Foreground,
+}
+
+/// Regions of a window that are obscured or reserved by the system.
+///
+/// Mobile applications often share space in their window with system-specific
+/// geometry, from keyboards to camera notches. In GPUI, all this is abstracted
+/// into a single "inset" which should be overlaid on the window's bounds.
+/// It is up to the application develop to determine how to handle these cases.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WindowInsets {
+    /// Regions covered by system UI or hardware: status bar, display
+    /// cutouts/notch, home indicator, navigation bars.
+    /// (iOS: `safeAreaInsets`. Android: `WindowInsets` of types
+    /// `systemBars() | displayCutout()`.)
+    pub safe_area: Edges<Pixels>,
+    /// The region covered by the keyboard, when present.
+    /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
+    /// Android: `WindowInsets.Type.ime()`.)
+    pub ime: Edges<Pixels>,
+}
+
+impl WindowInsets {
+    /// The combined inset content should avoid.
+    pub fn effective(&self) -> Edges<Pixels> {
+        Edges {
+            top: self.safe_area.top.max(self.ime.top),
+            right: self.safe_area.right.max(self.ime.right),
+            bottom: self.safe_area.bottom.max(self.ime.bottom),
+            left: self.safe_area.left.max(self.ime.left),
+        }
+    }
+}
+
+/// A change in the state of the focused text input.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum TextInputStateChange {
+    /// An editable element gained focus.
+    FocusGained,
+    /// The focused editable element lost focus.
+    FocusLost,
+    /// The selection or caret moved
+    SelectionChanged,
+    /// The document content changed outside of platform-initiated edits.
+    ContentChanged,
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
@@ -643,6 +736,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
+    /// Requests that the operating system draw attention to this window.
+    fn request_attention(&self) {}
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
@@ -720,6 +815,38 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    // Mobile platform methods.
+
+    /// The regions of this window currently obscured or reserved by the
+    /// system. Zero on platforms without such regions.
+    fn insets(&self) -> WindowInsets {
+        WindowInsets::default()
+    }
+
+    /// Registers a callback invoked whenever [`Self::insets`] change.
+    ///
+    /// Contract: fires continuously during animated transitions (Android
+    /// `WindowInsetsAnimation` progress; on iOS the platform interpolates
+    /// the keyboard animation curve on frame ticks) and is exact at rest.
+    fn on_insets_changed(&self, _callback: Box<dyn FnMut(WindowInsets)>) {}
+
+    /// Sets the handler for the system back action (Android back
+    /// button/gesture; no source on iOS or desktop).
+    fn set_back_handler(&self, _callback: Box<dyn FnMut()>) {}
+
+    /// Declares whether the application would currently handle the system
+    /// back action (e.g. navigation depth > 0).
+    fn set_back_enabled(&self, _enabled: bool) {}
+
+    /// Requests that the soft keyboard be shown.
+    fn show_soft_keyboard(&self) {}
+
+    /// Requests that the soft keyboard be hidden.
+    fn hide_soft_keyboard(&self) {}
+
+    /// Inform the operating system that the text input state has changed
+    fn text_input_state_changed(&self, _change: TextInputStateChange) {}
 
     fn play_system_bell(&self) {}
 
@@ -1334,6 +1461,32 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    /// See [`InputHandler::set_selected_text_range`].
+    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .set_selected_text_range(range_utf16, window, cx)
+            })
+            .ok();
+    }
+
+    /// See [`InputHandler::element_bounds`].
+    pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| self.handler.element_bounds(window, cx))
+            .ok()
+            .flatten()
+    }
+
+    /// See [`InputHandler::text_length_utf16`].
+    pub fn text_length_utf16(&mut self) -> Option<usize> {
+        self.cx
+            .update(|window, cx| self.handler.text_length_utf16(window, cx))
+            .ok()
+            .flatten()
+    }
+
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
@@ -1452,6 +1605,38 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     ) -> Option<usize>;
 
+    /// Set the range of the user's currently selected text.
+    ///
+    /// This is the reverse data-flow direction from [`Self::selected_text_range`]:
+    /// platforms call it when the system text machinery moves the selection on the
+    /// application's behalf — e.g. the user drags a system selection handle or
+    /// invokes Select All from system UI (iOS `UITextInput setSelectedTextRange:`,
+    /// Android `InputConnection.setSelection`).
+    ///
+    /// range_utf16 is in terms of UTF-16 characters, from 0 to the length of the document
+    fn set_selected_text_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
+
+    /// Get the bounds of the focused text element in window coordinates, if known.
+    ///
+    /// This is the pull counterpart to the [`PlatformWindow::update_ime_position`]
+    /// push: mobile platforms ask for the focused element's geometry when they
+    /// need it (e.g. to frame system text-interaction UI overlaid on the focused
+    /// element).
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    /// Get the length of the document in UTF-16 characters, if known.
+    fn text_length_utf16(&mut self, _window: &mut Window, _cx: &mut App) -> Option<usize> {
+        None
+    }
+
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.
     /// TODO: Ideally we should be able to set ApplePressAndHoldEnabled in NSUserDefaults
@@ -1499,13 +1684,23 @@ pub struct WindowOptions {
     /// The kind of window to create
     pub kind: WindowKind,
 
-    /// Whether the window should be movable by the user.
-    ///
-    /// On macOS 27, custom titlebar windows that implement their own drag behavior
-    /// with [`Window::start_window_move`] should set this to `false`; otherwise
-    /// AppKit can treat the titlebar region as system-owned and delay clicks
-    /// while disambiguating titlebar double-clicks.
+    /// Whether the window can be moved by the user. When `false`, the user cannot drag
+    /// the window (on macOS this sets `NSWindow.isMovable`, which also disables the
+    /// Window-menu tiling items); programmatic moves are still allowed.
     pub is_movable: bool,
+
+    /// Whether the application owns dragging of the (custom) titlebar, rather than
+    /// AppKit. Only has an effect on macOS.
+    ///
+    /// Set this to `true` for windows that draw their own titlebar and move the window
+    /// themselves via [`Window::start_window_move`]. It marks the whole content view as
+    /// app-owned titlebar content, so AppKit neither drags the window from the titlebar
+    /// nor delays titlebar clicks while disambiguating double-clicks (a delay first
+    /// observed on macOS 27). It is independent of `is_movable`, so such windows stay
+    /// user-movable (via their own drag) and keep the Window-menu tiling items enabled.
+    ///
+    /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
+    pub app_owns_titlebar_drag: bool,
 
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
@@ -1561,6 +1756,13 @@ pub struct WindowParams {
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
+
+    /// Whether the application owns dragging of the (custom) titlebar (macOS only)
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
+    pub app_owns_titlebar_drag: bool,
 
     /// Whether the window should be resizable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1643,6 +1845,7 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
+            app_owns_titlebar_drag: false,
             is_resizable: true,
             is_minimizable: true,
             display_id: None,
@@ -2113,6 +2316,21 @@ impl ImageFormat {
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
             ImageFormat::Pnm => "image/x-portable-anymap",
+        }
+    }
+
+    /// Returns the file extension for this image format (without leading dot).
+    pub const fn extension(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Webp => "webp",
+            ImageFormat::Gif => "gif",
+            ImageFormat::Svg => "svg",
+            ImageFormat::Bmp => "bmp",
+            ImageFormat::Tiff => "tiff",
+            ImageFormat::Ico => "ico",
+            ImageFormat::Pnm => "pnm",
         }
     }
 

@@ -1846,12 +1846,12 @@ impl Thread {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
     }
 
-    /// Whether sandboxing is *applicable* for this thread's project (feature on,
-    /// local project, supported platform), regardless of whether it's been
-    /// turned off in settings. The UI shows the sandbox indicator whenever this
-    /// is true, drawing it struck-out when sandboxing is disabled.
+    /// Whether sandboxing is *applicable* for this thread's project (local
+    /// project, supported platform), regardless of whether it's been turned off
+    /// in settings. The UI shows the sandbox indicator whenever this is true,
+    /// drawing it struck-out when sandboxing is disabled.
     pub fn sandboxing_available(&self, cx: &App) -> bool {
-        sandboxing_available_for_project(self.project.read(cx), cx)
+        sandboxing_available_for_project(self.project.read(cx))
     }
 
     /// The directory subtrees the sandbox always grants write access to for this
@@ -2310,6 +2310,31 @@ impl Thread {
 
         self.request_token_usage
             .insert(last_user_message.id.clone(), update);
+        cx.emit(TokenUsageUpdated(self.latest_token_usage()));
+        cx.notify();
+    }
+
+    /// Records that the last request overflowed the model's context window so
+    /// the token usage indicator reports `Exceeded` instead of the stale usage
+    /// from the last successful request. Providers don't report usage for
+    /// failed requests, so we synthesize one from the reported overflow (when
+    /// available) or the model's context size.
+    fn mark_token_limit_exceeded(&mut self, tokens: Option<u64>, cx: &mut Context<Self>) {
+        let Some(model) = self.model() else {
+            return;
+        };
+        let input_tokens = tokens.unwrap_or(0).max(model.max_token_count());
+        let Some(last_user_message) = self.last_user_message() else {
+            return;
+        };
+
+        self.request_token_usage.insert(
+            last_user_message.id.clone(),
+            language_model::TokenUsage {
+                input_tokens,
+                ..Default::default()
+            },
+        );
         cx.emit(TokenUsageUpdated(self.latest_token_usage()));
         cx.notify();
     }
@@ -3038,7 +3063,7 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let retry = this.update(cx, |this, cx| {
             let user_store = this.user_store.read(cx);
-            this.handle_completion_error(error, attempt, user_store.plan())
+            this.handle_completion_error(error, attempt, user_store.plan(), cx)
         })??;
         let timer = cx.background_executor().timer(retry.duration);
         event_stream.send_retry(retry);
@@ -3228,7 +3253,12 @@ impl Thread {
         error: LanguageModelCompletionError,
         attempt: u8,
         plan: Option<Plan>,
+        cx: &mut Context<Self>,
     ) -> Result<acp_thread::RetryStatus> {
+        if let LanguageModelCompletionError::PromptTooLarge { tokens } = &error {
+            self.mark_token_limit_exceeded(*tokens, cx);
+        }
+
         let Some(model) = self.model() else {
             return Err(anyhow!(error));
         };
@@ -5926,10 +5956,15 @@ impl ToolCallEventStream {
         &self,
         command: Option<String>,
         reason: String,
+        docs_section: Option<String>,
         retries: usize,
         cx: &mut App,
     ) -> Task<Result<SandboxFallbackDecision>> {
-        let details = acp_thread::SandboxFallbackAuthorizationDetails { command, reason };
+        let details = acp_thread::SandboxFallbackAuthorizationDetails {
+            command,
+            reason,
+            docs_section,
+        };
         let retry_label = if retries == 0 {
             "Retry".to_string()
         } else {
@@ -7686,6 +7721,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "bwrap not found on PATH".to_string(),
+                Some("installing-bubblewrap".to_string()),
                 0,
                 cx,
             )
@@ -7697,6 +7733,10 @@ mod tests {
         .expect("fallback authorization should include details");
         assert_eq!(details.command.as_deref(), Some("cargo build"));
         assert_eq!(details.reason, "bwrap not found on PATH");
+        assert_eq!(
+            details.docs_section.as_deref(),
+            Some("installing-bubblewrap")
+        );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat fallback permission options");
@@ -7737,6 +7777,7 @@ mod tests {
                 event_stream.authorize_sandbox_fallback(
                     None,
                     "probe failed".to_string(),
+                    None,
                     retries,
                     cx,
                 )
@@ -7781,6 +7822,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "user namespaces are disabled".to_string(),
+                None,
                 0,
                 cx,
             )
@@ -7810,7 +7852,13 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox_fallback(None, "bwrap probe failed".to_string(), 0, cx)
+            event_stream.authorize_sandbox_fallback(
+                None,
+                "bwrap probe failed".to_string(),
+                None,
+                0,
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         authorization
