@@ -7553,7 +7553,7 @@ impl GitPanel {
                                     Tooltip::simple("Conflicts marked as resolved", cx)
                                 } else {
                                     let action = stage_intent.label(|| stage_status);
-                                    Tooltip::simple(format!("{action} folder"), cx)
+                                    Tooltip::simple(format!("{action} Folder"), cx)
                                 }
                             }),
                     ),
