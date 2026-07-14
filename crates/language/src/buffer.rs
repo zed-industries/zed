@@ -1813,6 +1813,25 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
+    /// Ensures the syntax tree reflects the current buffer contents, parsing
+    /// synchronously if a reparse is currently pending. This is meant for the
+    /// rare synchronous operation that must read an up-to-date syntax tree
+    /// immediately after an edit rather than waiting for the background
+    /// reparse (for example, renumbering Markdown list markers on Tab). It is
+    /// a no-op when no parse is pending or the buffer has no language.
+    pub fn parse_synchronously(&mut self, cx: &mut Context<Self>) {
+        if self.language.is_none() || self.reparse.is_none() {
+            return;
+        }
+        // Drop the in-flight async parse so `reparse` does not early-return,
+        // then parse synchronously with a generous timeout.
+        self.reparse = None;
+        let previous_timeout = self.sync_parse_timeout;
+        self.sync_parse_timeout = Some(Duration::from_secs(1));
+        self.reparse(cx, true);
+        self.sync_parse_timeout = previous_timeout;
+    }
+
     fn invalidate_tree_sitter_data(
         tree_sitter_data: &mut Arc<TreeSitterData>,
         snapshot: &text::BufferSnapshot,

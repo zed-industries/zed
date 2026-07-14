@@ -181,7 +181,7 @@ use language::{
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LanguageScope,
-    LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
+    LocalFile, Node, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
@@ -272,6 +272,10 @@ use workspace::{
 };
 pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::markdown::{
+    Indent as MarkdownIndent, IndentBehavior as MarkdownIndentBehavior, Outdent as MarkdownOutdent,
+    OutdentBehavior as MarkdownOutdentBehavior,
+};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -5370,6 +5374,233 @@ impl Editor {
                 .all::<MultiBufferOffset>(&this.display_snapshot(cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
         });
+    }
+
+    /// Indents in markdown buffers. Falls back to [`Editor::tab`]/[`Editor::indent`]
+    /// unless the selection touches an ordered list item, in which case the
+    /// indentation also renumbers the affected list markers (see
+    /// [`input::renumber_ordered_list_edits`]).
+    pub fn markdown_indent(
+        &mut self,
+        action: &MarkdownIndent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+        if action.behavior == MarkdownIndentBehavior::Tab
+            && self.move_to_next_snippet_tabstop(window, cx)
+        {
+            return;
+        }
+        if self.read_only(cx) {
+            return;
+        }
+
+        // A preceding edit (e.g. the newline that inserted this item) may not
+        // have been reparsed yet, since parsing is asynchronous outside of
+        // tests. Ensure the tree is current before we read it to classify and
+        // renumber list items.
+        self.ensure_singleton_parsed_synchronously(cx);
+
+        let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
+        let touches_ordered_list = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .as_singleton()
+            .is_some_and(|singleton| input::selection_touches_ordered_list(&selections, singleton));
+
+        if !touches_ordered_list {
+            match action.behavior {
+                MarkdownIndentBehavior::Tab => self.tab(&Tab, window, cx),
+                MarkdownIndentBehavior::Indent => self.indent(&Indent, window, cx),
+            }
+            return;
+        }
+
+        self.apply_markdown_ordered_list_indent(window, cx);
+    }
+
+    fn ensure_singleton_parsed_synchronously(&mut self, cx: &mut Context<Self>) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| buffer.parse_synchronously(cx));
+        }
+    }
+
+    /// Outdents in markdown buffers. Falls back to [`Editor::outdent`] unless
+    /// the selection touches an ordered list item; see [`Editor::markdown_indent`].
+    pub fn markdown_outdent(
+        &mut self,
+        action: &MarkdownOutdent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+        if action.behavior == MarkdownOutdentBehavior::Backtab
+            && self.move_to_prev_snippet_tabstop(window, cx)
+        {
+            return;
+        }
+        if self.read_only(cx) {
+            return;
+        }
+
+        // See the note in `markdown_indent`: parsing is asynchronous outside
+        // of tests, so make sure the tree is current before reading it.
+        self.ensure_singleton_parsed_synchronously(cx);
+
+        let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
+        let touches_ordered_list = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .as_singleton()
+            .is_some_and(|singleton| input::selection_touches_ordered_list(&selections, singleton));
+
+        if !touches_ordered_list {
+            self.outdent(&Outdent, window, cx);
+            return;
+        }
+
+        self.apply_markdown_ordered_list_outdent(window, cx);
+    }
+
+    fn apply_markdown_ordered_list_indent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut selections = self.selections.all::<Point>(&self.display_snapshot(cx));
+        let mut prev_edited_row = 0;
+        let mut row_delta = 0;
+        let mut edits: Vec<(Range<Point>, String)> = Vec::new();
+        let mut row_indent_deltas: BTreeMap<u32, i64> = BTreeMap::default();
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        for selection in &mut selections {
+            if selection.start.row != prev_edited_row {
+                row_delta = 0;
+            }
+            prev_edited_row = selection.end.row;
+
+            let edits_start = edits.len();
+            row_delta =
+                Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
+            for (range, text) in &edits[edits_start..] {
+                *row_indent_deltas.entry(range.start.row).or_insert(0) +=
+                    text.chars().count() as i64;
+            }
+        }
+
+        if let Some(singleton) = snapshot.as_singleton() {
+            let renumber_edits = input::renumber_ordered_list_edits(singleton, &row_indent_deltas);
+            Self::apply_digit_width_deltas(&renumber_edits, &mut selections);
+            edits.extend(renumber_edits);
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
+            this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+        });
+    }
+
+    fn apply_markdown_ordered_list_outdent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.selections.all::<Point>(&display_map);
+        let mut edits: Vec<(Range<Point>, String)> = Vec::new();
+        let mut row_indent_deltas: BTreeMap<u32, i64> = BTreeMap::default();
+        let mut last_outdent = None;
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        for selection in &selections {
+            let settings = buffer.language_settings_at(selection.start, cx);
+            let tab_size = settings.tab_size;
+            let mut rows = selection.spanned_rows(false, &display_map);
+
+            if let Some(last_row) = last_outdent
+                && last_row == rows.start
+            {
+                rows.start = rows.start.next_row();
+            }
+            let has_multiple_rows = rows.len() > 1;
+            for row in rows.iter_rows() {
+                let indent_size = snapshot.indent_size_for_line(row);
+                if indent_size.len > 0 {
+                    let deletion_len = indent_size.outdent_len(tab_size);
+                    let start = if has_multiple_rows
+                        || deletion_len > selection.start.column
+                        || indent_size.len < selection.start.column
+                    {
+                        0
+                    } else {
+                        selection.start.column - deletion_len
+                    };
+                    edits.push((
+                        Point::new(row.0, start)..Point::new(row.0, start + deletion_len),
+                        String::new(),
+                    ));
+                    *row_indent_deltas.entry(row.0).or_insert(0) -= deletion_len as i64;
+                    last_outdent = Some(row);
+                }
+            }
+        }
+
+        if let Some(singleton) = snapshot.as_singleton() {
+            edits.extend(input::renumber_ordered_list_edits(
+                singleton,
+                &row_indent_deltas,
+            ));
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+            let selections = this
+                .selections
+                .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+            this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+        });
+    }
+
+    /// Shifts `selections`' columns to account for digit-width changes in
+    /// `renumber_edits` (e.g. `9.` -> `10.`). Needed only where the caller
+    /// restores selections by explicitly recomputed columns (as
+    /// [`Editor::indent_selection`] does for the whitespace edit); callers
+    /// that instead read back live selections after the buffer edit already
+    /// get this for free from anchor tracking.
+    fn apply_digit_width_deltas(
+        renumber_edits: &[(Range<Point>, String)],
+        selections: &mut [Selection<Point>],
+    ) {
+        let mut deltas: BTreeMap<u32, Vec<(u32, i64)>> = BTreeMap::default();
+        for (range, text) in renumber_edits {
+            let old_len = range.end.column.saturating_sub(range.start.column) as i64;
+            let new_len = text.chars().count() as i64;
+            deltas
+                .entry(range.start.row)
+                .or_default()
+                .push((range.end.column, new_len - old_len));
+        }
+        if deltas.is_empty() {
+            return;
+        }
+
+        let shift = |column: &mut u32, row: u32| {
+            if let Some(row_deltas) = deltas.get(&row) {
+                for &(edit_end_column, delta) in row_deltas {
+                    if *column >= edit_end_column {
+                        *column = (*column as i64 + delta).max(0) as u32;
+                    }
+                }
+            }
+        };
+        for selection in selections.iter_mut() {
+            shift(&mut selection.start.column, selection.start.row);
+            shift(&mut selection.end.column, selection.end.row);
+        }
     }
 
     pub fn autoindent(&mut self, _: &AutoIndent, window: &mut Window, cx: &mut Context<Self>) {

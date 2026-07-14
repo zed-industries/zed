@@ -606,6 +606,16 @@
     },
   },
   {
+    "context": "Editor && (extension == md || extension == mdx || extension == mdwn || extension == mdc || extension == markdown)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": ["markdown::Indent", { "behavior": "tab" }],
+      "shift-tab": ["markdown::Outdent", { "behavior": "backtab" }],
+      "ctrl-]": "markdown::Indent",
+      "ctrl-[": "markdown::Outdent",
+    },
+  },
+  {
     "context": "Editor && extension == svg",
     "use_key_equivalents": true,
     "bindings": {

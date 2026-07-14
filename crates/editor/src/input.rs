@@ -1,6 +1,7 @@
 use super::*;
 
 const ORDERED_LIST_MAX_MARKER_LEN: usize = 16;
+const MARKDOWN_NESTED_LIST_MIN_INDENT: u32 = 4;
 
 impl Editor {
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
@@ -2673,6 +2674,13 @@ fn list_delimiter_for_newline(
                 .any(|c| !c.is_whitespace());
 
             if has_content_after_marker && cursor_is_after_prefix {
+                if let NewlineConfig::Newline {
+                    prevent_auto_indent,
+                    ..
+                } = newline_config
+                {
+                    *prevent_auto_indent = true;
+                }
                 return Some((*continuation).into());
             }
 
@@ -2718,6 +2726,13 @@ fn list_delimiter_for_newline(
                 let continuation = ordered_config
                     .format
                     .replace("{1}", &(number + 1).to_string());
+                if let NewlineConfig::Newline {
+                    prevent_auto_indent,
+                    ..
+                } = newline_config
+                {
+                    *prevent_auto_indent = true;
+                }
                 return Some(continuation.into());
             }
 
@@ -2737,6 +2752,338 @@ fn list_delimiter_for_newline(
     }
 
     None
+}
+
+/// Returns true if any row spanned by `selections` begins an ordered list item,
+/// as determined by the markdown syntax tree (`list_item` nodes whose first
+/// child is a `list_marker_dot`/`list_marker_parenthesis` marker).
+pub(super) fn selection_touches_ordered_list(
+    selections: &[Selection<Point>],
+    snapshot: &BufferSnapshot,
+) -> bool {
+    for selection in selections {
+        let start_row = selection.start.row;
+        let mut end_row = selection.end.row + 1;
+        if selection.end.column == 0 && selection.end.row > selection.start.row {
+            end_row -= 1;
+        }
+        for row in start_row..end_row {
+            if ordered_list_marker_node_at_row(row, snapshot).is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Locates the tree-sitter marker node for an ordered list item whose marker
+/// begins on `row`, if any. Used only to classify a single row; grouping and
+/// numbering are handled by [`renumber_ordered_list_edits`], which walks the
+/// enclosing `list` node instead of scanning the buffer.
+fn ordered_list_marker_node_at_row(row: u32, snapshot: &BufferSnapshot) -> Option<Node<'_>> {
+    let indent_len = snapshot.indent_size_for_line(row).len;
+    if indent_len >= snapshot.line_len(row) {
+        return None;
+    }
+    let anchor = Point::new(row, indent_len);
+    let mut current = snapshot.syntax_ancestor(anchor..Point::new(row, indent_len + 1));
+    while let Some(node) = current {
+        if matches!(node.kind(), "list_marker_dot" | "list_marker_parenthesis") {
+            return Some(node);
+        }
+        if node.kind() == "list_item" {
+            return None;
+        }
+        current = node.parent();
+    }
+    None
+}
+
+/// Finds the outermost tree-sitter `list` node enclosing `row`, if any.
+/// ERROR nodes count as list containers too: an empty item just inserted at
+/// the end of the buffer (e.g. by Enter's list continuation, before any
+/// content is typed after the marker) fails to parse as a `list_item`, and
+/// tree-sitter can wrap the marker, or the whole surrounding list, in an
+/// ERROR node instead.
+fn outermost_list_node_at_row(row: u32, snapshot: &BufferSnapshot) -> Option<Node<'_>> {
+    let indent_len = snapshot.indent_size_for_line(row).len;
+    let anchor = Point::new(row, indent_len);
+    let mut current = snapshot.syntax_ancestor(anchor..anchor);
+    let mut outermost = None;
+    while let Some(node) = current {
+        if matches!(node.kind(), "list" | "ERROR") {
+            outermost = Some(node);
+        }
+        current = node.parent();
+    }
+    outermost
+}
+
+struct ListItemEntry {
+    row: u32,
+    column: u32,
+    /// `Some((number, digit_byte_range))` for ordered items; `None` for
+    /// unordered/task items, which still occupy a nesting level but are
+    /// never renumbered.
+    ordered: Option<(u32, Range<usize>)>,
+}
+
+/// Recursively collects every `list_item` in `node` (a `list` or `ERROR`
+/// node, possibly containing nested `list` nodes) in document order. ERROR
+/// nodes are treated as transparent containers, and a bare list marker
+/// directly inside one (how an empty item at the end of the buffer parses,
+/// see [`outermost_list_node_at_row`]) counts as an item of its own.
+fn collect_list_items(
+    node: Node,
+    snapshot: &BufferSnapshot,
+    ordered_list_regexes: &mut HashMap<String, Option<Regex>>,
+    items: &mut Vec<ListItemEntry>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "list_item" => {
+                if let Some(marker) = child.child(0) {
+                    let ordered =
+                        if matches!(marker.kind(), "list_marker_dot" | "list_marker_parenthesis") {
+                            parse_ordered_marker(
+                                marker.byte_range(),
+                                snapshot,
+                                ordered_list_regexes,
+                            )
+                        } else {
+                            None
+                        };
+                    let row = snapshot.offset_to_point(child.start_byte()).row;
+                    // Read the column from the line's actual leading
+                    // whitespace rather than the marker node's own
+                    // start_position(): the markdown grammar's column
+                    // bookkeeping for continuation lines is not always
+                    // consistent with the visual indent for the first item
+                    // of a nested list.
+                    let column = snapshot.indent_size_for_line(row).len;
+                    items.push(ListItemEntry {
+                        row,
+                        column,
+                        ordered,
+                    });
+                }
+                collect_list_items(child, snapshot, ordered_list_regexes, items);
+            }
+            "list" | "ERROR" => {
+                collect_list_items(child, snapshot, ordered_list_regexes, items);
+            }
+            // A marker that is a direct child of an ERROR node (a `list_item`
+            // handles its own marker above) is an item the parser failed to
+            // reduce; still treat it as one.
+            "list_marker_dot" | "list_marker_parenthesis" if node.kind() == "ERROR" => {
+                let row = snapshot.offset_to_point(child.start_byte()).row;
+                items.push(ListItemEntry {
+                    row,
+                    column: snapshot.indent_size_for_line(row).len,
+                    ordered: parse_ordered_marker(
+                        child.byte_range(),
+                        snapshot,
+                        ordered_list_regexes,
+                    ),
+                });
+            }
+            "list_marker_minus" | "list_marker_plus" | "list_marker_star"
+                if node.kind() == "ERROR" =>
+            {
+                let row = snapshot.offset_to_point(child.start_byte()).row;
+                items.push(ListItemEntry {
+                    row,
+                    column: snapshot.indent_size_for_line(row).len,
+                    ordered: None,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reads the number out of an ordered marker's own text (e.g. `"12. "`),
+/// returning it along with the byte range of just the digits so callers can
+/// rewrite the number in place without touching the rest of the marker.
+fn parse_ordered_marker(
+    marker_byte_range: Range<usize>,
+    snapshot: &BufferSnapshot,
+    ordered_list_regexes: &mut HashMap<String, Option<Regex>>,
+) -> Option<(u32, Range<usize>)> {
+    let language = snapshot.language_scope_at(snapshot.offset_to_point(marker_byte_range.start))?;
+    let text: String = snapshot.text_for_range(marker_byte_range.clone()).collect();
+    for config in language.ordered_list() {
+        let Some(regex) = ordered_list_regexes
+            .entry(config.pattern.clone())
+            .or_insert_with(|| Regex::new(&config.pattern).ok())
+            .as_ref()
+        else {
+            continue;
+        };
+        let Some(captures) = regex.captures(&text) else {
+            continue;
+        };
+        let Some(digits) = captures.get(1) else {
+            continue;
+        };
+        let Ok(number) = digits.as_str().parse::<u32>() else {
+            continue;
+        };
+        let start = marker_byte_range.start + digits.start();
+        let end = marker_byte_range.start + digits.end();
+        return Some((number, start..end));
+    }
+    None
+}
+
+/// Tracks the numbering state for one open nesting level while walking a
+/// list's items in row order.
+struct RenumberFrame {
+    column: u32,
+    /// The number the next ordered item at this column should receive, if
+    /// this level is currently an uninterrupted ordered run.
+    next_number: Option<u32>,
+}
+
+fn renumber_list_group(
+    group: &[Node],
+    snapshot: &BufferSnapshot,
+    row_indent_deltas: &BTreeMap<u32, i64>,
+    ordered_list_regexes: &mut HashMap<String, Option<Regex>>,
+    edits: &mut Vec<(Range<Point>, String)>,
+) {
+    let mut items = Vec::new();
+    for node in group {
+        collect_list_items(*node, snapshot, ordered_list_regexes, &mut items);
+    }
+    items.sort_by_key(|item| item.row);
+
+    let mut stack: Vec<RenumberFrame> = Vec::new();
+    for item in &items {
+        let delta = row_indent_deltas.get(&item.row).copied().unwrap_or(0);
+        let moved = delta != 0;
+        let predicted_column = (item.column as i64 + delta).max(0) as u32;
+
+        while stack
+            .last()
+            .is_some_and(|frame| frame.column > predicted_column)
+        {
+            stack.pop();
+        }
+
+        // The Markdown scanner accepts up to three columns of indentation for
+        // a sibling list marker. When an outdent lands in that range, continue
+        // the nearest shallower counter instead of creating a visual level
+        // that does not exist in the syntax tree.
+        let numbering_column = if delta < 0 {
+            stack
+                .last()
+                .filter(|frame| {
+                    frame.column < predicted_column
+                        && predicted_column - frame.column < MARKDOWN_NESTED_LIST_MIN_INDENT
+                })
+                .map_or(predicted_column, |frame| frame.column)
+        } else {
+            predicted_column
+        };
+        if stack
+            .last()
+            .is_none_or(|frame| frame.column != numbering_column)
+        {
+            stack.push(RenumberFrame {
+                column: numbering_column,
+                next_number: None,
+            });
+        }
+
+        let Some((existing_number, digits_range)) = &item.ordered else {
+            // Unordered/task item: occupies the level but breaks any
+            // in-progress ordered run, so a later ordered item at the same
+            // column is treated as a fresh run rather than continuing it.
+            if let Some(frame) = stack.last_mut() {
+                frame.next_number = None;
+            }
+            continue;
+        };
+
+        // A frame for `predicted_column` exists at this point: either it was
+        // already on top, or the push above just put it there.
+        let Some(frame) = stack.last_mut() else {
+            continue;
+        };
+        let new_number = frame
+            .next_number
+            .unwrap_or(if moved { 1 } else { *existing_number });
+        frame.next_number = Some(new_number.saturating_add(1));
+
+        if new_number != *existing_number {
+            let start = snapshot.offset_to_point(digits_range.start);
+            let end = snapshot.offset_to_point(digits_range.end);
+            edits.push((start..end, new_number.to_string()));
+        }
+    }
+}
+
+/// Computes marker-renumbering edits for every ordered list touched by
+/// `row_indent_deltas` (rows about to be indented/outdented, mapped to their
+/// column delta). Grouping and nesting come entirely from the markdown
+/// syntax tree's `list`/`list_item` nodes so counters are never shared
+/// across separate lists or nesting levels; the numbers themselves are read
+/// from each marker's own text since tree-sitter list items carry no
+/// integer field.
+pub(super) fn renumber_ordered_list_edits(
+    snapshot: &BufferSnapshot,
+    row_indent_deltas: &BTreeMap<u32, i64>,
+) -> Vec<(Range<Point>, String)> {
+    let mut seen_ranges = HashSet::default();
+    let mut list_nodes = Vec::new();
+    for &row in row_indent_deltas.keys() {
+        let Some(list_node) = outermost_list_node_at_row(row, snapshot) else {
+            continue;
+        };
+        let range = list_node.byte_range();
+        if seen_ranges.insert((range.start, range.end)) {
+            list_nodes.push(list_node);
+        }
+    }
+    list_nodes.sort_by_key(|node| node.start_byte());
+
+    // A parse failure can split what is visually one list into a `list` node
+    // plus an adjacent ERROR node (e.g. a bare trailing marker at the end of
+    // the buffer). Renumber such row-adjacent groups as a single list so the
+    // ERROR part continues the counters of the intact part. Well-formed
+    // neighboring lists are never merged: tree-sitter only produces separate
+    // adjacent `list` nodes when something (marker style, other content)
+    // genuinely separates them.
+    let mut groups: Vec<Vec<Node>> = Vec::new();
+    for node in list_nodes {
+        if let Some(group) = groups.last_mut()
+            && let Some(last) = group.last()
+            && (last.kind() == "ERROR" || node.kind() == "ERROR")
+        {
+            let last_end_row = snapshot.offset_to_point(last.end_byte()).row;
+            let node_start_row = snapshot.offset_to_point(node.start_byte()).row;
+            if node_start_row <= last_end_row + 1 {
+                group.push(node);
+                continue;
+            }
+        }
+        groups.push(vec![node]);
+    }
+
+    let mut edits = Vec::new();
+    let mut ordered_list_regexes = HashMap::default();
+    for group in groups {
+        renumber_list_group(
+            &group,
+            snapshot,
+            row_indent_deltas,
+            &mut ordered_list_regexes,
+            &mut edits,
+        );
+    }
+    edits
 }
 
 impl EntityInputHandler for Editor {

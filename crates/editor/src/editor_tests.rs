@@ -38366,6 +38366,40 @@ async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_newline_ordered_list_preserves_deep_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // A doubly-indented (2-level, 4-space) item continued via Enter must
+    // keep its 4-space indent, not fall back to column 0 (#48244, #49017).
+    cx.set_state(indoc! {"
+        1. item
+        2. sub subˇ
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. item
+            2. sub subˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. item
+            2. sub sub
+            3. ˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_tab_list_indent(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
@@ -38474,6 +38508,454 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
           ˇ- sub item
     "};
     cx.assert_editor_state(expected);
+}
+
+#[gpui::test]
+async fn test_markdown_ordered_list_indent_renumber(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: issue #48244's exact repro. Indenting the second item of a
+    // flat list restarts its number at 1; outdenting restores it to 2.
+    cx.set_state(indoc! {"
+        1. a
+        2. ˇb
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+          1. ˇb
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_outdent(
+            &MarkdownOutdent {
+                behavior: MarkdownOutdentBehavior::Backtab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+        2. ˇb
+    "});
+
+    // Case 2: gap closing. Indenting the middle item of a 3-item list moves
+    // it into its own nested list and renumbers the trailing sibling to
+    // close the gap it left behind.
+    cx.set_state(indoc! {"
+        1. A
+        2. ˇB
+        3. C
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. A
+          1. ˇB
+        2. C
+    "});
+
+    // Case 3: dinocosta's #52677 counterexample. Indenting a selection that
+    // spans two different nesting levels must not let the deeper item share
+    // the shallower item's counter.
+    cx.set_state(indoc! {"
+        1. A
+        «2. B
+          1. Cˇ»
+          2. D
+        3. E
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. A
+          «1. B
+            1. Cˇ»
+          2. D
+        2. E
+    "});
+
+    // Case 4: smitbarmase's #49017 outdent repro. Outdenting `sub third`
+    // from the 4-space nested list makes it a sibling of `first` in the
+    // Markdown syntax tree, so it continues the parent sequence as `2`.
+    cx.set_state(indoc! {"
+        1. first
+            1. sub first
+            2. sub second
+            3. ˇsub third
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_outdent(
+            &MarkdownOutdent {
+                behavior: MarkdownOutdentBehavior::Backtab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first
+            1. sub first
+            2. sub second
+          2. ˇsub third
+    "});
+
+    // Case 5: indenting onto a preceding nested run continues its
+    // numbering rather than restarting at 1 (the #51294 lesson).
+    cx.set_state(indoc! {"
+        1. A
+          1. suba
+          2. subb
+        2. ˇB
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. A
+          1. suba
+          2. subb
+          3. ˇB
+    "});
+
+    // Case 6: multiple cursors in two separate lists (split by a paragraph)
+    // renumber independently.
+    cx.set_state(indoc! {"
+        1. A
+        2. ˇB
+
+        Some paragraph.
+
+        1. X
+        2. ˇY
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. A
+          1. ˇB
+
+        Some paragraph.
+
+        1. X
+          1. ˇY
+    "});
+
+    // Case 7: digit-width changes (9 -> 10) still land the cursor correctly.
+    cx.set_state(indoc! {"
+        1. a
+        2. b
+        3. c
+        4. d
+        5. e
+        6. f
+        7. g
+        8. h
+        9. i
+        10. ˇj
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+        2. b
+        3. c
+        4. d
+        5. e
+        6. f
+        7. g
+        8. h
+        9. i
+          1. ˇj
+    "});
+
+    // Case 8: a fenced code block containing ordered-list-looking text is
+    // left untouched, since the syntax tree never treats it as a list item.
+    cx.set_state(indoc! {"
+        ```
+        1. ˇfake
+        ```
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        ```
+          1. ˇfake
+        ```
+    "});
+
+    // Case 9: non-list content falls back to (and behaves identically to)
+    // stock Tab, which inserts a plain indent.
+    cx.set_state(indoc! {"
+        ˇSome plain paragraph.
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        $$ˇSome plain paragraph.
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+
+    // Case 10: an empty item at the end of the buffer with no trailing
+    // newline (what Enter's list continuation produces, and #48244's actual
+    // manual gesture). tree-sitter-md parses the bare trailing marker as an
+    // ERROR node outside the list, so renumbering must graft it back on.
+    cx.set_state("1. one\n2. ˇ");
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state("1. one\n  1. ˇ");
+}
+
+#[gpui::test]
+async fn test_markdown_ordered_list_renumber_uses_marker_language_scope(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let python_language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    language_registry.add(markdown_language.clone());
+    language_registry.add(python_language);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+    });
+    cx.set_state(indoc! {"
+        ```python
+        ˇpass
+        ```
+
+        1. A
+        2. ˇB
+    "});
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        ```python
+          ˇpass
+        ```
+
+        1. A
+          1. ˇB
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.markdown_outdent(
+            &MarkdownOutdent {
+                behavior: MarkdownOutdentBehavior::Backtab,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        ```python
+        ˇpass
+        ```
+
+        1. A
+        2. ˇB
+    "});
+}
+
+#[gpui::test]
+async fn test_markdown_ordered_list_renumbers_before_reparse(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    // Reproduce production, where parsing is asynchronous: a fast user can
+    // insert a newline and press Tab before the background reparse lands, so
+    // the syntax tree is stale when the indent action fires. The handler must
+    // still renumber correctly by parsing synchronously first (#48244).
+    cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+
+    cx.set_state(indoc! {"
+        1. aˇ
+    "});
+    cx.run_until_parked();
+
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    // Deliberately do NOT wait for the reparse before indenting.
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        1. a
+          1. ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_markdown_ordered_sublist_enter_preserves_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Full issue #48244 flow: type a list, indent (and renumber) the second
+    // item, then keep typing and continuing the resulting sublist. Every
+    // continuation must keep the sublist's indentation.
+    cx.set_state(indoc! {"
+        1. aˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+          1. ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.handle_input("b", window, cx));
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+          1. b
+          2. ˇ
+    "});
+
+    // Indenting again (to a 4-space, tree-nested level) and continuing must
+    // also preserve indentation on Enter (OmChillure's #49017 diagnosis).
+    cx.update_editor(|e, window, cx| {
+        e.markdown_indent(
+            &MarkdownIndent {
+                behavior: MarkdownIndentBehavior::Tab,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.update_editor(|e, window, cx| e.handle_input("c", window, cx));
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. a
+          1. b
+            1. c
+            2. ˇ
+    "});
 }
 
 #[gpui::test]
@@ -41430,4 +41912,104 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
+}
+
+#[gpui::test]
+async fn test_markdown_ordered_list_tab_through_default_keymap(cx: &mut TestAppContext) {
+    // End-to-end repro of #48244 through the real default keymap: a real
+    // `file.md` buffer, real markdown language config + grammar, and `tab`
+    // dispatched as a keystroke rather than a direct action call. Typing the
+    // list rather than using `set_state` matters: Enter's list continuation
+    // leaves an empty `2. ` marker at the end of the buffer, which
+    // tree-sitter-md parses as an ERROR node outside the list until content
+    // is typed after it.
+    let markdown_language = Arc::into_inner(languages::language(
+        "markdown",
+        tree_sitter_md::LANGUAGE.into(),
+    ))
+    .expect("markdown language should be uniquely owned");
+    let mut cx = EditorLspTestContext::new(markdown_language, Default::default(), cx).await;
+
+    cx.update(|_, cx| {
+        let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-linux.json",
+            cx,
+        )
+        .unwrap();
+        for binding in &mut bindings {
+            binding.set_meta(settings::KeybindSource::Default.meta());
+        }
+        cx.bind_keys(bindings);
+    });
+
+    cx.set_state("ˇ");
+    cx.simulate_keystrokes("1 . space o n e enter");
+    cx.run_until_parked();
+    cx.assert_editor_state("1. one\n2. ˇ");
+
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    cx.assert_editor_state("1. one\n    1. ˇ");
+
+    cx.simulate_keystrokes("s u b enter");
+    cx.run_until_parked();
+    cx.assert_editor_state("1. one\n    1. sub\n    2. ˇ");
+
+    cx.simulate_keystrokes("shift-tab");
+    cx.run_until_parked();
+    cx.assert_editor_state("1. one\n    1. sub\n2. ˇ");
+}
+
+#[gpui::test]
+async fn test_markdown_indent_bindings_cover_markdown_extensions(cx: &mut TestAppContext) {
+    // The markdown indent/outdent bindings must cover every extension the
+    // Markdown language claims (crates/grammars/src/markdown/config.toml),
+    // not just `.md`; the editor lowercases the extension context key, so
+    // `MD` is covered by `md`.
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        for path in [
+            "keymaps/default-linux.json",
+            "keymaps/default-macos.json",
+            "keymaps/default-windows.json",
+        ] {
+            let bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(path, cx).unwrap();
+            let markdown_bindings: Vec<_> = bindings
+                .iter()
+                .filter(|b| matches!(b.action().name(), "markdown::Indent" | "markdown::Outdent"))
+                .collect();
+            assert_eq!(
+                markdown_bindings.len(),
+                4,
+                "{path}: expected 4 markdown indent/outdent bindings"
+            );
+            for ext in ["md", "mdx", "mdwn", "mdc", "markdown"] {
+                let mut key_context = gpui::KeyContext::default();
+                key_context.add("Editor");
+                key_context.set("extension", ext);
+                for binding in &markdown_bindings {
+                    let predicate = binding.predicate().expect("binding should have context");
+                    assert!(
+                        predicate.eval(std::slice::from_ref(&key_context)),
+                        "{path}: {} should match extension {ext}",
+                        binding.action().name()
+                    );
+                }
+            }
+            // A non-markdown extension must not match.
+            let mut key_context = gpui::KeyContext::default();
+            key_context.add("Editor");
+            key_context.set("extension", "rs");
+            for binding in &markdown_bindings {
+                let predicate = binding.predicate().expect("binding should have context");
+                assert!(
+                    !predicate.eval(std::slice::from_ref(&key_context)),
+                    "{path}: {} must not match extension rs",
+                    binding.action().name()
+                );
+            }
+            eprintln!("{path}: OK");
+        }
+    });
 }

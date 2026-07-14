@@ -580,6 +580,8 @@ impl EditorElement {
             register_action(editor, window, Editor::backtab);
             register_action(editor, window, Editor::indent);
             register_action(editor, window, Editor::outdent);
+            register_action(editor, window, Editor::markdown_indent);
+            register_action(editor, window, Editor::markdown_outdent);
             register_action(editor, window, Editor::autoindent);
             register_action(editor, window, Editor::delete_line);
             register_action(editor, window, Editor::join_lines);
