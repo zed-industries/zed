@@ -15803,3 +15803,42 @@ mod disable_ai_settings_tests {
         });
     }
 }
+
+#[gpui::test]
+async fn test_worktree_released_when_creation_caller_is_cancelled(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), serde_json::json!({ "a.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/other"), serde_json::json!({ "b.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    // Drop the returned task immediately, as a cancelled caller would; creation
+    // still completes through the clone held by `loading_worktrees`.
+    let task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(path!("/other"), true, cx)
+    });
+    drop(task);
+    cx.run_until_parked();
+
+    let created = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .find(|worktree| worktree.read(cx).abs_path().ends_with("other"))
+            .map(|worktree| (worktree.read(cx).id(), worktree.downgrade()))
+    });
+
+    let Some((worktree_id, weak_worktree)) = created else {
+        panic!("worktree creation should complete even when the caller is cancelled");
+    };
+
+    project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+    cx.run_until_parked();
+
+    assert!(
+        weak_worktree.upgrade().is_none(),
+        "removed worktree should be released even when its creation task's caller was cancelled"
+    );
+}

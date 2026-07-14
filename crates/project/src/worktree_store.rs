@@ -722,25 +722,36 @@ impl WorktreeStore {
                 }
             };
 
+            let shared_task = task.shared();
             self.loading_worktrees
-                .insert(abs_path.clone(), task.shared());
+                .insert(abs_path.clone(), shared_task.clone());
 
             if visible && self.scanning_enabled {
                 *self.initial_scan_complete.0.borrow_mut() = false;
             }
+
+            // Remove the entry in its own task rather than in the one returned to
+            // callers: every caller can be cancelled while creation keeps running
+            // through the map's own clone, and a resolved task left in the map
+            // would retain the worktree entity it produced forever.
+            cx.spawn({
+                let abs_path = abs_path.clone();
+                async move |this, cx| {
+                    let is_err = shared_task.await.is_err();
+                    this.update(cx, |this, cx| {
+                        this.loading_worktrees.remove(&abs_path);
+                        if !visible || !this.scanning_enabled || is_err {
+                            this.update_initial_scan_state(cx);
+                        }
+                    })
+                    .ok();
+                }
+            })
+            .detach();
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
         cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                this.loading_worktrees.remove(&abs_path);
-                if !visible || !this.scanning_enabled || result.is_err() {
-                    this.update_initial_scan_state(cx);
-                }
-            })
-            .ok();
-
-            match result {
+            match task.await {
                 Ok(worktree) => {
                     if !is_via_collab {
                         if let Some((trusted_worktrees, worktree_store)) = this
