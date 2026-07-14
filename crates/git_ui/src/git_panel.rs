@@ -5091,7 +5091,7 @@ impl GitPanel {
 
         PopoverMenu::new(id.into())
             .trigger_with_tooltip(
-                IconButton::new("view-options-menu-trigger", IconName::Sliders)
+                IconButton::new("view-options-menu-trigger", IconName::Filter)
                     .icon_size(IconSize::Small),
                 Tooltip::text("View Options"),
             )
@@ -8034,6 +8034,7 @@ impl GitPanelMessageTooltip {
                         remote_url.as_deref(),
                         provider_registry,
                     )),
+                    tag_names: Vec::new(),
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
