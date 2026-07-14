@@ -52,7 +52,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, MultiWorkspace, TabBarSettings, ToggleCenteredLayout, ToggleEditorZoom,
+    ToggleTabBar, ToggleWorktreeSecurity, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -1296,6 +1297,13 @@ impl TitleBar {
                 let is_agent = matches!(current_layout, WindowLayout::Agent(_));
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
 
+                let (is_pane_maximized, is_centered_layout) = workspace
+                    .read_with(cx, |workspace, _| {
+                        (workspace.is_pane_maximized(), workspace.centered_layout)
+                    })
+                    .unwrap_or((false, false));
+                let show_tab_bar = TabBarSettings::get_global(cx).show;
+
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
                         let username = username.clone();
@@ -1434,6 +1442,34 @@ impl TitleBar {
                                 })
                             })
                     })
+                    .when(!ai_enabled, |menu| menu.separator())
+                    .toggleable_entry(
+                        "Maximize Editor Pane",
+                        is_pane_maximized,
+                        IconPosition::Start,
+                        Some(ToggleEditorZoom.boxed_clone()),
+                        move |window, cx| {
+                            window.dispatch_action(ToggleEditorZoom.boxed_clone(), cx);
+                        },
+                    )
+                    .toggleable_entry(
+                        "Centered Layout",
+                        is_centered_layout,
+                        IconPosition::Start,
+                        Some(ToggleCenteredLayout.boxed_clone()),
+                        move |window, cx| {
+                            window.dispatch_action(ToggleCenteredLayout.boxed_clone(), cx);
+                        },
+                    )
+                    .toggleable_entry(
+                        "Show Tab Bar",
+                        show_tab_bar,
+                        IconPosition::Start,
+                        Some(ToggleTabBar.boxed_clone()),
+                        move |window, cx| {
+                            window.dispatch_action(ToggleTabBar.boxed_clone(), cx);
+                        },
+                    )
                     .when(is_signed_in, |this| {
                         this.separator()
                             .action("Sign Out", client::SignOut.boxed_clone())

@@ -339,6 +339,11 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Toggles maximizing the active editor pane within the center area,
+        /// hiding other split panes but leaving docks/panels unaffected.
+        ToggleEditorZoom,
+        /// Toggles the visibility of the tab bar.
+        ToggleTabBar,
         /// Toggles read-only mode for the active item (if supported by that item).
         ToggleReadOnlyFile,
         /// Zooms in on the active pane.
@@ -1370,6 +1375,7 @@ pub struct Workspace {
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
+    maximized_pane: Option<WeakEntity<Pane>>,
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
@@ -1821,6 +1827,7 @@ impl Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
+            maximized_pane: None,
             previous_dock_drag_coordinates: None,
             center,
             panes: vec![center_pane.clone()],
@@ -5540,6 +5547,13 @@ impl Workspace {
             None
         });
 
+        if let Some(maximized) = &self.maximized_pane {
+            let is_center_pane = self.panes.contains(&pane);
+            if is_center_pane && maximized.upgrade().as_ref() != Some(&pane) {
+                self.maximized_pane = None;
+            }
+        }
+
         self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into());
@@ -5678,6 +5692,7 @@ impl Workspace {
             }
             pane::Event::ZoomIn => {
                 if *pane == self.active_pane {
+                    self.maximized_pane = None;
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus(window, cx) {
                         self.zoomed = Some(pane.downgrade().into());
@@ -5817,6 +5832,15 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if self.center.remove(&pane, cx).unwrap() {
+            if self
+                .maximized_pane
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+                .as_ref()
+                == Some(&pane)
+            {
+                self.maximized_pane = None;
+            }
             self.force_remove_pane(&pane, &focus_on, window, cx);
             self.unfollow_in_pane(&pane, window, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
@@ -7731,6 +7755,8 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::toggle_editor_zoom))
+            .on_action(cx.listener(Workspace::toggle_tab_bar))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, action: &pane::ActivateNextItem, window, cx| {
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
@@ -7986,6 +8012,14 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn toggle_tab_bar(&mut self, _: &ToggleTabBar, _: &mut Window, cx: &mut Context<Self>) {
+        let fs = self.project.read(cx).fs().clone();
+        let show = !TabBarSettings::get_global(cx).show;
+        update_settings_file(fs, cx, move |content, _cx| {
+            content.tab_bar.get_or_insert_default().show = Some(show);
+        });
+    }
+
     pub fn clear_bookmarks(&mut self, _: &ClearBookmarks, _: &mut Window, cx: &mut Context<Self>) {
         self.project()
             .read(cx)
@@ -7993,6 +8027,37 @@ impl Workspace {
             .update(cx, |bookmark_store, cx| {
                 bookmark_store.clear_bookmarks(cx);
             });
+    }
+
+    pub fn toggle_editor_zoom(
+        &mut self,
+        _: &ToggleEditorZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.zoomed.is_some() {
+            self.active_pane.update(cx, |pane, cx| {
+                pane.set_zoomed(false, cx);
+            });
+            self.zoomed = None;
+            self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
+        }
+
+        if let Some(maximized) = self.maximized_pane.take() {
+            if maximized.upgrade().as_ref() == Some(&self.active_pane) {
+                cx.notify();
+                return;
+            }
+        }
+
+        self.maximized_pane = Some(self.active_pane.downgrade());
+        window.focus(&self.active_pane.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    pub fn is_pane_maximized(&self) -> bool {
+        self.maximized_pane.is_some()
     }
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
@@ -8255,10 +8320,13 @@ impl Workspace {
                 this.track_focus(&self.region_focus_handles.editor)
             })
             .size_full()
-            .child(
-                self.center
-                    .render(self.zoomed.as_ref(), render_cx, window, cx),
-            )
+            .child(self.center.render(
+                self.zoomed.as_ref(),
+                self.maximized_pane.as_ref(),
+                render_cx,
+                window,
+                cx,
+            ))
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -13568,6 +13636,75 @@ mod tests {
                 workspace.zoomed.is_none(),
                 "Workspace remains without zoomed pane"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_editor_zoom(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane_a = workspace.update_in(cx, |workspace, _window, _cx| {
+            workspace.active_pane().clone()
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(TestItem::new);
+            workspace.add_item(pane_a.clone(), Box::new(item), None, true, true, window, cx);
+        });
+
+        let pane_b = split_pane(cx, &workspace);
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(TestItem::new);
+            workspace.add_item(pane_b.clone(), Box::new(item), None, true, true, window, cx);
+        });
+
+        // Toggle editor zoom maximizes the active pane
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_editor_zoom(&ToggleEditorZoom, window, cx);
+            assert!(workspace.is_pane_maximized());
+            assert_eq!(
+                workspace.maximized_pane.as_ref().and_then(|w| w.upgrade()),
+                Some(pane_b.clone()),
+            );
+        });
+
+        // Toggle again un-maximizes
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_editor_zoom(&ToggleEditorZoom, window, cx);
+            assert!(!workspace.is_pane_maximized());
+        });
+
+        // Toggle editor zoom while zoomed: should unzoom then maximize
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.zoom_in(&ZoomIn, window, cx);
+        });
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            assert!(pane_b.read(cx).is_zoomed());
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_editor_zoom(&ToggleEditorZoom, window, cx);
+            assert!(!pane_b.read(cx).is_zoomed());
+            assert!(workspace.zoomed.is_none());
+            assert!(workspace.is_pane_maximized());
+        });
+
+        // Un-maximize for next test
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_editor_zoom(&ToggleEditorZoom, window, cx);
+        });
+
+        // Maximized pane cleared when it is removed
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_editor_zoom(&ToggleEditorZoom, window, cx);
+            assert!(workspace.is_pane_maximized());
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.remove_pane(pane_b.clone(), None, window, cx);
+            assert!(!workspace.is_pane_maximized());
         });
     }
 
