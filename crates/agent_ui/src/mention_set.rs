@@ -92,7 +92,14 @@ impl MentionSet {
                     cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))
                         .await?
                 } else {
-                    task.await.map_err(|e| anyhow!("{e}"))?
+                    task.await.or_else(|error| {
+                        cx.update(|cx| file_mention_fallback_text(&project, &mention_uri, cx))
+                            .map(|content| Mention::Text {
+                                content,
+                                tracked_buffers: Vec::new(),
+                            })
+                            .ok_or_else(|| anyhow!("{error}"))
+                    })?
                 };
 
                 contents.insert(crease_id, (mention_uri, content));
@@ -255,6 +262,7 @@ impl MentionSet {
         let end_anchor = snapshot.buffer_snapshot().anchor_before(
             start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
         );
+        let file_fallback_text = file_mention_fallback_text(&project, &mention_uri, cx);
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && is_raster_image_path(abs_path)
@@ -362,22 +370,30 @@ impl MentionSet {
         }
         self.recompute_disambiguation(cx);
 
-        // Notify the user if we failed to load the mentioned context
         let workspace = workspace.downgrade();
         cx.spawn(async move |this, mut cx| {
-            let result = task.await.notify_workspace_async_err(workspace, &mut cx);
+            let result = task.await;
             drop(tx);
-            if result.is_none() {
-                this.update(cx, |this, cx| {
-                    editor.update(cx, |editor, cx| {
-                        // Remove mention
-                        editor.edit([(start_anchor..end_anchor, "")], cx);
-                    });
-                    this.mentions.remove(&crease_id);
-                    this.crease_entities.remove(&crease_id);
-                })
-                .ok();
+            if result.is_ok() {
+                return;
             }
+
+            let replacement_text = if let Some(file_fallback_text) = file_fallback_text {
+                format!("{file_fallback_text} ")
+            } else {
+                result.notify_workspace_async_err(workspace, &mut cx);
+                String::new()
+            };
+
+            this.update(cx, |this, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.edit([(start_anchor..end_anchor, replacement_text)], cx);
+                });
+                this.mentions.remove(&crease_id);
+                this.crease_entities.remove(&crease_id);
+                this.recompute_disambiguation(cx);
+            })
+            .ok();
         })
     }
 
@@ -737,6 +753,19 @@ fn disambiguated_labels_for_uris(uris: &[&MentionUri]) -> Vec<SharedString> {
             uri.disambiguated_name(detail).into()
         })
         .collect()
+}
+
+fn file_mention_fallback_text(
+    project: &Entity<Project>,
+    mention_uri: &MentionUri,
+    cx: &App,
+) -> Option<String> {
+    let MentionUri::File { abs_path } = mention_uri else {
+        return None;
+    };
+    let project = project.read(cx);
+    let project_path = project.project_path_for_absolute_path(abs_path, cx)?;
+    project.short_full_path_for_project_path(&project_path, cx)
 }
 
 #[cfg(test)]

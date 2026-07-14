@@ -3179,8 +3179,15 @@ mod tests {
                         "seven.txt": "7",
                         "eight.txt": "8",
                     },
-                    "x.png": "",
                 }),
+            )
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_file(
+                path!("/dir/x.bin"),
+                vec![0x00, 0xff, 0x12, 0x00, 0x99, 0x88, 0x77, 0x66, 0x00],
             )
             .await;
 
@@ -3582,56 +3589,64 @@ mod tests {
             );
         });
 
-        // Try to mention an "image" file that will fail to load
-        cx.simulate_input("@file x.png");
+        // Try to mention a binary file that will fail to load as editor text.
+        cx.simulate_input("@file x.bin");
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.bin", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png "]);
+            assert_eq!(current_completion_labels(editor), &["x.bin "]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        // Getting the message contents fails
-        message_editor
+        let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor
-                    .mention_set()
-                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
+                message_editor.contents(false, cx)
             })
             .await
-            .expect_err("Should fail to load x.png");
+            .unwrap()
+            .0;
+        assert!(contents.iter().any(|block| matches!(
+            block,
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
+                ..
+            }) if resource.text == "x.bin"
+        )));
 
         cx.run_until_parked();
 
-        // Mention was removed
+        // The invalid mention was replaced with the relative path.
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
                 format!(
-                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) x.bin ",
                     symbol.to_uri()
                 )
             );
         });
 
         // Once more
-        cx.simulate_input("@file x.png");
+        cx.simulate_input("@file x.bin");
 
         editor.update(&mut cx, |editor, cx| {
-                    assert_eq!(
-                        editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
-                    );
-                    assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png "]);
-                });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) x.bin @file x.bin",
+                    symbol.to_uri()
+                )
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(current_completion_labels(editor), &["x.bin "]);
+        });
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
@@ -3640,12 +3655,12 @@ mod tests {
         // This time don't immediately get the contents, just let the confirmed completion settle
         cx.run_until_parked();
 
-        // Mention was removed
+        // Mention was replaced with the relative path.
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
                 format!(
-                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) x.bin x.bin ",
                     symbol.to_uri()
                 )
             );
