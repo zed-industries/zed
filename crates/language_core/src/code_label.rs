@@ -4,7 +4,7 @@ use std::ops::Range;
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
-    pub kind: lsp::SymbolKind,
+    pub kind: lsp_types::SymbolKind,
     pub container_name: Option<String>,
 }
 
