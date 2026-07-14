@@ -820,6 +820,27 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        let hwnd = self.0.hwnd;
+        self.0
+            .executor
+            .spawn(async move {
+                let info = FLASHWINFO {
+                    cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                    hwnd,
+                    dwFlags: FLASHW_ALL | FLASHW_TIMERNOFG,
+                    uCount: 0,
+                    dwTimeout: 0,
+                };
+                unsafe { FlashWindowEx(&info).ok().log_err() };
+            })
+            .detach();
+    }
+
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
