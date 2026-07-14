@@ -443,6 +443,7 @@ impl LspCommand for GoToParentModule {
             lsp_store,
             buffer,
             server_id,
+            false,
             cx,
         )
         .await

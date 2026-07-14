@@ -1,14 +1,14 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic};
 
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use serde_json::json;
-use ui::rems;
 use util::path;
 use workspace::{AppState, MultiWorkspace};
 
-use crate::OpenPathDelegate;
+use crate::{CandidateInfo, DirectoryState, OpenPathDelegate};
 
 #[gpui::test]
 async fn test_open_path_prompt(cx: &mut TestAppContext) {
@@ -373,6 +373,39 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_open_path_prompt_panics_with_stale_highlight_positions(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, false, false, cx);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.prompt_root = "/".to_string();
+        picker.delegate.directory_state = DirectoryState::List {
+            parent_path: picker.delegate.prompt_root.clone(),
+            entries: vec![CandidateInfo {
+                path: StringMatchCandidate::new(0, "éclair"),
+                is_dir: false,
+            }],
+            error: None,
+        };
+        picker.delegate.string_matches = vec![StringMatch {
+            candidate_id: 0,
+            score: 0.0,
+            positions: vec![1],
+            string: "ab".to_string(),
+        }];
+
+        picker.delegate.render_match(0, false, window, cx);
+    });
+}
+
+#[gpui::test]
 async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -407,6 +440,43 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
     assert_eq!(collect_match_candidates(&picker, cx), vec![".hidden"]);
 }
 
+#[gpui::test]
+async fn test_dismiss_cancels_in_flight_match(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a1": "A1",
+                "a2": "A2",
+                "a3": "A3",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, false, false, cx);
+
+    insert_query(path!("/root/a"), &picker, cx).await;
+
+    let cancel_flag = picker.read_with(cx, |picker, _| picker.delegate.cancel_flag.clone());
+    assert!(
+        !cancel_flag.load(atomic::Ordering::Acquire),
+        "cancel flag should be clear while the prompt is active"
+    );
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.dismissed(window, cx);
+    });
+
+    assert!(
+        cancel_flag.load(atomic::Ordering::Acquire),
+        "dismissing the prompt must cancel the in-flight fuzzy match"
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
@@ -438,9 +508,7 @@ fn build_open_path_prompt(
                 delegate
             };
             cx.new(|cx| {
-                let picker = Picker::uniform_list(delegate, window, cx)
-                    .width(rems(34.))
-                    .modal(false);
+                let picker = Picker::uniform_list(delegate, window, cx).embedded();
                 let query = lister.default_query(cx);
                 picker.set_query(&query, window, cx);
                 picker

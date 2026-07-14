@@ -5,14 +5,15 @@ use crate::{
     completion_provider::{
         AgentContextSelection, AvailableCommand, AvailableSkill, PromptCompletionProvider,
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
-        SlashCommandCompletion,
+        PromptLocalCommand, SlashCommandCompletion,
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
+use base64::Engine as _;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -24,8 +25,8 @@ use editor::{
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity,
+    Focusable, Image, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt,
+    TextStyle, WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
@@ -33,10 +34,10 @@ use project::AgentId;
 use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
-use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -115,6 +116,7 @@ impl SessionCapabilities {
                 description: command.description.clone().into(),
                 requires_argument: command.input.is_some(),
                 source: None,
+                category: acp_thread::command_category_from_meta(&command.meta),
             })
             .collect()
     }
@@ -138,10 +140,13 @@ impl SessionCapabilities {
 
 pub type SharedSessionCapabilities = Arc<RwLock<SessionCapabilities>>;
 
+pub type SharedLocalCommands = Arc<RwLock<Vec<PromptLocalCommand>>>;
+
 struct MessageEditorCompletionDelegate {
     session_capabilities: SharedSessionCapabilities,
     has_thread_store: bool,
     message_editor: WeakEntity<MessageEditor>,
+    local_commands: SharedLocalCommands,
 }
 
 impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
@@ -161,6 +166,18 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
 
     fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
         self.session_capabilities.read().completion_skills()
+    }
+
+    fn available_local_commands(&self, _cx: &App) -> Vec<PromptLocalCommand> {
+        self.local_commands.read().clone()
+    }
+
+    fn run_local_command(&self, command: PromptLocalCommand, cx: &mut App) {
+        self.message_editor
+            .update(cx, |_this, cx| {
+                cx.emit(MessageEditorEvent::LocalCommandInvoked(command));
+            })
+            .ok();
     }
 
     fn slash_autocomplete_invoked(&self, cx: &mut App) {
@@ -187,6 +204,7 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     session_capabilities: SharedSessionCapabilities,
+    local_commands: SharedLocalCommands,
     agent_id: AgentId,
     thread_store: Option<Entity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
@@ -206,10 +224,16 @@ pub enum MessageEditorEvent {
     Cancel,
     Focus,
     LostFocus,
+    Edited,
     /// Emitted when the user opens slash-command autocomplete in this
     /// editor. Used by `ThreadView` to fire the global-skills scan
     /// trigger; see `NativeAgent::ensure_skills_scan_started`.
     SlashAutocompleteOpened,
+    /// Emitted when the user confirms a local slash command (scrolling,
+    /// exporting, feedback) in this editor's completion popup. `ThreadView`
+    /// handles it by running the corresponding action; see
+    /// `handle_message_editor_event`.
+    LocalCommandInvoked(PromptLocalCommand),
     InputAttempted {
         attempt: InputAttempt,
         cursor_offset: usize,
@@ -220,14 +244,8 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
-enum MentionInsertPosition {
-    AtCursor,
-    EndOfBuffer,
-}
-
 fn insert_mention_for_project_path(
     project_path: &ProjectPath,
-    position: MentionInsertPosition,
     editor: &Entity<Editor>,
     mention_set: &Entity<MentionSet>,
     project: &Entity<Project>,
@@ -258,38 +276,20 @@ fn insert_mention_for_project_path(
     let mention_text = mention_uri.as_link().to_string();
     let content_len = mention_text.len();
 
-    let text_anchor = match position {
-        MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx);
-            let snapshot = buffer.snapshot(cx);
-            let buffer_snapshot = snapshot.as_singleton()?;
-            let text_anchor = snapshot
-                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
-                .0
-                .bias_left(&buffer_snapshot);
+    let text_anchor = editor.update(cx, |editor, cx| {
+        let buffer = editor.buffer().read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let buffer_snapshot = snapshot.as_singleton()?;
+        let text_anchor = snapshot
+            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
+            .0
+            .bias_left(&buffer_snapshot);
 
-            editor.insert(&mention_text, window, cx);
-            editor.insert(" ", window, cx);
+        editor.insert(&mention_text, window, cx);
+        editor.insert(" ", window, cx);
 
-            Some(text_anchor)
-        }),
-        MentionInsertPosition::EndOfBuffer => {
-            let multi_buffer = editor.read(cx).buffer().clone();
-            let buffer = multi_buffer.read(cx).as_singleton()?;
-            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
-            let new_text = format!("{mention_text} ");
-            editor.update(cx, |editor, cx| {
-                editor.edit(
-                    [(
-                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
-                        new_text,
-                    )],
-                    cx,
-                );
-            });
-            Some(anchor)
-        }
-    }?;
+        Some(text_anchor)
+    })?;
 
     Some(mention_set.update(cx, |mention_set, cx| {
         mention_set.confirm_mention_completion(
@@ -392,7 +392,6 @@ fn insert_project_path_as_context(
         let project = workspace.read(cx).project().clone();
         insert_mention_for_project_path(
             &project_path,
-            MentionInsertPosition::AtCursor,
             &editor,
             &mention_set,
             &project,
@@ -453,7 +452,6 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
         placeholder: &str,
@@ -506,13 +504,14 @@ impl MessageEditor {
 
             editor
         });
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, thread_store.clone()));
+        let local_commands: SharedLocalCommands = Arc::new(RwLock::new(Vec::new()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             MessageEditorCompletionDelegate {
                 session_capabilities: session_capabilities.clone(),
                 has_thread_store: thread_store.is_some(),
                 message_editor: cx.weak_entity(),
+                local_commands: local_commands.clone(),
             },
             editor.downgrade(),
             mention_set.clone(),
@@ -559,6 +558,7 @@ impl MessageEditor {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
+                    cx.emit(MessageEditorEvent::Edited);
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
                         this.mention_set
@@ -606,11 +606,16 @@ impl MessageEditor {
             mention_set,
             workspace,
             session_capabilities,
+            local_commands,
             agent_id,
             thread_store,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
+    }
+
+    pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
+        *self.local_commands.write() = commands;
     }
 
     pub fn set_session_capabilities(
@@ -721,7 +726,6 @@ impl MessageEditor {
             .detach();
     }
 
-    #[cfg(test)]
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
@@ -1119,6 +1123,7 @@ impl MessageEditor {
                     let mention_uri = MentionUri::Selection {
                         abs_path: Some(file_path.clone()),
                         line_range: line_range.clone(),
+                        column: None,
                     };
 
                     let mention_text = mention_uri.as_link().to_string();
@@ -1159,7 +1164,11 @@ impl MessageEditor {
                                     .update(cx, |project, cx| {
                                         project.project_path_for_absolute_path(&file_path, cx)
                                     })
-                                    .ok_or_else(|| "project path not found".to_string())?;
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "project path not found for pasted selection {file_path:?}"
+                                        )
+                                    })?;
 
                                 let buffer = project
                                     .update(cx, |project, cx| project.open_buffer(project_path, cx))
@@ -1409,7 +1418,6 @@ impl MessageEditor {
         for path in paths {
             if let Some(task) = insert_mention_for_project_path(
                 &path,
-                MentionInsertPosition::EndOfBuffer,
                 &self.editor,
                 &self.mention_set,
                 &project,
@@ -1512,6 +1520,61 @@ impl MessageEditor {
                 })
             })
             .detach_and_log_err(cx);
+    }
+
+    pub fn insert_skill_crease(
+        &mut self,
+        skill: &AvailableSkill,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let mention_uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
+        };
+
+        let link_text = mention_uri.as_link().to_string();
+        let content_len = link_text.len();
+        let mention_text = format!("{} ", link_text);
+        let crease_text: SharedString = mention_uri.name().into();
+
+        let start_anchor = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let cursor = editor.selections.newest_anchor().start;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(cursor)?
+                .0
+                .bias_left(buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            Some(text_anchor)
+        });
+
+        let Some(start_anchor) = start_anchor else {
+            return;
+        };
+
+        self.mention_set
+            .update(cx, |mention_set, cx| {
+                mention_set.confirm_mention_completion(
+                    crease_text,
+                    start_anchor,
+                    content_len,
+                    mention_uri,
+                    false,
+                    self.editor.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                )
+            })
+            .detach();
     }
 
     pub(crate) fn insert_selections(
@@ -1665,11 +1728,15 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let append_normalized = |text: &mut String, mut segment: String| {
+            LineEnding::normalize(&mut segment);
+            text.push_str(&segment);
+        };
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    text.push_str(&text_content.text);
+                    append_normalized(&mut text, text_content.text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1680,7 +1747,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1696,7 +1763,7 @@ impl MessageEditor {
                         MentionUri::parse(&resource.uri, path_style).log_err()
                     {
                         let start = text.len();
-                        write!(&mut text, "{}", mention_uri.as_link()).ok();
+                        append_normalized(&mut text, mention_uri.as_link().to_string());
                         let end = text.len();
                         mentions.push((start..end, mention_uri, Mention::Link));
                     }
@@ -1722,7 +1789,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1762,6 +1829,7 @@ impl MessageEditor {
         for (range, mention_uri, mention) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
+            let image_preview = image_preview_task_for_mention(&mention);
             let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                 snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
@@ -1770,7 +1838,7 @@ impl MessageEditor {
                 mention_uri.tooltip_text(),
                 Some(mention_uri.clone()),
                 Some(self.workspace.clone()),
-                None,
+                image_preview,
                 self.editor.clone(),
                 window,
                 cx,
@@ -2041,6 +2109,31 @@ fn build_chunks_from_creases(
     (chunks, tracked_buffers)
 }
 
+fn image_preview_task_for_mention(
+    mention: &Mention,
+) -> Option<futures::future::Shared<Task<Result<Arc<Image>, String>>>> {
+    let Mention::Image(mention_image) = mention else {
+        return None;
+    };
+
+    let bytes =
+        match base64::engine::general_purpose::STANDARD.decode(mention_image.data.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log::error!("failed to decode image mention: {error}");
+                return None;
+            }
+        };
+
+    Some(
+        Task::ready(Ok::<Arc<Image>, String>(Arc::new(Image::from_bytes(
+            mention_image.format,
+            bytes,
+        ))))
+        .shared(),
+    )
+}
+
 fn mention_to_content_block(
     uri: &MentionUri,
     mention: Option<&Mention>,
@@ -2150,11 +2243,12 @@ fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, path::Path, path::PathBuf, sync::Arc};
+    use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
 
+    use super::PromptLocalCommand;
     use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
-    use agent_client_protocol::schema as acp;
+    use agent_client_protocol::schema::v1 as acp;
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
@@ -2195,6 +2289,7 @@ mod tests {
             description: "Deploy the app".into(),
             source: "".into(),
             skill_file_path: skill_file_path.clone(),
+            warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
             acp::PromptCapabilities::default(),
@@ -2210,6 +2305,40 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_commands_derive_category_from_meta() {
+        let session_capabilities = SessionCapabilities::new(
+            acp::PromptCapabilities::default(),
+            vec![
+                acp::AvailableCommand::new("compact", "Built-in").meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+                ),
+                acp::AvailableCommand::new("deploy", "MCP").meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
+                ),
+                // No category meta: this is how external ACP agents' commands
+                // arrive, and they should group on their own.
+                acp::AvailableCommand::new("help", "External"),
+            ],
+            Vec::new(),
+        );
+
+        let commands = session_capabilities.completion_commands();
+        let category = |name: &str| {
+            commands
+                .iter()
+                .find(|command| command.name.as_ref() == name)
+                .unwrap()
+                .category
+        };
+        assert_eq!(
+            category("compact"),
+            Some(acp_thread::CommandCategory::Native)
+        );
+        assert_eq!(category("deploy"), Some(acp_thread::CommandCategory::Mcp));
+        assert_eq!(category("help"), None);
+    }
+
+    #[test]
     fn test_validate_slash_commands_accepts_scope_qualified_skill() {
         let agent_id = AgentId::from("Zed");
         let make_skill = |name: &str, source: &str| AvailableSkill {
@@ -2217,6 +2346,7 @@ mod tests {
             description: "desc".into(),
             source: source.into(),
             skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
+            warning: None,
         };
 
         // Global skills carry an empty scope (so the popup inserts
@@ -2419,7 +2549,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -2520,7 +2649,6 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     session_capabilities.clone(),
                     "Claude Agent".into(),
                     "Test",
@@ -2686,7 +2814,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
@@ -2815,6 +2942,118 @@ mod tests {
         });
     }
 
+    /// Local commands set via `set_local_commands` must surface in the
+    /// slash-command popup, and confirming one must emit
+    /// `MessageEditorEvent::LocalCommandInvoked` (so `ThreadView` can run the
+    /// corresponding action) without leaving the `/keyword` in the editor.
+    #[gpui::test]
+    async fn test_local_commands_complete_and_emit_event(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
+            acp::PromptCapabilities::default(),
+            Vec::new(),
+        )));
+
+        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    None,
+                    session_capabilities.clone(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        message_editor.read_with(&cx, |message_editor, _| {
+            message_editor.set_local_commands(vec![
+                PromptLocalCommand::ThumbsUp,
+                PromptLocalCommand::ThumbsDown,
+            ]);
+        });
+
+        let invoked = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&message_editor, {
+                let invoked = invoked.clone();
+                move |_editor, event, _cx| {
+                    if let MessageEditorEvent::LocalCommandInvoked(command) = event {
+                        invoked.borrow_mut().push(*command);
+                    }
+                }
+            })
+        });
+
+        // `/helpful` would fuzzy-match both commands ("helpful" is a
+        // subsequence of "not-helpful"), so drive the unambiguous keyword.
+        cx.simulate_input("/not-helpful");
+        cx.run_until_parked();
+
+        editor.read_with(&cx, |editor, _| {
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                current_completion_labels(editor),
+                &[PromptLocalCommand::ThumbsDown.label().to_string()],
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.read_with(&cx, |editor, cx| {
+            // The `/keyword` text is removed when a local command is confirmed.
+            assert_eq!(editor.text(cx), "");
+            assert!(!editor.has_visible_completions_menu());
+        });
+
+        assert_eq!(
+            invoked.borrow().as_slice(),
+            &[PromptLocalCommand::ThumbsDown],
+        );
+    }
+
     /// Opening slash-command autocomplete must emit
     /// [`MessageEditorEvent::SlashAutocompleteOpened`]. `ThreadView`
     /// subscribes to that event to fire the global-skills scan trigger
@@ -2858,7 +3097,6 @@ mod tests {
                 MessageEditor::new(
                     workspace_handle,
                     project.downgrade(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
@@ -3008,7 +3246,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
@@ -3500,7 +3737,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3601,7 +3837,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3670,7 +3905,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3723,7 +3957,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3780,7 +4013,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3838,7 +4070,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3900,7 +4131,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4060,7 +4290,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4180,7 +4409,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store.clone()),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4259,7 +4487,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4342,10 +4569,12 @@ mod tests {
         let first_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 0..=1,
+            column: None,
         };
         let second_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 2..=3,
+            column: None,
         };
 
         source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
@@ -4435,7 +4664,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4503,10 +4731,12 @@ mod tests {
         let first_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 0..=1,
+            column: None,
         };
         let second_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 2..=3,
+            column: None,
         };
 
         let buffer_len = message_editor.update_in(&mut cx, |message_editor, window, cx| {
@@ -4845,7 +5075,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4997,6 +5226,88 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dragged_file_path_inserts_at_cursor(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Hello world", window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+        });
+
+        insert_dragged_project_paths(&message_editor, vec!["file.txt"], &mut cx);
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/file.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Hello [@file.txt]({expected_uri}) world")
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/file.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dragged_file_paths_insert_in_order_at_cursor(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "one.txt": "one",
+                "two.txt": "two",
+            }),
+            cx,
+        )
+        .await;
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Hello world", window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+        });
+
+        insert_dragged_project_paths(&message_editor, vec!["one.txt", "two.txt"], &mut cx);
+
+        let first_uri = MentionUri::File {
+            abs_path: path!("/project/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+        let second_uri = MentionUri::File {
+            abs_path: path!("/project/two.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Hello [@one.txt]({first_uri}) [@two.txt]({second_uri}) world")
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_paste_mixed_external_image_without_extension_and_file_path(
         cx: &mut TestAppContext,
     ) {
@@ -5100,7 +5411,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5141,6 +5451,36 @@ mod tests {
 
         message_editor.update_in(cx, |message_editor, window, cx| {
             message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn insert_dragged_project_paths(
+        message_editor: &Entity<MessageEditor>,
+        paths: Vec<&str>,
+        cx: &mut VisualTestContext,
+    ) {
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            let workspace = message_editor
+                .workspace
+                .upgrade()
+                .expect("message editor should keep workspace alive");
+            let project = workspace.read(cx).project().clone();
+            let worktree_id = project.update(cx, |project, cx| {
+                let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+                assert_eq!(worktrees.len(), 1, "expected a single worktree");
+                worktrees.pop().unwrap().read(cx).id()
+            });
+
+            let paths = paths
+                .into_iter()
+                .map(|path| ProjectPath {
+                    worktree_id,
+                    path: rel_path(path).into(),
+                })
+                .collect();
+
+            message_editor.insert_dragged_files(paths, vec![], window, cx);
         });
         cx.run_until_parked();
     }
@@ -5193,7 +5533,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5229,6 +5568,33 @@ mod tests {
         let text = message_editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "hello world");
         assert!(!message_editor.update(cx, |editor, cx| editor.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_set_message_normalizes_crlf_before_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent::new("before\r\n".to_string())),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                        "file.txt",
+                        "file:///project/file.txt",
+                    )),
+                ],
+                window,
+                cx,
+            );
+        });
+
+        let text = message_editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "before\n[@file.txt](file:///project/file.txt)");
+
+        let mention_uris =
+            message_editor.update(cx, |editor, cx| editor.mention_set.read(cx).mentions());
+        assert_eq!(mention_uris.len(), 1);
     }
 
     #[gpui::test]
@@ -5341,7 +5707,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),

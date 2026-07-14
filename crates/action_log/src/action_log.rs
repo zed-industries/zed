@@ -159,11 +159,8 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.language_changed(language, language_registry, cx);
-                    diff
-                });
+                let diff =
+                    cx.new(|cx| BufferDiff::new(&text_snapshot, language, language_registry, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
@@ -465,29 +462,15 @@ impl ActionLog {
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language) = this.read_with(cx, |this, cx| {
+        let diff = this.read_with(cx, |this, _cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
                 .context("buffer not tracked")?;
-            anyhow::Ok((
-                tracked_buffer.diff.clone(),
-                buffer.read(cx).language().cloned(),
-            ))
+            anyhow::Ok(tracked_buffer.diff.clone())
         })??;
-        let update = diff
-            .update(cx, |diff, cx| {
-                diff.update_diff(
-                    buffer_snapshot.clone(),
-                    Some(new_base_text),
-                    Some(true),
-                    language,
-                    cx,
-                )
-            })
-            .await;
         diff.update(cx, |diff, cx| {
-            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+            diff.set_base_text(Some(new_base_text), buffer_snapshot.clone(), cx)
         })
         .await;
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
@@ -936,7 +919,11 @@ impl ActionLog {
         let mut undo_buffers = Vec::new();
         let mut futures = Vec::new();
 
-        for buffer in self.changed_buffers(cx).into_keys() {
+        for buffer in self
+            .changed_buffers(cx)
+            .map(|(buffer, _)| buffer)
+            .collect::<Vec<_>>()
+        {
             let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
                 buffer.read(cx).remote_id(),
             )];
@@ -1023,17 +1010,19 @@ impl ActionLog {
     }
 
     /// Returns the set of buffers that contain edits that haven't been reviewed by the user.
-    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
+    pub fn changed_buffers(
+        &self,
+        cx: &App,
+    ) -> impl Iterator<Item = (Entity<Buffer>, Entity<BufferDiff>)> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
-            .collect()
     }
 
     /// Returns the total number of lines added and removed across all unreviewed buffers.
     pub fn diff_stats(&self, cx: &App) -> DiffStats {
-        DiffStats::all_files(&self.changed_buffers(cx), cx)
+        DiffStats::all_files(self.changed_buffers(cx), cx)
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -1079,7 +1068,7 @@ impl DiffStats {
     }
 
     pub fn all_files(
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: impl IntoIterator<Item = (Entity<Buffer>, Entity<BufferDiff>)>,
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
@@ -1334,7 +1323,7 @@ mod tests {
     use std::env;
     use util::{RandomCharIter, path};
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -3254,21 +3243,21 @@ mod tests {
             child_log_1
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let child_2_changed: Vec<_> = cx.read(|cx| {
             child_log_2
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let parent_changed: Vec<_> = cx.read(|cx| {
             parent_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
 
@@ -3494,7 +3483,6 @@ mod tests {
             action_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_iter()
                 .map(|(buffer, diff)| {
                     let snapshot = buffer.read(cx).snapshot();
                     (

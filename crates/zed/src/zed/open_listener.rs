@@ -42,6 +42,7 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
+    pub open_behavior: Option<cli::OpenBehavior>,
 }
 
 pub enum OpenRequestKind {
@@ -58,8 +59,9 @@ pub enum OpenRequestKind {
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
-    SharedAgentThread {
-        session_id: String,
+    InstallSkill {
+        /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
+        content: String,
     },
     DockMenuAction {
         index: usize,
@@ -94,9 +96,9 @@ impl std::fmt::Debug for OpenRequestKind {
                 .debug_struct("AgentPanel")
                 .field("external_source_prompt", external_source_prompt)
                 .finish(),
-            Self::SharedAgentThread { session_id } => f
-                .debug_struct("SharedAgentThread")
-                .field("session_id", session_id)
+            Self::InstallSkill { content } => f
+                .debug_struct("InstallSkill")
+                .field("content_len", &content.len())
                 .finish(),
             Self::DockMenuAction { index } => f
                 .debug_struct("DockMenuAction")
@@ -135,6 +137,7 @@ impl OpenRequest {
         this.diff_paths = request.diff_paths;
         this.diff_all = request.diff_all;
         this.dev_container = request.dev_container;
+        this.open_behavior = request.open_behavior;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -168,14 +171,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
-                if uuid::Uuid::parse_str(session_id_str).is_ok() {
-                    this.kind = Some(OpenRequestKind::SharedAgentThread {
-                        session_id: session_id_str.to_string(),
-                    });
-                } else {
-                    log::error!("Invalid session ID in URL: {}", session_id_str);
-                }
+            } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
+                this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
             } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
@@ -233,6 +230,13 @@ impl OpenRequest {
         self.kind = Some(OpenRequestKind::AgentPanel {
             external_source_prompt,
         });
+    }
+
+    fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
+        // Format: zed://skill?data=<base64url of SKILL.md contents>
+        let content = agent_skills::decode_skill_share_link(url)?;
+        self.kind = Some(OpenRequestKind::InstallSkill { content });
+        Ok(())
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -382,6 +386,7 @@ pub struct RawOpenRequest {
     pub diff_all: bool,
     pub dev_container: bool,
     pub wsl: Option<String>,
+    pub open_behavior: Option<cli::OpenBehavior>,
 }
 
 impl Global for OpenListener {}
@@ -571,6 +576,7 @@ pub async fn handle_cli_connection(
                                 diff_all,
                                 dev_container,
                                 wsl,
+                                open_behavior: Some(open_behavior),
                             },
                             cx,
                         ) {
@@ -606,10 +612,14 @@ pub async fn handle_cli_connection(
                             open_behavior = cli::OpenBehavior::ExistingWindow;
                         }
                         Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_behavior = cli::OpenBehavior::Classic;
+                            open_behavior = cli::OpenBehavior::PreferNewWindow;
                         }
                         None => {}
                     }
+                }
+
+                if open_behavior == cli::OpenBehavior::Default {
+                    open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
                 }
 
                 cx.update(|cx| cx.activate(true));
@@ -641,8 +651,8 @@ pub async fn handle_cli_connection(
     }
 }
 
-/// Resolves the CLI open behavior when no explicit flag (`-n`, `-e`, `--reuse`)
-/// was given. May prompt the user interactively on first run.
+/// Resolves the CLI open behavior when no explicit open behavior flag was given.
+/// May prompt the user interactively on first run.
 ///
 /// Returns `Some(behavior)` to override the default, or `None` if no override
 /// is needed (e.g. no existing windows, paths already in a workspace, or the
@@ -735,6 +745,64 @@ async fn resolve_open_behavior(
     None
 }
 
+pub(crate) fn open_options_for_request(
+    open_behavior: Option<cli::OpenBehavior>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> workspace::OpenOptions {
+    let open_behavior = open_behavior.unwrap_or_else(|| {
+        match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
+            settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
+            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
+        }
+    });
+    open_options_for_behavior(open_behavior, location, cx)
+}
+
+pub(crate) fn open_options_for_behavior(
+    open_behavior: cli::OpenBehavior,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> workspace::OpenOptions {
+    let open_behavior = if open_behavior == cli::OpenBehavior::Default {
+        open_behavior_for_default_setting(cx)
+    } else {
+        open_behavior
+    };
+
+    // If reuse flag is passed, open a new workspace in an existing window.
+    let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
+        workspace::workspace_windows_for_location(location, cx)
+            .into_iter()
+            .next()
+    } else {
+        None
+    };
+    workspace::OpenOptions {
+        workspace_matching: match open_behavior {
+            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
+                workspace::WorkspaceMatching::None
+            }
+            cli::OpenBehavior::PreferNewWindow => workspace::WorkspaceMatching::MatchSubpaths,
+            cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
+            _ => workspace::WorkspaceMatching::MatchExact,
+        },
+        add_dirs_to_sidebar: match open_behavior {
+            cli::OpenBehavior::ExistingWindow => true,
+            _ => false,
+        },
+        requesting_window,
+        ..Default::default()
+    }
+}
+
+fn open_behavior_for_default_setting(cx: &App) -> cli::OpenBehavior {
+    match workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior {
+        settings::CliDefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
+        settings::CliDefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
+    }
+}
+
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
@@ -748,7 +816,10 @@ async fn open_workspaces(
     cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
+    if paths.is_empty()
+        && diff_paths.is_empty()
+        && !matches!(open_behavior, cli::OpenBehavior::AlwaysNew)
+    {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -787,39 +858,13 @@ async fn open_workspaces(
     let mut errored = false;
 
     for (location, workspace_paths) in grouped_locations {
-        // If reuse flag is passed, open a new workspace in an existing window.
-        let replace_window = if open_behavior == cli::OpenBehavior::Reuse {
-            cx.update(|cx| {
-                workspace::workspace_windows_for_location(&location, cx)
-                    .into_iter()
-                    .next()
-            })
-        } else {
-            None
-        };
+        let base_open_options =
+            cx.update(|cx| open_options_for_behavior(open_behavior, &location, cx));
         let open_options = workspace::OpenOptions {
-            workspace_matching: match open_behavior {
-                cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
-                    workspace::WorkspaceMatching::None
-                }
-                cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
-                _ => workspace::WorkspaceMatching::MatchExact,
-            },
-            add_dirs_to_sidebar: match open_behavior {
-                cli::OpenBehavior::ExistingWindow => true,
-                // For the default value, we consult the settings to decide
-                // whether to open in a new window or existing window.
-                cli::OpenBehavior::Default => cx.update(|cx| {
-                    workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                }),
-                _ => false,
-            },
-            requesting_window: replace_window,
             wait,
             env: env.clone(),
             open_in_dev_container: dev_container,
-            ..Default::default()
+            ..base_open_options
         };
 
         match location {
@@ -1022,13 +1067,20 @@ pub async fn derive_paths_with_position(
         let original_path = Path::new(path_str.as_ref());
         let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
 
-        // If the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
-        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
-        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
-        if !cfg!(windows)
+        // If the unparsed path string actually points to an existing file or directory, use it
+        // instead of parsing out the line/col number. This matters for paths whose final
+        // component looks like a position suffix, e.g. a folder named `Test (3)` would
+        // otherwise be parsed as `Test ` at row 3.
+        // Colon : is not valid in NTFS file names, so skip this logic if colon on windows.
+        let has_colon = original_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| name.contains(':'));
+
+        if (!has_colon || !cfg!(windows))
             && parsed.row.is_some()
             && parsed.path != original_path
-            && fs.is_file(original_path).await
+            && (fs.is_file(original_path).await || fs.is_dir(original_path).await)
         {
             parsed = PathWithPosition::from_path(original_path.to_path_buf());
         }
@@ -1049,12 +1101,13 @@ mod tests {
     use cli::CliResponse;
     use editor::Editor;
     use futures::poll;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext, UpdateGlobal as _};
     use language::LineEnding;
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::{sync::Arc, task::Poll};
+    use session::Session;
+    use std::{path::Path, sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, MultiWorkspace};
 
@@ -1161,6 +1214,119 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_derive_paths_with_position_directory_with_position_like_name(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        // A folder whose name ends in `(N)` or `(row,col)` would otherwise be parsed as a
+        // path with a row/column suffix (e.g. the MSVC-style `file.c(22)`), truncating the name.
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "TEST (1)": {},
+                "Project (2,3)": {},
+                "test 123": {},
+            }),
+        )
+        .await;
+
+        let inputs = vec![
+            path!("/root/TEST (1)").to_string(),
+            path!("/root/Project (2,3)").to_string(),
+            path!("/root/test 123").to_string(),
+        ];
+        let result = derive_paths_with_position(fs.as_ref(), inputs).await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                (path!("/root/TEST (1)").to_string(), None, None),
+                (path!("/root/Project (2,3)").to_string(), None, None),
+                (path!("/root/test 123").to_string(), None, None),
+            ]
+        );
+    }
+
+    // Test file with colon (`:`) in the name on non-Windows platforms,
+    // as it is valid for file names on Unix-like systems.
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_derive_paths_with_position_colon_in_name_reverts_on_unix(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        fs.insert_tree(path!("/root"), json!({ "test.txt:10": "" }))
+            .await;
+
+        let result =
+            derive_paths_with_position(fs.as_ref(), vec![path!("/root/test.txt:10").to_string()])
+                .await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![(path!("/root/test.txt:10").to_string(), None, None)]
+        );
+    }
+
+    // On Windows `:` is used to delimit NTFS alternate data streams,
+    // `notes.txt:10` should be parsed as `notes.txt` at row 10
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_derive_paths_with_position_colon_in_name_parsed_as_position_on_windows(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        fs.insert_tree(path!("/root"), json!({ "test.txt": "" }))
+            .await;
+
+        let result =
+            derive_paths_with_position(fs.as_ref(), vec![path!("/root/test.txt:10").to_string()])
+                .await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![(path!("/root/test.txt").to_string(), Some(10), None)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_parse_ssh_url_preserves_open_behavior(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["ssh://me@host:/".into()],
+                    open_behavior: Some(cli::OpenBehavior::AlwaysNew),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(request.open_behavior, Some(cli::OpenBehavior::AlwaysNew));
+    }
+
+    #[gpui::test]
     fn test_reject_ssh_urls(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
@@ -1180,6 +1346,66 @@ mod tests {
             });
             assert!(result.is_err(), "{input} should be rejected");
         }
+    }
+
+    #[gpui::test]
+    fn test_open_options_for_behavior_always_new(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let options = cx.update(|cx| {
+            open_options_for_behavior(
+                cli::OpenBehavior::AlwaysNew,
+                &SerializedWorkspaceLocation::Local,
+                cx,
+            )
+        });
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::None
+        );
+        assert!(!options.add_dirs_to_sidebar);
+        assert!(options.requesting_window.is_none());
+    }
+
+    #[gpui::test]
+    fn test_open_options_for_request_respects_default_open_behavior(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+
+        let _app_state = init_test(cx);
+
+        // A `None` behavior (e.g. a Finder or URL open) consults the UI-level
+        // `default_open_behavior` setting rather than falling back to fixed
+        // defaults.
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.default_open_behavior =
+                        Some(settings::DefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+        let options =
+            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::MatchSubpaths
+        );
+        assert!(!options.add_dirs_to_sidebar);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.default_open_behavior =
+                        Some(settings::DefaultOpenBehavior::ExistingWindow);
+                });
+            });
+        });
+        let options =
+            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::MatchExact
+        );
+        assert!(options.add_dirs_to_sidebar);
     }
 
     #[gpui::test]
@@ -1205,6 +1431,52 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
+    }
+
+    #[gpui::test]
+    fn test_parse_skill_install_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\nDo the thing.\n".to_string();
+        let link = agent_skills::encode_skill_share_link(&content);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![link],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::InstallSkill {
+                content: parsed_content,
+            }) => {
+                assert_eq!(parsed_content, content);
+            }
+            _ => panic!("Expected InstallSkill kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_malformed_skill_install_url_errors(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://skill?data=!!!notbase64".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        assert!(result.is_err());
     }
 
     fn agent_url_with_prompt(prompt: &str) -> String {
@@ -1324,50 +1596,6 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![format!("zed://agent/shared/{session_id}")],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::SharedAgentThread {
-                session_id: parsed_session_id,
-            }) => {
-                assert_eq!(parsed_session_id, session_id);
-            }
-            _ => panic!("Expected SharedAgentThread kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        assert!(request.kind.is_none());
     }
 
     #[gpui::test]
@@ -2074,6 +2302,7 @@ mod tests {
             .await;
 
         assert!(!errored);
+        cx.run_until_parked();
 
         let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
@@ -2154,6 +2383,25 @@ mod tests {
         CliRequest::Open {
             paths,
             urls: vec![],
+            diff_paths: vec![],
+            diff_all: false,
+            wsl: None,
+            wait: false,
+            open_behavior,
+            env: None,
+            user_data_dir: None,
+            dev_container: false,
+            cwd: None,
+        }
+    }
+
+    fn make_cli_url_open_request(
+        urls: Vec<String>,
+        open_behavior: cli::OpenBehavior,
+    ) -> CliRequest {
+        CliRequest::Open {
+            paths: vec![],
+            urls,
             diff_paths: vec![],
             diff_all: false,
             wsl: None,
@@ -2404,6 +2652,207 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_e2e_new_window_setting_restores_workspace_when_no_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let serialization_tasks = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .unwrap();
+        futures::future::join_all(serialization_tasks).await;
+
+        multi_workspace
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 0);
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(Vec::new(), cli::OpenBehavior::Default),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when no windows exist"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let restored_window = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        restored_window
+            .read_with(cx, |multi_workspace, cx| {
+                let root_paths = multi_workspace.workspace().read(cx).root_paths(cx);
+                assert!(
+                    root_paths
+                        .iter()
+                        .any(|path| path.as_ref() == Path::new(path!("/project"))),
+                    "expected CLI launch with no paths to restore /project, got {root_paths:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_opens_project_root_in_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "new_window"}"#
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_focuses_existing_window_for_subpaths(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "file.txt": "content",
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "new_window"}"#
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state.clone(),
+            make_cli_open_request(
+                vec![path!("/project/src").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
+    }
+
+    #[gpui::test]
     async fn test_e2e_explicit_existing_flag_no_prompt(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -2464,6 +2913,35 @@ mod tests {
                 vec![path!("/project_b/file.txt").to_string()],
                 cli::OpenBehavior::AlwaysNew, // -n flag: force new window
             ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(!prompt_shown, "no prompt should be shown with -n flag");
+        assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_explicit_new_flag_with_file_url_opens_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let file_url = format!(
+            "file://{}",
+            urlencoding::encode(path!("/project/file.txt")).into_owned()
+        );
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_url_open_request(vec![file_url], cli::OpenBehavior::AlwaysNew),
             None,
         );
 

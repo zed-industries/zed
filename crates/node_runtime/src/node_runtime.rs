@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
@@ -253,6 +253,15 @@ impl NodeRuntime {
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
+        self.npm_package_latest_version_with_requirement(name, None)
+            .await
+    }
+
+    pub async fn npm_package_latest_version_with_requirement(
+        &self,
+        name: &str,
+        version_requirement: Option<&VersionReq>,
+    ) -> Result<Version> {
         let http = self.0.lock().await.http.clone();
         let instance = self.instance().await;
         let output = instance
@@ -273,16 +282,22 @@ impl NodeRuntime {
             )
             .await?;
 
-        let info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+        let info: NpmInfo = deserialize_npm_info_from_response(&output.stdout).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse npm info response: {e}\nstdout: {}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })?;
         let before = npm_config_before(instance.as_ref(), http.proxy())
             .await
             .context("getting npm before config")
             .log_err()
             .flatten();
         let latest_dist_tag = info.dist_tags.latest.clone();
-        let selected_version = select_npm_package_version(name, info, before.as_deref())?;
+        let selected_version =
+            select_npm_package_version(name, info, before.as_deref(), version_requirement)?;
         log::debug!(
-            "selected latest npm package version package={name:?} before={before:?} dist_tag_latest={latest_dist_tag:?} selected={selected_version}"
+            "selected latest npm package version package={name:?} version_requirement={version_requirement:?} before={before:?} dist_tag_latest={latest_dist_tag:?} selected={selected_version}"
         );
         Ok(selected_version)
     }
@@ -408,13 +423,47 @@ pub struct NpmInfo {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
     versions: Vec<Version>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_npm_info_time")]
     time: HashMap<String, String>,
+}
+
+/// Parse NpmInfo from npm info --json output, handling both v11 and >= v12 formats.
+fn deserialize_npm_info_from_response(data: &[u8]) -> Result<NpmInfo, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_slice(data)?;
+
+    // npm >= 12 returns an array with one object: [ { ... } ]
+    if let serde_json::Value::Array(arr) = &value {
+        if arr.len() == 1 {
+            return NpmInfo::deserialize(&arr[0]);
+        }
+    }
+
+    // npm <= v11 returns a bare JSON object: { ... }
+    NpmInfo::deserialize(value)
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NpmInfoDistTags {
     latest: Option<Version>,
+}
+
+// Some registries put non-string values in the `time` map: JFrog Artifactory emits
+// `"unpublished": null`, and npm itself reports `unpublished` as an object when a
+// package has had versions unpublished. Only version keys map to the RFC 3339 strings
+// we read, so keep the string entries and drop the rest rather than failing to parse
+// the entire `npm info` response (which would block language server installation).
+fn deserialize_npm_info_time<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(value) => Some((key, value)),
+            _ => None,
+        })
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -442,7 +491,19 @@ fn select_npm_package_version(
     package_name: &str,
     mut info: NpmInfo,
     before: Option<&str>,
+    version_requirement: Option<&VersionReq>,
 ) -> Result<Version> {
+    if let Some(version_requirement) = version_requirement {
+        info.versions
+            .retain(|version| version_requirement.matches(version));
+        info.versions.sort();
+        info.dist_tags.latest = info
+            .dist_tags
+            .latest
+            .take()
+            .filter(|version| version_requirement.matches(version));
+    }
+
     if let Some(before) = before
         && !info.time.is_empty()
     {
@@ -463,6 +524,7 @@ fn select_npm_package_version(
                 latest_version,
                 &info.time,
                 &before_timestamp,
+                version_requirement.is_some(),
             )? {
                 return Ok(version.clone());
             }
@@ -482,8 +544,9 @@ fn is_allowed_npm_version_before(
     latest_version: Option<&Version>,
     published_at_by_version: &HashMap<String, String>,
     before: &DateTime<Utc>,
+    allow_prereleases: bool,
 ) -> Result<bool> {
-    if !version.pre.is_empty()
+    if (!allow_prereleases && !version.pre.is_empty())
         || latest_version.is_some_and(|latest_version| version > latest_version)
     {
         return Ok(false);
@@ -1082,11 +1145,11 @@ mod tests {
 
     use anyhow::{Result, bail};
     use http_client::Url;
-    use semver::Version;
+    use semver::{Version, VersionReq};
 
     use super::{
-        NpmInfo, VersionStrategy, build_npm_command_args, proxy_argument,
-        select_npm_package_version, should_install_npm_package_version,
+        NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
+        proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
 
     // Map localhost to 127.0.0.1
@@ -1206,8 +1269,38 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, None)?,
+            select_npm_package_version("test-package", info, None, None)?,
             Version::parse("3.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_npm_info_skips_non_string_time_entries() -> Result<()> {
+        // Registries such as JFrog Artifactory include `"unpublished": null` in `time`;
+        // parsing must tolerate this rather than rejecting the whole response.
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0"],
+                "time": {
+                    "unpublished": null,
+                    "created": "2024-01-01T00:00:00.000Z",
+                    "modified": "2024-02-01T00:00:00.000Z",
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
+            Version::parse("2.0.0")?
         );
         Ok(())
     }
@@ -1227,7 +1320,12 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
             Version::parse("2.0.0")?
         );
         Ok(())
@@ -1248,7 +1346,12 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
             Version::parse("2.0.0")?
         );
         Ok(())
@@ -1268,7 +1371,12 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
             Version::parse("2.0.0-beta.1")?
         );
         Ok(())
@@ -1289,7 +1397,12 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
             Version::parse("1.0.0")?
         );
         Ok(())
@@ -1310,7 +1423,12 @@ mod tests {
         )?;
 
         assert_eq!(
-            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                None
+            )?,
             Version::parse("1.0.0")?
         );
         Ok(())
@@ -1329,14 +1447,165 @@ mod tests {
             }"#,
         )?;
 
-        let Err(error) =
-            select_npm_package_version("test-package", info, Some("2023-12-01T00:00:00.000Z"))
-        else {
+        let Err(error) = select_npm_package_version(
+            "test-package",
+            info,
+            Some("2023-12-01T00:00:00.000Z"),
+            None,
+        ) else {
             bail!("expected cutoff to reject all package versions");
         };
         assert_eq!(
             error.to_string(),
             "no version found for npm package test-package before 2023-12-01T00:00:00.000Z"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_selects_latest_matching_requirement() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["6.0.3", "7.0.0", "5.9.3", "6.0.2"]
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        assert_eq!(
+            select_npm_package_version("test-package", info, None, Some(&version_requirement))?,
+            Version::parse("6.0.3")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_applies_before_to_matching_versions() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["6.0.3", "7.0.0", "6.0.2"],
+                "time": {
+                    "6.0.2": "2024-02-01T00:00:00.000Z",
+                    "6.0.3": "2024-03-01T00:00:00.000Z",
+                    "7.0.0": "2024-04-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                Some(&version_requirement),
+            )?,
+            Version::parse("6.0.2")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_allows_requested_prerelease_before_cutoff() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["7.1.0-beta.1", "7.1.0-beta.2", "7.0.0"],
+                "time": {
+                    "7.0.0": "2024-01-01T00:00:00.000Z",
+                    "7.1.0-beta.1": "2024-02-01T00:00:00.000Z",
+                    "7.1.0-beta.2": "2024-03-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse(">=7.1.0-beta.1, <7.1.0")?;
+
+        assert_eq!(
+            select_npm_package_version(
+                "test-package",
+                info,
+                Some("2024-02-15T00:00:00.000Z"),
+                Some(&version_requirement),
+            )?,
+            Version::parse("7.1.0-beta.1")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_npm_package_version_errors_without_matching_version() -> Result<()> {
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "7.0.0" },
+                "versions": ["5.9.3", "7.0.0"]
+            }"#,
+        )?;
+        let version_requirement = VersionReq::parse("^6")?;
+
+        let error =
+            select_npm_package_version("test-package", info, None, Some(&version_requirement))
+                .expect_err("expected version requirement to reject all package versions");
+        assert_eq!(
+            error.to_string(),
+            "no version found for npm package test-package"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_pinned_version_strategy_replaces_different_installed_version() -> Result<()> {
+        let pinned_version = Version::parse("6.0.3")?;
+
+        assert!(!should_install_npm_package_version(
+            &pinned_version,
+            VersionStrategy::Pin(&pinned_version)
+        ));
+        assert!(should_install_npm_package_version(
+            &Version::parse("7.0.0")?,
+            VersionStrategy::Pin(&pinned_version)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_info_npm11_format() -> Result<()> {
+        let json = r#"{
+            "dist-tags": { "latest": "3.0.0" },
+            "versions": ["1.0.0", "2.0.0", "3.0.0"]
+        }"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_v12_format() -> Result<()> {
+        let json = r#"[
+            {
+                "dist-tags": { "latest": "3.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"]
+            }
+        ]"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
         );
         Ok(())
     }

@@ -233,7 +233,7 @@ impl OpenPathPrompt {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
-            let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
+            let picker = Picker::uniform_list(delegate, window, cx);
             let mut query = lister.default_query(cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
@@ -257,6 +257,10 @@ impl OpenPathPrompt {
 
 impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "open path prompt"
+    }
 
     fn match_count(&self) -> usize {
         let user_input = if let DirectoryState::Create { user_input, .. } = &self.directory_state {
@@ -694,6 +698,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.cancel_flag.store(true, atomic::Ordering::Release);
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
@@ -709,25 +714,35 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let mut match_positions = match &self.directory_state {
-            DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
+        let string_match = match &self.directory_state {
+            DirectoryState::List { .. } => self.string_matches.get(ix),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
                     if !user_input.exists || !user_input.is_dir {
                         if ix == 0 {
-                            Vec::new()
+                            None
                         } else {
-                            self.string_matches.get(ix - 1)?.positions.clone()
+                            self.string_matches.get(ix - 1)
                         }
                     } else {
-                        self.string_matches.get(ix)?.positions.clone()
+                        self.string_matches.get(ix)
                     }
                 } else {
-                    self.string_matches.get(ix)?.positions.clone()
+                    self.string_matches.get(ix)
                 }
             }
-            DirectoryState::None { .. } => Vec::new(),
+            DirectoryState::None { .. } => None,
         };
+
+        // Directory entries and string matches can briefly go out of sync during
+        // async updates. When that happens, render the row without highlights.
+        let mut match_positions = string_match
+            .filter(|string_match| {
+                string_match.candidate_id == candidate.path.id
+                    && string_match.string == candidate.path.string
+            })
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         let is_current_dir_candidate = candidate.path.string == self.current_dir();
 

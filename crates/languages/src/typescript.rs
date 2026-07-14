@@ -12,7 +12,7 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde_json::{Value, json};
 use smol::lock::RwLock;
 use std::{
@@ -601,6 +601,9 @@ fn replace_test_name_parameters(test_name: &str) -> String {
     PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
+static TYPESCRIPT_VERSION_REQ: LazyLock<VersionReq> =
+    LazyLock::new(|| VersionReq::parse("^6").expect("Failed to parse TypeScript version req"));
+
 pub struct TypeScriptLspAdapter {
     fs: Arc<dyn Fs>,
     node: NodeRuntime,
@@ -634,7 +637,12 @@ impl TypeScriptLspAdapter {
 
         if self
             .fs
-            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .is_file(
+                &adapter
+                    .worktree_root_path()
+                    .join(tsdk_path)
+                    .join("tsserver.js"),
+            )
             .await
         {
             Some(tsdk_path)
@@ -654,14 +662,17 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         Ok(TypeScriptVersions {
             typescript_version: self
                 .node
-                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .npm_package_latest_version_with_requirement(
+                    Self::PACKAGE_NAME,
+                    Some(&TYPESCRIPT_VERSION_REQ),
+                )
                 .await?,
             server_version: self
                 .node
@@ -684,12 +695,13 @@ impl LspInstaller for TypeScriptLspAdapter {
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
+            // Pin rather than Latest so an unusable TypeScript 7.x install gets downgraded.
             if node
                 .should_install_npm_package(
                     Self::PACKAGE_NAME,
                     &server_path,
                     &container_dir,
-                    VersionStrategy::Latest(&typescript_version),
+                    VersionStrategy::Pin(&typescript_version),
                 )
                 .await
             {
@@ -718,7 +730,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        _latest_version: Self::BinaryVersion,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -726,10 +738,14 @@ impl LspInstaller for TypeScriptLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+            let typescript_version = latest_version.typescript_version.to_string();
 
-            node.npm_install_latest_packages(
+            node.npm_install_packages(
                 &container_dir,
-                &[Self::PACKAGE_NAME, Self::SERVER_PACKAGE_NAME],
+                &[
+                    (Self::PACKAGE_NAME, typescript_version.as_str()),
+                    (Self::SERVER_PACKAGE_NAME, "latest"),
+                ],
             )
             .await?;
 
@@ -1431,6 +1447,184 @@ mod tests {
                 ("async *asyncMethodGenerator()", 1),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_conditional_test_wrappers(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+                it.runIf(true)("runIf test", () => {
+                    true;
+                });
+
+                it.skipIf(false)("skipIf test", () => {
+                    true;
+                });
+
+                test.runIf(true)("runIf test 2", () => {
+                    true;
+                });
+
+                test.skipIf(false)("skipIf test 2", () => {
+                    true;
+                });
+
+                describe.runIf(true)("runIf describe", () => {
+                    it("inner test", () => {
+                        true;
+                    });
+                });
+
+                describe.skipIf(false)("skipIf describe", () => {
+                    it("inner test 2", () => {
+                        true;
+                    });
+                });
+
+                it.todoIf(false)("todoIf test", () => {
+                    true;
+                });
+
+                it.if(true)("if test", () => {
+                    true;
+                });
+
+                test.todoIf(false)("todoIf test 2", () => {
+                    true;
+                });
+
+                test.if(true)("if test 2", () => {
+                    true;
+                });
+
+                describe.todoIf(false)("todoIf describe", () => {
+                    it("inner todoIf", () => {
+                        true;
+                    });
+                });
+
+                describe.if(true)("if describe", () => {
+                    it("inner if", () => {
+                        true;
+                    });
+                });
+
+                test.failing("failing test", () => {
+                    true;
+                });
+
+                it.failing("failing it", () => {
+                    true;
+                });
+
+                it.each([1, 2, 3])("each test", () => {
+                    true;
+                });
+
+                describe.each([1, 2])("each describe", () => {
+                    it("inner each", () => {
+                        true;
+                    });
+                });
+
+                it.skip("skip test", () => {
+                    true;
+                });
+
+                it.only("only test", () => {
+                    true;
+                });
+
+                it.todo("todo test");
+            "#
+            .unindent();
+
+            let text_len = text.len();
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            cx.executor().run_until_parked();
+
+            let outline = buffer.update(cx, |buffer, _cx| buffer.snapshot().outline(None));
+            let outline_names = outline
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                outline_names,
+                [
+                    "runIf test",
+                    "skipIf test",
+                    "runIf test 2",
+                    "skipIf test 2",
+                    "runIf describe",
+                    "it inner test",
+                    "skipIf describe",
+                    "it inner test 2",
+                    "todoIf test",
+                    "if test",
+                    "todoIf test 2",
+                    "if test 2",
+                    "todoIf describe",
+                    "it inner todoIf",
+                    "if describe",
+                    "it inner if",
+                    "test.failing failing test",
+                    "it.failing failing it",
+                    "each test",
+                    "each describe",
+                    "it inner each",
+                    "it.skip skip test",
+                    "it.only only test",
+                    "it.todo todo test",
+                ]
+            );
+
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let runnable_names = snapshot
+                .runnable_ranges(0..text_len)
+                .map(|runnable| {
+                    snapshot
+                        .text_for_range(runnable.run_range)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                runnable_names,
+                [
+                    "runIf test",
+                    "skipIf test",
+                    "runIf test 2",
+                    "skipIf test 2",
+                    "runIf describe",
+                    "inner test",
+                    "skipIf describe",
+                    "inner test 2",
+                    "todoIf test",
+                    "if test",
+                    "todoIf test 2",
+                    "if test 2",
+                    "todoIf describe",
+                    "inner todoIf",
+                    "if describe",
+                    "inner if",
+                    "failing test",
+                    "failing it",
+                    "each test",
+                    "each describe",
+                    "inner each",
+                    "skip test",
+                    "only test",
+                    "todo test",
+                ]
+            );
+        }
     }
 
     #[gpui::test]

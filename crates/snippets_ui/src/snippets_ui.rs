@@ -129,7 +129,7 @@ impl Focusable for ScopeSelector {
 
 impl Render for ScopeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -198,6 +198,10 @@ impl ScopeSelectorDelegate {
 
 impl PickerDelegate for ScopeSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "snippet scope selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
         "Select snippet scope...".into()

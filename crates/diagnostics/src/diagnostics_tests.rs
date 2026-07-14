@@ -30,7 +30,7 @@ use unindent::Unindent as _;
 use util::{RandomCharIter, path, post_inc, rel_path::rel_path};
 use workspace::MultiWorkspace;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -412,7 +412,6 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
             "§ main.js
              § -----
              ⋯
-
              tset(); § no method `tset`"
         }
     );
@@ -1549,6 +1548,8 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     }
 
     // Default, should cycle through all diagnostics
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
     go!(GoToDiagnosticSeverityFilter::default());
     cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
     go!(GoToDiagnosticSeverityFilter::default());

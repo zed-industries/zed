@@ -48,6 +48,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             cache_control: None,
+            context_management: None,
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
@@ -63,6 +64,7 @@ impl PlainLlmClient {
             &self.api_key,
             request,
             None,
+            &http_client::CustomHeaders::default(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -89,6 +91,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             cache_control: None,
+            context_management: None,
             metadata: None,
             output_config: None,
             stop_sequences: Vec::new(),
@@ -104,6 +107,7 @@ impl PlainLlmClient {
             &self.api_key,
             request,
             None,
+            &http_client::CustomHeaders::default(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -585,6 +589,7 @@ impl BatchingLlmClient {
                     tool_choice: None,
                     system: None,
                     cache_control: None,
+                    context_management: None,
                     metadata: None,
                     output_config: None,
                     stop_sequences: Vec::new(),

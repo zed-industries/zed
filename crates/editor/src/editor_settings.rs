@@ -61,6 +61,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub code_lens: CodeLens,
     pub lsp_document_colors: DocumentColorsRenderMode,
+    pub lsp_document_links: bool,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
@@ -300,6 +301,7 @@ impl Settings for EditorSettings {
             },
             code_lens: editor.code_lens.unwrap(),
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
+            lsp_document_links: editor.lsp_document_links.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor
                 .completion_menu_scrollbar

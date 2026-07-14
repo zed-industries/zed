@@ -528,7 +528,7 @@ Each rule in the `semantic_token_rules` array is defined as follows:
 - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `background_color`: The background color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
-- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token will have a strikethrough with the text color.
 - `font_weight`: One of `"normal"`, `"bold"`.
 - `font_style`: One of `"normal"`, `"italic"`.
 

@@ -34,13 +34,13 @@ wasmtime::component::bindgen!({
     },
     path: "../extension_api/wit/since_v0.1.0",
     with: {
-         "worktree": ExtensionWorktree,
-         "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
-         "zed:extension/slash-command": latest::zed::extension::slash_command,
+        "worktree": ExtensionWorktree,
+        "key-value-store": ExtensionKeyValueStore,
+        "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/nodejs": latest::zed::extension::nodejs,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
+        "zed:extension/slash-command": latest::zed::extension::slash_command,
     },
 });
 

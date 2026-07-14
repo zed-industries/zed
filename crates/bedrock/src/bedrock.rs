@@ -35,6 +35,7 @@ pub use crate::models::*;
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
+    extra_headers: http_client::CustomHeaders,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
@@ -99,30 +100,45 @@ pub async fn stream_completion(
         );
     }
 
-    let output = response.send().await.map_err(|err| match err {
-        bedrock::error::SdkError::ServiceError(ctx) => {
-            use bedrock::operation::converse_stream::ConverseStreamError;
-            let err = ctx.into_err();
-            match &err {
-                ConverseStreamError::ValidationException(e) => {
-                    BedrockError::Validation(e.message().unwrap_or("validation error").to_string())
-                }
-                ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
-                ConverseStreamError::ServiceUnavailableException(_)
-                | ConverseStreamError::ModelNotReadyException(_) => {
-                    BedrockError::ServiceUnavailable
-                }
-                ConverseStreamError::AccessDeniedException(e) => {
-                    BedrockError::AccessDenied(e.message().unwrap_or("access denied").to_string())
-                }
-                ConverseStreamError::InternalServerException(e) => BedrockError::InternalServer(
-                    e.message().unwrap_or("internal server error").to_string(),
-                ),
-                _ => BedrockError::Other(err.into()),
+    let output = response
+        .customize()
+        .mutate_request(move |http_request| {
+            let headers = http_request.headers_mut();
+            for (name, value) in extra_headers.iter() {
+                headers.insert(
+                    name.as_str().to_owned(),
+                    value.to_str().unwrap_or("").to_owned(),
+                );
             }
-        }
-        other => BedrockError::Other(other.into()),
-    });
+        })
+        .send()
+        .await
+        .map_err(|err| match err {
+            bedrock::error::SdkError::ServiceError(ctx) => {
+                use bedrock::operation::converse_stream::ConverseStreamError;
+                let err = ctx.into_err();
+                match &err {
+                    ConverseStreamError::ValidationException(e) => BedrockError::Validation(
+                        e.message().unwrap_or("validation error").to_string(),
+                    ),
+                    ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
+                    ConverseStreamError::ServiceUnavailableException(_)
+                    | ConverseStreamError::ModelNotReadyException(_) => {
+                        BedrockError::ServiceUnavailable
+                    }
+                    ConverseStreamError::AccessDeniedException(e) => BedrockError::AccessDenied(
+                        e.message().unwrap_or("access denied").to_string(),
+                    ),
+                    ConverseStreamError::InternalServerException(e) => {
+                        BedrockError::InternalServer(
+                            e.message().unwrap_or("internal server error").to_string(),
+                        )
+                    }
+                    _ => BedrockError::Other(err.into()),
+                }
+            }
+            other => BedrockError::Other(other.into()),
+        });
 
     let stream = Box::pin(stream::unfold(
         output?.stream,

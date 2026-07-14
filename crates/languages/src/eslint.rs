@@ -83,7 +83,7 @@ impl LspInstaller for EsLintLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {

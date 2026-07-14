@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -22,7 +22,6 @@ use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
-use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use std::{
     cell::RefCell,
@@ -61,21 +60,15 @@ pub struct MentionImage {
 pub struct MentionSet {
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
     crease_entities: HashMap<CreaseId, Entity<LoadingContext>>,
 }
 
 impl MentionSet {
-    pub fn new(
-        project: WeakEntity<Project>,
-        thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
-    ) -> Self {
+    pub fn new(project: WeakEntity<Project>, thread_store: Option<Entity<ThreadStore>>) -> Self {
         Self {
             project,
             thread_store,
-            prompt_store,
             mentions: HashMap::default(),
             crease_entities: HashMap::default(),
         }
@@ -153,7 +146,6 @@ impl MentionSet {
                 line_range,
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Skill {
                 skill_file_path, ..
             } => self.confirm_mention_for_skill(skill_file_path, cx),
@@ -167,13 +159,15 @@ impl MentionSet {
             MentionUri::Selection {
                 abs_path: Some(abs_path),
                 line_range,
+                ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
-            | MentionUri::MergeConflict { .. } => {
+            | MentionUri::MergeConflict { .. }
+            | MentionUri::Rule { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -269,7 +263,7 @@ impl MentionSet {
                 .read(cx)
                 .project_path_for_absolute_path(&abs_path, cx)
             else {
-                log::error!("project path not found");
+                log::error!("project path not found for image mention {abs_path:?}");
                 return Task::ready(());
             };
             let image_task = project.update(cx, |project, cx| project.open_image(project_path, cx));
@@ -326,7 +320,6 @@ impl MentionSet {
                 line_range,
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Skill {
                 skill_file_path, ..
             } => self.confirm_mention_for_skill(skill_file_path, cx),
@@ -354,6 +347,10 @@ impl MentionSet {
             MentionUri::MergeConflict { .. } => {
                 debug_panic!("unexpected merge conflict URI");
                 Task::ready(Err(anyhow!("unexpected merge conflict URI")))
+            }
+            MentionUri::Rule { .. } => {
+                debug_panic!("unexpected rule URI");
+                Task::ready(Err(anyhow!("unexpected rule URI")))
             }
         };
         let task = cx
@@ -398,7 +395,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for file mention {abs_path:?}"
+            )));
         };
 
         if is_raster_image_path(&abs_path) {
@@ -468,7 +467,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for symbol mention {abs_path:?}"
+            )));
         };
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
@@ -514,24 +515,6 @@ impl MentionSet {
         })
     }
 
-    fn confirm_mention_for_rule(
-        &mut self,
-        id: PromptId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Missing prompt store")));
-        };
-        let prompt = prompt_store.read(cx).load(id, cx);
-        cx.spawn(async move |_, _| {
-            let prompt = prompt.await?;
-            Ok(Mention::Text {
-                content: prompt,
-                tracked_buffers: Vec::new(),
-            })
-        })
-    }
-
     pub fn confirm_mention_for_selection(
         &mut self,
         source_range: Range<text::Anchor>,
@@ -570,6 +553,7 @@ impl MentionSet {
             let uri = MentionUri::Selection {
                 abs_path: abs_path.clone(),
                 line_range: line_range.clone(),
+                column: None,
             };
             let crease = crease_for_mention(
                 selection_name(abs_path.as_deref(), &line_range).into(),
@@ -632,7 +616,7 @@ impl MentionSet {
             thread_store,
         ));
         let delegate =
-            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None, None);
         let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -717,23 +701,41 @@ impl MentionSet {
     }
 }
 
-/// Computes disambiguated labels for a set of mentions. When multiple mentions
-/// share the same base name, their labels include extra context (additional
-/// parent path components for files/directories, source for skills) so the user
-/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
-/// which is the same utility used for buffer tab titles and the sidebar.
+/// Computes disambiguated labels for a set of mentions, so that mentions sharing
+/// a base name get extra context (parent path components, skill source) to tell
+/// them apart. Same approach as buffer tab titles and the sidebar.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
-    let mentions: Vec<_> = mentions.collect();
+    let (ids, uris): (Vec<CreaseId>, Vec<&MentionUri>) = mentions.unzip();
+    ids.into_iter()
+        .zip(disambiguated_labels_for_uris(&uris))
+        .collect()
+}
+
+/// Labels for each URI, in input order. Duplicate URIs are collapsed first, so a
+/// mention added twice keeps its base name instead of being escalated to its
+/// full path by the collision-resolution loop.
+fn disambiguated_labels_for_uris(uris: &[&MentionUri]) -> Vec<SharedString> {
+    let mut seen: HashSet<&MentionUri> = HashSet::default();
+    let unique_uris: Vec<&MentionUri> = uris
+        .iter()
+        .copied()
+        .filter(|&uri| seen.insert(uri))
+        .collect();
+
     let details =
-        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
+        util::disambiguate::compute_disambiguation_details(&unique_uris, |uri, detail| {
             uri.disambiguated_name(detail)
         });
-    mentions
-        .into_iter()
-        .zip(details)
-        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
+
+    let uri_to_detail: HashMap<&MentionUri, usize> = unique_uris.into_iter().zip(details).collect();
+
+    uris.iter()
+        .map(|uri| {
+            let detail = uri_to_detail.get(uri).copied().unwrap_or(0);
+            uri.disambiguated_name(detail).into()
+        })
         .collect()
 }
 
@@ -771,7 +773,7 @@ mod tests {
         fs.insert_tree("/project", json!({"file": ""})).await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
         let thread_store = None;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store));
 
         let task = mention_set.update(cx, |mention_set, cx| {
             mention_set.confirm_mention_for_thread(acp::SessionId::new("thread-1"), cx)
@@ -797,7 +799,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
 
         let mention_task = mention_set.update(cx, |mention_set, cx| {
             let http_client = project.read(cx).client().http_client();
@@ -805,6 +807,7 @@ mod tests {
                 MentionUri::Selection {
                     abs_path: Some(path!("/project/file.rs").into()),
                     line_range: 1..=2,
+                    column: None,
                 },
                 false,
                 http_client,
@@ -842,6 +845,27 @@ mod tests {
         // Non-image extensions and paths with no extension.
         assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
         assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
+
+    #[test]
+    fn test_disambiguated_labels_dedupe_identical_uris() {
+        // Mentioning the same file twice must not escalate the duplicates to
+        // their full path. Distinct files sharing a base name still disambiguate.
+        let foo_a = MentionUri::File {
+            abs_path: path!("/project/a/foo.rs").into(),
+        };
+
+        let foo_b = MentionUri::File {
+            abs_path: path!("/project/b/foo.rs").into(),
+        };
+
+        let uris = vec![&foo_a, &foo_a, &foo_b];
+        let labels = disambiguated_labels_for_uris(&uris);
+
+        assert_eq!(labels[0].as_ref(), "a/foo.rs");
+        assert_eq!(labels[2].as_ref(), "b/foo.rs");
+        // The duplicate keeps the same label rather than escalating to full path.
+        assert_eq!(labels[1].as_ref(), "a/foo.rs");
     }
 }
 
@@ -1202,7 +1226,9 @@ fn full_mention_for_directory(
         .read(cx)
         .project_path_for_absolute_path(&abs_path, cx)
     else {
-        return Task::ready(Err(anyhow!("project path not found")));
+        return Task::ready(Err(anyhow!(
+            "project path not found for directory mention {abs_path:?}"
+        )));
     };
     let Some(entry) = project.read(cx).entry_for_path(&project_path, cx) else {
         return Task::ready(Err(anyhow!("project entry not found")));

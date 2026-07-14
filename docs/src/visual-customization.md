@@ -71,12 +71,22 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "agent_ui_font_size": 15,
   // Controls the font size for the agent panel's message editor, user message,
   // and any other snippet of code.
-  "agent_buffer_font_size": 12
+  "agent_buffer_font_size": 12,
+
+  // Controls the font size for the markdown preview.
+  // If not specified, it falls back to the editor font size.
+  "markdown_preview_font_size": null,
+  // Controls the font family for the markdown preview.
+  // If not specified, it falls back to the UI font family.
+  "markdown_preview_font_family": null,
+  // Controls the font family for code blocks in the markdown preview.
+  // If not specified, it falls back to the editor font family.
+  "markdown_preview_code_font_family": null
 ```
 
 ### Font ligatures
 
-By default Zed enable font ligatures which will visually combines certain adjacent characters.
+By default Zed enables font ligatures which will visually combine certain adjacent characters.
 
 For example `=>` will be displayed as `→` and `!=` will be `≠`.
 This is purely cosmetic and the individual characters remain unchanged.
@@ -237,7 +247,8 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay_ms": 0,                  // Show after delay (ms)
+      "delay_ms": 0,               // Show after delay (ms)
+      "location": "inline",        // inline, status_bar
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -281,7 +292,7 @@ TBD: Centered layout related settings
   // Minimap related settings
   "minimap": {
     "show": "never",                // When to show (auto, always, never)
-    "display_in": "active_editor",  // Where to show (active_editor, all_editor)
+    "display_in": "active_editor",  // Where to show (active_editor, all_editors)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
@@ -382,6 +393,8 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // Whether to query and display LSP document links in the editor.
+  "lsp_document_links": true,
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
 
@@ -557,7 +570,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left",               // Where to dock: left, right
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
-    "sort_by_path": false,        // Sort by path (false) or status (true)
+    "sort_by": "path",            // path, name
+    "group_by": "status",         // none, status, staging
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }

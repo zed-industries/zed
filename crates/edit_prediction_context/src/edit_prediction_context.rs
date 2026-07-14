@@ -20,14 +20,23 @@ use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
+mod bm25_context;
 #[cfg(test)]
 mod edit_prediction_context_tests;
+mod editable_context;
 #[cfg(test)]
 mod fake_definition_lsp;
+mod git_log_context;
 
-pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
+pub use editable_context::{
+    EditHistoryContextEntry, OracleTarget, collect_editable_context,
+    limit_retrieved_context_to_bytes,
+};
+
+pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
+const MAX_CONTEXT_IDENTIFIER_COUNT: usize = 32;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
@@ -220,9 +229,25 @@ impl RelatedExcerptStore {
         };
 
         let file = snapshot.file().cloned();
+        let file_extension = file
+            .as_ref()
+            .and_then(|file| file.path().extension())
+            .unwrap_or("")
+            .to_string();
         if let Some(file) = &file {
             log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
         }
+        let (lsp_store, is_via_ssh) = project.read_with(cx, |project, _| {
+            (project.lsp_store(), project.is_via_remote_server())
+        });
+        let lsp_names = lsp_store.update(cx, |lsp_store, cx| {
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.name().to_string())
+                    .collect::<Vec<_>>()
+            })
+        });
 
         this.update(cx, |_, cx| {
             cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
@@ -252,7 +277,13 @@ impl RelatedExcerptStore {
                         (id, distance)
                     })
                     .collect();
-                identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
+                // Only the closest `MAX_CONTEXT_IDENTIFIER_COUNT` identifiers are
+                // used below, so select that prefix instead of fully sorting.
+                util::truncate_to_bottom_n_sorted_by(
+                    &mut identifiers_with_distance,
+                    MAX_CONTEXT_IDENTIFIER_COUNT,
+                    &|(_, a), (_, b)| a.cmp(b),
+                );
 
                 let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
                 let mut current_rank = 0;
@@ -286,7 +317,11 @@ impl RelatedExcerptStore {
                             let buffer = buffer.upgrade()?;
                             let definitions = project
                                 .update(cx, |project, cx| {
-                                    project.definitions(&buffer, identifier.range.start, cx)
+                                    project.workspace_definitions(
+                                        &buffer,
+                                        identifier.range.start,
+                                        cx,
+                                    )
                                 })
                                 .ok()?;
                             let type_definitions = project
@@ -296,7 +331,11 @@ impl RelatedExcerptStore {
                                     if is_tombi_lsp_in_toml(project, &buffer, cx) {
                                         return Task::ready(Ok(None));
                                     }
-                                    project.type_definitions(&buffer, identifier.range.start, cx)
+                                    project.workspace_type_definitions(
+                                        &buffer,
+                                        identifier.range.start,
+                                        cx,
+                                    )
                                 })
                                 .ok()?;
                             Some((definitions, type_definitions))
@@ -304,7 +343,6 @@ impl RelatedExcerptStore {
                     };
 
                     let cx = async_cx.clone();
-                    let project = project.clone();
                     async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
@@ -323,39 +361,39 @@ impl RelatedExcerptStore {
                                     .flatten()
                                     .unwrap_or_default();
 
-                                Some(cx.update(|cx| {
-                                    let definitions: SmallVec<[CachedDefinition; 1]> =
-                                        definition_locations
-                                            .into_iter()
-                                            .filter_map(|location| {
-                                                process_definition(location, &project, cx)
-                                            })
-                                            .collect();
+                                let definitions: SmallVec<[CachedDefinition; 1]> =
+                                    definition_locations
+                                        .into_iter()
+                                        .filter_map(|location| {
+                                            let mut cx = cx.clone();
+                                            process_definition(location, &mut cx)
+                                        })
+                                        .collect();
 
-                                    let type_definitions: SmallVec<[CachedDefinition; 1]> =
-                                        type_definition_locations
-                                            .into_iter()
-                                            .filter_map(|location| {
-                                                process_definition(location, &project, cx)
+                                let type_definitions: SmallVec<[CachedDefinition; 1]> =
+                                    type_definition_locations
+                                        .into_iter()
+                                        .filter_map(|location| {
+                                            let mut cx = cx.clone();
+                                            process_definition(location, &mut cx)
+                                        })
+                                        .filter(|type_def| {
+                                            !definitions.iter().any(|def| {
+                                                def.buffer.entity_id()
+                                                    == type_def.buffer.entity_id()
+                                                    && def.anchor_range == type_def.anchor_range
                                             })
-                                            .filter(|type_def| {
-                                                !definitions.iter().any(|def| {
-                                                    def.buffer.entity_id()
-                                                        == type_def.buffer.entity_id()
-                                                        && def.anchor_range == type_def.anchor_range
-                                                })
-                                            })
-                                            .collect();
+                                        })
+                                        .collect();
 
-                                    (
-                                        identifier,
-                                        Arc::new(CacheEntry {
-                                            definitions,
-                                            type_definitions,
-                                        }),
-                                        Some(duration),
-                                    )
-                                }))
+                                Some((
+                                    identifier,
+                                    Arc::new(CacheEntry {
+                                        definitions,
+                                        type_definitions,
+                                    }),
+                                    Some(duration),
+                                ))
                             }
                         }
                     }
@@ -379,10 +417,25 @@ impl RelatedExcerptStore {
                 cache_hit_count += 1;
             }
         }
+        let lsp_fetch_latency_ms = start_time.elapsed().as_millis();
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
         let (new_cache, related_buffers) =
             rebuild_related_files(&project, new_cache, &cursor_distances, cx).await?;
+        let latency_ms = start_time.elapsed().as_millis();
+        let returned_excerpt_count = related_buffers
+            .iter()
+            .map(|related_buffer| related_buffer.anchor_ranges.len())
+            .sum::<usize>();
+        telemetry::event!(
+            "Edit Prediction LSP Context Retrieved",
+            lsp_names,
+            file_extension,
+            latency_ms,
+            lsp_fetch_latency_ms,
+            returned_excerpt_count,
+            is_via_ssh
+        );
 
         if let Some(file) = &file {
             log::debug!(
@@ -566,6 +619,7 @@ impl RelatedBuffer {
                     row_range: start.row..end.row,
                     text: buffer.text_for_range(start..end).collect::<String>().into(),
                     order,
+                    context_source: ContextSource::Lsp,
                 }
             })
             .collect::<Vec<_>>();
@@ -581,34 +635,29 @@ use language::ToPoint as _;
 
 const MAX_TARGET_LEN: usize = 128;
 
-fn process_definition(
-    location: LocationLink,
-    project: &Entity<Project>,
-    cx: &mut App,
-) -> Option<CachedDefinition> {
-    let buffer = location.target.buffer.read(cx);
-    let anchor_range = location.target.range;
-    let file = buffer.file()?;
-    let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
-    if worktree.read(cx).is_single_file() {
-        return None;
-    }
-
-    // If the target range is large, it likely means we requested the definition of an entire module.
-    // For individual definitions, the target range should be small as it only covers the symbol.
-    let buffer = location.target.buffer.read(cx);
-    let target_len = anchor_range.to_offset(&buffer).len();
-    if target_len > MAX_TARGET_LEN {
-        return None;
-    }
-
-    Some(CachedDefinition {
-        path: ProjectPath {
+fn process_definition(location: LocationLink, cx: &mut AsyncApp) -> Option<CachedDefinition> {
+    cx.update(|cx| {
+        let buffer = location.target.buffer;
+        let buffer_snapshot = buffer.read(cx);
+        let file = buffer_snapshot.file()?;
+        let path = ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
-        },
-        buffer: location.target.buffer,
-        anchor_range,
+        };
+        let anchor_range = location.target.range;
+
+        // If the target range is large, it likely means we requested the definition of an entire module.
+        // For individual definitions, the target range should be small as it only covers the symbol.
+        let target_len = anchor_range.to_offset(&buffer_snapshot).len();
+        if target_len > MAX_TARGET_LEN {
+            return None;
+        }
+
+        Some(CachedDefinition {
+            path,
+            buffer: buffer.clone(),
+            anchor_range,
+        })
     })
 }
 

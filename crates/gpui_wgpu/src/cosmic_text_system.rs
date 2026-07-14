@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
-    Attrs, AttrsList, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
-    FontSystem, ShapeBuffer, ShapeLine,
+    Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
+    FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine,
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
@@ -106,7 +106,7 @@ impl PlatformTextSystem for CosmicTextSystem {
             .faces()
             .filter_map(|face| face.families.first().map(|family| family.0.clone()))
             .collect_vec();
-        result.sort();
+        result.sort_unstable();
         result.dedup();
         result
     }
@@ -544,6 +544,7 @@ impl CosmicTextSystemState {
             f32::from(font_size),
             None, // We do our own wrapping
             cosmic_text::Wrap::None,
+            Ellipsize::None,
             None,
             &mut layout_lines,
             None,

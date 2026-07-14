@@ -43,20 +43,23 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 
 ## Supported Tools
 
-| Tool               | Input Matched Against        |
-| ------------------ | ---------------------------- |
-| `terminal`         | The shell command string     |
-| `edit_file`        | The file path                |
-| `write_file`       | The file path                |
-| `delete_path`      | The path being deleted       |
-| `move_path`        | Source and destination paths |
-| `copy_path`        | Source and destination paths |
-| `create_directory` | The directory path           |
-| `fetch`            | The URL                      |
-| `search_web`       | The search query             |
+| Tool               | Input Matched Against                            |
+| ------------------ | ------------------------------------------------ |
+| `terminal`         | The shell command string                         |
+| `edit_file`        | The file path                                    |
+| `write_file`       | The file path                                    |
+| `delete_path`      | The path being deleted                           |
+| `move_path`        | Source and destination paths                     |
+| `copy_path`        | Source and destination paths                     |
+| `create_directory` | The directory path                               |
+| `fetch`            | The URL                                          |
+| `search_web`       | The search query                                 |
+| `skill`            | The absolute path to the skill's `SKILL.md` file |
 
 For MCP tools, use the format `mcp:<server>:<tool_name>`.
 For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
+
+For model-invoked [Skills](./skills.md), use the `skill` tool. A user-invoked `/skill-name` slash command does not prompt again because you explicitly invoked the skill.
 
 ## Configuration
 
@@ -305,3 +308,24 @@ MCP tools only support the tool-level option.
   }
 }
 ```
+
+### Skills
+
+Patterns for the `skill` tool match against the absolute path to the skill's `SKILL.md` file, not the skill name.
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "skill": {
+          "default": "confirm",
+          "always_allow": [{ "pattern": "/code-review/SKILL\\.md$" }]
+        }
+      }
+    }
+  }
+}
+```
+
+To prevent the model from invoking a skill at all, set `disable-model-invocation: true` in that skill's `SKILL.md`. See [Skills](./skills.md#disable-model-invocation).

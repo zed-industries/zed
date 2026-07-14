@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol::schema as acp,
+    agent_client_protocol::schema::v1 as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -1358,6 +1358,7 @@ fn run_settings_ui_subpage_visual_tests(
             window.dispatch_action(
                 Box::new(OpenSettingsAt {
                     path: "agent".to_string(),
+                    target: None,
                 }),
                 cx,
             );
@@ -1403,6 +1404,7 @@ fn run_settings_ui_subpage_visual_tests(
             window.dispatch_action(
                 Box::new(OpenSettingsAt {
                     path: "edit_predictions.providers".to_string(),
+                    target: None,
                 }),
                 cx,
             );
@@ -2387,6 +2389,7 @@ fn run_tool_permissions_visual_tests(
             window.dispatch_action(
                 Box::new(OpenSettingsAt {
                     path: "agent.tool_permissions".to_string(),
+                    target: None,
                 }),
                 cx,
             );
@@ -2435,6 +2438,7 @@ fn run_tool_permissions_visual_tests(
                 "Terminal",
                 "Configure Tool Rules",
                 None,
+                true,
                 settings_ui::pages::render_terminal_tool_config,
                 window,
                 cx,
@@ -2727,13 +2731,14 @@ fn run_multi_workspace_sidebar_visual_tests(
                             request_token_usage: Default::default(),
                             model: None,
                             profile: None,
-                            imported: false,
                             subagent_context: None,
                             speed: None,
                             thinking_enabled: false,
                             thinking_effort: None,
                             ui_scroll_position: None,
                             draft_prompt: None,
+                            sandboxed_terminal_temp_dir: None,
+                            sandbox_grants: Default::default(),
                         },
                         path_list,
                         cx,

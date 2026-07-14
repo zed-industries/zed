@@ -1046,8 +1046,9 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut App) {
+    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut Context<Self>) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
+        let mut clamped = false;
         for entry in &mut self.panel_entries {
             let use_flexible = entry.panel.has_flexible_size(window, cx);
             if use_flexible {
@@ -1060,7 +1061,11 @@ impl Dock {
                 .unwrap_or_else(|| entry.panel.default_size(window, cx));
             if size > max_size {
                 entry.size_state.size = Some(max_size.max(RESIZE_HANDLE_SIZE));
+                clamped = true;
             }
+        }
+        if clamped {
+            cx.notify();
         }
     }
 
@@ -1352,6 +1357,8 @@ impl Render for PanelButtons {
                             let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
+                                .tab_index(0isize)
+                                .aria_label(icon_tooltip)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {

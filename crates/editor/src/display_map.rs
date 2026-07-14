@@ -133,11 +133,11 @@ use std::{
 use crate::{
     EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
-use block_map::{BlockRow, BlockSnapshot};
-use fold_map::FoldSnapshot;
-use inlay_map::InlaySnapshot;
-use tab_map::TabSnapshot;
-use wrap_map::{WrapMap, WrapPatch};
+use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
+use fold_map::{FoldPointCursor, FoldSnapshot};
+use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
+use tab_map::{TabPointCursor, TabSnapshot};
+use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -180,6 +180,7 @@ pub enum HighlightKey {
     MatchingBracket,
     NavigationOverlay(NavigationOverlayKey),
     PendingInput,
+    PickerPreview,
     ProjectSearchView,
     Rename,
     SearchWithinRange,
@@ -1150,15 +1151,22 @@ impl DisplayMap {
                 Some((previous_style, previous_ranges)) => {
                     *previous_style = style;
                     *previous_ranges = ranges;
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                 }
                 None if merge => {
                     ranges.extend(slot.get().1.iter().cloned());
                     ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                     slot.insert(Arc::new((style, ranges)));
                 }
-                None => _ = slot.insert(Arc::new((style, ranges))),
+                None => {
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    slot.insert(Arc::new((style, ranges)));
+                }
             },
-            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+            Entry::Vacant(slot) => {
+                ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                slot.insert(Arc::new((style, ranges)));
+            }
         }
     }
 
@@ -1540,6 +1548,11 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
 
+    #[inline(always)]
+    pub fn has_collapsed_content(&self) -> bool {
+        self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
@@ -1664,29 +1677,53 @@ impl DisplaySnapshot {
         &self,
         range: Range<MultiBufferOffset>,
     ) -> SmallVec<[Range<DisplayPoint>; 1]> {
-        let inlay_snapshot = self.inlay_snapshot();
-        inlay_snapshot
-            .buffer_offset_to_inlay_ranges(range)
-            .map(|inlay_range| {
-                let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
-                    let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
-                    let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
-                    let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
-                    let block_point = self.block_snapshot.to_block_point(wrap_point);
-                    DisplayPoint(block_point)
-                };
+        self.display_point_converter().map(range)
+    }
 
-                let start = inlay_point_to_display_point(
-                    inlay_snapshot.to_point(inlay_range.start),
-                    Bias::Left,
-                );
-                let end = inlay_point_to_display_point(
-                    inlay_snapshot.to_point(inlay_range.end),
-                    Bias::Left,
-                );
-                start..end
-            })
-            .collect()
+    /// Converts a non-empty buffer range into one contiguous display range.
+    /// Inlays at either boundary are excluded, while inlays between selected
+    /// buffer characters are included.
+    pub fn contiguous_display_point_range_for_buffer_range(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> Option<Range<DisplayPoint>> {
+        if range.is_empty() {
+            return None;
+        }
+
+        let buffer = self.buffer_snapshot();
+        let first_character_end =
+            buffer.clip_offset((range.start + 1usize).min(range.end), Bias::Right);
+        let last_character_start = buffer.clip_offset(
+            range.end.saturating_sub_usize(1).max(range.start),
+            Bias::Left,
+        );
+
+        let mut converter = self.display_point_converter();
+        let first_ranges = converter.map(range.start..first_character_end);
+        let start = first_ranges.first()?.start;
+        if first_character_end == range.end {
+            return Some(start..first_ranges.last()?.end);
+        }
+
+        let last_ranges = converter.map(last_character_start..range.end);
+        Some(start..last_ranges.last()?.end)
+    }
+
+    /// Returns a converter that maps buffer offset ranges to `DisplayPoint`
+    /// ranges (as in [`Self::isomorphic_display_point_ranges_for_buffer_range`])
+    /// while reusing cursor state across calls. Use this when converting many
+    /// ranges in a single pass; the inputs must be supplied with non-decreasing
+    /// offsets so the underlying cursors only advance forward.
+    pub fn display_point_converter(&self) -> DisplayPointConverter<'_> {
+        DisplayPointConverter {
+            inlay_cursor: self.inlay_snapshot().buffer_offset_to_inlay_point_cursor(),
+            fold_point_cursor: self.fold_snapshot().fold_point_cursor(),
+            tab_point_cursor: self.tab_snapshot().tab_point_cursor(),
+            wrap_point_cursor: self.wrap_snapshot().wrap_point_cursor(),
+            block_point_cursor: self.block_snapshot.block_point_cursor(),
+            prev_end: None,
+        }
     }
 
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
@@ -2593,6 +2630,57 @@ impl ToDisplayPoint for Point {
 impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(map.buffer_snapshot()).to_display_point(map)
+    }
+}
+
+/// Maps buffer offset ranges to `DisplayPoint` ranges covering only buffer text
+/// (excluding inlay text), reusing cursor state across calls.
+///
+/// Created via [`DisplaySnapshot::display_point_converter`]. Each layer
+/// (inlay -> fold -> tab -> wrap -> block) is backed by a forward-only cursor,
+/// so it is most efficient when ranges are supplied with non-decreasing
+/// offsets. If a range starts before the previous one ended, the cursors are
+/// transparently reset so the result stays correct (at the cost of an extra
+/// seek), which keeps the converter robust to overlapping inputs such as the
+/// base and buffer word diffs of an inline modified hunk.
+pub struct DisplayPointConverter<'a> {
+    inlay_cursor: BufferOffsetToInlayPointCursor<'a>,
+    fold_point_cursor: FoldPointCursor<'a>,
+    tab_point_cursor: TabPointCursor<'a>,
+    wrap_point_cursor: WrapPointCursor<'a>,
+    block_point_cursor: BlockPointCursor<'a>,
+    prev_end: Option<MultiBufferOffset>,
+}
+
+impl DisplayPointConverter<'_> {
+    pub fn map(&mut self, range: Range<MultiBufferOffset>) -> SmallVec<[Range<DisplayPoint>; 1]> {
+        if self.prev_end.is_some_and(|prev_end| range.start < prev_end) {
+            // The input went backward relative to where the cursors are
+            // positioned; reset them so they can seek freely.
+            self.inlay_cursor.reset();
+            self.fold_point_cursor.reset();
+            self.tab_point_cursor.reset();
+            self.wrap_point_cursor.reset();
+            self.block_point_cursor.reset();
+        }
+        self.prev_end = Some(range.end);
+
+        let inlay_ranges = self.inlay_cursor.map(range);
+        inlay_ranges
+            .into_iter()
+            .map(|inlay_range| {
+                let start = self.inlay_point_to_display_point(inlay_range.start);
+                let end = self.inlay_point_to_display_point(inlay_range.end);
+                start..end
+            })
+            .collect()
+    }
+
+    fn inlay_point_to_display_point(&mut self, inlay_point: InlayPoint) -> DisplayPoint {
+        let fold_point = self.fold_point_cursor.map(inlay_point, Bias::Left);
+        let tab_point = self.tab_point_cursor.map(fold_point);
+        let wrap_point = self.wrap_point_cursor.map(tab_point);
+        DisplayPoint(self.block_point_cursor.map(wrap_point))
     }
 }
 
@@ -4117,6 +4205,62 @@ pub mod tests {
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
+
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[InlayId::Hint(0)],
+                vec![
+                    Inlay::mock_hint(1, buffer_snapshot.anchor_after(MultiBufferOffset(5)), "L"),
+                    Inlay::mock_hint(2, buffer_snapshot.anchor_before(MultiBufferOffset(5)), "R"),
+                    Inlay::mock_hint(3, buffer_snapshot.anchor_after(MultiBufferOffset(7)), "I"),
+                ],
+                cx,
+            );
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(5),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 5)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(5)..MultiBufferOffset(6),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 8)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(6),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 8)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(6)..MultiBufferOffset(7),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 9)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(7)..MultiBufferOffset(8),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 11)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(9),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 12)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(5)..MultiBufferOffset(5),
+            ),
+            None,
+        );
     }
 
     #[test]

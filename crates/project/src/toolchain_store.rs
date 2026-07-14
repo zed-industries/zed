@@ -265,7 +265,7 @@ impl ToolchainStore {
             let path = if let Some(path) = envelope.payload.path {
                 RelPath::from_proto(&path)?
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             Ok(this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx))
         })?

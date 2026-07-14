@@ -389,6 +389,15 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
+
+        if self.search.cmd_f_search {
+            self.search.cmd_f_search = false;
+            if self.mode.is_visual() {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
+            self.sync_vim_settings(window, cx);
+        }
+
         let prior_selections = self.editor_selections(window, cx);
 
         let success = pane.update(cx, |pane, cx| {
@@ -433,6 +442,15 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
+
+        if self.search.cmd_f_search {
+            self.search.cmd_f_search = false;
+            if self.mode.is_visual() {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
+            self.sync_vim_settings(window, cx);
+        }
+
         let prior_selections = self.editor_selections(window, cx);
         let vim = cx.entity();
 
@@ -1015,6 +1033,46 @@ mod test {
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
         cx.assert_state("one «oneˇ» one one", Mode::Insert);
+    }
+
+    #[gpui::test]
+    async fn test_n_after_cmd_f_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone two one two one", Mode::Normal);
+        cx.run_until_parked();
+
+        // Use cmd+f to search (non-vim style)
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Now use n to go to next match — should move cursor, not create selection
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        cx.assert_state("one two ˇone two one", Mode::Normal);
+
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        cx.assert_state("one two one two ˇone", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_star_after_cmd_f_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone two one two one", Mode::Normal);
+        cx.run_until_parked();
+
+        // Use cmd+f to search (non-vim style)
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Now use * to search under cursor — should move cursor, not create selection
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state("one two ˇone two one", Mode::Normal);
     }
 
     #[gpui::test]

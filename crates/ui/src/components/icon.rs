@@ -288,57 +288,54 @@ impl Component for Icon {
         ComponentScope::Images
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.",
-        )
+    fn description() -> &'static str {
+        "A versatile icon component that supports SVG and image-based icons \
+        with customizable size, color, and transformations."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Sizes",
-                        vec![single_example(
-                            "XSmall, Small, Default, Large",
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::Star).size(IconSize::XSmall))
-                                .child(Icon::new(IconName::Star).size(IconSize::Small))
-                                .child(Icon::new(IconName::Star))
-                                .child(Icon::new(IconName::Star).size(IconSize::XLarge))
-                                .into_any_element(),
-                        )],
-                    ),
-                    example_group(vec![single_example(
-                        "All Icons",
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![single_example(
+                        "XSmall, Small, Default, Large",
                         h_flex()
-                            .image_cache(gpui::retain_all("all icons"))
-                            .flex_wrap()
-                            .gap_2()
-                            .children(<IconName as strum::IntoEnumIterator>::iter().map(
-                                |icon_name: IconName| {
-                                    let name: SharedString = format!("{icon_name:?}").into();
-                                    v_flex()
-                                        .min_w_0()
-                                        .w_24()
-                                        .p_1p5()
-                                        .gap_2()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .bg(cx.theme().colors().element_disabled)
-                                        .rounded_sm()
-                                        .items_center()
-                                        .child(Icon::new(icon_name))
-                                        .child(Label::new(name).size(LabelSize::XSmall).truncate())
-                                },
-                            ))
+                            .gap_1()
+                            .child(Icon::new(IconName::Star).size(IconSize::XSmall))
+                            .child(Icon::new(IconName::Star).size(IconSize::Small))
+                            .child(Icon::new(IconName::Star))
+                            .child(Icon::new(IconName::Star).size(IconSize::XLarge))
                             .into_any_element(),
-                    )]),
-                ])
-                .into_any_element(),
-        )
+                    )],
+                ),
+                example_group(vec![single_example(
+                    "All Icons",
+                    h_flex()
+                        .image_cache(gpui::retain_all("all icons"))
+                        .flex_wrap()
+                        .gap_2()
+                        .children(<IconName as strum::IntoEnumIterator>::iter().map(
+                            |icon_name: IconName| {
+                                let name: SharedString = format!("{icon_name:?}").into();
+                                v_flex()
+                                    .min_w_0()
+                                    .w_24()
+                                    .p_1p5()
+                                    .gap_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().element_disabled)
+                                    .rounded_sm()
+                                    .items_center()
+                                    .child(Icon::new(icon_name))
+                                    .child(Label::new(name).size(LabelSize::XSmall).truncate())
+                            },
+                        ))
+                        .into_any_element(),
+                )]),
+            ])
+            .into_any_element()
     }
 }

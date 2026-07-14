@@ -83,7 +83,7 @@ impl ModeIndicator {
                     .map(|count| format!("{}", count)),
             )
             .collect::<Vec<_>>()
-            .join("")
+            .concat()
     }
 }
 
