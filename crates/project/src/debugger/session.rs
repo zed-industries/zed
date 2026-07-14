@@ -15,7 +15,7 @@ use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashMap, HashSet, IndexMap, TypeIdHashMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -704,7 +704,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
-    requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
@@ -876,7 +876,7 @@ impl Session {
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
                 output: circular_buffer::CircularBuffer::boxed(),
-                requests: HashMap::default(),
+                requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,

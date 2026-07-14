@@ -338,7 +338,7 @@ impl ToString for Hunk {
             .iter()
             .map(|line| line.to_string() + "\n")
             .collect::<Vec<String>>()
-            .join("");
+            .concat();
         format!("{header}\n{lines}")
     }
 }

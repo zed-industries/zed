@@ -102,22 +102,34 @@ fn font_style(font_family: &str) -> String {
 }
 
 fn rewrite_background_style<'a>(style: &'a str, background_css: &str) -> Cow<'a, str> {
-    const WHITE_BACKGROUND_STYLE: &str = "background-color: white";
+    const PROPERTY: &str = "background-color:";
 
-    let Some(background_start) = style.find(WHITE_BACKGROUND_STYLE) else {
+    let Some(property_start) = style.find(PROPERTY) else {
         return Cow::Borrowed(style);
     };
+    let value_start = property_start + PROPERTY.len();
+    let value_end = style[value_start..]
+        .find(';')
+        .map_or(style.len(), |offset| value_start + offset);
+    let value = style[value_start..value_end].trim();
 
+    let is_white = value.eq_ignore_ascii_case("white")
+        || value.eq_ignore_ascii_case("#fff")
+        || value.eq_ignore_ascii_case("#ffffff");
+    if !is_white {
+        return Cow::Borrowed(style);
+    }
+
+    let value_len = value_end.saturating_sub(value_start);
     let mut rewritten = String::with_capacity(
         style
             .len()
-            .saturating_sub(WHITE_BACKGROUND_STYLE.len())
-            .saturating_add("background-color: ".len())
+            .saturating_sub(value_len)
             .saturating_add(background_css.len()),
     );
-    rewritten.push_str(&style[..background_start]);
-    write!(rewritten, "background-color: {background_css}").expect("write to String cannot fail");
-    rewritten.push_str(&style[background_start + WHITE_BACKGROUND_STYLE.len()..]);
+    rewritten.push_str(&style[..value_start]);
+    rewritten.push_str(background_css);
+    rewritten.push_str(&style[value_end..]);
     Cow::Owned(rewritten)
 }
 

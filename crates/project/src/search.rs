@@ -1,5 +1,5 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
@@ -45,6 +45,8 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
+pub type LineHint = u32;
+
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
@@ -78,6 +80,7 @@ pub enum SearchQuery {
         include_ignored: bool,
         one_match_per_line: bool,
         inner: SearchInputs,
+        escaped: bool,
     },
 }
 
@@ -102,7 +105,8 @@ impl SearchQuery {
         match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
-        let query = query.to_string();
+        let mut query = query.to_string();
+        text::LineEnding::normalize(&mut query);
         if !case_sensitive && !query.is_ascii() {
             // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
             // Fallback to regex search as recommended by
@@ -169,6 +173,7 @@ impl SearchQuery {
             include_ignored,
             one_match_per_line,
             inner,
+            false,
         )
     }
 
@@ -187,7 +192,8 @@ impl SearchQuery {
         match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
-        let query = query.to_string();
+        let mut query = query.to_string();
+        text::LineEnding::normalize(&mut query);
         let inner = SearchInputs {
             query: Arc::from(query.as_str()),
             files_to_include,
@@ -202,6 +208,7 @@ impl SearchQuery {
             include_ignored,
             false,
             inner,
+            true,
         )
     }
 
@@ -212,6 +219,7 @@ impl SearchQuery {
         include_ignored: bool,
         one_match_per_line: bool,
         inner: SearchInputs,
+        escaped: bool,
     ) -> Result<Self> {
         if let Some((case_sensitive_from_pattern, new_pattern)) =
             Self::case_sensitive_from_pattern(&pattern)
@@ -243,6 +251,7 @@ impl SearchQuery {
 
         let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!case_sensitive)
+            .crlf(true)
             .build()?;
         Ok(Self::Regex {
             regex,
@@ -253,6 +262,7 @@ impl SearchQuery {
             include_ignored,
             inner,
             one_match_per_line,
+            escaped,
         })
     }
 
@@ -383,10 +393,10 @@ impl SearchQuery {
     pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<bool> {
+    ) -> Result<Option<LineHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Yield from this function every 20KB scanned.
@@ -397,12 +407,18 @@ impl SearchQuery {
                 let mut text = String::new();
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
-                    Ok(search.is_match(&text))
+                    text::LineEnding::normalize(&mut text);
+                    if search.is_match(&text) {
+                        Ok(Some(LineHint::default()))
+                    } else {
+                        Ok(None)
+                    }
                 } else {
                     let mut bytes_read = 0;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
-                            return Ok(true);
+                            return Ok(Some(line_number));
                         }
                         bytes_read += text.len();
                         if bytes_read >= YIELD_THRESHOLD {
@@ -410,8 +426,9 @@ impl SearchQuery {
                             smol::future::yield_now().await;
                         }
                         text.clear();
+                        line_number += 1;
                     }
-                    Ok(false)
+                    Ok(None)
                 }
             }
             Self::Regex {
@@ -420,12 +437,18 @@ impl SearchQuery {
                 let mut text = String::new();
                 if *multiline {
                     reader.read_to_string(&mut text)?;
-                    Ok(regex.is_match(&text)?)
+                    text::LineEnding::normalize(&mut text);
+                    if regex.is_match(&text)? {
+                        Ok(Some(LineHint::default()))
+                    } else {
+                        Ok(None)
+                    }
                 } else {
                     let mut bytes_read = 0;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if regex.is_match(&text)? {
-                            return Ok(true);
+                            return Ok(Some(line_number));
                         }
                         bytes_read += text.len();
                         if bytes_read >= YIELD_THRESHOLD {
@@ -433,8 +456,9 @@ impl SearchQuery {
                             smol::future::yield_now().await;
                         }
                         text.clear();
+                        line_number += 1;
                     }
-                    Ok(false)
+                    Ok(None)
                 }
             }
         }
@@ -450,27 +474,36 @@ impl SearchQuery {
     /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
     pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
         match self {
-            SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
+            SearchQuery::Text { replacement, .. }
+            | SearchQuery::Regex {
+                replacement,
+                escaped: true,
+                ..
+            } => replacement.clone().map(Cow::from),
+
             SearchQuery::Regex {
-                regex, replacement, ..
+                regex,
+                replacement: Some(replacement),
+                escaped: false,
+                ..
             } => {
-                if let Some(replacement) = replacement {
-                    static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
-                        LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
-                    let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
-                        replacement,
-                        |c: &Captures| match c.get(0).unwrap().as_str() {
-                            r"\\" => "\\",
-                            r"\n" => "\n",
-                            r"\t" => "\t",
-                            x => unreachable!("Unexpected escape sequence: {}", x),
-                        },
-                    );
-                    Some(regex.replace(text, replacement))
-                } else {
-                    None
-                }
+                static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
+                let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
+                    replacement,
+                    |c: &Captures| match c.get(0).unwrap().as_str() {
+                        r"\\" => "\\",
+                        r"\n" => "\n",
+                        r"\t" => "\t",
+                        x => unreachable!("Unexpected escape sequence: {}", x),
+                    },
+                );
+                Some(regex.replace(text, replacement))
             }
+
+            SearchQuery::Regex {
+                replacement: None, ..
+            } => None,
         }
     }
 
@@ -538,7 +571,7 @@ impl SearchQuery {
                             yield_now().await;
                         }
 
-                        if let Ok(mat) = mat {
+                        if let std::result::Result::Ok(mat) = mat {
                             matches.push(mat.start()..mat.end());
                         }
                     }

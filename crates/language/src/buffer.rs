@@ -2,16 +2,16 @@ pub mod row_chunk;
 
 use crate::{
     ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
+    runnable::{self, RunnableRange},
     syntax_map::{
         MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
-    task_context::RunnableRange,
     text_diff::text_diff,
     unified_diff_with_offsets,
 };
@@ -43,6 +43,7 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -618,8 +619,8 @@ pub struct HighlightedText {
 }
 
 #[derive(Default, Debug)]
-struct HighlightedTextBuilder {
-    pub text: String,
+pub struct HighlightedTextBuilder {
+    text: String,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
@@ -692,6 +693,22 @@ impl HighlightedTextBuilder {
         }
     }
 
+    /// Append a displayable value to the text, highlighting its range with
+    /// `style`.
+    pub fn push_styled(&mut self, value: impl std::fmt::Display, style: HighlightStyle) {
+        let start = self.text.len();
+        let _ = write!(&mut self.text, "{value}");
+        let end = self.text.len();
+        if end > start {
+            self.highlights.push((start..end, style));
+        }
+    }
+
+    /// Append a displayable value to the text without any highlighting.
+    pub fn push_plain(&mut self, value: impl std::fmt::Display) {
+        let _ = write!(&mut self.text, "{value}");
+    }
+
     pub fn add_text_from_buffer_range<T: ToOffset>(
         &mut self,
         range: Range<T>,
@@ -756,6 +773,14 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn unchanged(snapshot: &BufferSnapshot) -> Self {
+        Self {
+            old_snapshot: snapshot.text.clone(),
+            applied_edits_snapshot: snapshot.text.clone(),
+            syntax_snapshot: snapshot.syntax.clone(),
+        }
+    }
+
     pub fn as_unified_diff(
         &self,
         file: Option<&Arc<dyn File>>,
@@ -2138,6 +2163,11 @@ impl Buffer {
                             for row in row_range.skip(1) {
                                 indent_sizes.entry(row).or_insert_with(|| {
                                     let mut size = snapshot.indent_size_for_line(row);
+                                    // A line with no indentation has an arbitrary
+                                    // indent kind, so it can adopt the new kind.
+                                    if size.len == 0 {
+                                        size.kind = new_indent.kind;
+                                    }
                                     if size.kind == new_indent.kind {
                                         match delta.cmp(&0) {
                                             Ordering::Greater => size.len += delta as u32,
@@ -2254,14 +2284,21 @@ impl Buffer {
         })
     }
 
-    /// Spawns a background task that searches the buffer for any whitespace
-    /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
-    pub fn remove_trailing_whitespace(&self, cx: &App) -> Task<Diff> {
+    /// Spawns a background task that returns a `Diff` removing trailing whitespace from line ends.
+    ///
+    /// When `modified_rows` is `Some`, only lines whose row falls within one of the given ranges
+    /// are trimmed; when it is `None`, the whole buffer is scanned.
+    pub fn remove_trailing_whitespace(
+        &self,
+        modified_rows: Option<&[Range<u32>]>,
+        cx: &App,
+    ) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
+        let modified_rows = modified_rows.map(|rows| rows.to_vec());
         cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges(&old_text);
+            let ranges = trailing_whitespace_ranges(&old_text, modified_rows.as_deref());
             let empty = Arc::<str>::from("");
             Diff {
                 base_version,
@@ -2274,28 +2311,60 @@ impl Buffer {
         })
     }
 
-    /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace. Skips if the buffer is empty.
-    pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
+    /// Returns a `Diff` ensuring the buffer ends with a trailing newline.
+    ///
+    /// When `modified_rows` is `None`, the whole buffer is considered: trailing whitespace and
+    /// blank lines at the end of the file are collapsed into a single newline.
+    ///
+    /// When `modified_rows` is `Some`, the operation is scoped to a "Format Selection": a single
+    /// newline is appended only when the last line is non-empty and its row falls within one of
+    /// the ranges. Trailing blank lines are left intact so that formatting a selection cannot
+    /// delete unselected rows.
+    pub fn ensure_final_newline(&self, modified_rows: Option<&[Range<u32>]>) -> Diff {
         let len = self.len();
-        if len == 0 {
-            return;
-        }
-        let mut offset = len;
-        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
-            let non_whitespace_len = chunk
-                .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                .len();
-            offset -= chunk.len();
-            offset += non_whitespace_len;
-            if non_whitespace_len != 0 {
-                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                    return;
-                }
-                break;
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let newline = Arc::<str>::from("\n");
+
+        let edits = if len == 0 {
+            Vec::new()
+        } else if let Some(modified_rows) = modified_rows {
+            let max_point = self.max_point();
+            let last_line_is_empty = max_point.column == 0;
+            let last_row_is_modified = modified_rows
+                .iter()
+                .any(|range| range.contains(&max_point.row));
+            if last_line_is_empty || !last_row_is_modified {
+                Vec::new()
+            } else {
+                Vec::from([(len..len, newline)])
             }
+        } else {
+            let mut offset = len;
+            let mut already_normalized = false;
+            for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    already_normalized =
+                        offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n");
+                    break;
+                }
+            }
+            if already_normalized {
+                Vec::new()
+            } else {
+                Vec::from([(offset..len, newline)])
+            }
+        };
+        Diff {
+            base_version,
+            line_ending,
+            edits,
         }
-        self.edit([(offset..len, "\n")], None, cx);
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
@@ -2660,6 +2729,7 @@ impl Buffer {
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
     /// delete, and a string of text to insert at that location. Adjacent edits are coalesced.
+    /// Inserted text is normalized to LF line endings before being applied.
     ///
     /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
     /// request for the edited ranges, which will be processed when the buffer finishes
@@ -3320,6 +3390,76 @@ impl Buffer {
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
+    }
+
+    // TODO: see if ep can use this instead of Buffer::branch
+    pub fn snapshot_with_edits<I, S, T>(
+        &mut self,
+        edits: I,
+        cx: &mut Context<Self>,
+    ) -> Task<EditedBufferSnapshot>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        let mut snapshot = self.snapshot();
+        let text = snapshot.text.clone();
+        let mut syntax = snapshot.syntax.clone();
+        let language = self.language().cloned();
+        let registry = self.language_registry();
+        let new_text = self.text.snapshot_with_edits(edits);
+        cx.background_spawn(async move {
+            if let Some(language) = language.clone() {
+                syntax.reparse(&text, registry.clone(), language);
+            }
+
+            syntax.interpolate(&new_text.snapshot);
+
+            if let Some(language) = language {
+                syntax.reparse(&new_text.snapshot, registry, language);
+            }
+
+            snapshot.text = new_text.snapshot.clone();
+            snapshot.syntax = syntax;
+
+            EditedBufferSnapshot {
+                text: new_text,
+                snapshot,
+            }
+        })
+    }
+
+    pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
+        let base_version = edited.text.base_version.clone();
+        let did_edit = edited.text.did_edit;
+        self.text.fast_forward(edited.text);
+        if edited.snapshot.language == self.language {
+            self.reparse = None;
+            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            if did_edit {
+                cx.emit(BufferEvent::Edited {
+                    source: BufferEditSource::User,
+                });
+            }
+        } else {
+            self.did_edit(&base_version, false, BufferEditSource::User, cx);
+        }
+    }
+}
+
+pub struct EditedBufferSnapshot {
+    text: text::EditedBufferSnapshot,
+    snapshot: BufferSnapshot,
+}
+
+impl EditedBufferSnapshot {
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn base_version(&self) -> &clock::Global {
+        &self.text.base_version
     }
 }
 
@@ -4456,6 +4596,7 @@ impl BufferSnapshot {
             anchor_items.push(OutlineItem {
                 depth: item_ends_stack.len(),
                 range: range_callback(self, item.range.clone()),
+                selection_range: range_callback(self, item.selection_range.clone()),
                 source_range_for_text: range_callback(self, item.source_range_for_text.clone()),
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
@@ -4533,6 +4674,14 @@ impl BufferSnapshot {
         }
         let source_range_for_text =
             buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end;
+        let selection_range = buffer_ranges
+            .iter()
+            .filter(|(_, node_is_name)| *node_is_name)
+            .map(|(buffer_range, _)| buffer_range.clone())
+            .reduce(|mut combined_range, next_range| {
+                combined_range.end = next_range.end;
+                combined_range
+            })?;
 
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
@@ -4590,8 +4739,9 @@ impl BufferSnapshot {
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
+            selection_range: selection_range.to_point(self),
             source_range_for_text: source_range_for_text.to_point(self),
-            text,
+            text: text.into(),
             highlight_ranges,
             name_ranges,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
@@ -4769,7 +4919,7 @@ impl BufferSnapshot {
                     })
                     .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
-                unique_closes.sort();
+                unique_closes.sort_unstable();
                 unique_closes.dedup();
 
                 // Build valid pairs by walking through closes in order
@@ -5186,105 +5336,7 @@ impl BufferSnapshot {
         &self,
         offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar.runnable_config.as_ref().map(|config| &config.query)
-        });
-
-        let test_configs = syntax_matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.runnable_config.as_ref())
-            .collect::<Vec<_>>();
-
-        iter::from_fn(move || {
-            loop {
-                let mat = syntax_matches.peek()?;
-
-                let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
-                    let mut run_range = None;
-                    let full_range = mat.captures.iter().fold(
-                        Range {
-                            start: usize::MAX,
-                            end: 0,
-                        },
-                        |mut acc, next| {
-                            let byte_range = next.node.byte_range();
-                            if acc.start > byte_range.start {
-                                acc.start = byte_range.start;
-                            }
-                            if acc.end < byte_range.end {
-                                acc.end = byte_range.end;
-                            }
-                            acc
-                        },
-                    );
-                    if full_range.start > full_range.end {
-                        // We did not find a full spanning range of this match.
-                        return None;
-                    }
-                    let extra_captures: SmallVec<[_; 1]> =
-                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                            test_configs
-                                .extra_captures
-                                .get(capture.index as usize)
-                                .cloned()
-                                .and_then(|tag_name| match tag_name {
-                                    RunnableCapture::Named(name) => {
-                                        Some((capture.node.byte_range(), name))
-                                    }
-                                    RunnableCapture::Run => {
-                                        let _ = run_range.insert(capture.node.byte_range());
-                                        None
-                                    }
-                                })
-                        }));
-                    let run_range = run_range?;
-                    let tags = test_configs
-                        .query
-                        .property_settings(mat.pattern_index)
-                        .iter()
-                        .filter_map(|property| {
-                            if *property.key == *"tag" {
-                                property
-                                    .value
-                                    .as_ref()
-                                    .map(|value| RunnableTag(value.to_string().into()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    let extra_captures = extra_captures
-                        .into_iter()
-                        .map(|(range, name)| {
-                            (
-                                name.to_string(),
-                                self.text_for_range(range).collect::<String>(),
-                            )
-                        })
-                        .collect();
-                    // All tags should have the same range.
-                    Some(RunnableRange {
-                        run_range,
-                        full_range,
-                        runnable: Runnable {
-                            tags,
-                            language: mat.language,
-                            buffer: self.remote_id(),
-                        },
-                        extra_captures,
-                        buffer_id: self.remote_id(),
-                    })
-                });
-
-                syntax_matches.advance();
-                if test_range.is_some() {
-                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                    return test_range;
-                }
-            }
-        })
+        runnable::runnable_ranges(self, offset_range)
     }
 
     /// Returns selections for remote peers intersecting the given range.
@@ -5817,7 +5869,9 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             let slice = &chunk[bit_start..bit_end];
 
-            let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
+            let mask = 1u128
+                .unbounded_shl((bit_end - bit_start) as u32)
+                .wrapping_sub(1);
             let tabs = (tabs >> bit_start) & mask;
             let chars = (chars_map >> bit_start) & mask;
             let newlines = (newlines >> bit_start) & mask;
@@ -5915,6 +5969,27 @@ impl IndentSize {
             }
         }
         self
+    }
+
+    /// Returns the number of indentation characters to remove when outdenting to the
+    /// previous editor tab stop.
+    pub fn outdent_len(self, tab_size: NonZeroU32) -> u32 {
+        if self.len == 0 {
+            return 0;
+        }
+
+        match self.kind {
+            IndentKind::Space => {
+                let tab_size = tab_size.get();
+                let columns_to_prev_tab_stop = self.len % tab_size;
+                if columns_to_prev_tab_stop == 0 {
+                    tab_size
+                } else {
+                    columns_to_prev_tab_stop
+                }
+            }
+            IndentKind::Tab => 1,
+        }
     }
 
     pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
@@ -6102,10 +6177,24 @@ impl CharClassifier {
 ///
 /// This could also be done with a regex search, but this implementation
 /// avoids copying text.
-pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
+/// Returns the byte ranges of trailing whitespace at the end of each line.
+///
+/// When `row_ranges` is `Some`, only lines whose row falls within one of the ranges are
+/// included. The single pass keeps filtering cheap, avoiding collecting every range up front.
+pub(crate) fn trailing_whitespace_ranges(
+    rope: &Rope,
+    row_ranges: Option<&[Range<u32>]>,
+) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
 
+    let is_row_included = |row: u32| match row_ranges {
+        Some(row_ranges) => row_ranges.iter().any(|range| range.contains(&row)),
+        None => true,
+    };
+
     let mut offset = 0;
+    let mut current_row: u32 = 0;
+    let mut prev_row: Option<u32> = None;
     let mut prev_chunk_trailing_whitespace_range = 0..0;
     for chunk in rope.chunks() {
         let mut prev_line_trailing_whitespace_range = 0..0;
@@ -6117,19 +6206,24 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
             if i == 0 && trimmed_line_len == 0 {
                 trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
             }
-            if !prev_line_trailing_whitespace_range.is_empty() {
-                ranges.push(prev_line_trailing_whitespace_range);
+            if let Some(row) = prev_row {
+                if !prev_line_trailing_whitespace_range.is_empty() && is_row_included(row) {
+                    ranges.push(prev_line_trailing_whitespace_range);
+                }
             }
 
+            prev_row = Some(current_row);
             offset = line_end_offset + 1;
+            current_row += 1;
             prev_line_trailing_whitespace_range = trailing_whitespace_range;
         }
 
         offset -= 1;
+        current_row -= 1;
         prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
     }
 
-    if !prev_chunk_trailing_whitespace_range.is_empty() {
+    if !prev_chunk_trailing_whitespace_range.is_empty() && is_row_included(current_row) {
         ranges.push(prev_chunk_trailing_whitespace_range);
     }
 

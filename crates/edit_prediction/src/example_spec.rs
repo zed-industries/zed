@@ -4,9 +4,10 @@ use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 use telemetry_events::EditPredictionRating;
 
 pub use zeta_prompt::udiff::{
-    CURSOR_POSITION_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
+    CURSOR_POSITION_MARKER, INLINE_CURSOR_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
 };
-pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
+
+use crate::data_collection::format_cursor_excerpt;
 
 /// Maximum cursor file size to capture (64KB).
 /// Files larger than this will not have their content captured,
@@ -482,51 +483,7 @@ impl ExampleSpec {
         cursor_offset: usize,
         line_comment_prefix: &str,
     ) {
-        // Find which line the cursor is on and its column
-        let cursor_line_start = excerpt[..cursor_offset]
-            .rfind('\n')
-            .map(|pos| pos + 1)
-            .unwrap_or(0);
-        let cursor_line_end = excerpt[cursor_line_start..]
-            .find('\n')
-            .map(|pos| cursor_line_start + pos + 1)
-            .unwrap_or(excerpt.len());
-        let cursor_line = &excerpt[cursor_line_start..cursor_line_end];
-        let cursor_line_indent = &cursor_line[..cursor_line.len() - cursor_line.trim_start().len()];
-        let cursor_column = cursor_offset - cursor_line_start;
-
-        // Build the marker line
-        let mut marker_line = String::new();
-        if cursor_column < line_comment_prefix.len() {
-            for _ in 0..cursor_column {
-                marker_line.push(' ');
-            }
-            marker_line.push_str(line_comment_prefix);
-            write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
-        } else {
-            if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
-                marker_line.push_str(cursor_line_indent);
-            }
-            marker_line.push_str(line_comment_prefix);
-            while marker_line.len() < cursor_column {
-                marker_line.push(' ');
-            }
-            write!(marker_line, "^{}", CURSOR_POSITION_MARKER).unwrap();
-        }
-
-        // Build the final cursor_position string
-        let mut result = String::with_capacity(excerpt.len() + marker_line.len() + 2);
-        result.push_str(&excerpt[..cursor_line_end]);
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push_str(&marker_line);
-        if cursor_line_end < excerpt.len() {
-            result.push('\n');
-            result.push_str(&excerpt[cursor_line_end..]);
-        }
-
-        self.cursor_position = result;
+        self.cursor_position = format_cursor_excerpt(excerpt, cursor_offset, line_comment_prefix);
     }
 
     /// Returns all of the possible expected patches for this example, each with an optional
@@ -536,8 +493,7 @@ impl ExampleSpec {
     /// to the start of the hunk.
     ///
     /// In the serialized representation of this example, the cursor position is represented
-    /// using a comment line in the diff, beginning with `#`, and containing a `[CURSOR_POSITION]`
-    /// marker with the same format as the [`Self::cursor_excerpt`].
+    /// using an inline `<|user_cursor|>` marker in an added diff line.
     pub fn expected_patches_with_cursor_positions(&self) -> Vec<(String, Option<usize>)> {
         self.expected_patches
             .iter()
@@ -826,8 +782,7 @@ mod tests {
             +// prints a greeting
              fn main() {
             -    println!("hi");
-            +    println!("hello, {}", );
-            #                          ^[CURSOR_POSITION]
+            +    println!("hello, {}", <|user_cursor|>);
                  let x = 42;
              }
         "#}
@@ -856,8 +811,7 @@ mod tests {
             +++ b/test.rs
             @@ -1,2 +1,2 @@
             -fn old() {}
-            +fn new_name() {}
-            #       ^[CURSOR_POSITION]
+            +fn new_<|user_cursor|>name() {}
         "#};
 
         let cursor_offset = "fn new_name() {}".find("name").unwrap();
@@ -868,7 +822,7 @@ mod tests {
         assert_eq!(
             encoded_once
                 .lines()
-                .filter(|line| line.contains(CURSOR_POSITION_MARKER))
+                .filter(|line| line.contains(INLINE_CURSOR_MARKER))
                 .count(),
             1
         );

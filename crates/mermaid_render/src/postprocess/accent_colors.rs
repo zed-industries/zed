@@ -37,9 +37,7 @@ impl NodeTracker {
         });
     }
 
-    pub fn finish_node(&mut self) {
-        debug_assert!(self.building.is_some());
-
+    pub fn maybe_finish_node(&mut self) {
         if let Some(rect) = self.building.take() {
             self.rects.push(rect);
         }
@@ -71,15 +69,14 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     let attr = e.try_get_attribute("d").ok()??;
     let d = attr.unescape_value().ok()?;
     let rest = d.strip_prefix('M')?.trim_start();
-    let mut chars = rest.chars().peekable();
-    while chars.peek().is_some_and(|c| *c != ' ' && *c != ',') {
-        chars.next();
-    }
-    while chars.peek().is_some_and(|c| *c == ' ' || *c == ',') {
-        chars.next();
-    }
-    let y_str: String = chars.take_while(|c| *c != ' ' && *c != ',').collect();
-    let y: f64 = y_str.parse().ok()?;
+    // The path data starts with `M x,y ...`; the y coordinate is the second
+    // whitespace/comma-separated token.
+    let y: f64 = rest
+        .split([' ', ','])
+        .filter(|token| !token.is_empty())
+        .nth(1)?
+        .parse()
+        .ok()?;
     Some(y.abs())
 }
 
@@ -146,8 +143,48 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
     Ok(new_elem)
 }
 
-pub(crate) fn current_stack_accent(stack: &[Option<usize>]) -> Option<usize> {
-    stack.iter().rev().find_map(|entry| *entry)
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AccentStackEntry {
+    /// The accent inherited by nested text, even when the group has no layout geometry.
+    accent_idx: Option<usize>,
+    /// Whether this group called `NodeTracker::start_node` and must be finished later.
+    tracks_node: bool,
+}
+
+impl AccentStackEntry {
+    pub fn none() -> Self {
+        Self {
+            accent_idx: None,
+            tracks_node: false,
+        }
+    }
+
+    pub fn accent(accent_idx: usize, tracks_node: bool) -> Self {
+        Self {
+            accent_idx: Some(accent_idx),
+            tracks_node,
+        }
+    }
+
+    pub fn tracks_node(self) -> bool {
+        self.tracks_node
+    }
+
+    fn accent_idx(self) -> Option<usize> {
+        self.accent_idx
+    }
+}
+
+pub(crate) fn current_stack_accent(stack: &[AccentStackEntry]) -> Option<usize> {
+    stack.iter().rev().find_map(|entry| entry.accent_idx())
+}
+
+// merman's fallback overlay groups intentionally preserve source classes such
+// as `node` and `section-*` so host CSS can style fallback text. They are not
+// layout nodes though, so accent tracking must not count them as new nodes.
+pub(crate) fn is_foreign_object_fallback_group(e: &BytesStart<'_>) -> Result<bool> {
+    Ok(e.try_get_attribute("data-merman-foreignobject")?
+        .is_some_and(|attr| attr.value.as_ref() == b"fallback"))
 }
 
 pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>) -> Option<usize> {
@@ -217,9 +254,9 @@ enum Handler {
     Sequence(sequence_diagram::SequenceDiagramAccents),
 }
 
-struct AccentColors<I> {
+struct AccentColors<'theme, I> {
     inner: I,
-    theme: MermaidTheme,
+    theme: &'theme MermaidTheme,
     handler: Handler,
     in_legend: bool,
     legend_color_idx: usize,
@@ -230,19 +267,25 @@ struct AccentColors<I> {
     quadrant_point_idx: usize,
 }
 
-impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
+impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> {
     fn process_chart_colors(&mut self, event: Event<'a>) -> Result<Event<'a>> {
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
-                if self.in_plot {
+                let is_start = matches!(event, Event::Start(_));
+                // Only a real opening tag increases nesting depth. Self-closing `<g/>`
+                // elements have no matching `</g>`, so counting them would leave
+                // `plot_depth` permanently inflated and `in_plot` stuck on.
+                if self.in_plot && is_start {
                     self.plot_depth += 1;
                 }
                 if let Some(class_attr) = e.try_get_attribute("class")? {
                     let class = class_attr.unescape_value()?;
                     if class.as_ref() == "plot" {
-                        self.in_plot = true;
-                        self.plot_depth = 1;
-                        self.plot_path_done = false;
+                        if is_start && !self.in_plot {
+                            self.in_plot = true;
+                            self.plot_depth = 1;
+                            self.plot_path_done = false;
+                        }
                     } else if class.as_ref() == "legend" {
                         self.in_legend = true;
                     } else if class.as_ref() == "data-point" {
@@ -259,7 +302,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
 
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if self.in_plot {
-                    self.plot_depth -= 1;
+                    self.plot_depth = self.plot_depth.saturating_sub(1);
                     if self.plot_depth == 0 {
                         self.in_plot = false;
                     }
@@ -306,7 +349,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
     }
 }
 
-impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
+impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<'theme, I> {
     type Item = Result<Event<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -356,13 +399,13 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
     }
 }
 
-pub(super) fn process<'a>(
+pub(super) fn process<'a, 'theme>(
     events: impl Iterator<Item = Result<Event<'a>>>,
-    theme: &MermaidTheme,
+    theme: &'theme MermaidTheme,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
     AccentColors {
         inner: events,
-        theme: theme.clone(),
+        theme,
         handler: Handler::Pending,
         in_legend: false,
         legend_color_idx: 0,

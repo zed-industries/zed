@@ -34,10 +34,6 @@ impl Head {
                 cx,
             )
             .detach();
-        // cx.subscribe_in(&editor, window, |v, _, event, window, cx| {
-        //     edit_handler(v, event, window, cx);
-        // })
-        // .detach();
         Self::Editor(editor)
     }
 

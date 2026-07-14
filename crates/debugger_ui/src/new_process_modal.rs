@@ -106,7 +106,7 @@ impl NewProcessModal {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
                         Picker::list(delegate, window, cx)
-                            .modal(false)
+                            .embedded()
                             .list_measure_all()
                     });
 
@@ -1206,6 +1206,10 @@ impl DebugDelegate {
 
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "debug scenario picker"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()

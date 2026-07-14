@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
 use collections::HashSet;
+use gpui::TasksIncluded;
 use language::File;
 use lsp::LanguageServerId;
 
@@ -253,7 +254,7 @@ impl HeadlessProject {
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
         language_extension::init(
-            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            language_extension::LspAccess::ViaLspStore(lsp_store.downgrade()),
             proxy.clone(),
             languages.clone(),
         );
@@ -536,6 +537,7 @@ impl HeadlessProject {
                 root_repo_common_dir: worktree
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
             }
         });
 
@@ -1106,7 +1108,7 @@ impl HeadlessProject {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let _ = buffer_store
                     .update(cx, |this, cx| {
                         this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
@@ -1269,11 +1271,12 @@ impl HeadlessProject {
         let foreground_only = envelope.payload.foreground_only;
 
         let (deltas, now_nanos) = cx.update(|cx| {
-            let dispatcher = cx.foreground_executor().dispatcher();
             let timings = if foreground_only {
-                vec![dispatcher.get_current_thread_timings()]
+                vec![gpui::profiler::get_current_thread_timings(
+                    TasksIncluded::OnlyCompleted,
+                )]
             } else {
-                dispatcher.get_all_timings()
+                gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted)
             };
             this.update(cx, |this, _cx| {
                 let deltas = this.profiling_collector.collect_unseen(timings);

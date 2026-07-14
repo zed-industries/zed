@@ -1,11 +1,14 @@
 use anyhow::Result;
 use quick_xml::events::Event;
 
-use super::{NodeTracker, accent_class_name, add_class, add_to_event, parse_translate};
+use super::{
+    AccentStackEntry, NodeTracker, accent_class_name, add_class, add_to_event,
+    is_foreign_object_fallback_group, parse_translate,
+};
 
 pub(crate) struct ClassDiagramAccents {
     accent_count: usize,
-    accent_g_stack: Vec<Option<usize>>,
+    accent_g_stack: Vec<AccentStackEntry>,
     node_counter: usize,
     nodes: NodeTracker,
     current_text_accent: Option<usize>,
@@ -29,6 +32,11 @@ impl ClassDiagramAccents {
 
         match &event {
             Event::Start(e) if e.name().as_ref() == b"g" => {
+                if is_foreign_object_fallback_group(e)? {
+                    self.accent_g_stack.push(AccentStackEntry::none());
+                    return Ok(event);
+                }
+
                 let is_node = if let Some(class_attr) = e.try_get_attribute("class")? {
                     let class = class_attr.unescape_value()?;
                     class
@@ -42,23 +50,27 @@ impl ClassDiagramAccents {
                     let accent_idx = self.node_counter % self.accent_count;
                     self.node_counter += 1;
 
-                    if let Some((cx, cy)) = parse_translate(e) {
+                    let tracks_node = if let Some((cx, cy)) = parse_translate(e) {
                         self.nodes.start_node(cx, cy, 30.0, accent_idx);
-                    }
+                        true
+                    } else {
+                        false
+                    };
 
-                    self.accent_g_stack.push(Some(accent_idx));
+                    self.accent_g_stack
+                        .push(AccentStackEntry::accent(accent_idx, tracks_node));
                     let new_elem = add_class(e, &accent_class_name(accent_idx))?;
                     return Ok(Event::Start(new_elem));
                 }
 
-                self.accent_g_stack.push(None);
+                self.accent_g_stack.push(AccentStackEntry::none());
                 Ok(event)
             }
 
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(entry) = self.accent_g_stack.pop() {
-                    if entry.is_some() {
-                        self.nodes.finish_node();
+                    if entry.tracks_node() {
+                        self.nodes.maybe_finish_node();
                     }
                 }
                 Ok(event)

@@ -14,10 +14,9 @@ doctest = false
 
 [dependencies]
 editor.workspace = true
-fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 gpui.workspace = true
 language.workspace = true
-ordered-float.workspace = true
 picker.workspace = true
 settings.workspace = true
 theme.workspace = true

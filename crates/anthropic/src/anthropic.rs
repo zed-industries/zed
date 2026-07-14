@@ -1,12 +1,16 @@
 use std::io;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
@@ -15,7 +19,20 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+
+pub fn supports_fast_mode(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+    )
+}
+
+pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
+pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -89,6 +106,7 @@ pub struct Model {
     pub supports_adaptive_thinking: bool,
     pub supports_images: bool,
     pub supports_speed: bool,
+    pub supports_compaction: bool,
     pub supported_effort_levels: Vec<Effort>,
     /// A model id to substitute when invoking tools, used for models that
     /// don't support tool calling natively.
@@ -145,14 +163,26 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(
+        let supports_speed = supports_fast_mode(&entry.id);
+
+        // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
+        let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+            "claude-fable-5"
+                | "claude-mythos-5"
+                | "claude-mythos-preview"
+                | "claude-opus-4-8"
+                | "claude-opus-4-7"
+                | "claude-opus-4-6"
+                | "claude-sonnet-4-6"
         );
 
         let mut extra_beta_headers = Vec::new();
         if supports_speed {
             extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
+        }
+        if supports_compaction {
+            extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
         }
 
         Self {
@@ -166,6 +196,7 @@ impl Model {
             supports_adaptive_thinking,
             supports_images,
             supports_speed,
+            supports_compaction,
             supported_effort_levels,
             tool_override: None,
             extra_beta_headers,
@@ -202,10 +233,18 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
-        .await
-        .map(|output| output.0)
+    stream_completion_with_rate_limit_info(
+        client,
+        api_url,
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await
+    .map(|output| output.0)
 }
 
 /// A raw model entry returned by the Anthropic models listing endpoint.
@@ -233,6 +272,7 @@ pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>> {
     let uri = format!("{api_url}/v1/models?limit=1000");
 
@@ -242,6 +282,7 @@ pub async fn list_models(
         .header("Anthropic-Version", "2023-06-01")
         .header("X-Api-Key", api_key.trim())
         .header("Accept", "application/json")
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .context("failed to build Anthropic models list request")?;
 
@@ -282,9 +323,17 @@ pub async fn non_streaming_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Response, AnthropicError> {
-    let (mut response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (mut response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let mut body = String::new();
@@ -306,6 +355,7 @@ async fn send_request(
     api_key: &str,
     request: impl Serialize,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
 
@@ -323,6 +373,7 @@ async fn send_request(
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
@@ -462,6 +513,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -474,8 +526,15 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
 
-    let (response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -585,6 +644,12 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "compaction")]
+    Compaction {
+        content: Option<Arc<str>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -616,6 +681,8 @@ pub enum ResponseContent {
         name: String,
         input: serde_json::Value,
     },
+    #[serde(rename = "compaction")]
+    Compaction { content: Option<Arc<str>> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -694,6 +761,32 @@ pub enum StringOrContents {
     Content(Vec<RequestContent>),
 }
 
+/// Server-side context management configuration.
+///
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagement {
+    pub edits: Vec<ContextManagementEdit>,
+}
+
+/// A context management edit strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContextManagementEdit {
+    #[serde(rename = "compact_20260112")]
+    Compact {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<CompactionTrigger>,
+    },
+}
+
+/// When to trigger server-side compaction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CompactionTrigger {
+    InputTokens { value: u64 },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
@@ -713,6 +806,8 @@ pub struct Request {
     /// we don't have to micromanage per-block breakpoints ourselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -759,6 +854,34 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
+    /// Only populated when a new compaction is triggered during the request.
+    /// The top-level token fields exclude compaction iterations, so total
+    /// billable usage is the sum across all iterations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<UsageIteration>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageIteration {
+    #[serde(rename = "type")]
+    pub iteration_type: UsageIterationType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageIterationType {
+    Compaction,
+    Message,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -811,6 +934,8 @@ pub enum ContentDelta {
     SignatureDelta { signature: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
+    #[serde(rename = "compaction_delta")]
+    CompactionDelta { content: Option<Arc<str>> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -923,73 +1048,89 @@ impl From<language_model_core::Speed> for Speed {
 
 impl From<AnthropicError> for language_model_core::LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
-            AnthropicError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            AnthropicError::HttpResponseError {
-                status_code,
-                message,
-            } => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
-            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            AnthropicError::ApiError(api_error) => api_error.into(),
-        }
+        completion_error_from_anthropic(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
     }
 }
 
 impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        use ApiErrorCode::*;
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error.code() {
-            Some(code) => match code {
-                InvalidRequestError => Self::BadRequestFormat {
-                    provider,
-                    message: error.message,
-                },
-                AuthenticationError => Self::AuthenticationError {
-                    provider,
-                    message: error.message,
-                },
-                PermissionError => Self::PermissionError {
-                    provider,
-                    message: error.message,
-                },
-                NotFoundError => Self::ApiEndpointNotFound { provider },
-                RequestTooLarge => Self::PromptTooLarge {
-                    tokens: language_model_core::parse_prompt_too_long(&error.message),
-                },
-                RateLimitError => Self::RateLimitExceeded {
-                    provider,
-                    retry_after: None,
-                },
-                ApiError => Self::ApiInternalServerError {
-                    provider,
-                    message: error.message,
-                },
-                OverloadedError => Self::ServerOverloaded {
-                    provider,
-                    retry_after: None,
-                },
-            },
-            None => Self::Other(error.into()),
+        completion_error_from_anthropic_api(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
+    }
+}
+
+pub fn completion_error_from_anthropic(
+    error: AnthropicError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error {
+        AnthropicError::SerializeRequest(error) => Error::SerializeRequest { provider, error },
+        AnthropicError::BuildRequestBody(error) => Error::BuildRequestBody { provider, error },
+        AnthropicError::HttpSend(error) => Error::HttpSend { provider, error },
+        AnthropicError::DeserializeResponse(error) => {
+            Error::DeserializeResponse { provider, error }
         }
+        AnthropicError::ReadResponse(error) => Error::ApiReadResponseError { provider, error },
+        AnthropicError::HttpResponseError {
+            status_code,
+            message,
+        } => Error::HttpResponseError {
+            provider,
+            status_code,
+            message,
+        },
+        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
+            provider,
+            retry_after: Some(retry_after),
+        },
+        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
+            provider,
+            retry_after,
+        },
+        AnthropicError::ApiError(api_error) => {
+            completion_error_from_anthropic_api(api_error, provider)
+        }
+    }
+}
+
+pub fn completion_error_from_anthropic_api(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use ApiErrorCode::*;
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error.code() {
+        Some(code) => match code {
+            InvalidRequestError => Error::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Error::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PermissionError => Error::PermissionError {
+                provider,
+                message: error.message,
+            },
+            NotFoundError => Error::ApiEndpointNotFound { provider },
+            RequestTooLarge => Error::PromptTooLarge {
+                tokens: language_model_core::parse_prompt_too_long(&error.message),
+            },
+            RateLimitError => Error::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Error::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Error::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
+        },
+        None => Error::Other(error.into()),
     }
 }
 
@@ -1066,7 +1207,11 @@ mod tests {
         ));
 
         assert!(model.supports_speed);
-        assert_eq!(model.beta_headers().as_deref(), Some(FAST_MODE_BETA_HEADER));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
     }
 
     #[test]

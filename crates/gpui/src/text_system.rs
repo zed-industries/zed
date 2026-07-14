@@ -93,7 +93,7 @@ impl TextSystem {
                 .map(|font| font.family.to_string()),
         );
         names.push(".SystemUIFont".to_string());
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         names
     }

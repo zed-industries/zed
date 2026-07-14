@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 //! Accessibility (AccessKit) demo app.
 //!
 //! Run with: `cargo run -p gpui --example a11y`

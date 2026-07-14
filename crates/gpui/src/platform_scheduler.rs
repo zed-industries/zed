@@ -129,7 +129,10 @@ impl Scheduler for PlatformScheduler {
         // Create a runnable that will send the completion signal
         let location = std::panic::Location::caller();
         let (runnable, _task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                spawned: scheduler::SpawnTime(Instant::now()),
+            })
             .spawn(
                 move |_| async move {
                     let _ = tx.send(());
@@ -185,7 +188,7 @@ impl Clock for PlatformClock {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
-    use crate::{RunnableVariant, ThreadTaskTimings};
+    use crate::RunnableVariant;
     use scheduler::BackgroundExecutor;
     use std::time::Instant as StdInstant;
 
@@ -194,17 +197,6 @@ mod tests {
     struct SmokeDispatcher;
 
     impl PlatformDispatcher for SmokeDispatcher {
-        fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-            Vec::new()
-        }
-        fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-            ThreadTaskTimings {
-                thread_name: None,
-                thread_id: std::thread::current().id(),
-                timings: Vec::new(),
-                total_pushed: 0,
-            }
-        }
         fn is_main_thread(&self) -> bool {
             false
         }

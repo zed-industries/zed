@@ -299,9 +299,11 @@ mod conflict_set_tests {
             )
         });
         let buffer = buffer.await.unwrap();
-        let conflict_set = git_store.update(cx, |git_store, cx| {
-            git_store.open_conflict_set(buffer.clone(), cx)
-        });
+        let conflict_set = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_conflict_set(buffer.clone(), cx)
+            })
+            .await;
         let (events_tx, events_rx) = mpsc::channel::<ConflictSetUpdate>();
         let _conflict_set_subscription = cx.update(|cx| {
             cx.subscribe(&conflict_set, move |_, event, _| {
@@ -417,9 +419,11 @@ mod conflict_set_tests {
         let buffer = buffer.await.unwrap();
 
         // Open the conflict set for a file that currently has conflicts.
-        let conflict_set = git_store.update(cx, |git_store, cx| {
-            git_store.open_conflict_set(buffer.clone(), cx)
-        });
+        let conflict_set = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_conflict_set(buffer.clone(), cx)
+            })
+            .await;
 
         cx.run_until_parked();
         conflict_set.update(cx, |conflict_set, cx| {
@@ -518,9 +522,11 @@ mod conflict_set_tests {
             )
         });
         let buffer = buffer.await.unwrap();
-        let conflict_set = git_store.update(cx, |git_store, cx| {
-            git_store.open_conflict_set(buffer.clone(), cx)
-        });
+        let conflict_set = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_conflict_set(buffer.clone(), cx)
+            })
+            .await;
 
         let (events_tx, events_rx) = mpsc::channel::<ConflictSetUpdate>();
         let _conflict_set_subscription = cx.update(|cx| {

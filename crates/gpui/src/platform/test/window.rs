@@ -6,6 +6,7 @@ use crate::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use collections::HashMap;
+use gpui_util::ResultExt as _;
 use image::RgbaImage;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -291,7 +292,14 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &Scene) {}
+    fn draw(&self, scene: &Scene) {
+        let scale_factor = self.scale_factor();
+        let mut state = self.0.lock();
+        let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
+        if let Some(renderer) = &mut state.renderer {
+            renderer.render_scene(scene, device_size).warn_on_err();
+        }
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
@@ -299,10 +307,10 @@ impl PlatformWindow for TestWindow {
 
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
+        let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
         let size = state.bounds.size;
         if let Some(renderer) = &mut state.renderer {
-            let scale_factor = 2.0;
             let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
             renderer.render_scene_to_image(scene, device_size)
         } else {

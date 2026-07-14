@@ -71,6 +71,18 @@ impl HighlightedLabel {
     pub fn highlight_indices(&self) -> &[usize] {
         &self.highlight_indices
     }
+
+    /// Truncates the label from the start, keeping the end visible.
+    pub fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
 }
 
 impl HighlightedLabel {

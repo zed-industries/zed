@@ -615,6 +615,7 @@ impl DiffState {
                     changed_range,
                     base_text_changed_range: _,
                     extended_range,
+                    base_text_changed: _,
                 }) => {
                     let use_extended = this.snapshot.borrow().use_extended_diff_range;
                     let range = if use_extended {
@@ -622,13 +623,10 @@ impl DiffState {
                     } else {
                         changed_range.clone()
                     };
-                    if let Some(range) = range {
-                        this.buffer_diff_changed(diff, range, cx)
-                    }
+                    this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
-                _ => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -652,6 +650,7 @@ impl DiffState {
                             changed_range: _,
                             base_text_changed_range,
                             extended_range: _,
+                            base_text_changed: _,
                         }) => {
                             this.inverted_buffer_diff_changed(
                                 diff,
@@ -661,10 +660,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::LanguageChanged => {
-                            this.inverted_buffer_diff_language_changed(diff, main_buffer, cx)
-                        }
-                        _ => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),
@@ -1973,38 +1969,10 @@ impl MultiBuffer {
         });
     }
 
-    fn buffer_diff_language_changed(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
-        let diff = diff.read(cx);
-        let buffer_id = diff.buffer_id;
-        let diff = DiffStateSnapshot {
-            buffer_id,
-            diff: diff.snapshot(cx),
-            main_buffer: None,
-        };
-        self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
-    }
-
-    fn inverted_buffer_diff_language_changed(
-        &mut self,
-        diff: Entity<BufferDiff>,
-        main_buffer: Entity<language::Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
-        let main_buffer_snapshot = main_buffer.read(cx).snapshot();
-        let diff = diff.read(cx);
-        let diff = DiffStateSnapshot {
-            buffer_id: base_text_buffer_id,
-            diff: diff.snapshot(cx),
-            main_buffer: Some(main_buffer_snapshot),
-        };
-        self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
-    }
-
     fn buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
-        range: Range<text::Anchor>,
+        range: Option<Range<text::Anchor>>,
         cx: &mut Context<Self>,
     ) {
         let Some(buffer) = self.buffer(diff.read(cx).buffer_id) else {
@@ -2029,6 +1997,9 @@ impl MultiBuffer {
         snapshot.diffs.insert_or_replace(new_diff, ());
 
         let buffer = buffer.read(cx);
+        let Some(range) = range else {
+            return;
+        };
         let diff_change_range = range.to_offset(buffer);
 
         let excerpt_edits = snapshot.excerpt_edits_for_diff_change(&path, diff_change_range);
@@ -2143,6 +2114,9 @@ impl MultiBuffer {
         self.title.as_deref()
     }
 
+    /// The title used for buffers not backed by a file and with no title of their own.
+    pub const DEFAULT_TITLE: &str = "untitled";
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();
@@ -2160,7 +2134,7 @@ impl MultiBuffer {
             }
         };
 
-        "untitled".into()
+        Self::DEFAULT_TITLE.into()
     }
 
     fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
@@ -2239,7 +2213,7 @@ impl MultiBuffer {
 
         self.buffer_diff_changed(
             diff.clone(),
-            text::Anchor::min_max_range_for_buffer(buffer_id),
+            Some(text::Anchor::min_max_range_for_buffer(buffer_id)),
             cx,
         );
         self.diffs.insert(buffer_id, DiffState::new(diff, cx));
@@ -3638,7 +3612,7 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Vec<(
-        BufferSnapshot,
+        &BufferSnapshot,
         Range<BufferOffset>,
         ExcerptRange<text::Anchor>,
     )> {
@@ -3649,7 +3623,7 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         let mut result: Vec<(
-            BufferSnapshot,
+            &BufferSnapshot,
             Range<BufferOffset>,
             ExcerptRange<text::Anchor>,
         )> = Vec::new();
@@ -3681,7 +3655,7 @@ impl MultiBufferSnapshot {
                 {
                     prev.1.end = end;
                 } else {
-                    result.push((region.buffer.clone(), start..end, excerpt_range));
+                    result.push((region.buffer, start..end, excerpt_range));
                 }
             }
             cursor.next();
@@ -3704,11 +3678,7 @@ impl MultiBufferSnapshot {
                         || prev_excerpt.context.start != excerpt_range.context.start
                 })
             {
-                result.push((
-                    buffer_snapshot.clone(),
-                    buffer_offset..buffer_offset,
-                    excerpt_range,
-                ));
+                result.push((buffer_snapshot, buffer_offset..buffer_offset, excerpt_range));
             }
         }
 
@@ -6325,6 +6295,7 @@ impl MultiBufferSnapshot {
                 .map(|item| OutlineItem {
                     depth: item.depth,
                     range: Anchor::range_in_buffer(path_key_index, item.range),
+                    selection_range: Anchor::range_in_buffer(path_key_index, item.selection_range),
                     source_range_for_text: Anchor::range_in_buffer(
                         path_key_index,
                         item.source_range_for_text,
@@ -6367,6 +6338,10 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
+                        selection_range: Anchor::range_in_buffer(
+                            excerpt.path_key_index,
+                            item.selection_range,
+                        ),
                         source_range_for_text: Anchor::range_in_buffer(
                             excerpt.path_key_index,
                             item.source_range_for_text,
