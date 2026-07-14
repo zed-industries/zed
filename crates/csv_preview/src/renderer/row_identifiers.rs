@@ -1,12 +1,12 @@
 use ui::{
     ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
-    Clickable as _, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, StyledTypography as _, Tooltip, div,
+    Clickable as _, Context, ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _,
+    SharedString, Styled as _, StyledTypography as _, Tooltip, div,
 };
 
 use crate::{
     CsvPreviewView,
-    settings::{FontType, RowIdentifiers, VerticalAlignment},
+    settings::{RowIdentifiers, VerticalAlignment},
     types::{DataRow, DisplayRow, LineNumber},
 };
 
@@ -179,10 +179,7 @@ impl CsvPreviewView {
                 VerticalAlignment::Top => div.items_start(),
                 VerticalAlignment::Center => div.items_center(),
             })
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
+            .font_buffer(cx)
             .child(row_identifier)
             .into_any_element();
         Some(value)
