@@ -342,6 +342,8 @@ actions!(
         /// Toggles maximizing the active editor pane within the center area,
         /// hiding other split panes but leaving docks/panels unaffected.
         ToggleEditorZoom,
+        /// Toggles the visibility of the tab bar.
+        ToggleTabBar,
         /// Toggles read-only mode for the active item (if supported by that item).
         ToggleReadOnlyFile,
         /// Zooms in on the active pane.
@@ -7754,6 +7756,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::toggle_editor_zoom))
+            .on_action(cx.listener(Workspace::toggle_tab_bar))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, action: &pane::ActivateNextItem, window, cx| {
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
@@ -8007,6 +8010,14 @@ impl Workspace {
             .detach_and_log_err(cx);
         }
         cx.notify();
+    }
+
+    pub fn toggle_tab_bar(&mut self, _: &ToggleTabBar, _: &mut Window, cx: &mut Context<Self>) {
+        let fs = self.project.read(cx).fs().clone();
+        let show = !TabBarSettings::get_global(cx).show;
+        update_settings_file(fs, cx, move |content, _cx| {
+            content.tab_bar.get_or_insert_default().show = Some(show);
+        });
     }
 
     pub fn clear_bookmarks(&mut self, _: &ClearBookmarks, _: &mut Window, cx: &mut Context<Self>) {
