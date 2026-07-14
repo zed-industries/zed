@@ -1,6 +1,7 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
+    git_panel_settings::GitPanelSettings,
     git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
@@ -39,6 +40,7 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
+use settings::{Settings, update_settings_file};
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -51,8 +53,8 @@ use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
-    Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
+    Checkbox, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
+    DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
@@ -1338,9 +1340,52 @@ pub struct GitGraph {
     changed_files_view_mode: ChangedFilesViewMode,
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
+    show_stashes_in_graph: bool,
 }
 
 impl GitGraph {
+    fn should_show_stashes(cx: &App) -> bool {
+        GitPanelSettings::get_global(cx).show_stashes_in_graph
+    }
+
+    fn is_stash_commit(commit: &InitialGraphCommitData) -> bool {
+        commit
+            .ref_names
+            .iter()
+            .any(|ref_name| ref_name.as_ref() == "refs/stash")
+    }
+
+    fn visible_graph_commits(
+        &self,
+        commits: &[Arc<InitialGraphCommitData>],
+    ) -> Vec<Arc<InitialGraphCommitData>> {
+        if self.show_stashes_in_graph {
+            commits.to_vec()
+        } else {
+            commits
+                .iter()
+                .filter(|commit| !Self::is_stash_commit(commit))
+                .cloned()
+                .collect()
+        }
+    }
+
+    fn toggle_show_stashes_in_graph(&mut self, cx: &mut Context<Self>) {
+        let new_value = !self.show_stashes_in_graph;
+        self.show_stashes_in_graph = new_value;
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                settings.git_panel.get_or_insert_default().show_stashes_in_graph = Some(new_value);
+            });
+        }
+
+        self.pending_select_sha = None;
+        self.invalidate_state(cx);
+        self.fetch_initial_graph_data(cx);
+    }
+
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
         self.graph_data.clear();
         self.search_state.matches.clear();
@@ -1536,9 +1581,11 @@ impl GitGraph {
             },
         );
         let mut row_height = Self::row_height(window, cx);
+        let mut show_stashes_in_graph = Self::should_show_stashes(cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
             let new_row_height = Self::row_height(window, cx);
+            let new_show_stashes_in_graph = Self::should_show_stashes(cx);
             if new_row_height != row_height {
                 // The `uniform_list` powering the table caches the item size
                 // from its last layout; invalidate it so it re-measures with
@@ -1548,6 +1595,13 @@ impl GitGraph {
                 });
                 row_height = new_row_height;
                 cx.notify();
+            }
+            if new_show_stashes_in_graph != show_stashes_in_graph {
+                show_stashes_in_graph = new_show_stashes_in_graph;
+                this.show_stashes_in_graph = new_show_stashes_in_graph;
+                this.pending_select_sha = None;
+                this.invalidate_state(cx);
+                this.fetch_initial_graph_data(cx);
             }
         })
         .detach();
@@ -1584,6 +1638,7 @@ impl GitGraph {
             changed_files_view_mode: ChangedFilesViewMode::default(),
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
+            show_stashes_in_graph: Self::should_show_stashes(cx),
         };
 
         this.fetch_initial_graph_data(cx);
@@ -1639,7 +1694,8 @@ impl GitGraph {
                                     old_count..*commit_count,
                                     cx,
                                 );
-                                self.graph_data.add_commits(commits);
+                                let commits = self.visible_graph_commits(commits);
+                                self.graph_data.add_commits(&commits);
 
                                 let pending_sha_index = self.pending_select_sha.and_then(|oid| {
                                     repository.get_graph_data(source.clone(), *order).and_then(
@@ -1671,7 +1727,9 @@ impl GitGraph {
                     self.invalidate_state(cx);
                 }
             }
-            RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
+            RepositoryEvent::StashEntriesChanged
+                if self.log_source == LogSource::All && self.show_stashes_in_graph =>
+            {
                 // Stash entries initial's scan id is 2, so we don't want to invalidate the graph before that
                 if repository.read(cx).scan_id > 2 {
                     self.pending_select_sha = None;
@@ -1689,7 +1747,8 @@ impl GitGraph {
                 let commits = repository
                     .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
                     .commits;
-                self.graph_data.add_commits(commits);
+                let commits = self.visible_graph_commits(commits);
+                self.graph_data.add_commits(&commits);
             });
         }
     }
@@ -2754,6 +2813,7 @@ impl GitGraph {
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
+        let show_stashes_in_graph = self.show_stashes_in_graph;
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, _window, _cx| {
             context_menu = context_menu.context(focus_handle).header("Columns");
             for (col_idx, label) in columns.iter().enumerate() {
@@ -2771,6 +2831,20 @@ impl GitGraph {
                         git_graph.update(cx, |this, cx| {
                             this.toggle_column_visibility(col_idx, cx);
                             cx.notify();
+                        });
+                    },
+                );
+            }
+            if !is_path_history {
+                let git_graph = git_graph.clone();
+                context_menu = context_menu.separator().toggleable_entry(
+                    "Show Stashes",
+                    show_stashes_in_graph,
+                    IconPosition::End,
+                    None,
+                    move |_window, cx| {
+                        git_graph.update(cx, |this, cx| {
+                            this.toggle_show_stashes_in_graph(cx);
                         });
                     },
                 );
@@ -2912,6 +2986,23 @@ impl GitGraph {
                             ),
                     ),
             )
+            .when(matches!(self.log_source, LogSource::All), |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            Checkbox::new(
+                                "git-graph-show-stashes",
+                                self.show_stashes_in_graph.into(),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_show_stashes_in_graph(cx);
+                            })),
+                        )
+                        .child(Label::new("Show stashes").size(LabelSize::Small)),
+                )
+            })
     }
 
     fn render_loading_spinner(&self, cx: &App) -> AnyElement {
@@ -6592,6 +6683,85 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(reloaded_shas, vec![updated_head, updated_stash]);
+    }
+
+    #[gpui::test]
+    async fn test_git_graph_hides_stashes_when_setting_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().show_stashes_in_graph = Some(false);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let head = Oid::from_bytes(&[1; 20]).unwrap();
+        let stash = Oid::from_bytes(&[2; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: head,
+                    parents: smallvec![stash],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: stash,
+                    parents: smallvec![],
+                    ref_names: vec!["refs/stash".into()],
+                }),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let shas = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .map(|commit| commit.data.sha)
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(shas, vec![head]);
     }
 
     #[gpui::test]
