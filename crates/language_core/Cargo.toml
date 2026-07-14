@@ -12,7 +12,6 @@ anyhow.workspace = true
 collections.workspace = true
 gpui_shared_string.workspace = true
 log.workspace = true
-lsp.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 schemars.workspace = true
@@ -21,7 +20,8 @@ serde_json.workspace = true
 toml.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
-
+gpui_util.workspace = true
+lsp-types.workspace = true
 
 [features]
 test-support = []

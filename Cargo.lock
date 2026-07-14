@@ -8113,7 +8113,6 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
- "util",
 ]
 
 [[package]]
@@ -9751,8 +9750,9 @@ dependencies = [
  "anyhow",
  "collections",
  "gpui_shared_string",
+ "gpui_util",
  "log",
- "lsp",
+ "lsp-types",
  "parking_lot",
  "regex",
  "schemars 1.0.4",
@@ -10549,10 +10549,12 @@ name = "lsp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "async-pipe",
  "collections",
  "ctor",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "gpui",
  "gpui_util",
  "log",
@@ -10564,7 +10566,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "smol",
  "util",
  "zlog",
 ]
