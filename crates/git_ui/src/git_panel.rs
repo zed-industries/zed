@@ -2696,15 +2696,7 @@ impl GitPanel {
             return;
         };
 
-        // Mirror the checkbox: a resolved conflict is locked against toggling
-        // (the explicit git::UnstageFile action remains as an escape hatch).
-        if self.section_for_entry_index(selected_index) == Some(Section::Conflict)
-            && let Some(status_entry) = selected_entry.status_entry()
-            && self.active_repository.as_ref().is_some_and(|repo| {
-                GitPanel::stage_status_for_entry(status_entry, &repo.read(cx))
-                    == StageStatus::Staged
-            })
-        {
+        if self.is_resolved_conflict(selected_index, cx) {
             return;
         }
 
@@ -4852,6 +4844,32 @@ impl GitPanel {
     fn stage_intent_for_entry_index(&self, ix: usize) -> StageIntent {
         self.section_for_entry_index(ix)
             .map_or(StageIntent::Toggle, StageIntent::for_section)
+    }
+
+    // A conflict that has been marked resolved (fully staged) is locked
+    // against toggling: unstaging would rebuild the index entry from HEAD,
+    // silently discarding the unmerged (base/ours/theirs) stages — a
+    // round-trip git can't actually perform. The explicit git::UnstageFile
+    // action remains as an escape hatch.
+    fn is_resolved_conflict(&self, ix: usize, cx: &App) -> bool {
+        if self.section_for_entry_index(ix) != Some(Section::Conflict) {
+            return false;
+        }
+        let Some(entry) = self.entries.get(ix) else {
+            return false;
+        };
+        let Some(repo) = self.active_repository.as_ref() else {
+            return false;
+        };
+        let repo = repo.read(cx);
+        match entry {
+            GitListEntry::Directory(directory) => {
+                self.stage_status_for_directory(directory, repo) == StageStatus::Staged
+            }
+            entry => entry.status_entry().is_some_and(|status_entry| {
+                GitPanel::stage_status_for_entry(status_entry, repo) == StageStatus::Staged
+            }),
+        }
     }
 
     fn diff_target_for_section(section: Option<Section>) -> DiffTarget {
@@ -7186,14 +7204,7 @@ impl GitPanel {
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let stage_intent = self.stage_intent_for_entry_index(ix);
-
-        // Unstaging a resolved conflict would rebuild the index entry from HEAD,
-        // silently discarding the unmerged (base/ours/theirs) stages, so once a
-        // conflict is marked resolved we lock the checkbox instead of offering a
-        // round-trip git can't actually perform.
-        let resolved_conflict = self.section_for_entry_index(ix) == Some(Section::Conflict)
-            && stage_status == StageStatus::Staged;
-
+        let resolved_conflict = self.is_resolved_conflict(ix, cx);
         let toggle_state = stage_intent.checkbox_state(|| {
             if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
                 ToggleState::Selected
@@ -7455,6 +7466,7 @@ impl GitPanel {
         };
 
         let stage_intent = StageIntent::for_section(entry.key.section);
+        let resolved_conflict = self.is_resolved_conflict(ix, cx);
         let toggle_state = stage_intent.checkbox_state(|| match stage_status {
             StageStatus::Staged => ToggleState::Selected,
             StageStatus::Unstaged => ToggleState::Unselected,
@@ -7506,7 +7518,7 @@ impl GitPanel {
                     .cursor_pointer()
                     .child(
                         Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
+                            .disabled(!has_write_access || resolved_conflict)
                             .fill()
                             .elevation(ElevationIndex::Surface)
                             .on_click({
@@ -7514,7 +7526,7 @@ impl GitPanel {
                                 let this = cx.weak_entity();
                                 move |_, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        if !has_write_access {
+                                        if !has_write_access || resolved_conflict {
                                             return;
                                         }
                                         this.toggle_staged_for_entry(
@@ -7529,8 +7541,12 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = stage_intent.label(|| stage_status);
-                                Tooltip::simple(format!("{action} folder"), cx)
+                                if resolved_conflict {
+                                    Tooltip::simple("Conflicts marked as resolved", cx)
+                                } else {
+                                    let action = stage_intent.label(|| stage_status);
+                                    Tooltip::simple(format!("{action} folder"), cx)
+                                }
                             }),
                     ),
             )
