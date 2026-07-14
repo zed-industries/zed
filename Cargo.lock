@@ -4347,6 +4347,7 @@ version = "0.1.0"
 dependencies = [
  "async-process",
  "crash-handler",
+ "libc",
  "log",
  "mach2 0.5.0",
  "minidumper",
