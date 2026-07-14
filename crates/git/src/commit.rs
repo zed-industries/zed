@@ -90,6 +90,7 @@ pub(crate) async fn get_tag_names(
         .build_command(&[
             "for-each-ref",
             "refs/tags",
+            "--sort=-creatordate",
             "--format=%(objectname)%00%(*objectname)%00%(refname:short)",
         ])
         .output()
