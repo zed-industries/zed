@@ -990,7 +990,7 @@ impl BranchListDelegate {
     }
 
     fn branch_filter_trigger(&self) -> IconButton {
-        IconButton::new("branch-filter", IconName::Sliders)
+        IconButton::new("branch-filter", IconName::Filter)
             .icon_size(IconSize::Small)
             .toggle_state(self.branch_filter != BranchFilter::All)
             .when(self.branch_filter != BranchFilter::All, |this| {
