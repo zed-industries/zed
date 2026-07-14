@@ -10,7 +10,7 @@ use std::cell::RefCell;
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, PlanEntry, SandboxAuthorizationDetails,
-    SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
+    SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason, decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -45,6 +45,7 @@ use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
 };
+use util::markdown::{source_line_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
@@ -12195,6 +12196,30 @@ pub(crate) fn open_link(
     };
 
     let path_style = workspace.read(cx).path_style(cx);
+    let (relative_path, fragment) = split_local_url_fragment(&url);
+    if let Some(fragment) = fragment
+        && !relative_path.is_empty()
+        && !path_style.is_absolute(relative_path)
+    {
+        let project = workspace.read(cx).project().clone();
+        let decoded_path = decode_path_escapes(relative_path);
+        let abs_path = project.update(cx, |project, cx| {
+            let resolve_path = |path: &str| {
+                let project_path = project.find_project_path(path, cx)?;
+                project.entry_for_path(&project_path, cx)?;
+                project.absolute_path(&project_path, cx)
+            };
+            resolve_path(&decoded_path).or_else(|| resolve_path(relative_path))
+        });
+        if let Some(abs_path) = abs_path {
+            let point = source_line_from_fragment(fragment).map(|row| Point::new(row, 0));
+            workspace.update(cx, |workspace, cx| {
+                open_abs_path_at_point(workspace, abs_path, point, window, cx);
+            });
+            return;
+        }
+    }
+
     if let Some(mention) = MentionUri::parse_hyperlink(&url, path_style).log_err() {
         // Percent escapes in bare paths are ambiguous: prefer the decoded
         // interpretation, falling back to the literal one (e.g. a file
@@ -12411,8 +12436,11 @@ mod tests {
         crate::test_support::init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
-            .await;
+        fs.insert_tree(
+            path!("/project"),
+            json!({"src": {"main.rs": "first\nsecond\nthird\n"}}),
+        )
+        .await;
 
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
@@ -12431,6 +12459,21 @@ mod tests {
                 .and_then(|item| item.project_path(cx))
                 .expect("file should be open");
             assert!(*active.path == *"src/main.rs");
+        });
+
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link("src/main.rs#L2".into(), &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("file should be open in an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
         });
 
         // Absolute path
@@ -12456,10 +12499,10 @@ mod tests {
         fs.insert_tree(
             path!("/project"),
             json!({
-                "a%20b.rs": "literal",
-                "a b.rs": "decoded",
-                "c d.rs": "",
-                "e%20f.rs": "",
+                "a%20b.rs": "literal\nsecond\n",
+                "a b.rs": "decoded\nsecond\n",
+                "c d.rs": "first\nsecond\n",
+                "e%20f.rs": "first\nsecond\n",
             }),
         )
         .await;
@@ -12495,6 +12538,25 @@ mod tests {
         // Only the literally-named file exists: fall back to it.
         let path = open_link_and_active_path(path!("/project/e%20f.rs").to_string(), cx);
         assert_eq!(*path, *"e%20f.rs");
+
+        let path = open_link_and_active_path("a%20b.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"a b.rs");
+
+        let path = open_link_and_active_path("c%20d.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"c d.rs");
+
+        let path = open_link_and_active_path("e%20f.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"e%20f.rs");
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("file should be open in an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
+        });
     }
 
     #[gpui::test]

@@ -57,6 +57,12 @@ pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
     }
 }
 
+pub fn source_line_from_fragment(fragment: &str) -> Option<u32> {
+    let line = fragment.strip_prefix('L')?;
+    let line = line.split_once([':', '-']).map_or(line, |(line, _)| line);
+    line.parse::<u32>().ok()?.checked_sub(1)
+}
+
 /// Indicates that the wrapped `String` is markdown text.
 #[derive(Debug, Clone)]
 pub struct MarkdownString(pub String);
@@ -348,6 +354,16 @@ mod tests {
             split_local_url_fragment("123:not-a-scheme#frag"),
             ("123:not-a-scheme", Some("frag"))
         );
+    }
+
+    #[test]
+    fn test_source_line_from_fragment() {
+        assert_eq!(source_line_from_fragment("L1"), Some(0));
+        assert_eq!(source_line_from_fragment("L42"), Some(41));
+        assert_eq!(source_line_from_fragment("L10-L20"), Some(9));
+        assert_eq!(source_line_from_fragment("L10:20"), Some(9));
+        assert_eq!(source_line_from_fragment("heading"), None);
+        assert_eq!(source_line_from_fragment("L0"), None);
     }
 
     #[test]
