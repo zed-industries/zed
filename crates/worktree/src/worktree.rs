@@ -2082,9 +2082,18 @@ impl LocalWorktree {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.read_with(cx, |this, _| {
-                this.entry_for_path(&path).cloned().with_context(|| {
-                    format!("Could not find entry in worktree for {path:?} after refresh")
-                })
+                this.entry_for_path(&path)
+                    .or_else(|| {
+                        this.as_local()
+                            .filter(|this| !this.fs_is_case_sensitive())
+                            .and_then(|this| {
+                                this.snapshot.entry_for_path_ignoring_ascii_case(&path)
+                            })
+                    })
+                    .cloned()
+                    .with_context(|| {
+                        format!("Could not find entry in worktree for {path:?} after refresh")
+                    })
             })??;
             Ok(Some(new_entry))
         })
@@ -2805,6 +2814,15 @@ impl Snapshot {
             } else {
                 None
             }
+        })
+    }
+
+    fn entry_for_path_ignoring_ascii_case(&self, path: &RelPath) -> Option<&Entry> {
+        self.entries_by_path.cursor::<()>(()).find(|entry| {
+            entry
+                .path
+                .as_unix_str()
+                .eq_ignore_ascii_case(path.as_unix_str())
         })
     }
 
@@ -5430,13 +5448,36 @@ impl BackgroundScanner {
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
         let mut paths_to_process = Vec::with_capacity(relative_paths.len());
+        let mut changed_paths = Vec::with_capacity(relative_paths.len());
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
+            let mut path = path.clone();
+            if let Ok(Some((_metadata, canonical_path))) = metadata
+                && !self.fs_case_sensitive
+                && let Some(case_corrected_path) = Self::case_corrected_relative_path(
+                    root_canonical_path,
+                    path.as_ref(),
+                    canonical_path,
+                )
+            {
+                let removed_descendant_paths =
+                    state.remove_path_from_snapshot(path.as_ref(), false);
+                state.unwatch_path(
+                    self.watcher.as_ref(),
+                    path.as_ref(),
+                    removed_descendant_paths,
+                    true,
+                );
+                changed_paths.push(path);
+                path = case_corrected_path;
+            }
+
             let path_was_removed = matches!(metadata, Ok(None));
             let removed_descendant_paths = if path_was_removed || doing_recursive_update {
-                state.remove_path_from_snapshot(path, path_was_removed)
+                state.remove_path_from_snapshot(path.as_ref(), path_was_removed)
             } else {
                 Vec::new()
             };
+            changed_paths.push(path.clone());
             paths_to_process.push((path, metadata, removed_descendant_paths));
         }
 
@@ -5449,7 +5490,8 @@ impl BackgroundScanner {
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir, self.fs.as_ref())
                         .await;
                     let is_external = !canonical_path.starts_with(&root_canonical_path);
-                    let entry_id = state.entry_id_for(self.next_entry_id.as_ref(), path, &metadata);
+                    let entry_id =
+                        state.entry_id_for(self.next_entry_id.as_ref(), path.as_ref(), &metadata);
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
@@ -5465,10 +5507,10 @@ impl BackgroundScanner {
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
                     fs_entry.is_external = is_external;
-                    fs_entry.is_private = self.is_path_private(path);
+                    fs_entry.is_private = self.is_path_private(path.as_ref());
                     fs_entry.is_always_included =
-                        self.settings.is_path_always_included(path, is_dir);
-                    fs_entry.is_hidden = self.settings.is_path_hidden(path);
+                        self.settings.is_path_always_included(path.as_ref(), is_dir);
+                    fs_entry.is_hidden = self.settings.is_path_hidden(path.as_ref());
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if self.should_scan_directory(&state, &fs_entry)
@@ -5524,7 +5566,7 @@ impl BackgroundScanner {
                     self.remove_repo_path(path.clone(), &mut state.snapshot);
                     state.unwatch_path(
                         self.watcher.as_ref(),
-                        path,
+                        path.as_ref(),
                         removed_descendant_abs_paths,
                         false,
                     );
@@ -5533,7 +5575,7 @@ impl BackgroundScanner {
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
                     state.unwatch_path(
                         self.watcher.as_ref(),
-                        path,
+                        path.as_ref(),
                         removed_descendant_abs_paths,
                         false,
                     );
@@ -5541,12 +5583,33 @@ impl BackgroundScanner {
             }
         }
 
+        changed_paths.sort_unstable();
+        changed_paths.dedup();
         util::extend_sorted(
             &mut state.changed_paths,
-            relative_paths.iter().cloned(),
+            changed_paths,
             usize::MAX,
             Ord::cmp,
         );
+    }
+
+    fn case_corrected_relative_path(
+        root_canonical_path: &SanitizedPath,
+        requested_path: &RelPath,
+        canonical_path: &SanitizedPath,
+    ) -> Option<Arc<RelPath>> {
+        let canonical_relative_path = PathStyle::local()
+            .strip_prefix(canonical_path.as_path(), root_canonical_path.as_path())?;
+        let canonical_relative_path = canonical_relative_path.as_ref();
+        if canonical_relative_path != requested_path
+            && canonical_relative_path
+                .as_unix_str()
+                .eq_ignore_ascii_case(requested_path.as_unix_str())
+        {
+            Some(canonical_relative_path.into_arc())
+        } else {
+            None
+        }
     }
 
     fn remove_repo_path(&self, path: Arc<RelPath>, snapshot: &mut LocalSnapshot) -> Option<()> {
@@ -6956,6 +7019,25 @@ fn decode_byte_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_corrected_relative_path_matches_canonical_case() {
+        let root = SanitizedPath::new(Path::new("/Users/rifujita/Git_Managed"));
+        let requested_path =
+            RelPath::new(Path::new("phorganize/README.md"), PathStyle::Posix).unwrap();
+        let canonical_path = SanitizedPath::new(Path::new(
+            "/Users/rifujita/Git_Managed/Phorganize/README.md",
+        ));
+
+        let corrected_path = BackgroundScanner::case_corrected_relative_path(
+            root,
+            requested_path.as_ref(),
+            canonical_path,
+        )
+        .unwrap();
+
+        assert_eq!(corrected_path.as_unix_str(), "Phorganize/README.md");
+    }
 
     /// reproduction of issue #50785
     fn build_pcm16_wav_bytes() -> Vec<u8> {
