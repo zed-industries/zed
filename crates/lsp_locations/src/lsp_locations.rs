@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use collections::HashMap;
 use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
@@ -17,7 +18,7 @@ use settings::{GoToDefinitionFallback, Settings as _};
 use text::{Anchor, Point};
 use theme_settings::ThemeSettings;
 use ui::{Divider, FluentBuilder};
-use ui::{ListItem, ListItemSpacing, Rems, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemSettings;
 use workspace::notifications::NotificationId;
@@ -308,11 +309,9 @@ impl LspLocationsPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let preview = picker_preview::editor_preview(project.clone(), window, cx);
         let delegate = LspLocationsDelegate::new(kind, matches, project.clone(), editor);
-        let picker = cx.new(|cx| {
-            Picker::list_with_preview(delegate, project, window, cx)
-                .minimum_results_width(Rems(20.0))
-        });
+        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -363,7 +362,7 @@ struct LspLocationsDelegate {
     project: Entity<Project>,
     editor: WeakEntity<Editor>,
     all_matches: Vec<LocationMatch>,
-    candidates: Vec<StringMatchCandidate>,
+    candidates: Arc<[StringMatchCandidate]>,
     matches: Vec<usize>,
     entries: Vec<Entry>,
     selected_index: usize,
@@ -584,30 +583,38 @@ impl PickerDelegate for LspLocationsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query = query.trim();
-        self.matches = if query.is_empty() {
-            (0..self.all_matches.len()).collect()
-        } else {
-            let string_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
-                &self.candidates,
-                query,
-                false,
-                true,
-                self.candidates.len(),
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            let mut indices = string_matches
-                .into_iter()
-                .map(|string_match| string_match.candidate_id)
-                .collect::<Vec<_>>();
-            // Restore the file-grouped, positional order (fuzzy returns by score).
-            indices.sort_unstable();
-            indices
-        };
-        self.rebuild_entries();
-        cx.notify();
-        Task::ready(())
+        let query = query.trim().to_owned();
+        let candidates = self.candidates.clone();
+        cx.spawn(async move |picker, cx| {
+            let matches = if query.is_empty() {
+                (0..candidates.len()).collect()
+            } else {
+                let string_matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    true,
+                    candidates.len(),
+                    &Default::default(),
+                    cx.background_executor().clone(),
+                )
+                .await;
+                let mut indices = string_matches
+                    .into_iter()
+                    .map(|string_match| string_match.candidate_id)
+                    .collect::<Vec<_>>();
+                // Restore the file-grouped, positional order (fuzzy returns by score).
+                indices.sort_unstable();
+                indices
+            };
+            picker
+                .update(cx, |picker, cx| {
+                    picker.delegate.matches = matches;
+                    picker.delegate.rebuild_entries();
+                    cx.notify();
+                })
+                .ok();
+        })
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
