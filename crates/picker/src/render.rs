@@ -10,19 +10,26 @@ use ui::{
 
 use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, ToggleMultiSelect,
     head::Head,
     preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
 };
 use crate::{persistence, preview};
+use gpui::Action as _;
+use gpui::Focusable as _;
+use std::sync::Arc;
+use ui::{Divider, Tooltip, prelude::*};
+use ui_input::ErasedEditor;
 
 pub mod window_controls;
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.finish_any_completed_resize(window, cx);
-
+        // toggle between BelowForced and Right based on whether it'd clamp if
+        // horizontal
+        let rendered_layout = self.preview_layout_rendered(window);
         let content = match &self.preview {
             Some(
                 preview @ Preview {
@@ -30,6 +37,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     ..
                 },
             ) => self
+                .render_with_preview_below(preview, window, cx)
+                .into_any_element(),
+            // render sideways based on bounds
+            Some(
+                preview @ Preview {
+                    layout: Layout::Right,
+                    ..
+                },
+            ) if rendered_layout == Some(Layout::Below) => self
                 .render_with_preview_below(preview, window, cx)
                 .into_any_element(),
             Some(
@@ -58,7 +74,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(has_preview, |this| this.overflow_hidden())
             .child(content);
 
-        let layout = self.preview_layout().unwrap_or(Layout::Hidden);
+        let layout = self
+            .preview_layout_rendered(window)
+            .unwrap_or(Layout::Hidden);
 
         div()
             .relative()
@@ -75,6 +93,54 @@ impl<D: PickerDelegate> Render for Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        if let Some(custom) = self.delegate.render_editor(editor, window, cx) {
+            return custom;
+        }
+        let editor_position = self.delegate.editor_position();
+
+        v_flex()
+            .when(editor_position == PickerEditorPosition::End, |this| {
+                this.child(Divider::horizontal())
+            })
+            .child(
+                h_flex()
+                    .h_9()
+                    .px_2p5()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(div().flex_1().child(editor.render(window, cx)))
+                    .children(self.delegate.searchbar_trailer(window, cx))
+                    .when(self.delegate.supports_multi_select(), |this| {
+                        this.child(self.render_multi_select_toggle(cx))
+                    }),
+            )
+            .when(editor_position == PickerEditorPosition::Start, |this| {
+                this.child(Divider::horizontal())
+            })
+    }
+
+    /// The multi-select toggle is picker-owned so it can reflect the mode,
+    /// which delegates don't know about.
+    fn render_multi_select_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.select_instead_of_open;
+        let focus_handle = self.focus_handle(cx);
+        IconButton::new("picker-multi-select-toggle", IconName::FileMultiple)
+            .icon_size(IconSize::Small)
+            .toggle_state(active)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Toggle Multi Select", &ToggleMultiSelect, &focus_handle, cx)
+            })
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(ToggleMultiSelect.boxed_clone(), cx);
+            }))
+    }
+
     pub(crate) fn render_results(
         &self,
         window: &mut Window,
@@ -101,7 +167,7 @@ impl<D: PickerDelegate> Picker<D> {
             .relative()
             .map(|this| {
                 self.shape.apply_results_size(
-                    self.preview_layout(),
+                    self.preview_layout_rendered(window),
                     &self.size_bounds,
                     self.fill_height(),
                     this,
@@ -136,16 +202,19 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::set_preview_below))
             .on_action(cx.listener(Self::set_preview_hidden))
             .on_action(cx.listener(Self::toggle_actions_menu))
+            .on_action(cx.listener(Self::toggle_multi_select))
+            .on_action(cx.listener(Self::multi_select_next))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
-                        Some(h_flex().w_full().child(
-                            div().flex_1().child(self.delegate.render_editor(
-                                &editor.clone(),
-                                window,
-                                cx,
-                            )),
-                        ))
+                        let editor = editor.clone();
+                        Some(
+                            h_flex().w_full().child(
+                                div()
+                                    .flex_1()
+                                    .child(self.render_editor(&editor, window, cx)),
+                            ),
+                        )
                     } else {
                         None
                     }
@@ -205,7 +274,8 @@ impl<D: PickerDelegate> Picker<D> {
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::End {
-                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
+                        let editor = editor.clone();
+                        Some(self.render_editor(&editor, window, cx))
                     } else {
                         None
                     }
@@ -309,7 +379,11 @@ impl<D: PickerDelegate> Picker<D> {
                     ),
             )
             .when(self.is_resizable(), |this| {
-                this.child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
+                this.child(self.render_resize(
+                    window_controls::Middle(preview::Layout::Below),
+                    window,
+                    cx,
+                ))
             })
     }
 
@@ -365,7 +439,8 @@ impl<D: PickerDelegate> Picker<D> {
         if let Shape::Resizing(pos) = self.shape
             && !cx.has_active_drag()
         {
-            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            let centered =
+                Shape::centered_and_relative(pos, self.preview_layout_rendered(window), window);
             persistence::store_shape_for_this_layout(
                 D::name(),
                 self.preview_layout(),

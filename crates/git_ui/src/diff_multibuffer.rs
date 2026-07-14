@@ -365,6 +365,28 @@ impl DiffMultibuffer {
         }
     }
 
+    pub(crate) fn restore_selected_hunks(
+        &mut self,
+        move_to_next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = self.editor.read(cx).rhs_editor().clone();
+        let ranges = self.hunk_action_ranges(cx);
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let hunks: Vec<_> = editor.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+            if !hunks.is_empty() {
+                editor.apply_restore(hunks, window, cx);
+            }
+        });
+        if move_to_next {
+            editor
+                .focus_handle(cx)
+                .dispatch_action(&GoToHunk, window, cx);
+        }
+    }
+
     fn handle_editor_event(
         &mut self,
         editor: &Entity<SplittableEditor>,

@@ -273,7 +273,12 @@ impl NodeRuntime {
             )
             .await?;
 
-        let info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+        let info: NpmInfo = deserialize_npm_info_from_response(&output.stdout).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse npm info response: {e}\nstdout: {}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })?;
         let before = npm_config_before(instance.as_ref(), http.proxy())
             .await
             .context("getting npm before config")
@@ -410,6 +415,21 @@ pub struct NpmInfo {
     versions: Vec<Version>,
     #[serde(default, deserialize_with = "deserialize_npm_info_time")]
     time: HashMap<String, String>,
+}
+
+/// Parse NpmInfo from npm info --json output, handling both v11 and >= v12 formats.
+fn deserialize_npm_info_from_response(data: &[u8]) -> Result<NpmInfo, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_slice(data)?;
+
+    // npm >= 12 returns an array with one object: [ { ... } ]
+    if let serde_json::Value::Array(arr) = &value {
+        if arr.len() == 1 {
+            return NpmInfo::deserialize(&arr[0]);
+        }
+    }
+
+    // npm <= v11 returns a bare JSON object: { ... }
+    NpmInfo::deserialize(value)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1104,8 +1124,8 @@ mod tests {
     use semver::Version;
 
     use super::{
-        NpmInfo, VersionStrategy, build_npm_command_args, proxy_argument,
-        select_npm_package_version, should_install_npm_package_version,
+        NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
+        proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
 
     // Map localhost to 127.0.0.1
@@ -1381,6 +1401,48 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "no version found for npm package test-package before 2023-12-01T00:00:00.000Z"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_info_npm11_format() -> Result<()> {
+        let json = r#"{
+            "dist-tags": { "latest": "3.0.0" },
+            "versions": ["1.0.0", "2.0.0", "3.0.0"]
+        }"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_npm_v12_format() -> Result<()> {
+        let json = r#"[
+            {
+                "dist-tags": { "latest": "3.0.0" },
+                "versions": ["1.0.0", "2.0.0", "3.0.0"]
+            }
+        ]"#;
+
+        let info = deserialize_npm_info_from_response(json.as_bytes())?;
+        assert_eq!(info.dist_tags.latest, Some(Version::parse("3.0.0")?));
+        assert_eq!(
+            info.versions,
+            vec![
+                Version::parse("1.0.0")?,
+                Version::parse("2.0.0")?,
+                Version::parse("3.0.0")?
+            ]
         );
         Ok(())
     }

@@ -159,8 +159,27 @@ actions!(
     [
         /// Opens a prompt to enter a URL to open.
         OpenUrlPrompt,
+        /// Dumps the current accessibility tree (the last update sent to the
+        /// platform adapter) to a new buffer as JSON, for debugging what is
+        /// exposed to assistive technology.
+        DumpAccessibilityTree,
+        /// Copies the current accessibility tree to the clipboard as JSON,
+        /// without opening a buffer. See [`DumpAccessibilityTree`].
+        CopyAccessibilityTree,
     ]
 );
+
+/// Serializes the window's most recent accessibility tree to JSON for the
+/// `dev: dump/copy accessibility tree` actions, falling back to a friendly
+/// placeholder when no tree has been built yet.
+fn accessibility_tree_dump(window: &Window) -> String {
+    window.debug_a11y_tree_json().unwrap_or_else(|| {
+        "No accessibility tree has been built yet. The tree is only \
+         produced once assistive technology (e.g. a screen reader) is \
+         active for this window."
+            .to_string()
+    })
+}
 
 #[cfg(debug_assertions)]
 actions!(
@@ -381,10 +400,13 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        // On macOS, Zed handles window movement itself, so disable AppKit's titlebar dragging.
-        // On other platforms, `is_movable` gates native window dragging (e.g. Windows'
-        // `HTCAPTION` hit test), so it must remain `true`.
-        is_movable: cfg!(not(target_os = "macos")),
+        is_movable: true,
+        // Zed draws its own titlebar and moves the window via [`Window::start_window_move`],
+        // so on macOS AppKit should not own titlebar dragging. This avoids the titlebar
+        // click delay from AppKit's drag disambiguation (first observed on macOS 27) while
+        // keeping the window movable and the Window-menu tiling items enabled. No-op on
+        // other platforms.
+        app_owns_titlebar_drag: true,
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
@@ -908,6 +930,57 @@ fn register_actions(
                 workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
             },
         )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &DumpAccessibilityTree,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let json = accessibility_tree_dump(window);
+                let language = workspace.app_state().languages.language_for_name("JSON");
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let language = language.await.log_err();
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer(&json, language, true, cx)
+                            });
+                            let title = "Accessibility Tree".to_string();
+                            let buffer = cx.new(|cx| {
+                                MultiBuffer::singleton(buffer, cx).with_title(title.clone())
+                            });
+                            let editor = cx.new(|cx| {
+                                let mut editor = Editor::for_multibuffer(
+                                    buffer,
+                                    Some(project),
+                                    window,
+                                    cx,
+                                );
+                                editor.set_breadcrumb_header(title);
+                                editor
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .log_err();
+                })
+                .detach();
+            },
+        )
+        .register_action(
+            |_workspace: &mut Workspace,
+             _: &CopyAccessibilityTree,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let json = accessibility_tree_dump(window);
+                cx.write_to_clipboard(ClipboardItem::new_string(json));
+            },
+        )
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -1218,59 +1291,17 @@ fn register_actions(
             }
         })
         .register_action({
-            let app_state = app_state.clone();
             move |workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
-                let app_state = app_state.clone();
                 let old_group_key = workspace.project_group_key(cx);
-                cx.spawn_in(window, async move |this, cx| {
-                    let should_continue = this
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.prepare_to_close(
-                                CloseIntent::ReplaceWindow,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await?;
-                    if should_continue {
-                        let task = cx.update(|_window, cx| {
-                            open_new(
-                                workspace::OpenOptions {
-                                    requesting_window: Some(window_handle),
-                                    ..Default::default()
-                                },
-                                app_state,
-                                cx,
-                                |workspace, window, cx| {
-                                    cx.activate(true);
-                                    let project = workspace.project().clone();
-                                    let buffer = project.update(cx, |project, cx| {
-                                        project.create_local_buffer("", None, true, cx)
-                                    });
-                                    let editor = cx.new(|cx| {
-                                        Editor::for_buffer(buffer, Some(project), window, cx)
-                                    });
-                                    workspace.add_item_to_active_pane(
-                                        Box::new(editor),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )
-                        })?;
-                        task.await?;
-                        window_handle.update(cx, |mw, window, cx| {
-                            mw.remove_project_group(&old_group_key, window, cx)
-                        })?.await.log_err();
-                        Ok::<(), anyhow::Error>(())
-                    } else {
-                        Ok(())
-                    }
+                cx.spawn_in(window, async move |_, cx| {
+                    let task = window_handle.update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.remove_project_group(&old_group_key, window, cx)
+                    })?;
+                    task.await?;
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -7017,6 +7048,94 @@ mod tests {
         assert!(
             keys.is_empty(),
             "project group should be removed after CloseProject: {keys:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_close_project_switches_to_neighbor_in_multi_project(cx: &mut TestAppContext) {
+        use workspace::OpenMode;
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-a"), json!({}))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-b"), json!({}))
+            .await;
+
+        let workspace::OpenResult {
+            window,
+            workspace: workspace_a,
+            ..
+        } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/project-a").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let project_b = Project::test(app_state.fs.clone(), [Path::new("/project-b")], cx).await;
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b, window, cx);
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        // Reactivate workspace A so we close it via CloseProject.
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace_a, None, window, cx);
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let keys_before = window
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.project_group_keys()
+            })
+            .unwrap();
+        assert_eq!(
+            keys_before.len(),
+            2,
+            "should have 2 project groups before CloseProject: {keys_before:?}"
+        );
+
+        cx.dispatch_action(window.into(), CloseProject);
+        cx.background_executor.run_until_parked();
+
+        let keys_after = window
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.project_group_keys()
+            })
+            .unwrap();
+        assert_eq!(
+            keys_after.len(),
+            1,
+            "one project group should remain after CloseProject: {keys_after:?}"
+        );
+
+        let active_paths = window
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).root_paths(cx)
+            })
+            .unwrap();
+        assert!(
+            !active_paths.is_empty(),
+            "active workspace should contain the remaining project, not be empty: {active_paths:?}"
         );
     }
 }

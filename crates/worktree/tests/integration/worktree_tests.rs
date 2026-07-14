@@ -4621,6 +4621,89 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
     }
 }
 
+#[gpui::test]
+async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAppContext) {
+    // On Linux and FreeBSD the native file watcher is non-recursive: watching `.git`
+    // does not deliver events for files nested below it, like the loose refs that git
+    // updates on commit, fetch, and branch operations. The worktree must watch the
+    // `refs` tree explicitly, including directories created after the initial scan.
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        ".git": {},
+        "a.txt": "a-contents",
+    }));
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "0000000000000000000000000000000000000000\n",
+    )
+    .unwrap();
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    let mut events = cx.events(&tree);
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "1111111111111111111111111111111111111111\n",
+    )
+    .unwrap();
+    expect_git_repo_update(&mut events, cx, "updating a loose ref").await;
+
+    std::fs::create_dir_all(dir.path().join(".git/refs/remotes/origin")).unwrap();
+    expect_git_repo_update(&mut events, cx, "creating a directory under refs").await;
+    tree.flush_fs_events(cx).await;
+    drain_git_repo_updates(&mut events);
+
+    std::fs::write(
+        dir.path().join(".git/refs/remotes/origin/main"),
+        "2222222222222222222222222222222222222222\n",
+    )
+    .unwrap();
+    expect_git_repo_update(
+        &mut events,
+        cx,
+        "updating a ref in a directory created after the initial scan",
+    )
+    .await;
+}
+
+async fn expect_git_repo_update(
+    events: &mut futures::channel::mpsc::UnboundedReceiver<Event>,
+    cx: &mut TestAppContext,
+    description: &str,
+) {
+    let mut elapsed = std::time::Duration::ZERO;
+    let timeout = std::time::Duration::from_secs(10);
+    let poll_interval = std::time::Duration::from_millis(50);
+    loop {
+        match events.try_recv() {
+            Ok(Event::UpdatedGitRepositories(_)) => return,
+            Ok(_) => continue,
+            Err(_) => {}
+        }
+        assert!(
+            elapsed < timeout,
+            "timed out waiting for UpdatedGitRepositories after {description}"
+        );
+        cx.background_executor.timer(poll_interval).await;
+        elapsed += poll_interval;
+    }
+}
+
 fn drain_git_repo_updates(events: &mut futures::channel::mpsc::UnboundedReceiver<Event>) -> bool {
     let mut found = false;
     while let Ok(event) = events.try_recv() {

@@ -558,8 +558,10 @@ async fn run_terminal_tool(
         if !path.is_dir() {
             return Err(format!(
                 "Cannot request sandbox write access to `{}`: on Linux, write access can only \
-                 be granted to directories that already exist. To create or modify files, \
-                 request write access to the existing directory that contains them, not the \
+                 be granted to directories that already exist. To create a new directory to write \
+                 into, use the `create_directory` tool (which creates it and grants write access to \
+                 exactly that directory) rather than requesting its parent. To modify existing \
+                 files, request write access to the existing directory that contains them, not the \
                  file path itself.",
                 path.display()
             ));
@@ -683,6 +685,7 @@ async fn run_terminal_tool(
                             event_stream.authorize_sandbox_fallback(
                                 Some(input.command.clone()),
                                 error.user_facing_message(),
+                                Some(error.docs_section().to_string()),
                                 retries,
                                 cx,
                             )
@@ -788,6 +791,7 @@ async fn run_terminal_tool(
                     event_stream.authorize_sandbox_fallback(
                         Some(input.command.clone()),
                         sandbox_error.user_facing_message(),
+                        Some(sandbox_error.docs_section().to_string()),
                         retries,
                         cx,
                     )
