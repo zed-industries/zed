@@ -6892,6 +6892,7 @@ dependencies = [
  "anyhow",
  "ashpd",
  "async-channel 2.5.0",
+ "async-std",
  "async-tar",
  "async-trait",
  "collections",
