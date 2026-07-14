@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Converts a value into an LSP position.
 pub trait ToLspPosition {
     /// Converts the value into an LSP position.
-    fn to_lsp_position(self) -> lsp::Position;
+    fn to_lsp_position(self) -> lsp_types::Position;
 }
 
 /// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
@@ -15,7 +15,7 @@ pub struct PromptResponseContext {
     /// The original message shown to the user
     pub message: String,
     /// The action (button) the user selected
-    pub selected_action: lsp::MessageActionItem,
+    pub selected_action: lsp_types::MessageActionItem,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1548,6 +1548,7 @@ impl LocalLspStore {
         });
 
         let mut project_transaction = ProjectTransaction::default();
+        let mut format_error = None;
 
         for buffer in &buffers {
             zlog::debug!(
@@ -1601,10 +1602,16 @@ impl LocalLspStore {
                     .insert(cx.entity(), formatting_transaction);
             });
 
-            result?;
+            // Keep formatting the remaining buffers on failure, surfacing the first error.
+            if let Err(error) = result {
+                format_error.get_or_insert(error);
+            }
         }
 
-        Ok(project_transaction)
+        match format_error {
+            Some(error) => Err(error),
+            None => Ok(project_transaction),
+        }
     }
 
     async fn format_buffer_locally(
@@ -1733,9 +1740,13 @@ impl LocalLspStore {
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                settings.formatter.as_ref()
-            }
+            (FormatTrigger::Manual, _)
+            | (
+                FormatTrigger::Save,
+                FormatOnSave::On
+                | FormatOnSave::Modifications
+                | FormatOnSave::ModificationsIfAvailable,
+            ) => settings.formatter.as_ref(),
         };
 
         let formatters = code_actions_on_format_formatters
@@ -1743,8 +1754,13 @@ impl LocalLspStore {
             .flatten()
             .chain(formatters);
 
+        // Only explicitly configured formatters surface their failures;
+        // auto-resolved ones stay silent so a missing optional tool
+        // (e.g. prettier) does not warn on every save.
+        let mut format_error = None;
         for formatter in formatters {
-            let formatter = if formatter == &Formatter::Auto {
+            let is_auto = formatter == &Formatter::Auto;
+            let formatter = if is_auto {
                 if settings.prettier.allowed {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
                     &Formatter::Prettier
@@ -1763,16 +1779,23 @@ impl LocalLspStore {
                 &adapters_and_servers,
                 &settings,
                 request_timeout,
+                trigger,
                 logger,
                 cx,
             )
             .await
             {
                 zlog::error!(logger => "Formatter failed, skipping: {err:#}");
+                if !is_auto {
+                    format_error.get_or_insert(err);
+                }
             }
         }
 
-        Ok(())
+        match format_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     async fn apply_formatter(
@@ -1783,6 +1806,7 @@ impl LocalLspStore {
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         settings: &LanguageSettings,
         request_timeout: Duration,
+        trigger: FormatTrigger,
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
@@ -1925,23 +1949,22 @@ impl LocalLspStore {
                 };
 
                 let Some(language_server) = language_server else {
-                    log::debug!(
-                        "No language server found to format buffer '{:?}'. Skipping",
-                        buffer_path_abs.as_path().to_string_lossy()
+                    zlog::debug!(
+                        logger =>
+                        "No language server found to format buffer {buffer_path_abs:?}. Skipping",
                     );
                     return Ok(());
                 };
 
                 zlog::trace!(
                     logger =>
-                    "Formatting buffer '{:?}' using language server '{:?}'",
-                    buffer_path_abs.as_path().to_string_lossy(),
+                    "Formatting buffer {buffer_path_abs:?} using language server {:?}",
                     language_server.name()
                 );
 
                 let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                     zlog::trace!(logger => "formatting ranges");
-                    Self::format_ranges_via_lsp(
+                    let range_edits = Self::format_ranges_via_lsp(
                         &lsp_store,
                         &buffer.handle,
                         ranges,
@@ -1951,8 +1974,38 @@ impl LocalLspStore {
                         cx,
                     )
                     .await
-                    .context("Failed to format ranges via language server")?
-                    .unwrap_or_default()
+                    .context("Failed to format ranges via language server")?;
+
+                    match range_edits {
+                        Some(edits) => edits,
+                        None => {
+                            if trigger == FormatTrigger::Save
+                                && settings.format_on_save == FormatOnSave::ModificationsIfAvailable
+                            {
+                                zlog::debug!(
+                                    logger =>
+                                    "Falling back to full format - LSP does not support range formatting"
+                                );
+                                Self::format_via_lsp(
+                                    &lsp_store,
+                                    &buffer.handle,
+                                    buffer_path_abs,
+                                    &language_server,
+                                    &settings,
+                                    cx,
+                                )
+                                .await
+                                .context("failed to format via language server")?
+                            } else {
+                                zlog::debug!(
+                                    logger =>
+                                    "Skipping range format - language server {:?} does not support range formatting",
+                                    language_server.name()
+                                );
+                                Vec::new()
+                            }
+                        }
+                    }
                 } else {
                     zlog::trace!(logger => "formatting full");
                     Self::format_via_lsp(
@@ -3440,6 +3493,25 @@ impl LocalLspStore {
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
 
+                    // An LSP "rename symbol" can also rename the file, with the text edit
+                    // applied only to the in-memory buffer. Persist it before renaming, or
+                    // fs.rename moves the stale on-disk content and the files' contents swap.
+                    let dirty_buffer = this.update(cx, |this, cx| {
+                        let project_path = this
+                            .worktree_store()
+                            .read(cx)
+                            .project_path_for_absolute_path(&source_abs_path, cx)?;
+                        let buffer = this.buffer_store().read(cx).get_by_path(&project_path)?;
+                        buffer.read(cx).is_dirty().then_some(buffer)
+                    });
+                    if let Some(buffer) = dirty_buffer {
+                        this.update(cx, |this, cx| {
+                            this.buffer_store()
+                                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                        })
+                        .await?;
+                    }
+
                     let options = fs::RenameOptions {
                         overwrite: op
                             .options
@@ -4225,9 +4297,10 @@ impl SymbolLocation {
 }
 
 fn should_log_lsp_request_failure(message: &str) -> bool {
-    // content modified is a weird failure mode of rust-analyzer
-    // where requests are denied before its loaded a project
-    message.ends_with("content modified") || message.ends_with("server cancelled the request")
+    // "content modified" and "server cancelled the request" are noisy failure
+    // modes of rust-analyzer where requests are denied before it has loaded a
+    // project.
+    !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
 impl LspStore {
@@ -7238,27 +7311,19 @@ impl LspStore {
                         buffer.start_transaction();
 
                         for (range, text) in edits {
-                            let primary = &completion.replace_range;
-
-                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
-                            // and the primary completion is just an insertion (empty range), then this is likely
-                            // an auto-import scenario and should not be considered overlapping
-                            // https://github.com/zed-industries/zed/issues/26136
-                            let is_file_start_auto_import = {
-                                let snapshot = buffer.snapshot();
-                                let primary_start_point = primary.start.to_point(&snapshot);
-                                let range_start_point = range.start.to_point(&snapshot);
-
-                                let result = primary_start_point.row == 0
-                                    && primary_start_point.column == 0
-                                    && range_start_point.row == 0
-                                    && range_start_point.column == 0;
-
-                                result
-                            };
-
-                            let has_overlap = if is_file_start_auto_import {
-                                false
+                            // Zero-width additional edits (e.g. auto-imports at file start, or
+                            // rust-analyzer's ref-match `&` insertions) only overlap the primary
+                            // edit when they fall strictly inside it. Touching its boundary is fine.
+                            //
+                            // Ref: https://github.com/zed-industries/zed/issues/26136
+                            // Ref: https://github.com/zed-industries/zed/issues/56973
+                            let is_insertion = range.start.cmp(&range.end, buffer).is_eq();
+                            let has_overlap = if is_insertion {
+                                let insert_offset = range.start.to_offset(buffer);
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    commit_range.start.to_offset(buffer) < insert_offset
+                                        && insert_offset < commit_range.end.to_offset(buffer)
+                                })
                             } else {
                                 all_commit_ranges.iter().any(|commit_range| {
                                     let start_within =
@@ -7271,8 +7336,8 @@ impl LspStore {
                                 })
                             };
 
-                            //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
+                            // Skip additional edits which overlap with the primary completion edit
+                            // https://github.com/zed-industries/zed/pull/1871
                             if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
@@ -14417,7 +14482,12 @@ impl LanguageServerWatchedPaths {
         cx.spawn({
             async move |_, cx| {
                 maybe!(async move {
-                    let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                    let mut push_updates = cx
+                        .background_spawn({
+                            let abs_path = abs_path.clone();
+                            async move { fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await }
+                        })
+                        .await;
                     while let Some(update) = push_updates.0.next().await {
                         let action = lsp_store
                             .update(cx, |this, _| {
@@ -15314,4 +15384,29 @@ fn extend_formatting_transaction(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_log_lsp_request_failure_suppresses_known_noise() {
+        // Suppressed: rust-analyzer's superseded/denied request signals.
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: content modified"
+        ));
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server cancelled the request"
+        ));
+
+        // Logged: anything else is a real failure.
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server shut down"
+        ));
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: Server reset the connection"
+        ));
+        assert!(should_log_lsp_request_failure("something else entirely"));
+    }
 }

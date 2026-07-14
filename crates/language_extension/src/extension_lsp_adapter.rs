@@ -79,16 +79,19 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
 
         let mut tasks = Vec::new();
         match &self.lsp_access {
-            LspAccess::ViaLspStore(lsp_store) => lsp_store.update(cx, |lsp_store, cx| {
-                let stop_task = lsp_store.stop_language_servers_for_buffers(
-                    Vec::new(),
-                    HashSet::from_iter([LanguageServerSelector::Name(
-                        language_server_name.clone(),
-                    )]),
-                    cx,
-                );
-                tasks.push(stop_task);
-            }),
+            LspAccess::ViaLspStore(lsp_store) => {
+                if let Ok(stop_task) = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.stop_language_servers_for_buffers(
+                        Vec::new(),
+                        HashSet::from_iter([LanguageServerSelector::Name(
+                            language_server_name.clone(),
+                        )]),
+                        cx,
+                    )
+                }) {
+                    tasks.push(stop_task);
+                }
+            }
             LspAccess::ViaWorkspaces(lsp_store_provider) => {
                 if let Ok(lsp_stores) = lsp_store_provider(cx) {
                     for lsp_store in lsp_stores {
