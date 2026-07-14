@@ -41002,6 +41002,37 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_toggle_diagnostics_action_dispatches_after_disabling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should start enabled by default"
+        );
+    });
+
+    cx.dispatch_action(ToggleDiagnostics);
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.diagnostics_enabled(),
+            "diagnostics should be disabled after dispatching ToggleDiagnostics"
+        );
+    });
+
+    cx.dispatch_action(ToggleDiagnostics);
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should be re-enabled after a second dispatch of ToggleDiagnostics"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_columnar_selection_with_multibyte_chars(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
