@@ -4,12 +4,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
-      "shift-f5": "debugger::Stop",
-      "shift-cmd-f5": "debugger::RerunSession",
-      "f6": "debugger::Pause",
-      "f7": "debugger::StepOver",
-      "ctrl-f11": "debugger::StepInto",
-      "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
@@ -650,7 +644,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-k v": "markdown::OpenPreviewToTheSide",
-      "cmd-shift-v": "markdown::OpenPreview"
+      "cmd-shift-v": "markdown::OpenPreview",
     },
   },
   {
@@ -694,6 +688,13 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      // Move focus between the major regions of the window (editor, open
+      // panels, status bar). Accessibility navigation; mirrors VS Code's
+      // "Focus Next/Previous Part". `cmd-f6` mirrors `f6` so region navigation
+      // stays available even while a debug session rebinds plain `f6` to Pause.
+      "f6": "workspace::FocusNextPart",
+      "shift-f6": "workspace::FocusPreviousPart",
+      "cmd-f6": "workspace::FocusNextPart",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
@@ -1159,6 +1160,22 @@
     },
   },
   {
+    // While a debug session is live, debugger controls take over their F-keys.
+    // `f6` becomes Pause (region navigation stays on `cmd-f6` / `shift-f6`),
+    // and step/stop/rerun are scoped here so they're inert when not debugging.
+    // `debugger::Start` stays global so a session can be started from anywhere.
+    "context": "Workspace && debugger_session",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f6": "debugger::Pause",
+      "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::RerunSession",
+      "f7": "debugger::StepOver",
+      "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
+    },
+  },
+  {
     "context": "DebugPanel",
     "bindings": {
       "cmd-t": "debugger::ToggleThreadPicker",
@@ -1571,6 +1588,7 @@
       "cmd-shift-backspace": "branch_picker::DeleteBranch",
       "cmd-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
       "cmd-shift-i": "branch_picker::CycleBranchFilter",
+      "cmd-k": "branch_picker::ToggleFilterMenu",
     },
   },
   {

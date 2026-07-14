@@ -17,12 +17,13 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-credentials_provider.workspace = true
 base64.workspace = true
 collections.workspace = true
+credentials_provider.workspace = true
 env_var.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 http_client.workspace = true
 icons.workspace = true
 image.workspace = true
@@ -32,7 +33,6 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
