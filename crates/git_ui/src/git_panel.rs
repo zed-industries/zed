@@ -509,8 +509,6 @@ impl StageIntent {
         }
     }
 
-    /// The checkbox state for a row with this intent: section-relative when
-    /// the section forces a direction, otherwise the entry's own state.
     fn checkbox_state(self, entry_state: impl FnOnce() -> ToggleState) -> ToggleState {
         match self {
             StageIntent::Stage => ToggleState::Unselected,
@@ -596,7 +594,6 @@ impl GitListEntry {
         }
     }
 
-    /// Whether keyboard navigation can land on this entry.
     fn is_selectable(&self) -> bool {
         matches!(
             self,
@@ -1654,6 +1651,7 @@ impl GitPanel {
         let Some(candidate) = candidate else {
             return;
         };
+
         self.selected_entry = Some(candidate);
         self.scroll_to_selected_entry(cx);
     }
@@ -1731,6 +1729,7 @@ impl GitPanel {
         let Some(candidate) = candidate else {
             return;
         };
+
         self.selected_entry = Some(candidate);
         self.scroll_to_selected_entry(cx);
     }
@@ -1746,6 +1745,7 @@ impl GitPanel {
                 })
             }
         };
+
         if let Some(last_entry) = last_entry {
             self.selected_entry = Some(last_entry);
             self.scroll_to_selected_entry(cx);
@@ -4679,8 +4679,6 @@ impl GitPanel {
         // through, so their headers stay pinned even when empty (as long as
         // there is anything to show at all); this both keeps the layout stable
         // during staging and makes an empty commit visible at a glance.
-        // Descriptive sections (Conflicts, Tracked, Untracked) are only shown
-        // when non-empty.
         let has_any_section_entries = section_entries
             .iter()
             .any(|(_, entries)| !entries.is_empty());
@@ -6974,8 +6972,6 @@ impl GitPanel {
             .w_full()
             .pl_2p5()
             .pr_1()
-            .border_1()
-            .border_r_2()
             .opacity(0.8)
             .child(
                 Label::new(message)
