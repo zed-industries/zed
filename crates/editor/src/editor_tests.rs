@@ -29017,6 +29017,177 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_go_to_source_definition_resolves_through_vtsls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript_with_adapter(
+        FakeLspAdapter {
+            name: "vtsls",
+            capabilities: lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["typescript.goToSourceDefinition".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("functionˇ one() {}\n\nfunction two() {}\n");
+
+    let target_url = cx.buffer_lsp_url.clone();
+    let mut execute_command = cx.lsp.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+        move |params, _cx| {
+            let target_url = target_url.clone();
+            async move {
+                assert_eq!(params.command, "typescript.goToSourceDefinition");
+                assert_eq!(
+                    params.arguments.first(),
+                    Some(&serde_json::Value::String(target_url.to_string()))
+                );
+                Ok(Some(serde_json::json!([{
+                    "uri": target_url.to_string(),
+                    "range": {
+                        "start": {"line": 2, "character": 9},
+                        "end": {"line": 2, "character": 12},
+                    },
+                }])))
+            }
+        },
+    );
+
+    let _go_to_definition = cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        move |_, _, _| async move {
+            panic!(
+                "Should not fall back to regular Go to Definition when vtsls resolves a source definition"
+            )
+        },
+    );
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.go_to_source_definition(&GoToSourceDefinition, window, cx)
+        })
+        .await
+        .expect("Failed to navigate to source definition");
+    execute_command
+        .next()
+        .await
+        .expect("Should have called the vtsls goToSourceDefinition handler");
+
+    assert_eq!(navigated, Navigated::Yes);
+    cx.assert_editor_state("function one() {}\n\nfunction «twoˇ»() {}\n");
+}
+
+#[gpui::test]
+async fn test_go_to_source_definition_resolves_through_tsserver_request(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript_with_adapter(
+        FakeLspAdapter {
+            name: "typescript-language-server",
+            capabilities: lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["typescript.tsserverRequest".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("functionˇ one() {}\n\nfunction two() {}\n");
+
+    let source_file = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("file.ts")
+        .to_string_lossy()
+        .into_owned();
+
+    let mut execute_command = cx.lsp.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+        move |params, _cx| {
+            let source_file = source_file.clone();
+            async move {
+                assert_eq!(params.command, "typescript.tsserverRequest");
+                assert_eq!(
+                    params.arguments.first(),
+                    Some(&serde_json::Value::String(
+                        "findSourceDefinition".to_string()
+                    ))
+                );
+                Ok(Some(serde_json::json!({
+                    "body": [{
+                        "file": source_file,
+                        "start": {"line": 3, "offset": 10},
+                        "end": {"line": 3, "offset": 13},
+                    }]
+                })))
+            }
+        },
+    );
+
+    let _go_to_definition = cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        move |_, _, _| async move {
+            panic!(
+                "Should not fall back to regular Go to Definition when tsserver resolves a source definition"
+            )
+        },
+    );
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.go_to_source_definition(&GoToSourceDefinition, window, cx)
+        })
+        .await
+        .expect("Failed to navigate to source definition");
+    execute_command
+        .next()
+        .await
+        .expect("Should have called the tsserver findSourceDefinition handler");
+
+    assert_eq!(navigated, Navigated::Yes);
+    cx.assert_editor_state("function one() {}\n\nfunction «twoˇ»() {}\n");
+}
+
+#[gpui::test]
+async fn test_go_to_source_definition_falls_back_to_regular_definition(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("functionˇ one() {}\n\nfunction two() {}\n");
+
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+            uri: url,
+            range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+        })))
+    });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.go_to_source_definition(&GoToSourceDefinition, window, cx)
+        })
+        .await
+        .expect("Failed to navigate via fallback");
+
+    assert_eq!(navigated, Navigated::Yes);
+    cx.assert_editor_state("function one() {}\n\nfunction «twoˇ»() {}\n");
+}
+
+#[gpui::test]
 async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(

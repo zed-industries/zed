@@ -4303,6 +4303,18 @@ fn should_log_lsp_request_failure(message: &str) -> bool {
     !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
+const SOURCE_DEFINITION_VTSLS: LanguageServerName = LanguageServerName::new_static("vtsls");
+const SOURCE_DEFINITION_VTSLS_COMMAND: &str = "typescript.goToSourceDefinition";
+const SOURCE_DEFINITION_TS_LS: LanguageServerName =
+    LanguageServerName::new_static("typescript-language-server");
+const SOURCE_DEFINITION_TS_LS_COMMAND: &str = "typescript.tsserverRequest";
+
+#[derive(Clone, Copy)]
+enum SourceDefinitionStrategy {
+    Vtsls,
+    TsServerRequest,
+}
+
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
@@ -6163,6 +6175,180 @@ impl LspStore {
                 })
             })?
             .await
+        })
+    }
+
+    /// Returns whether [`Self::source_definitions`] has a language server to work
+    /// with for `buffer` — i.e. whether it's worth offering "Go to Source
+    /// Definition" as an action for this buffer at all. Cheap and synchronous, so
+    /// it's safe to call when building UI (e.g. the right-click context menu).
+    pub fn supports_source_definition(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.upstream_client().is_none() && self.find_source_definition_server(buffer, cx).is_some()
+    }
+
+    fn find_source_definition_server(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Option<(Arc<LanguageServer>, SourceDefinitionStrategy)> {
+        let local = self.as_local()?;
+        local
+            .language_servers_for_buffer(buffer, cx)
+            .find_map(|(adapter, server)| {
+                let commands = server
+                    .capabilities()
+                    .execute_command_provider
+                    .map(|options| options.commands)
+                    .unwrap_or_default();
+                if adapter.name == SOURCE_DEFINITION_VTSLS
+                    && commands.iter().any(|c| c == SOURCE_DEFINITION_VTSLS_COMMAND)
+                {
+                    Some((server.clone(), SourceDefinitionStrategy::Vtsls))
+                } else if adapter.name == SOURCE_DEFINITION_TS_LS
+                    && commands
+                        .iter()
+                        .any(|c| c == SOURCE_DEFINITION_TS_LS_COMMAND)
+                {
+                    Some((server.clone(), SourceDefinitionStrategy::TsServerRequest))
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Resolves the "source definition" of the symbol at `position`, i.e. the real
+    /// `.js`/`.ts` implementation behind an ambient `.d.ts` declaration (e.g. from a
+    /// node_modules package), which plain `textDocument/definition` can't reach.
+    ///
+    /// `vtsls` exposes this directly as the `typescript.goToSourceDefinition`
+    /// executeCommand (taking a document uri + LSP position, returning `Location[]`
+    /// already converted to LSP shape). `typescript-language-server` instead exposes
+    /// a generic `typescript.tsserverRequest` passthrough, through which we invoke
+    /// tsserver's own `findSourceDefinition` command (available since TypeScript 4.7)
+    /// with tsserver's 1-based file/line/offset args, unwrapping its
+    /// `{ success, body }` response envelope.
+    ///
+    /// Returns `Ok(None)` (rather than an error) whenever this isn't applicable —
+    /// remote/collab projects, buffers without a matching language server, or
+    /// buffers with no local file — so callers can fall back to regular
+    /// `definitions` without treating this as a failure.
+    pub fn source_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        if self.upstream_client().is_some() {
+            return Task::ready(Ok(None));
+        }
+
+        let Some((server, strategy)) =
+            buffer.update(cx, |buffer, cx| self.find_source_definition_server(buffer, cx))
+        else {
+            return Task::ready(Ok(None));
+        };
+
+        let Some(abs_path) = File::from_dyn(buffer.read(cx).file())
+            .and_then(File::as_local)
+            .map(|file| file.abs_path(cx))
+        else {
+            return Task::ready(Ok(None));
+        };
+        let Ok(uri) = file_path_to_lsp_url(&abs_path) else {
+            return Task::ready(Ok(None));
+        };
+
+        let params = match strategy {
+            SourceDefinitionStrategy::Vtsls => lsp::ExecuteCommandParams {
+                command: SOURCE_DEFINITION_VTSLS_COMMAND.to_owned(),
+                arguments: vec![
+                    Value::String(uri.to_string()),
+                    serde_json::to_value(point_to_lsp(position)).unwrap_or(Value::Null),
+                ],
+                ..lsp::ExecuteCommandParams::default()
+            },
+            SourceDefinitionStrategy::TsServerRequest => lsp::ExecuteCommandParams {
+                command: SOURCE_DEFINITION_TS_LS_COMMAND.to_owned(),
+                arguments: vec![
+                    Value::String("findSourceDefinition".to_owned()),
+                    serde_json::json!({
+                        "file": abs_path.to_string_lossy(),
+                        "line": position.row + 1,
+                        "offset": position.column + 1,
+                    }),
+                ],
+                ..lsp::ExecuteCommandParams::default()
+            },
+        };
+
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+        let server_id = server.server_id();
+        let lsp_store = cx.entity();
+        let buffer = buffer.clone();
+
+        cx.spawn(async move |_, cx| {
+            let response = server
+                .request::<lsp::request::ExecuteCommand>(params, request_timeout)
+                .await
+                .into_response()
+                .context("source definition")?;
+
+            let locations = match strategy {
+                SourceDefinitionStrategy::Vtsls => {
+                    serde_json::from_value::<Vec<lsp::Location>>(response.unwrap_or(Value::Null))
+                        .unwrap_or_default()
+                }
+                SourceDefinitionStrategy::TsServerRequest => {
+                    let body = match response {
+                        Some(Value::Object(mut map)) => map.remove("body").unwrap_or(Value::Null),
+                        _ => Value::Null,
+                    };
+                    #[derive(serde::Deserialize)]
+                    struct TsServerLocation {
+                        line: u32,
+                        offset: u32,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct TsServerFileSpan {
+                        file: String,
+                        start: TsServerLocation,
+                        end: TsServerLocation,
+                    }
+                    serde_json::from_value::<Vec<TsServerFileSpan>>(body)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|span| {
+                            let uri = file_path_to_lsp_url(Path::new(&span.file)).ok()?;
+                            Some(lsp::Location {
+                                uri,
+                                range: lsp::Range::new(
+                                    lsp::Position::new(
+                                        span.start.line.saturating_sub(1),
+                                        span.start.offset.saturating_sub(1),
+                                    ),
+                                    lsp::Position::new(
+                                        span.end.line.saturating_sub(1),
+                                        span.end.offset.saturating_sub(1),
+                                    ),
+                                ),
+                            })
+                        })
+                        .collect()
+                }
+            };
+
+            let definitions = location_links_from_lsp(
+                Some(lsp::GotoDefinitionResponse::Array(locations)),
+                lsp_store,
+                buffer,
+                server_id,
+                false,
+                cx.clone(),
+            )
+            .await?;
+            Ok(Some(definitions))
         })
     }
 

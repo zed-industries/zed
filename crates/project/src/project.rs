@@ -4285,6 +4285,24 @@ impl Project {
         })
     }
 
+    pub fn source_definitions<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.source_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
     pub fn workspace_definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -6138,6 +6156,14 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
+    }
+
+    /// Whether [`Self::source_definitions`] has a language server to work with for
+    /// `buffer` right now — used to decide whether "Go to Source Definition" is
+    /// worth offering in UI (e.g. the right-click context menu) for this buffer.
+    pub fn supports_source_definition(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.supports_source_definition(buffer, cx))
     }
 
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {

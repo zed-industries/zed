@@ -1051,6 +1051,24 @@ impl Editor {
         })
     }
 
+    pub fn go_to_source_definition(
+        &mut self,
+        _: &GoToSourceDefinition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Source, false, window, cx)
+    }
+
+    pub fn go_to_source_definition_split(
+        &mut self,
+        _: &GoToSourceDefinitionSplit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Source, true, window, cx)
+    }
+
     pub fn go_to_declaration(
         &mut self,
         _: &GoToDeclaration,
@@ -1713,7 +1731,9 @@ impl Editor {
             if num_locations > 1 {
                 let tab_kind = match kind {
                     Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
+                    Some(GotoDefinitionKind::Symbol) | Some(GotoDefinitionKind::Source) | None => {
+                        "Definitions"
+                    }
                     Some(GotoDefinitionKind::Declaration) => "Declarations",
                     Some(GotoDefinitionKind::Type) => "Types",
                 };
