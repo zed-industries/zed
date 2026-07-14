@@ -11580,14 +11580,6 @@ impl EditorSnapshot {
                 )
             });
 
-            let show_diff_hunk_signs_gutter = show_git_gutter
-                && self.show_git_diff_hunk_signs_gutter.unwrap_or_else(|| {
-                    matches!(
-                        ProjectSettings::get_global(cx).git.git_gutter,
-                        GitGutterSetting::TrackedFilesWithSigns
-                    )
-                });
-
             let gutter_settings = EditorSettings::get_global(cx).gutter;
             let show_line_numbers = self
                 .show_line_numbers
