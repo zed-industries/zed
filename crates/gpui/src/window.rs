@@ -982,6 +982,7 @@ impl Frame {
 enum InputModality {
     Mouse,
     Keyboard,
+    Touch,
 }
 
 /// Holds the state for a specific window.
@@ -1292,6 +1293,7 @@ impl Window {
             show,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             is_resizable,
             is_minimizable,
             display_id,
@@ -1320,6 +1322,7 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                app_owns_titlebar_drag,
                 is_resizable,
                 is_minimizable,
                 focus,
@@ -1999,6 +2002,16 @@ impl Window {
         self.platform_window.start_window_resize(edge);
     }
 
+    /// Linux (wayland) only: Set the window's input region, the area that receives pointer
+    /// and touch input. Events outside it pass through to whatever is below the window.
+    ///
+    /// - `Some(rects)` restricts input to the union of `rects`, in window coordinates.
+    /// - `Some(&[])` is an empty region, so the window receives no pointer or touch input.
+    /// - `None` resets the region to the default, so the whole window receives input again.
+    pub fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        self.platform_window.set_input_region(region);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
@@ -2240,6 +2253,7 @@ impl Window {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
+        self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
 
@@ -2812,8 +2826,16 @@ impl Window {
             }
         };
 
-        // Layout all root elements.
-        let mut root_element = self.root.as_ref().unwrap().clone().into_any();
+        // Layout all root elements. Like the root element on the web, which
+        // stretches to fill the viewport unless explicitly sized, window roots
+        // fill the window when their size is `auto`.
+        let scale_factor = self.scale_factor();
+        let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
+        let root_layout_id = root_element.request_layout(self, cx);
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2825,12 +2847,17 @@ impl Window {
         let mut active_drag_element = None;
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
-            let mut element = prompt.view.any_view().into_any();
+            let mut element = prompt.view.any_view().into_any_element();
+            let prompt_layout_id = element.request_layout(self, cx);
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
-            let mut element = active_drag.view.clone().into_any();
+            let mut element = active_drag.view.clone().into_any_element();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
@@ -2869,8 +2896,15 @@ impl Window {
         let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
 
         if a11y_active_start_of_frame {
+            // Harvest frame metadata for the debug dump while the live window
+            // and frame are still in scope.
+            let frame_info = crate::window::a11y::debug::FrameDebugInfo {
+                viewport_size: self.viewport_size,
+                scale_factor: self.scale_factor,
+                tab_stop_count: self.next_frame.tab_stops.tab_stop_count(),
+            };
             // clear the builder state regardless
-            let tree_update = self.a11y.end_frame();
+            let tree_update = self.a11y.end_frame(frame_info);
 
             if should_send_a11y_update {
                 log::debug!(
@@ -2894,7 +2928,7 @@ impl Window {
                 log::error!("Unexpectedly absent TooltipRequest");
                 continue;
             };
-            let mut element = tooltip_request.tooltip.view.clone().into_any();
+            let mut element = tooltip_request.tooltip.view.clone().into_any_element();
             let mouse_position = tooltip_request.tooltip.mouse_position;
             let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
 
@@ -3801,7 +3835,7 @@ impl Window {
             content_mask: self.snapped_content_mask(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness,
-            wavy: if style.wavy { 1 } else { 0 },
+            wavy: style.wavy.into(),
         });
     }
 
@@ -3831,7 +3865,7 @@ impl Window {
             content_mask: self.snapped_content_mask(),
             thickness: self.snap_stroke(style.thickness),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: 0,
+            wavy: false.into(),
         });
     }
 
@@ -3991,7 +4025,7 @@ impl Window {
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
-                grayscale: false,
+                grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
                 content_mask,
@@ -4106,7 +4140,7 @@ impl Window {
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
-            grayscale,
+            grayscale: grayscale.into(),
             bounds,
             content_mask,
             corner_radii,
@@ -4530,6 +4564,7 @@ impl Window {
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
         if self.last_input_modality != old_modality {
@@ -4623,6 +4658,7 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
+            PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -5163,6 +5199,11 @@ impl Window {
         self.platform_window.activate();
     }
 
+    /// Requests that the operating system draw attention to this window.
+    pub fn request_attention(&self) {
+        self.platform_window.request_attention();
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.platform_window.minimize();
@@ -5510,6 +5551,11 @@ impl Window {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
+    }
+
+    /// Debug representation of the last frame's accessibility information.
+    pub fn debug_a11y_tree_json(&self) -> Option<String> {
+        self.a11y.debug_tree_json()
     }
 
     /// Register a listener for an accessibility action on a specific node.
@@ -6299,5 +6345,79 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Pixels, Render,
+        Styled as _, TestAppContext, Window, canvas, div, px, size,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct RootView {
+        explicit_size: bool,
+        child_bounds: Rc<Cell<Bounds<Pixels>>>,
+    }
+
+    impl Render for RootView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let child_bounds = self.child_bounds.clone();
+            let root = div().flex().flex_col().child(
+                canvas(
+                    move |bounds, _, _| child_bounds.set(bounds),
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            );
+            if self.explicit_size {
+                root.w(px(300.)).h(px(200.))
+            } else {
+                root
+            }
+        }
+    }
+
+    #[test]
+    fn auto_sized_window_root_fills_the_window() {
+        let mut cx = TestAppContext::single();
+        let child_bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let child_bounds = child_bounds.clone();
+            move |_, _| RootView {
+                explicit_size: false,
+                child_bounds,
+            }
+        });
+
+        let viewport_size = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear();
+                window.viewport_size()
+            })
+            .unwrap();
+
+        assert_eq!(child_bounds.get().size, viewport_size);
+    }
+
+    #[test]
+    fn explicitly_sized_window_root_keeps_its_size() {
+        let mut cx = TestAppContext::single();
+        let child_bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let child_bounds = child_bounds.clone();
+            move |_, _| RootView {
+                explicit_size: true,
+                child_bounds,
+            }
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+
+        assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
     }
 }

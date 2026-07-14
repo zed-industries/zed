@@ -741,6 +741,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        // CredWriteW rejects larger blobs with the opaque RPC error
+        // 0x800706F7 "The stub received bad data", so fail with a clear
+        // message instead.
+        if password.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+            return Task::ready(Err(anyhow!(
+                "credential for {url} is {} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes",
+                password.len()
+            )));
+        }
         let password = password.to_vec();
         let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)

@@ -295,6 +295,7 @@ pub struct Metadata {
     pub len: u64,
     pub is_fifo: bool,
     pub is_executable: bool,
+    pub is_writable: bool,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -1025,6 +1026,7 @@ impl Fs for RealFs {
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
             is_executable,
+            is_writable: !metadata.permissions().readonly(),
         }))
     }
 
@@ -1091,7 +1093,11 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
+            // Skipped for poll watchers: PollWatcher::watch() recursively scans
+            // at registration, blocking on large virtual filesystem mounts
+            if let Some(parent) = target.parent()
+                && !fs_watcher::requires_poll_watcher(parent)
+            {
                 watcher.add(parent).log_err();
             }
         }
@@ -3081,6 +3087,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -3092,6 +3099,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
