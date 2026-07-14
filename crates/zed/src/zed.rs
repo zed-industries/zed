@@ -377,10 +377,13 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        // On macOS, Zed handles window movement itself, so disable AppKit's titlebar dragging.
-        // On other platforms, `is_movable` gates native window dragging (e.g. Windows'
-        // `HTCAPTION` hit test), so it must remain `true`.
-        is_movable: cfg!(not(target_os = "macos")),
+        is_movable: true,
+        // Zed draws its own titlebar and moves the window via [`Window::start_window_move`],
+        // so on macOS AppKit should not own titlebar dragging. This avoids the titlebar
+        // click delay from AppKit's drag disambiguation (first observed on macOS 27) while
+        // keeping the window movable and the Window-menu tiling items enabled. No-op on
+        // other platforms.
+        app_owns_titlebar_drag: true,
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
