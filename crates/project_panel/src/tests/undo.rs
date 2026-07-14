@@ -435,3 +435,26 @@ async fn trash_continues_when_one_entry_fails(cx: &mut gpui::TestAppContext) {
     cx.undo().await;
     cx.assert_fs_state_is(&["0_dir/", "a.txt", "b.txt"]);
 }
+
+#[gpui::test]
+async fn record_via_collab(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    // Manually update the `UndoManager::is_via_collab` field in order to
+    // simulate a Project Panel's Undo Manager in a collab scenario, acting as a
+    // client.
+    cx.panel.update(&mut cx.cx, |panel, _cx| {
+        panel.undo_manager.set_is_via_collab(true);
+    });
+
+    // Even though the rename operation should succeed, no operation should be
+    // recorded so calling undo or redo should not update the filesystem state.
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+
+    cx.redo().await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+}

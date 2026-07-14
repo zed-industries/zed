@@ -229,6 +229,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct UndoManager {
     tx: mpsc::Sender<UndoMessage>,
+    is_via_collab: bool,
     can_undo: Arc<AtomicBool>,
     can_redo: Arc<AtomicBool>,
 }
@@ -237,6 +238,7 @@ impl UndoManager {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         panel: WeakEntity<ProjectPanel>,
+        is_via_collab: bool,
         cx: &App,
     ) -> Self {
         let (tx, rx) = mpsc::channel(1024);
@@ -244,6 +246,7 @@ impl UndoManager {
 
         let this = Self {
             tx,
+            is_via_collab,
             can_undo: Arc::clone(&inner.can_undo),
             can_redo: Arc::clone(&inner.can_redo),
         };
@@ -265,6 +268,17 @@ impl UndoManager {
             .context("Undo and redo task can not keep up")
     }
     pub fn record(&mut self, changes: impl IntoIterator<Item = Change>) -> Result<()> {
+        // In a collab session, undoing or redoing can send `TrashProjectEntry`
+        // or `RestoreProjectEntry`, for example, undoing a create or undoing a
+        // trash.
+        // Since older hosts can't decode those messages, which would
+        // silently never complete, besides disabling the `Undo`/`Redo` actions
+        // for collab, we also avoid recording history here so there's nothing
+        // that could later trigger those messages.
+        if self.is_via_collab {
+            return Ok(());
+        }
+
         self.tx
             .try_send(UndoMessage::Changed(changes.into_iter().collect()))
             .context("Undo and redo task can not keep up")
@@ -278,6 +292,11 @@ impl UndoManager {
     /// operations happening.
     pub fn can_redo(&self) -> bool {
         self.can_redo.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_is_via_collab(&mut self, is_via_collab: bool) {
+        self.is_via_collab = is_via_collab;
     }
 }
 
