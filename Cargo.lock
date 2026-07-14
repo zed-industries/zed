@@ -19691,9 +19691,11 @@ dependencies = [
  "num-format",
  "schemars 1.0.4",
  "serde",
+ "settings",
  "smallvec",
  "strum 0.27.2",
  "theme",
+ "theme_settings",
  "ui_macros",
  "windows 0.61.3",
 ]
