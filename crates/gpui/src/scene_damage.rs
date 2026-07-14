@@ -3,9 +3,8 @@
 //! region.
 
 use crate::{
-    Bounds, MonochromeSprite, PaintOperation, PaintSurface, Path, PathVertex, Point,
-    PolychromeSprite, Primitive, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    TransformationMatrix, Underline,
+    Bounds, PaintOperation, PaintSurface, Path, Point, Primitive, Quad, ScaledPixels, Scene, Size,
+    TransformationMatrix,
 };
 
 /// The region of the framebuffer that changed between two frames.
@@ -36,35 +35,35 @@ impl SceneDamage {
         diff_primitives(
             &prev.shadows,
             &next.shadows,
-            shadows_equal,
+            PartialEq::eq,
             |shadow| shadow.bounds.dilate(shadow.blur_radius * 3.0),
             &mut acc,
         );
         diff_primitives(
             &prev.underlines,
             &next.underlines,
-            underlines_equal,
+            PartialEq::eq,
             |underline| underline.bounds,
             &mut acc,
         );
         diff_primitives(
             &prev.monochrome_sprites,
             &next.monochrome_sprites,
-            monochrome_sprites_equal,
+            PartialEq::eq,
             |sprite| transformed_bounds(sprite.bounds, &sprite.transformation),
             &mut acc,
         );
         diff_primitives(
             &prev.subpixel_sprites,
             &next.subpixel_sprites,
-            subpixel_sprites_equal,
+            PartialEq::eq,
             |sprite| transformed_bounds(sprite.bounds, &sprite.transformation),
             &mut acc,
         );
         diff_primitives(
             &prev.polychrome_sprites,
             &next.polychrome_sprites,
-            polychrome_sprites_equal,
+            PartialEq::eq,
             |sprite| sprite.bounds,
             &mut acc,
         );
@@ -72,7 +71,7 @@ impl SceneDamage {
             &prev.paths,
             &next.paths,
             paths_equal,
-            |path| path.bounds,
+            path_damage_bounds,
             &mut acc,
         );
         diff_paint_operations(&prev.paint_operations, &next.paint_operations, &mut acc);
@@ -114,70 +113,12 @@ fn quad_has_border(quad: &Quad) -> bool {
         || quad.border_widths.left.0 > 0.0
 }
 
-fn underlines_equal(a: &Underline, b: &Underline) -> bool {
-    a.order == b.order
-        && a.pad == b.pad
-        && a.bounds == b.bounds
-        && a.content_mask == b.content_mask
-        && a.color == b.color
-        && a.thickness == b.thickness
-        && a.wavy == b.wavy
-}
-
-fn shadows_equal(a: &Shadow, b: &Shadow) -> bool {
-    a.order == b.order
-        && a.blur_radius == b.blur_radius
-        && a.bounds == b.bounds
-        && a.corner_radii == b.corner_radii
-        && a.content_mask == b.content_mask
-        && a.color == b.color
-        && a.element_bounds == b.element_bounds
-        && a.element_corner_radii == b.element_corner_radii
-        && a.inset == b.inset
-        && a.pad == b.pad
-}
-
-fn monochrome_sprites_equal(a: &MonochromeSprite, b: &MonochromeSprite) -> bool {
-    a.order == b.order
-        && a.pad == b.pad
-        && a.bounds == b.bounds
-        && a.content_mask == b.content_mask
-        && a.color == b.color
-        && a.tile == b.tile
-        && a.transformation == b.transformation
-}
-
-fn subpixel_sprites_equal(a: &SubpixelSprite, b: &SubpixelSprite) -> bool {
-    a.order == b.order
-        && a.pad == b.pad
-        && a.bounds == b.bounds
-        && a.content_mask == b.content_mask
-        && a.color == b.color
-        && a.tile == b.tile
-        && a.transformation == b.transformation
-}
-
-fn polychrome_sprites_equal(a: &PolychromeSprite, b: &PolychromeSprite) -> bool {
-    a.order == b.order
-        && a.pad == b.pad
-        && a.grayscale == b.grayscale
-        && a.opacity == b.opacity
-        && a.bounds == b.bounds
-        && a.content_mask == b.content_mask
-        && a.corner_radii == b.corner_radii
-        && a.tile == b.tile
-}
-
 fn paths_equal(a: &Path<ScaledPixels>, b: &Path<ScaledPixels>) -> bool {
     a.order == b.order
         && a.bounds == b.bounds
         && a.content_mask == b.content_mask
         && a.color == b.color
-        && a.vertices.len() == b.vertices.len()
-        && a.vertices
-            .iter()
-            .zip(&b.vertices)
-            .all(|(a, b)| path_vertices_equal(a, b))
+        && a.vertices == b.vertices
 }
 
 fn paint_operations_equal(a: &PaintOperation, b: &PaintOperation) -> bool {
@@ -191,28 +132,16 @@ fn paint_operations_equal(a: &PaintOperation, b: &PaintOperation) -> bool {
 
 fn primitives_equal(a: &Primitive, b: &Primitive) -> bool {
     match (a, b) {
-        (Primitive::Shadow(a), Primitive::Shadow(b)) => shadows_equal(a, b),
+        (Primitive::Shadow(a), Primitive::Shadow(b)) => a == b,
         (Primitive::Quad(a), Primitive::Quad(b)) => quads_equal(a, b),
         (Primitive::Path(a), Primitive::Path(b)) => paths_equal(a, b),
-        (Primitive::Underline(a), Primitive::Underline(b)) => underlines_equal(a, b),
-        (Primitive::MonochromeSprite(a), Primitive::MonochromeSprite(b)) => {
-            monochrome_sprites_equal(a, b)
-        }
-        (Primitive::SubpixelSprite(a), Primitive::SubpixelSprite(b)) => {
-            subpixel_sprites_equal(a, b)
-        }
-        (Primitive::PolychromeSprite(a), Primitive::PolychromeSprite(b)) => {
-            polychrome_sprites_equal(a, b)
-        }
+        (Primitive::Underline(a), Primitive::Underline(b)) => a == b,
+        (Primitive::MonochromeSprite(a), Primitive::MonochromeSprite(b)) => a == b,
+        (Primitive::SubpixelSprite(a), Primitive::SubpixelSprite(b)) => a == b,
+        (Primitive::PolychromeSprite(a), Primitive::PolychromeSprite(b)) => a == b,
         (Primitive::Surface(_), Primitive::Surface(_)) => false,
         _ => false,
     }
-}
-
-fn path_vertices_equal(a: &PathVertex<ScaledPixels>, b: &PathVertex<ScaledPixels>) -> bool {
-    a.xy_position == b.xy_position
-        && a.st_position == b.st_position
-        && a.content_mask == b.content_mask
 }
 
 fn union_into(acc: &mut Option<Bounds<ScaledPixels>>, bounds: Bounds<ScaledPixels>) {
@@ -276,11 +205,17 @@ fn paint_operation_bounds(operation: &PaintOperation) -> Option<Bounds<ScaledPix
     }
 }
 
+fn path_damage_bounds(path: &Path<ScaledPixels>) -> Bounds<ScaledPixels> {
+    // Paths are copied from a linearly filtered intermediate texture, which can
+    // affect one pixel beyond their logical bounds.
+    path.bounds.dilate(ScaledPixels(1.0))
+}
+
 fn primitive_damage_bounds(primitive: &Primitive) -> Bounds<ScaledPixels> {
     match primitive {
         Primitive::Shadow(shadow) => shadow.bounds.dilate(shadow.blur_radius * 3.0),
         Primitive::Quad(quad) => quad.bounds,
-        Primitive::Path(path) => path.bounds,
+        Primitive::Path(path) => path_damage_bounds(path),
         Primitive::Underline(underline) => underline.bounds,
         Primitive::MonochromeSprite(sprite) => {
             transformed_bounds(sprite.bounds, &sprite.transformation)
@@ -368,7 +303,7 @@ fn transformed_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContentMask, Hsla, PaintSurface, Quad};
+    use crate::{Background, ContentMask, Hsla, PaintSurface, Quad, Underline, px};
 
     fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
         Bounds {
@@ -416,6 +351,51 @@ mod tests {
         }
         scene.finish();
         scene
+    }
+
+    fn path_primitive() -> Primitive {
+        let start = Point {
+            x: px(10.0),
+            y: px(20.0),
+        };
+        let mut path = Path::new(start);
+        path.color = Background::from(Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.5,
+            a: 1.0,
+        });
+        path.content_mask = ContentMask {
+            bounds: Bounds {
+                origin: Point {
+                    x: px(0.0),
+                    y: px(0.0),
+                },
+                size: Size {
+                    width: px(1000.0),
+                    height: px(1000.0),
+                },
+            },
+        };
+        path.push_triangle(
+            (
+                start,
+                Point {
+                    x: px(20.0),
+                    y: px(20.0),
+                },
+                Point {
+                    x: px(10.0),
+                    y: px(40.0),
+                },
+            ),
+            (
+                Point::new(0.0, 0.0),
+                Point::new(0.5, 0.0),
+                Point::new(1.0, 1.0),
+            ),
+        );
+        Primitive::Path(path.scale(1.0))
     }
 
     fn underline(bounds: Bounds<ScaledPixels>, lightness: f32) -> Underline {
@@ -516,6 +496,17 @@ mod tests {
         let after = scene_of(&[unchanged, quad(rect(200., 200., 10., 20.), 0.9)]);
         match SceneDamage::between(&before, &after) {
             SceneDamage::Rect(damage) => assert_eq!(damage, rect(200., 200., 10., 20.)),
+            other => panic!("expected rect damage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_path_damage_includes_intermediate_texture_filtering() {
+        let before = scene_of_primitives(&[path_primitive()]);
+        let after = scene_of_primitives(&[]);
+
+        match SceneDamage::between(&before, &after) {
+            SceneDamage::Rect(damage) => assert_eq!(damage, rect(9.0, 19.0, 12.0, 22.0)),
             other => panic!("expected rect damage, got {other:?}"),
         }
     }
