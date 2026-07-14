@@ -6898,8 +6898,7 @@ impl GitPanel {
         let weak = cx.weak_entity();
         let stage_intent = StageIntent::for_section(section);
         let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header));
-        // Pinned staging sections can be empty; hide the checkbox then, since
-        // there is nothing for it to act on.
+
         let section_is_empty = !self
             .entries
             .get(ix + 1)
@@ -6910,7 +6909,7 @@ impl GitPanel {
             .group(group_name)
             .h(self.list_item_height())
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_2()
             .justify_between()
@@ -6973,7 +6972,7 @@ impl GitPanel {
         h_flex()
             .h(self.list_item_height())
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .border_1()
             .border_r_2()
@@ -7253,7 +7252,7 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_1p5()
             .border_1()
@@ -7453,7 +7452,7 @@ impl GitPanel {
             .h(self.list_item_height())
             .min_w_0()
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_1p5()
             .justify_between()
