@@ -308,6 +308,7 @@ pub struct ProjectSearchView {
     pending_replace_all: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    debounced_search_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1068,15 +1069,18 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                if let EditorEvent::Edited { .. } = event
-                    && EditorSettings::get_global(cx).use_smartcase_search
-                {
-                    let query = this.search_query_text(cx);
-                    if !query.is_empty()
-                        && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                            != contains_uppercase(&query)
-                    {
-                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                if let EditorEvent::Edited { .. } = event {
+                    if EditorSettings::get_global(cx).use_smartcase_search {
+                        let query = this.search_query_text(cx);
+                        if !query.is_empty()
+                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                != contains_uppercase(&query)
+                        {
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                        }
+                    }
+                    if EditorSettings::get_global(cx).search.search_on_type {
+                        this.schedule_search_on_type(cx);
                     }
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
@@ -1186,6 +1190,7 @@ impl ProjectSearchView {
             pending_replace_all: false,
             included_opened_only: false,
             regex_language: None,
+            debounced_search_task: None,
             _subscriptions: subscriptions,
         };
 
@@ -1446,6 +1451,7 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut Context<Self>) {
+        self.debounced_search_task.take();
         let open_buffers = if self.included_opened_only {
             self.workspace
                 .update(cx, |workspace, cx| self.open_buffers(cx, workspace))
@@ -1456,6 +1462,25 @@ impl ProjectSearchView {
         if let Some(query) = self.build_search_query(cx, open_buffers) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
         }
+    }
+
+    /// Schedules a debounced search to run shortly after the user stops
+    /// typing. Any previously scheduled (not yet started) search is
+    /// cancelled by dropping its task, so at most one search is pending.
+    fn schedule_search_on_type(&mut self, cx: &mut Context<Self>) {
+        const SEARCH_ON_TYPE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+        self.debounced_search_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SEARCH_ON_TYPE_DEBOUNCE)
+                .await;
+            this.update(cx, |this, cx| {
+                if !this.search_query_text(cx).is_empty() {
+                    this.search(cx);
+                }
+            })
+            .ok();
+        }));
     }
 
     pub fn search_query_text(&self, cx: &App) -> String {

@@ -729,6 +729,9 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Whether project-wide search should run automatically (debounced) as you
+    // type the query, instead of waiting for the enter key.
+    "search_on_type": false,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
