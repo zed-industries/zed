@@ -395,7 +395,10 @@ impl StackFrameList {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
+            return Task::ready(Err(anyhow!(
+                "no absolute source path in stack frame {stack_frame_id}, source: {:?}",
+                stack_frame.source
+            )));
         };
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
