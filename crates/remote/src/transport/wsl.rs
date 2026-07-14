@@ -210,7 +210,7 @@ impl WslRemoteConnection {
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+                .map_err(|e| e.context("Failed to create directory"))?;
         }
 
         let binary_exists_on_server = self
@@ -346,7 +346,7 @@ impl WslRemoteConnection {
 
         self.run_wsl_command("sh", &["-c", &script])
             .await
-            .map_err(|e| anyhow!("Failed to extract server binary: {}", e))?;
+            .map_err(|e| e.context("Failed to extract server binary"))?;
         Ok(())
     }
 }
@@ -395,7 +395,9 @@ impl RemoteConnection for WslRemoteConnection {
             {
                 Ok(process) => process,
                 Err(error) => {
-                    return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                    return Task::ready(Err(
+                        anyhow::Error::new(error).context("failed to spawn remote server")
+                    ));
                 }
             };
 

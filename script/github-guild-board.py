@@ -38,7 +38,10 @@ RETRY_DELAY_SECONDS = 5
 GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
-GUILD_TEAM_SLUG = "guild-cohort-2"
+# Cohort members are outside collaborators on the repo holding this custom
+# repository role, rather than members of an org team. Rotating the cohort is
+# then just adding/removing collaborators, with no org seats involved.
+GUILD_ROLE_NAME = "Guild Assign issues/PRs"
 
 STATUS_FIELD = "Status"
 STATUS_IN_PROGRESS = "In Progress"
@@ -137,15 +140,19 @@ def github_rest_get_paginated(path):
 @lru_cache(maxsize=None)
 def is_guild_member(username):
     response = requests.get(
-        f"{GITHUB_API_URL}/orgs/{REPO_OWNER}/teams/{GUILD_TEAM_SLUG}/memberships/{username}",
+        f"{GITHUB_API_URL}/repos/{REPO_OWNER}/{REPO_NAME}/collaborators/{username}/permission",
         headers=GITHUB_HEADERS,
         timeout=30,
     )
+    # 404 means the user isn't a collaborator on the repo at all.
     if response.status_code == 404:
         return False
     response.raise_for_status()
-    # A pending invitation reports state "pending"; only active members count.
-    return response.json().get("state") == "active"
+    # role_name is the effective (highest) role for the user. For a cohort of
+    # outside collaborators whose only grant is this custom role, that is the
+    # custom role's name; built-in roles come back lowercased and won't match.
+    role_name = response.json().get("role_name") or ""
+    return role_name.lower() == GUILD_ROLE_NAME.lower()
 
 
 def issue_comments(issue_number):

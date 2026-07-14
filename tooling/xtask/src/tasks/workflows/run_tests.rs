@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::tasks::workflows::{
     steps::{
-        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
-        use_clang,
+        CommonJobConditions, CommonPermissionSets, cache_rust_dependencies_namespace,
+        repository_owner_guard_expression, use_clang,
     },
     vars::{self, PathCondition},
 };
@@ -105,6 +105,7 @@ pub(crate) fn run_tests() -> Workflow {
     ); // could be more specific here?
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default()
                 .push(
@@ -220,12 +221,17 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
           # Map directory names to package names
           FILE_CHANGED_PKGS=""
           for dir in $CHANGED_DIRS; do
-            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
+            # Only add directories that map to a real root-workspace package.
+            # Some directories (e.g. tooling/lints) belong to a separate workspace
+            # and are not root members, so they have no mapping here. Previously we
+            # fell back to the raw directory name, which fabricated a bogus package
+            # (e.g. "lints") and produced a nextest filter like rdeps(lints) that
+            # hard-errors ("operator didn't match any packages"). Skipping such
+            # directories leaves the package set empty, which falls through to the
+            # "run all tests" path below.
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
-            else
-              # Fall back to directory name if no mapping found
-              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
             fi
           done
           FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)

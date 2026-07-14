@@ -1660,13 +1660,16 @@ impl Editor {
     ) -> Task<Result<()>> {
         workspace.update(cx, |workspace, cx| {
             let path = snapshot.file().map(|file| file.full_path(cx));
-            let Some(path) =
-                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
+            let Some(project_path) = path
+                .as_ref()
+                .and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
             else {
-                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
+                return Task::ready(Err(anyhow::anyhow!(
+                    "project path not found for edit prediction target {path:?}"
+                )));
             };
             let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(path, None, true, window, cx);
+            let item = workspace.open_path(project_path, None, true, window, cx);
             window.spawn(cx, async move |cx| {
                 let Some(editor) = item.await?.downcast::<Editor>() else {
                     return Ok(());
@@ -2295,7 +2298,7 @@ impl Editor {
         let file_name = snapshot
             .file()
             .map(|file| SharedString::new(file.file_name(cx)))
-            .unwrap_or(SharedString::new_static("untitled"));
+            .unwrap_or(SharedString::new_static(MultiBuffer::DEFAULT_TITLE));
 
         h_flex()
             .id("ep-jump-outside-popover")
@@ -2429,7 +2432,7 @@ impl Editor {
                 let file_name = snapshot
                     .file()
                     .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
+                    .unwrap_or(MultiBuffer::DEFAULT_TITLE);
                 Some(
                     h_flex()
                         .px_2()
