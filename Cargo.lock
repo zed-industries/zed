@@ -7409,7 +7409,9 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
+ "github_pull_requests",
  "gpui",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -7453,9 +7455,25 @@ dependencies = [
  "windows 0.61.3",
  "workspace",
  "zed_actions",
+ "zed_credentials_provider",
  "zeroize",
  "zlog",
  "ztracing",
+]
+
+[[package]]
+name = "github_pull_requests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

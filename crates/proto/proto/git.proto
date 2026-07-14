@@ -424,6 +424,8 @@ message Fetch {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   optional string remote = 5;
+  optional string source_ref = 6;
+  optional string destination_ref = 7;
 }
 
 message GetRemotes {

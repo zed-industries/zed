@@ -2805,7 +2805,11 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
+        let fetch_options = FetchOptions::from_proto(
+            envelope.payload.remote,
+            envelope.payload.source_ref,
+            envelope.payload.destination_ref,
+        )?;
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -7478,12 +7482,15 @@ impl Repository {
                             debug_assert!(askpass_delegate.is_some());
                         });
 
+                        let (remote, source_ref, destination_ref) = fetch_options.to_proto();
                         let response = client
                             .request(proto::Fetch {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 askpass_id,
-                                remote: fetch_options.to_proto(),
+                                remote,
+                                source_ref,
+                                destination_ref,
                             })
                             .await?;
 
@@ -9316,6 +9323,20 @@ impl Repository {
         self.remote_upstream_url
             .clone()
             .or(self.remote_origin_url.clone())
+    }
+
+    pub fn default_remote(&self) -> Option<Remote> {
+        if self.remote_upstream_url.is_some() {
+            Some(Remote {
+                name: "upstream".into(),
+            })
+        } else if self.remote_origin_url.is_some() {
+            Some(Remote {
+                name: "origin".into(),
+            })
+        } else {
+            None
+        }
     }
 }
 
