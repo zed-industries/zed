@@ -9321,7 +9321,9 @@ mod tests {
         .await
         .unwrap();
         cx.run_until_parked();
-        fs.create_dir(Path::new(path!("/test/.git"))).await.unwrap();
+        fs.git_init(Path::new(path!("/test")), "main".to_string())
+            .await
+            .unwrap();
         cx.run_until_parked();
 
         complete_tx.send(()).unwrap();

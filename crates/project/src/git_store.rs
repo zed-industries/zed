@@ -2229,9 +2229,26 @@ impl GitStore {
                         .entry(repo_id)
                         .or_insert_with(HashSet::new)
                         .insert(worktree_id);
-                    let path_changed = update.old_work_directory_abs_path.as_ref()
-                        != update.new_work_directory_abs_path.as_ref();
-                    if path_changed
+                    // Reinitialize the backend when the repository's identity changes —
+                    // not only its work-directory path but also its resolved `.git`,
+                    // repository, or common dir. The latter happens when a gitfile is
+                    // retargeted to a different repository while the checkout stays put;
+                    // without this the backend would keep pointing at the old repository.
+                    let identity_changed = {
+                        let snapshot = &existing.read(cx).snapshot;
+                        let changed = |new: &Option<Arc<Path>>, current: &Arc<Path>| {
+                            new.as_ref().is_some_and(|new| new != current)
+                        };
+                        update.old_work_directory_abs_path.as_ref()
+                            != update.new_work_directory_abs_path.as_ref()
+                            || changed(
+                                &update.repository_dir_abs_path,
+                                &snapshot.repository_dir_abs_path,
+                            )
+                            || changed(&update.common_dir_abs_path, &snapshot.common_dir_abs_path)
+                            || changed(&update.dot_git_abs_path, &snapshot.dot_git_abs_path)
+                    };
+                    if identity_changed
                         && let Some(dot_git_abs_path) = update.dot_git_abs_path.clone()
                         && let Some(repository_dir_abs_path) =
                             update.repository_dir_abs_path.clone()
@@ -7282,7 +7299,9 @@ impl Repository {
         repo_path: &RepoPath,
         is_dir: bool,
     ) -> oneshot::Receiver<Result<()>> {
-        let repository_dir = self.snapshot.repository_dir_abs_path.clone();
+        // `info/exclude` lives in the common dir, which is shared across a repository's
+        // linked worktrees — not in the per-worktree repository dir.
+        let common_dir = self.snapshot.common_dir_abs_path.clone();
         let path_display = repo_path.as_ref().display(PathStyle::Unix);
         let file_path_str = if is_dir {
             format!("{}/", path_display)
@@ -7298,7 +7317,7 @@ impl Repository {
                     RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
                         append_pattern_to_ignore_file(
                             fs,
-                            repository_dir.join(git::REPO_EXCLUDE),
+                            common_dir.join(git::REPO_EXCLUDE),
                             file_path_str,
                         )
                         .await
@@ -9348,28 +9367,15 @@ fn format_job_key(key: &GitJobKey) -> SharedString {
 /// repository root. Returns `None` if `path` is a normal repository, not a git
 /// repo, or if resolution fails.
 ///
-/// Resolution works by:
-/// 1. Reading the `.git` file to get the `gitdir:` pointer
-/// 2. Following that to the worktree-specific git directory
-/// 3. Reading the `commondir` file to find the shared `.git` directory
-/// 4. Deriving the main repo's identity path from the common dir
+/// Resolution goes through the shared [`fs::resolve_git_repository`], so it agrees
+/// with worktree discovery and only treats *validated* repositories as worktrees; a
+/// linked worktree is distinguished by its repository dir differing from the shared
+/// common dir, from which the main repo's identity path is derived.
 pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
-    let dot_git = path.join(".git");
-    let metadata = fs.metadata(&dot_git).await.ok()??;
-    if metadata.is_dir {
-        return None; // Normal repo, not a linked worktree
-    }
-    // It's a .git file — parse the gitdir: pointer
-    let content = fs.load(&dot_git).await.ok()?;
-    let gitdir_rel = content.strip_prefix("gitdir:")?.trim();
-    let gitdir_abs = fs.canonicalize(&path.join(gitdir_rel)).await.ok()?;
-    // Read commondir to find the main .git directory
-    let commondir_content = fs.load(&gitdir_abs.join("commondir")).await.ok()?;
-    let common_dir = fs
-        .canonicalize(&gitdir_abs.join(commondir_content.trim()))
+    let (repository_dir, common_dir) = fs::resolve_git_repository(&path.join(git::DOT_GIT), fs)
         .await
-        .ok()?;
-    Some(repo_identity_path(&common_dir).to_path_buf())
+        .ok()??;
+    (repository_dir != common_dir).then(|| repo_identity_path(&common_dir).to_path_buf())
 }
 
 /// Validates that the resolved worktree directory is acceptable:

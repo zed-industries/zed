@@ -1634,6 +1634,200 @@ mod trust_tests {
     }
 }
 
+mod gitfile_retarget {
+    use fs::{FakeFs, Fs};
+    use git::repository::Worktree as GitWorktree;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::{Path, PathBuf};
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    /// Rewriting a linked worktree's gitfile from admin dir A to admin dir B (same
+    /// work-directory path) must reinitialize GitStore's local backend so identity
+    /// paths and B-derived backend state both switch to B — not only Worktree's
+    /// published path fields.
+    #[gpui::test]
+    async fn test_gitfile_retarget_reinitializes_git_store_backend(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/repo_a"),
+            json!({
+                ".git": {},
+                "file.txt": "a",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/repo_b"),
+            json!({
+                ".git": {},
+                "file.txt": "b",
+            }),
+        )
+        .await;
+
+        fs.add_linked_worktree_for_repo(
+            Path::new(path!("/repo_a/.git")),
+            false,
+            GitWorktree {
+                path: PathBuf::from(path!("/linked")),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "aaa111".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.write(path!("/linked/file.txt").as_ref(), b"content")
+            .await
+            .unwrap();
+
+        // FakeGitRepository follows the gitfile to the admin dir for state, so attach
+        // A- and B-specific origins there (not only on the common dirs).
+        let admin_a = PathBuf::from(path!("/repo_a/.git/worktrees/feature"));
+        fs.with_git_state(&admin_a, false, |state| {
+            state
+                .remotes
+                .insert("origin".into(), "https://example.com/repo-a.git".into());
+        })
+        .unwrap();
+
+        let admin_b = PathBuf::from(path!("/repo_b/.git/worktrees/feature"));
+        fs.create_dir(&admin_b).await.unwrap();
+        fs.write(&admin_b.join("HEAD"), b"ref: refs/heads/feature\n")
+            .await
+            .unwrap();
+        fs.write(&admin_b.join("commondir"), path!("/repo_b/.git").as_bytes())
+            .await
+            .unwrap();
+        fs.write(&admin_b.join("gitdir"), path!("/linked/.git").as_bytes())
+            .await
+            .unwrap();
+        fs.with_git_state(&admin_b, false, |state| {
+            state
+                .remotes
+                .insert("origin".into(), "https://example.com/repo-b.git".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/linked").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let (repository_id, snapshot_before) = project.read_with(cx, |project, cx| {
+            let repositories = project.repositories(cx);
+            assert_eq!(
+                repositories.len(),
+                1,
+                "linked worktree should register one GitStore repository"
+            );
+            let (id, entity) = repositories.iter().next().unwrap();
+            (*id, entity.read(cx).snapshot())
+        });
+        assert_eq!(
+            snapshot_before.common_dir_abs_path.as_ref(),
+            Path::new(path!("/repo_a/.git")),
+            "initially bound to repository A"
+        );
+        assert!(
+            snapshot_before
+                .repository_dir_abs_path
+                .as_ref()
+                .starts_with(path!("/repo_a/.git")),
+            "admin dir under A: {:?}",
+            snapshot_before.repository_dir_abs_path
+        );
+        assert_eq!(
+            snapshot_before.remote_origin_url.as_deref(),
+            Some("https://example.com/repo-a.git"),
+            "backend should report A's origin before retarget"
+        );
+        // FakeGitRepository::worktrees builds the main path from its *cached*
+        // common_dir_path (set only at open_repo / reinitialize). Snapshot path
+        // fields alone do not prove the backend was reopened.
+        let main_worktree_path_before = snapshot_before
+            .linked_worktrees
+            .iter()
+            .find(|worktree| worktree.is_main)
+            .map(|worktree| worktree.path.clone());
+        assert_eq!(
+            main_worktree_path_before.as_deref(),
+            Some(Path::new(path!("/repo_a"))),
+            "cached backend common_dir parent (main worktree path) starts at A"
+        );
+
+        // Pause events so a remove+write of the gitfile is observed as a single
+        // retarget: FakeFs caches a resolved `git_dir_path` on the file entry, and
+        // a plain content overwrite would leave the backend stuck on admin A.
+        // remove+write rebuilds the entry with a fresh parse; pause avoids a
+        // transient Ok(None) unregister between the two steps.
+        fs.pause_events();
+        fs.remove_file(path!("/linked/.git").as_ref(), Default::default())
+            .await
+            .unwrap();
+        fs.write(
+            path!("/linked/.git").as_ref(),
+            format!("gitdir: {}\n", admin_b.display()).as_bytes(),
+        )
+        .await
+        .unwrap();
+        fs.unpause_events_and_flush();
+        cx.executor().run_until_parked();
+
+        let snapshot_after = project.read_with(cx, |project, cx| {
+            let repositories = project.repositories(cx);
+            assert_eq!(
+                repositories.len(),
+                1,
+                "retarget must not remove/re-add under a new RepositoryId"
+            );
+            let (id, entity) = repositories.iter().next().unwrap();
+            assert_eq!(
+                *id, repository_id,
+                "RepositoryId must be preserved across gitfile retarget"
+            );
+            entity.read(cx).snapshot()
+        });
+
+        assert_eq!(
+            snapshot_after.common_dir_abs_path.as_ref(),
+            Path::new(path!("/repo_b/.git")),
+            "GitStore common_dir must switch to B (identity gate / reinitialize_local_backend)"
+        );
+        assert_eq!(
+            snapshot_after.repository_dir_abs_path.as_ref(),
+            admin_b.as_path(),
+            "GitStore repository_dir must switch to B's admin dir"
+        );
+        assert_eq!(
+            snapshot_after.remote_origin_url.as_deref(),
+            Some("https://example.com/repo-b.git"),
+            "backend must re-open against B and report B's origin, not A's"
+        );
+        let main_worktree_path_after = snapshot_after
+            .linked_worktrees
+            .iter()
+            .find(|worktree| worktree.is_main)
+            .map(|worktree| worktree.path.clone());
+        assert_eq!(
+            main_worktree_path_after.as_deref(),
+            Some(Path::new(path!("/repo_b"))),
+            "cached backend common_dir parent must flip to B only after reinitialize_local_backend"
+        );
+    }
+}
+
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -1700,6 +1894,11 @@ mod resolve_worktree_tests {
         fs.insert_tree(
             "/monty/.bare",
             json!({
+                // A real bare repo has its own HEAD and object/ref stores in the
+                // common dir; resolution now validates the repository.
+                "HEAD": "ref: refs/heads/main",
+                "objects": {},
+                "refs": {},
                 "worktrees": {
                     "feature-a": {
                         "commondir": "../../",

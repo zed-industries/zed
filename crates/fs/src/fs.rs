@@ -41,7 +41,7 @@ use smol::io::AsyncWriteExt;
 #[cfg(feature = "test-support")]
 use std::path::Component;
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
@@ -49,6 +49,7 @@ use std::{
 };
 use tempfile::TempDir;
 use text::LineEnding;
+use util::ResultExt as _;
 
 #[cfg(feature = "test-support")]
 mod fake_git_repo;
@@ -92,6 +93,174 @@ impl From<PathEvent> for PathBuf {
     fn from(event: PathEvent) -> Self {
         event.path
     }
+}
+
+/// Resolves a `.git` entry — a directory, or a gitfile pointing elsewhere — to its
+/// validated `(repository_dir, common_dir)`, mirroring git's discovery. Worktree
+/// discovery and identity resolution share it (the sync git backend shares only the
+/// grammar helpers), so they agree on what a repository is and where its dirs are.
+/// The two dirs differ only for a linked worktree, whose `HEAD` is per-worktree while
+/// the object/ref stores live in the shared common dir.
+///
+/// * `Ok(Some(_))` — fully resolved and structurally valid.
+/// * `Ok(None)` — confirmed *not* a repository (absent, malformed/empty gitfile,
+///   broken gitfile/`commondir` target, or a leftover/empty `.git`).
+/// * `Err(_)` — the answer is indeterminate because an I/O operation failed (a
+///   permission or other read error); a caller holding a registration must preserve it
+///   rather than remove it. This "confirmed gone" vs "couldn't read it" distinction is
+///   why the return type is `Result<Option<_>>`.
+pub async fn resolve_git_repository(
+    dot_git_path: &Path,
+    fs: &dyn Fs,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    let Some(metadata) = fs.metadata(dot_git_path).await? else {
+        return Ok(None);
+    };
+
+    let repository_dir = if metadata.is_dir {
+        // A plain `.git` or bare directory keeps its own identity; git does not
+        // canonicalize it during discovery.
+        dot_git_path.to_path_buf()
+    } else {
+        // A gitfile: the `.git` of a linked worktree or a separate-git-dir checkout.
+        // Confirmed-absent content (dangling symlink, TOCTOU delete) is non-repo,
+        // not a transient failure — same tri-state as `canonicalize_existing`.
+        let Some(contents) = load_bytes_existing(fs, dot_git_path).await? else {
+            return Ok(None);
+        };
+        let Some(target) = git::parse_gitfile(&contents).log_err() else {
+            return Ok(None);
+        };
+        // `Path::join` replaces the base for an absolute gitdir pointer.
+        let target = dot_git_path.parent().unwrap_or(Path::new("")).join(target);
+        // A gitfile pointing at a nonexistent directory is a broken worktree link;
+        // a transient error propagates so an existing registration is preserved.
+        let Some(resolved) = canonicalize_existing(fs, &target).await? else {
+            return Ok(None);
+        };
+        resolved
+    };
+
+    let Some(common_dir) = resolve_common_dir(&repository_dir, fs).await? else {
+        return Ok(None);
+    };
+
+    Ok(fs
+        .is_git_repository(&repository_dir, &common_dir)
+        .await?
+        .then_some((repository_dir, common_dir)))
+}
+
+/// Canonicalizes a path, distinguishing a confirmed-missing target (`Ok(None)`, a
+/// broken link) from a transient permission/I/O failure (`Err`) that a caller holding
+/// a registration must not treat as a deletion.
+async fn canonicalize_existing(fs: &dyn Fs, path: &Path) -> Result<Option<PathBuf>> {
+    match fs.canonicalize(path).await {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if io_error_is_absence(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Loads file bytes, mapping confirmed absence to `Ok(None)` the same way
+/// [`canonicalize_existing`] does, so a missing gitfile/commondir is not treated as a
+/// transient I/O failure that would preserve a stale registration.
+async fn load_bytes_existing(fs: &dyn Fs, path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs.load_bytes(path).await {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if io_error_is_absence(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `error` is confirmed path absence (`NotFound` / `NotADirectory`) rather
+/// than an indeterminate I/O failure. This is the absence half of the resolver's
+/// tri-state contract; shared so callers cannot drift from each other.
+pub fn io_error_is_absence(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+        )
+    })
+}
+
+/// Resolves the common directory for `repository_dir`, following a `commondir` file
+/// when present (git's `get_common_dir_noenv`). Returns `Ok(None)` when a `commondir`
+/// is present but broken (a directory, or a target that is missing or not a directory);
+/// git does not silently fall back to `repository_dir` in that case.
+async fn resolve_common_dir(repository_dir: &Path, fs: &dyn Fs) -> Result<Option<PathBuf>> {
+    let commondir_path = repository_dir.join(git::COMMONDIR);
+    let Some(metadata) = fs.metadata(&commondir_path).await? else {
+        // No `commondir`: the repository is its own common dir (normal or bare repo).
+        return Ok(Some(repository_dir.to_path_buf()));
+    };
+    if metadata.is_dir {
+        return Ok(None);
+    }
+    let Some(contents) = load_bytes_existing(fs, &commondir_path).await? else {
+        return Ok(None);
+    };
+    let Some(target) = git::parse_commondir(&contents).log_err() else {
+        return Ok(None);
+    };
+    let target = repository_dir.join(target);
+    let Some(resolved) = canonicalize_existing(fs, &target).await? else {
+        return Ok(None);
+    };
+    Ok(dir_exists(fs, &resolved).await?.then_some(resolved))
+}
+
+/// Whether `path` is an existing directory, distinguishing confirmed absence
+/// (`Ok(false)`) from a transient I/O error (`Err`). `Fs::metadata` already maps
+/// `NotFound`/`NotADirectory` to `Ok(None)`.
+async fn dir_exists<F: Fs + ?Sized>(fs: &F, path: &Path) -> Result<bool> {
+    Ok(fs
+        .metadata(path)
+        .await?
+        .is_some_and(|metadata| metadata.is_dir))
+}
+
+/// Whether the common dir holds git's object and ref stores (`objects` and `refs`).
+/// git's `is_git_directory` requires both; reftable repos still create `refs/`, so
+/// there is no "reftable instead of refs" branch. A missing store is `Ok(false)`; a
+/// transient I/O error propagates as `Err` so a valid repository is not spuriously
+/// unregistered.
+async fn common_dir_has_stores<F: Fs + ?Sized>(fs: &F, common_dir: &Path) -> Result<bool> {
+    Ok(dir_exists(fs, &common_dir.join(git::OBJECTS_DIR)).await?
+        && dir_exists(fs, &common_dir.join(git::REFS_DIR)).await?)
+}
+
+/// Path-aware `HEAD` validation, faithful to git's `validate_headref`: a symlink
+/// `HEAD` is validated by its link text without being followed (an unborn or
+/// packed-only target is legal), while a regular `HEAD` is validated from its
+/// first bytes. Returns `Err` only for transient I/O failures.
+async fn git_head_is_valid<F: Fs + ?Sized>(fs: &F, head_path: &Path) -> Result<bool> {
+    let Some(metadata) = fs.metadata(head_path).await? else {
+        return Ok(false);
+    };
+    // Symlink first: a symlink-to-directory is validated by link text, not rejected
+    // as a directory HEAD. Directory HEAD is confirmed-invalid (git rejects it).
+    if metadata.is_symlink {
+        return match fs.read_link(head_path).await {
+            Ok(target) => Ok(git::head_symlink_target_is_valid(target.as_os_str())),
+            Err(error) if io_error_is_absence(&error) => Ok(false),
+            Err(error) => Err(error),
+        };
+    }
+    if metadata.is_dir {
+        return Ok(false);
+    }
+    // git reads a fixed 255-byte buffer; HEAD is tiny, and the bound keeps a
+    // pathological large file from forcing a full read.
+    let reader = match fs.open_sync(head_path).await {
+        Ok(reader) => reader,
+        Err(error) if io_error_is_absence(&error) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let mut contents = Vec::new();
+    reader.take(255).read_to_end(&mut contents)?;
+    Ok(git::regular_head_contents_are_valid(&contents))
 }
 
 #[async_trait::async_trait]
@@ -164,6 +333,27 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
+
+    /// Whether the resolved `(repository_dir, common_dir)` is a valid git repository.
+    /// A leftover/empty `.git` directory isn't one: git walks up to the parent, and so
+    /// must discovery, or the phantom shadows the real parent. A gitfile pointing at a
+    /// non-repository is a fatal discovery error in git; discovery here deliberately
+    /// walks up instead so the phantom cannot shadow the real parent. Returns `Err`
+    /// for a transient I/O failure so callers can preserve an existing registration
+    /// rather than remove it. Most callers should use [`resolve_git_repository`], which
+    /// also resolves the dirs; this hook exists so `FakeFs` can consult its in-memory
+    /// model.
+    async fn is_git_repository(&self, repository_dir: &Path, common_dir: &Path) -> Result<bool> {
+        // The structural shape git's `is_git_directory` looks for: a valid `HEAD` in the
+        // repository dir plus `objects` and `refs` stores in the common dir (which
+        // differs from the repository dir only for a linked worktree). Existence is
+        // checked by type, not git's `X_OK` access check.
+        Ok(
+            git_head_is_valid(self, &repository_dir.join(git::HEAD)).await?
+                && common_dir_has_stores(self, common_dir).await?,
+        )
+    }
+
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1083,7 +1273,7 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use util::{ResultExt as _, paths::SanitizedPath};
+        use util::paths::SanitizedPath;
         let executor = self.executor.clone();
 
         let (tx, rx) = async_channel::unbounded();
@@ -1902,6 +2092,7 @@ impl FakeFs {
             tree: serde_json::Value,
         ) -> futures::future::BoxFuture<'a, ()> {
             async move {
+                let is_dir = matches!(tree, Object(_) | Null);
                 match tree {
                     Object(map) => {
                         this.create_dir(&path).await.unwrap();
@@ -1920,6 +2111,15 @@ impl FakeFs {
                     _ => {
                         panic!("JSON object must contain only objects, strings, or null");
                     }
+                }
+                // A directory named `.git` models a git repository, so mark it as an
+                // initialized repository (in-memory state, no files) — repository
+                // discovery recognizes it via `is_git_repository`. A `.git` created
+                // directly via `create_dir` deliberately stays uninitialized, so tests
+                // can model an invalid/phantom `.git`.
+                if is_dir && path.file_name() == Some(*FS_DOT_GIT) {
+                    this.with_git_state(&path, false, |_| {})
+                        .expect("just-created .git dir should accept git state");
                 }
             }
             .boxed()
@@ -1991,11 +2191,7 @@ impl FakeFs {
             let path = match git_dir_path {
                 Some(path) => path,
                 None => {
-                    let path = std::str::from_utf8(content)
-                        .ok()
-                        .and_then(|content| content.strip_prefix("gitdir:"))
-                        .context("not a valid gitfile")?
-                        .trim();
+                    let path = git::parse_gitfile(content)?;
                     git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
                 }
             }
@@ -2012,14 +2208,11 @@ impl FakeFs {
                 anyhow::bail!("gitfile points to a non-directory")
             };
             let common_dir = if let Some(child) = entries.get("commondir") {
-                let raw = std::str::from_utf8(child.file_content("commondir".as_ref())?)
-                    .context("commondir content")?
-                    .trim();
-                let raw_path = Path::new(raw);
+                let raw_path = git::parse_commondir(child.file_content("commondir".as_ref())?)?;
                 if raw_path.is_relative() {
-                    normalize_path(&canonical_path.join(raw_path))
+                    normalize_path(&canonical_path.join(&raw_path))
                 } else {
-                    raw_path.to_owned()
+                    raw_path
                 }
             } else {
                 canonical_path.clone()
@@ -3069,10 +3262,14 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        let canonical_path = state
-            .canonicalize(&path, true)
-            .with_context(|| format!("path does not exist: {path:?}"))?;
-        Ok(canonical_path)
+        // Real `io::Error` so `io_error_is_absence` downcasts like RealFs (an
+        // `Option` + `.with_context` does not put `io::Error` in the chain).
+        state.canonicalize(&path, true).ok_or_else(|| {
+            anyhow!(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("path does not exist: {path:?}")
+            ))
+        })
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -3143,9 +3340,12 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let mut state = self.state.lock();
-        let (entry, _) = state
-            .try_entry(&path, false)
-            .with_context(|| format!("path does not exist: {path:?}"))?;
+        let Some((entry, _)) = state.try_entry(&path, false) else {
+            return Err(anyhow!(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("path does not exist: {path:?}")
+            )));
+        };
         if let FakeFsEntry::Symlink { target } = entry {
             Ok(target.clone())
         } else {
@@ -3237,7 +3437,10 @@ impl Fs for FakeFs {
         abs_work_directory_path: &Path,
         _fallback_branch_name: String,
     ) -> Result<()> {
-        self.create_dir(&abs_work_directory_path.join(".git")).await
+        let dot_git = abs_work_directory_path.join(".git");
+        self.create_dir(&dot_git).await?;
+        self.with_git_state(&dot_git, false, |_| {})?;
+        Ok(())
     }
 
     async fn git_clone(&self, _abs_work_directory: &Path, _repo_url: &str) -> Result<()> {
@@ -3246,6 +3449,31 @@ impl Fs for FakeFs {
 
     async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
         anyhow::bail!("Git config is not supported in fake Fs")
+    }
+
+    async fn is_git_repository(&self, repository_dir: &Path, common_dir: &Path) -> Result<bool> {
+        // A fake repository is modeled either in memory (git state attached to the
+        // common dir — `insert_tree` on a `.git` dir, `git_init`, and the
+        // `set_*_for_repo` helpers all initialize it) or by literal files in the fixture
+        // (e.g. bare-backed linked worktrees, which write `HEAD`/`objects`/`refs`). A
+        // bare `create_dir` does neither, so tests can model an empty/leftover `.git`.
+        let has_git_state = matches!(
+            self.state.lock().try_entry(common_dir, false),
+            Some((
+                FakeFsEntry::Dir {
+                    git_repo_state: Some(_),
+                    ..
+                },
+                _
+            ))
+        );
+        // In-memory state lives on the common dir. It vouches for the whole repository
+        // only when the dirs coincide; for a split layout (linked worktree) the
+        // per-worktree `HEAD` is still validated from files so an invalidated gitfile is
+        // not masked, and the state can vouch only for the shared object/ref stores.
+        let head_is_valid = (repository_dir == common_dir && has_git_state)
+            || git_head_is_valid(self, &repository_dir.join(git::HEAD)).await?;
+        Ok(head_is_valid && (has_git_state || common_dir_has_stores(self, common_dir).await?))
     }
 
     fn is_fake(&self) -> bool {

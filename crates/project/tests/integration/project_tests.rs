@@ -13204,16 +13204,21 @@ async fn test_project_group_keys_match_for_bare_repo_linked_worktrees(
                 ".git": "gitdir: ./.bare\n",
                 ".bare": {
                     "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                    "refs": {},
                     "worktrees": {
                         "main": {
+                            "HEAD": "ref: refs/heads/main\n",
                             "commondir": "../..",
                             "gitdir": "/root/monty/main/.git",
                         },
                         "feature-a": {
+                            "HEAD": "ref: refs/heads/feature-a\n",
                             "commondir": "../..",
                             "gitdir": "/root/monty/feature-a/.git",
                         },
                         "feature-b": {
+                            "HEAD": "ref: refs/heads/feature-b\n",
                             "commondir": "../..",
                             "gitdir": "/root/monty/feature-b/.git",
                         },
@@ -14399,16 +14404,20 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
                 "worktrees": {
                     "some-worktree": {
                         "commondir": "../..\n",
-                        // For is_git_dir
-                        "HEAD": "",
+                        // A linked worktree's object/ref stores live in the common dir
+                        // (this `.git`); only HEAD is per-worktree.
+                        "HEAD": "ref: refs/heads/some-worktree\n",
                         "config": ""
                     }
                 },
                 "modules": {
                     "subdir": {
+                        // A submodule's git dir is a full repository: valid HEAD plus its
+                        // own object/ref stores.
                         "some-submodule": {
-                            // For is_git_dir
-                            "HEAD": "",
+                            "HEAD": "ref: refs/heads/main\n",
+                            "objects": {},
+                            "refs": {},
                             "config": "",
                         }
                     }

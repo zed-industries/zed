@@ -123,7 +123,7 @@ pub fn init_test(cx: &mut TestAppContext) {
 /// the FakeFs directory mtime as a stand-in for the creation time).
 pub async fn fake_worktree_created_at(fs: &dyn fs::Fs, worktree_path: &Path) -> SystemTime {
     let git_file = fs.load(&worktree_path.join(".git")).await.unwrap();
-    let git_dir = worktree_path.join(git_file.strip_prefix("gitdir:").unwrap().trim());
+    let git_dir = worktree_path.join(git::parse_gitfile(git_file.as_bytes()).unwrap());
     let (seconds, nanos) = fs
         .metadata(&git_dir)
         .await

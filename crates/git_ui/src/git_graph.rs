@@ -5439,45 +5439,82 @@ mod tests {
         let commits = generate_random_commit_dag(&mut rng, 10, false);
         fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        // Build the project WITHOUT a worktree so no repository exists yet, then
+        // install the git-store subscription BEFORE the initial scan. With the
+        // in-memory `is_git_repository` fast path the whole initial scan can otherwise
+        // complete inside `Project::test`, so a subscription installed afterwards would
+        // miss the initial `RepositoryAdded`/`HeadChanged`.
+        let project = Project::test(fs.clone(), [] as [&Path; 0], cx).await;
+
         let observed_repository_events = Arc::new(Mutex::new(Vec::new()));
         project.update(cx, |project, cx| {
             let observed_repository_events = observed_repository_events.clone();
-            cx.subscribe(project.git_store(), move |_, _, event, _| {
-                if let GitStoreEvent::RepositoryUpdated(_, repository_event, true) = event {
-                    observed_repository_events
-                        .lock()
-                        .expect("repository event mutex should be available")
-                        .push(repository_event.clone());
-                }
-            })
+            cx.subscribe(
+                project.git_store(),
+                move |_, git_store, event, cx| match event {
+                    // `RepositoryAdded` is emitted synchronously the moment the repository
+                    // is first registered, at `scan_id == 0`, BEFORE the git worker runs
+                    // `compute_snapshot`. Kicking off the graph-data load here is the only
+                    // deterministic way to guarantee the initial graph data exists before
+                    // the initial scan's `HeadChanged` (which fires at `scan_id == 1`),
+                    // independent of how fast the repository-validity check is.
+                    GitStoreEvent::RepositoryAdded => {
+                        if let Some(repo) =
+                            git_store.read(cx).repositories().values().next().cloned()
+                        {
+                            repo.update(cx, |repo, cx| {
+                                repo.graph_data(
+                                    LogSource::default(),
+                                    LogOrder::default(),
+                                    0..usize::MAX,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                    GitStoreEvent::RepositoryUpdated(_, repository_event, true) => {
+                        observed_repository_events
+                            .lock()
+                            .expect("repository event mutex should be available")
+                            .push(repository_event.clone());
+                    }
+                    _ => {}
+                },
+            )
             .detach();
         });
+
+        // Registering the worktree triggers the initial repository scan.
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(Path::new("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        // The initial scan must actually have emitted `HeadChanged` (scan_id -> 1);
+        // otherwise the guard this test protects was never exercised.
+        {
+            let observed_repository_events = observed_repository_events
+                .lock()
+                .expect("repository event mutex should be available");
+            assert!(
+                observed_repository_events
+                    .iter()
+                    .any(|event| matches!(event, RepositoryEvent::HeadChanged)),
+                "initial repository scan should emit HeadChanged"
+            );
+        }
 
         let repository = project.read_with(cx, |project, cx| {
             project
                 .active_repository(cx)
                 .expect("should have a repository")
         });
-
-        repository.update(cx, |repo, cx| {
-            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
-        });
-
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
-
-        let observed_repository_events = observed_repository_events
-            .lock()
-            .expect("repository event mutex should be available");
-        assert!(
-            observed_repository_events
-                .iter()
-                .any(|event| matches!(event, RepositoryEvent::HeadChanged)),
-            "initial repository scan should emit HeadChanged"
-        );
         let commit_count_after = repository.read_with(cx, |repo, _| {
             repo.get_graph_data(LogSource::default(), LogOrder::default())
                 .map(|data| data.commit_data.len())

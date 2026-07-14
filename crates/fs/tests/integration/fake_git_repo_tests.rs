@@ -194,3 +194,32 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
     assert!(diff.contains("b"), "diff should mention changed file 'b'");
     assert!(diff.contains("c"), "diff should mention added file 'c'");
 }
+
+#[gpui::test]
+async fn test_is_git_repository(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.executor());
+
+    // A `.git` via `insert_tree` and one via `git_init` are both initialized
+    // repositories; a `.git` created directly with `create_dir` models an
+    // empty/leftover `.git` (the phantom-repository bug case) and is not one.
+    fs.insert_tree("/repo", json!({".git": {}, "file.txt": "content"}))
+        .await;
+    fs.create_dir(Path::new("/repo2")).await.unwrap();
+    fs.git_init(Path::new("/repo2"), "main".to_string())
+        .await
+        .unwrap();
+    fs.create_dir(Path::new("/phantom/.git")).await.unwrap();
+
+    for (git_dir, expected) in [
+        ("/repo/.git", true),
+        ("/repo2/.git", true),
+        ("/phantom/.git", false),
+    ] {
+        let git_dir = Path::new(git_dir);
+        assert_eq!(
+            fs.is_git_repository(git_dir, git_dir).await.unwrap(),
+            expected,
+            "is_git_repository({git_dir:?})"
+        );
+    }
+}

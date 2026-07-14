@@ -612,11 +612,7 @@ impl GitRepository for FakeGitRepository {
                 .load(&dot_git_path)
                 .await
                 .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
-            let git_dir = git_file
-                .strip_prefix("gitdir:")
-                .context("worktree .git file missing gitdir pointer")?
-                .trim();
-            let git_dir = worktree_path.join(git_dir);
+            let git_dir = worktree_path.join(git::parse_gitfile(git_file.as_bytes())?);
             let metadata = fs
                 .metadata(&git_dir)
                 .await?
@@ -793,11 +789,7 @@ impl GitRepository for FakeGitRepository {
             // mirroring real git's behavior with `--force`.
             let dot_git_file = path.join(".git");
             let worktree_entry_dir = if let Ok(content) = fs.load(&dot_git_file).await {
-                let gitdir = content
-                    .strip_prefix("gitdir:")
-                    .context("invalid .git file in worktree")?
-                    .trim();
-                PathBuf::from(gitdir)
+                git::parse_gitfile(content.as_bytes())?
             } else {
                 self.find_worktree_entry_dir_by_path(&path)
                     .await
@@ -849,11 +841,7 @@ impl GitRepository for FakeGitRepository {
                 .load(&dot_git_file)
                 .await
                 .with_context(|| format!("no worktree found at path: {}", old_path.display()))?;
-            let gitdir = content
-                .strip_prefix("gitdir:")
-                .context("invalid .git file in worktree")?
-                .trim();
-            let worktree_entry_dir = PathBuf::from(gitdir);
+            let worktree_entry_dir = git::parse_gitfile(content.as_bytes())?;
 
             // Move the worktree checkout directory.
             fs.rename(

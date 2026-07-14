@@ -9,7 +9,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashId, Watcher, copy_recursive,
-    read_dir_items,
+    io_error_is_absence, read_dir_items,
 };
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -1485,10 +1485,7 @@ impl LocalWorktree {
                             new_repos.next();
                         }
                         Ordering::Equal => {
-                            if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
-                                || new_repo.work_directory_abs_path
-                                    != old_repo.work_directory_abs_path
-                            {
+                            if repository_identity_or_scan_changed(&old_repo, &new_repo) {
                                 changes.push(UpdatedGitRepository {
                                     work_directory_id: new_entry_id,
                                     old_work_directory_abs_path: Some(
@@ -2244,6 +2241,29 @@ impl LocalWorktree {
             .values()
             .map(|entry| entry.work_directory_abs_path.clone())
             .collect::<Vec<_>>()
+    }
+
+    /// `(repository_dir, common_dir)` for each registered repository.
+    #[cfg(feature = "test-support")]
+    pub fn repository_identities(&self) -> Vec<(Arc<Path>, Arc<Path>)> {
+        self.git_repositories
+            .values()
+            .map(|entry| {
+                (
+                    entry.repository_dir_abs_path.clone(),
+                    entry.common_dir_abs_path.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Whether the cached `info/exclude` for `work_dir_abs_path` still needs a re-read.
+    #[cfg(feature = "test-support")]
+    pub fn repo_exclude_needs_update(&self, work_dir_abs_path: &Path) -> Option<bool> {
+        self.snapshot
+            .repo_exclude_by_work_dir_abs_path
+            .get(work_dir_abs_path)
+            .map(|(_, needs_update)| *needs_update)
     }
 }
 
@@ -3056,6 +3076,16 @@ impl LocalSnapshot {
     ) -> IgnoreStack {
         let mut new_ignores = Vec::new();
         let mut repo_root = None;
+        // Deepest registered work dir covering this path — already validated at
+        // registration, so `reload_entries_for_paths` can skip a full resolve on the
+        // hot path (thousands of event paths per checkout). Invalid `.git` never
+        // enters `git_repositories`, so a phantom cannot win as a registered root.
+        let covering_registered = self
+            .git_repositories
+            .values()
+            .filter(|repo| abs_path.starts_with(repo.work_directory_abs_path.as_ref()))
+            .max_by_key(|repo| repo.work_directory_abs_path.as_os_str().len())
+            .map(|repo| repo.work_directory_abs_path.clone());
         for (index, ancestor) in abs_path.ancestors().enumerate() {
             if index > 0 {
                 if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
@@ -3065,11 +3095,29 @@ impl LocalSnapshot {
                 }
             }
 
-            if repo_root.is_none() {
-                let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
-                if metadata.is_some() {
-                    repo_root = Some(Arc::from(ancestor));
-                }
+            // Anchor the ignore root at a *validated* repository, so an invalid nested
+            // `.git` cannot shadow the real parent's excludes/ignore rooting.
+            if repo_root.is_some() {
+                continue;
+            }
+
+            // Covering registered root: free, no filesystem.
+            if covering_registered
+                .as_ref()
+                .is_some_and(|root| root.as_ref() == ancestor)
+            {
+                repo_root = covering_registered.clone();
+                continue;
+            }
+
+            // Deeper than the covering registration, or nothing registered yet: resolve.
+            // `reload_entries_for_paths` runs before `update_git_repositories`, so a
+            // newly-appeared nested repo may not be registered yet and must still win.
+            if discover_valid_git_repository(&ancestor.join(DOT_GIT), fs)
+                .await
+                .is_some()
+            {
+                repo_root = Some(Arc::from(ancestor));
             }
         }
 
@@ -3531,13 +3579,15 @@ impl BackgroundScannerState {
         .log_err();
     }
 
+    /// Registers a validated git repository for `work_directory`, returning whether a
+    /// repository was inserted (`Ok(false)` when the `.git` entry is not a repository).
     async fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
         dot_git_abs_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) -> Result<LocalRepositoryEntry> {
+    ) -> Result<bool> {
         let work_dir_entry = self
             .snapshot
             .entry_for_path(&work_directory.path_key().0)
@@ -3552,8 +3602,13 @@ impl BackgroundScannerState {
             })?;
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
-        let (repository_dir_abs_path, common_dir_abs_path) =
-            discover_git_paths(&dot_git_abs_path, fs).await;
+        // Bail before setting up any watches if the `.git` entry isn't a real repository.
+        let Some((repository_dir_abs_path, common_dir_abs_path)) =
+            discover_valid_git_repository(&dot_git_abs_path, fs).await
+        else {
+            return Ok(false);
+        };
+
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3570,22 +3625,46 @@ impl BackgroundScannerState {
 
         let work_directory_id = work_dir_entry.id;
 
-        let local_repository = LocalRepositoryEntry {
-            work_directory_id,
-            work_directory,
-            work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            git_dir_scan_id: 0,
-            dot_git_abs_path,
-            common_dir_abs_path,
-            repository_dir_abs_path,
-        };
-
+        let work_directory_abs_path: Arc<Path> = work_directory_abs_path.as_path().into();
+        // Registration owns exclude state: load a present info/exclude now so
+        // ignore updates that run after insert (affected_repo_roots) see it.
+        // Always insert an entry so a later info/exclude create can mark it
+        // dirty. Present, confirmed-absent, and unparsable are clean;
+        // indeterminate I/O inserts empty but stays dirty so the reload path
+        // retries instead of treating a transient failure as known-gone.
+        let exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
+        let (exclude, needs_update) =
+            match load_gitignore_existing(&exclude_abs_path, &work_directory_abs_path, fs).await {
+                GitignoreLoad::Present(ignore) => (Arc::new(ignore), false),
+                GitignoreLoad::Absent => (Arc::new(Gitignore::empty()), false),
+                GitignoreLoad::Unparsable(error) => {
+                    Err::<(), _>(error).log_err();
+                    (Arc::new(Gitignore::empty()), false)
+                }
+                GitignoreLoad::Indeterminate(error) => {
+                    Err::<(), _>(error).log_err();
+                    (Arc::new(Gitignore::empty()), true)
+                }
+            };
         self.snapshot
-            .git_repositories
-            .insert(work_directory_id, local_repository.clone());
+            .repo_exclude_by_work_dir_abs_path
+            .insert(work_directory_abs_path.clone(), (exclude, needs_update));
+
+        self.snapshot.git_repositories.insert(
+            work_directory_id,
+            LocalRepositoryEntry {
+                work_directory_id,
+                work_directory,
+                work_directory_abs_path,
+                git_dir_scan_id: 0,
+                dot_git_abs_path,
+                common_dir_abs_path,
+                repository_dir_abs_path,
+            },
+        );
 
         log::trace!("inserting new local git repository");
-        Ok(local_repository)
+        Ok(true)
     }
 }
 
@@ -3638,22 +3717,55 @@ async fn watch_dir_tree(root_abs_path: PathBuf, fs: &dyn Fs, watcher: &dyn Watch
     }
 }
 
-async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
-    if let Some(file_name) = path.file_name()
-        && file_name == DOT_GIT
-    {
-        return true;
-    }
+/// Whether a registered repository should publish an update between snapshots.
+/// Identity paths are first-class: a gitfile retarget changes repository_dir/
+/// common_dir without moving the work directory. Emitting only on scan_id or
+/// work-dir would miss that unless a scan token happens to bump — not an invariant.
+fn repository_identity_or_scan_changed(
+    old_repo: &LocalRepositoryEntry,
+    new_repo: &LocalRepositoryEntry,
+) -> bool {
+    new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
+        || new_repo.work_directory_abs_path != old_repo.work_directory_abs_path
+        || new_repo.dot_git_abs_path != old_repo.dot_git_abs_path
+        || new_repo.repository_dir_abs_path != old_repo.repository_dir_abs_path
+        || new_repo.common_dir_abs_path != old_repo.common_dir_abs_path
+}
 
-    // If we're in a bare repository, we are not inside a `.git` folder. In a
-    // bare repository, the root folder contains what would normally be in the
-    // `.git` folder.
-    let head_metadata = fs.metadata(&path.join("HEAD")).await;
-    if !matches!(head_metadata, Ok(Some(_))) {
-        return false;
-    }
-    let config_metadata = fs.metadata(&path.join("config")).await;
-    matches!(config_metadata, Ok(Some(_)))
+/// Classifies an fs event against git metadata directories, returning the matched
+/// git-dir root and the event's path within it, or `None` when it is not git metadata.
+/// Registered repositories are matched by their resolved `.git`/repository/common dirs,
+/// so linked worktrees and bare repositories are recognized by identity rather than by
+/// a name or the old `HEAD`+`config` heuristic (which missed config-less bare repos).
+fn match_git_metadata_event(
+    snapshot: &LocalSnapshot,
+    abs_path: &Path,
+) -> Option<(PathBuf, PathBuf)> {
+    let root = snapshot
+        .git_repositories
+        .values()
+        .flat_map(|repo| {
+            [
+                repo.dot_git_abs_path.as_ref(),
+                repo.repository_dir_abs_path.as_ref(),
+                repo.common_dir_abs_path.as_ref(),
+            ]
+        })
+        .filter(|root| abs_path.starts_with(root))
+        // The deepest matching root wins, so an event in a nested repository is
+        // attributed to it rather than an ancestor (a deeper root is necessarily longer).
+        .max_by_key(|root| root.as_os_str().len())
+        // Only a literally-named `.git` ancestor may seed a new (unregistered)
+        // repository, so a nested bare `cache.git` never claims a spurious worktree.
+        .or_else(|| {
+            abs_path
+                .ancestors()
+                .find(|ancestor| ancestor.file_name() == Some(OsStr::new(DOT_GIT)))
+        })?;
+    Some((
+        root.to_owned(),
+        abs_path.strip_prefix(root).ok()?.to_owned(),
+    ))
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
@@ -3666,6 +3778,50 @@ async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) ->
         .load(abs_path)
         .await
         .with_context(|| format!("failed to load gitignore file at {}", abs_path.display()))?;
+    parse_gitignore_contents(abs_path, root, &contents)
+}
+
+/// Outcome of loading an exclude/gitignore file that may be absent or bad.
+///
+/// Classified at the error-production site so callers never need to downcast
+/// `anyhow` chains. Unparsable content fails identically forever (clear dirty);
+/// transient I/O is Indeterminate (leave dirty and retry).
+enum GitignoreLoad {
+    Present(Gitignore),
+    Absent,
+    Unparsable(anyhow::Error),
+    Indeterminate(anyhow::Error),
+}
+
+/// Loads a gitignore file, distinguishing present / confirmed-absent /
+/// unparsable content / indeterminate I/O.
+async fn load_gitignore_existing(abs_path: &Path, root: &Path, fs: &dyn Fs) -> GitignoreLoad {
+    let bytes = match fs.load_bytes(abs_path).await {
+        Ok(bytes) => bytes,
+        Err(error) if io_error_is_absence(&error) => return GitignoreLoad::Absent,
+        Err(error) => {
+            return GitignoreLoad::Indeterminate(error.context(format!(
+                "failed to load gitignore file at {}",
+                abs_path.display()
+            )));
+        }
+    };
+    let contents = match String::from_utf8(bytes) {
+        Ok(contents) => contents,
+        Err(error) => {
+            return GitignoreLoad::Unparsable(anyhow::Error::new(error).context(format!(
+                "gitignore file at {} is not valid UTF-8",
+                abs_path.display()
+            )));
+        }
+    };
+    match parse_gitignore_contents(abs_path, root, &contents) {
+        Ok(gitignore) => GitignoreLoad::Present(gitignore),
+        Err(error) => GitignoreLoad::Unparsable(error),
+    }
+}
+
+fn parse_gitignore_contents(abs_path: &Path, root: &Path, contents: &str) -> Result<Gitignore> {
     let mut builder = GitignoreBuilder::new(root);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
@@ -4335,7 +4491,8 @@ impl BackgroundScanner {
             && self.track_git_repositories
         {
             maybe!(async {
-                self.state
+                let inserted = self
+                    .state
                     .lock()
                     .await
                     .insert_git_repository_for_path(
@@ -4345,8 +4502,10 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     )
                     .await
+                    // Bail on both an error and an invalid `.git` (`Ok(false)`), so a
+                    // non-repository is never reported as the containing repo.
                     .log_err()?;
-                Some(ancestor_dot_git)
+                inserted.then_some(ancestor_dot_git)
             })
             .await
         } else {
@@ -4722,10 +4881,12 @@ impl BackgroundScanner {
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
         let skipped_file_names_in_dot_git =
             [COMMIT_MESSAGE, FETCH_HEAD, ORIG_HEAD, BISECT_LOG, GC_PID];
+        // `objects` is intentionally absent: it is a repository-validity input
+        // (`common_dir_has_stores`), so the bare `objects` path must revalidate. Only
+        // descendants (loose-object writes) are skipped, via the carve-out below.
         let skipped_dirs_in_dot_git = [
             FSMONITOR_DAEMON,
             LFS_DIR,
-            OBJECTS_DIR,
             HOOKS_DIR,
             REBASE_MERGE_DIR,
             REBASE_APPLY_DIR,
@@ -4743,20 +4904,11 @@ impl BackgroundScanner {
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
 
-                let mut dot_git_paths = None;
-
-                if self.track_git_repositories {
-                    for ancestor in abs_path.as_path().ancestors() {
-                        if is_dot_git(ancestor, self.fs.as_ref()).await {
-                            let path_in_git_dir = abs_path
-                                .as_path()
-                                .strip_prefix(ancestor)
-                                .expect("stripping off the ancestor");
-                            dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
-                            break;
-                        }
-                    }
-                }
+                let dot_git_paths = if self.track_git_repositories {
+                    match_git_metadata_event(snapshot, abs_path.as_path())
+                } else {
+                    None
+                };
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
                     let is_ignored = skipped_file_names_in_dot_git.iter().any(|skipped| {
@@ -4767,6 +4919,8 @@ impl BackgroundScanner {
                         && path_in_git_dir != Path::new(LOGS_REF_STASH))
                         || (path_in_git_dir.starts_with(INFO_DIR)
                             && path_in_git_dir != Path::new(REPO_EXCLUDE))
+                        || (path_in_git_dir.starts_with(OBJECTS_DIR)
+                            && path_in_git_dir != Path::new(OBJECTS_DIR))
                         || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
                             path_in_git_dir.starts_with(skipped_git_subdir)
                         })
@@ -4820,12 +4974,13 @@ impl BackgroundScanner {
                     }
                 }
 
-                if self.track_git_repositories
-                    && abs_path
-                        .as_path()
-                        .ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE))
-                {
-                    if let Some(repository) = snapshot.git_repositories.values().find(|repo| {
+                // Route `info/exclude` changes by the resolved common dir, not by a
+                // literal `.git/info/exclude` suffix, so a linked worktree or bare repo
+                // whose common dir is named `foo.git`/`.bare` still refreshes its cache.
+                // A main checkout and linked worktree can share one common dir while
+                // keeping separate cache entries keyed by work dir — dirty every match.
+                if self.track_git_repositories && abs_path.as_path().ends_with(REPO_EXCLUDE) {
+                    for repository in snapshot.git_repositories.values().filter(|repo| {
                         repo.common_dir_abs_path.join(REPO_EXCLUDE) == abs_path.as_path()
                     }) {
                         work_dirs_needing_exclude_update
@@ -5229,6 +5384,9 @@ impl BackgroundScanner {
 
         if let Some(path) = child_paths.first()
             && path.ends_with(DOT_GIT)
+            && discover_valid_git_repository(path, self.fs.as_ref())
+                .await
+                .is_some()
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
@@ -5247,6 +5405,19 @@ impl BackgroundScanner {
             if self.track_git_repositories {
                 if child_name == DOT_GIT {
                     let mut state = self.state.lock().await;
+                    // On the initial scan a nested repo is not yet in
+                    // `repo_exclude_by_work_dir_abs_path` when the job's stack
+                    // was built (child jobs inherit the parent's stack), so
+                    // siblings would miss info/exclude. Append after a *new*
+                    // registration only — rescans already have the exclude on
+                    // the stack from `ignore_stack_for_abs_path` (cache hit).
+                    // `Ok(true)` from insert means "valid repo inserted",
+                    // including re-insert, so newness is the pre-insert cache
+                    // miss, not the bool return.
+                    let exclude_already_loaded = state
+                        .snapshot
+                        .repo_exclude_by_work_dir_abs_path
+                        .contains_key(&job.abs_path);
                     state
                         .insert_git_repository(
                             child_path.clone(),
@@ -5254,6 +5425,15 @@ impl BackgroundScanner {
                             self.watcher.as_ref(),
                         )
                         .await;
+                    if !exclude_already_loaded
+                        && let Some((exclude, _)) = state
+                            .snapshot
+                            .repo_exclude_by_work_dir_abs_path
+                            .get(&job.abs_path)
+                    {
+                        ignore_stack =
+                            ignore_stack.append(IgnoreKind::RepoExclude, exclude.clone());
+                    }
                 } else if child_name == GITIGNORE {
                     match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                         Ok(ignore) => {
@@ -5714,6 +5894,9 @@ impl BackgroundScanner {
         let mut excludes_to_load: Vec<(Arc<Path>, PathBuf)> = Vec::new();
 
         // First pass: collect updates and drop stale entries without awaiting.
+        // Do not clear exclude dirty flags here — only after Present, Absent, or
+        // Unparsable. Indeterminate I/O must leave dirty set so the next scan
+        // retries instead of stranding a never-loaded exclude.
         {
             let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
@@ -5727,18 +5910,9 @@ impl BackgroundScanner {
                     .iter()
                     .find(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path);
 
-                if *needs_update {
-                    *needs_update = false;
-                    if work_dir_abs_path.starts_with(abs_path.as_path()) {
-                        ignores_to_update.push(work_dir_abs_path.clone());
-                    } else {
-                        ignores_to_update.push(abs_path.as_path().into());
-                    }
-
-                    if let Some((_, repository)) = repository {
-                        let exclude_abs_path = repository.common_dir_abs_path.join(REPO_EXCLUDE);
-                        excludes_to_load.push((work_dir_abs_path.clone(), exclude_abs_path));
-                    }
+                if *needs_update && let Some((_, repository)) = repository {
+                    let exclude_abs_path = repository.common_dir_abs_path.join(REPO_EXCLUDE);
+                    excludes_to_load.push((work_dir_abs_path.clone(), exclude_abs_path));
                 }
 
                 if repository.is_none() {
@@ -5774,27 +5948,62 @@ impl BackgroundScanner {
                 });
         }
 
-        // Load gitignores asynchronously (outside the lock)
+        // Load excludes asynchronously (outside the lock).
+        // Present/Absent: install matcher, clear dirty, schedule ignore recompute.
+        // Unparsable: keep last-good matcher, clear dirty (no re-read loop), no
+        // recompute — installed rules did not change.
+        // Indeterminate: leave dirty for retry.
         let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
+        let mut unparsable_excludes: Vec<Arc<Path>> = Vec::new();
         for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            if let Ok(current_exclude) =
-                build_gitignore_with_root(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
-                    .await
+            match load_gitignore_existing(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
+                .await
             {
-                loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
+                GitignoreLoad::Present(current_exclude) => {
+                    loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
+                }
+                GitignoreLoad::Absent => {
+                    loaded_excludes.push((work_dir_abs_path, Arc::new(Gitignore::empty())));
+                }
+                GitignoreLoad::Unparsable(error) => {
+                    Err::<(), _>(error).log_err();
+                    unparsable_excludes.push(work_dir_abs_path);
+                }
+                GitignoreLoad::Indeterminate(error) => {
+                    Err::<(), _>(error).log_err();
+                }
             }
         }
 
-        // Second pass: apply updates.
+        // Second pass: install definitive loads and clear dirty.
         if !loaded_excludes.is_empty() {
             let snapshot = &mut self.state.lock().await.snapshot;
+            let abs_path = snapshot.abs_path.clone();
 
             for (work_dir_abs_path, exclude) in loaded_excludes {
-                if let Some((existing_exclude, _)) = snapshot
+                if let Some((existing_exclude, needs_update)) = snapshot
                     .repo_exclude_by_work_dir_abs_path
                     .get_mut(&work_dir_abs_path)
                 {
                     *existing_exclude = exclude;
+                    *needs_update = false;
+                    if work_dir_abs_path.starts_with(abs_path.as_path()) {
+                        ignores_to_update.push(work_dir_abs_path);
+                    } else {
+                        ignores_to_update.push(abs_path.as_path().into());
+                    }
+                }
+            }
+        }
+
+        if !unparsable_excludes.is_empty() {
+            let snapshot = &mut self.state.lock().await.snapshot;
+            for work_dir_abs_path in unparsable_excludes {
+                if let Some((_, needs_update)) = snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .get_mut(&work_dir_abs_path)
+                {
+                    *needs_update = false;
                 }
             }
         }
@@ -5855,8 +6064,11 @@ impl BackgroundScanner {
             return;
         };
 
-        if let Ok(Some(metadata)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await
-            && metadata.is_dir
+        // Anchor the ignore root at a *validated* repository (a `.git` directory or a
+        // linked-worktree gitfile), so an invalid/leftover `.git` doesn't shadow it.
+        if discover_valid_git_repository(&job.abs_path.join(DOT_GIT), self.fs.as_ref())
+            .await
+            .is_some()
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
@@ -5983,49 +6195,87 @@ impl BackgroundScanner {
             }
         }
 
-        // Remove any git repositories whose .git entry no longer exists.
-        let snapshot = &mut state.snapshot;
-        let mut ids_to_preserve = HashSet::default();
-        for (&work_directory_id, entry) in snapshot.git_repositories.iter() {
-            let exists_in_snapshot =
-                snapshot
-                    .entry_for_id(work_directory_id)
-                    .is_some_and(|entry| {
-                        snapshot
-                            .entry_for_path(
-                                &entry.path.join(RelPath::from_unix_str(DOT_GIT).unwrap()),
-                            )
-                            .is_some()
+        // Revalidate every registered repository against the filesystem, relying on the
+        // resolver's tri-state: `Ok(None)` is a confirmed non-repository and removes the
+        // registration, `Err(_)` is a transient failure that must *preserve* the entry —
+        // otherwise the repository flaps out of and back into the snapshot, churning its
+        // `RepositoryId` — and a valid-but-different result retargets the entry in place
+        // (same identity).
+        let registered = state
+            .snapshot
+            .git_repositories
+            .iter()
+            .map(|(&id, repo)| {
+                (
+                    id,
+                    repo.dot_git_abs_path.clone(),
+                    repo.repository_dir_abs_path.clone(),
+                    repo.common_dir_abs_path.clone(),
+                    repo.work_directory_abs_path.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (id, dot_git_abs_path, repository_dir, common_dir, work_directory_abs_path) in
+            registered
+        {
+            match fs::resolve_git_repository(&dot_git_abs_path, self.fs.as_ref()).await {
+                Ok(Some((new_repository_dir, new_common_dir)))
+                    if new_repository_dir.as_path() != repository_dir.as_ref()
+                        || new_common_dir.as_path() != common_dir.as_ref() =>
+                {
+                    let new_repository_dir = Arc::<Path>::from(new_repository_dir);
+                    let new_common_dir = Arc::<Path>::from(new_common_dir);
+                    // Add watches for the new metadata dirs before publishing the retarget
+                    // so no events under them are missed. Old watches are left in place: a
+                    // watch that may be shared with another linked worktree is unsafe to
+                    // remove, and a stale watch only produces events that no longer match a
+                    // registered repository and are ignored.
+                    self.watcher.add(&new_common_dir).log_err();
+                    self.watcher.add(&new_repository_dir).log_err();
+                    watch_git_dir_subdirectories(
+                        &new_common_dir,
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    )
+                    .await;
+                    if new_repository_dir != new_common_dir {
+                        watch_git_dir_subdirectories(
+                            &new_repository_dir,
+                            self.fs.as_ref(),
+                            self.watcher.as_ref(),
+                        )
+                        .await;
+                    }
+                    state.snapshot.git_repositories.update(&id, |entry| {
+                        entry.repository_dir_abs_path = new_repository_dir;
+                        entry.common_dir_abs_path = new_common_dir;
+                        entry.git_dir_scan_id = scan_id;
                     });
-
-            // Only drop a repository when we can positively confirm that its git
-            // directory is gone. `metadata` returns `Ok(None)` for a confirmed
-            // absence, but `Err(_)` for a transient failure (which can happen
-            // under heavy filesystem churn). Treating an error as a deletion
-            // makes the repository flap out of and back into the snapshot,
-            // causing the GitStore to repeatedly tear it down and re-create it
-            // with a fresh `RepositoryId`. So preserve the repository unless the
-            // `.git` entry is confirmed absent.
-            let dot_git_present =
-                !matches!(self.fs.metadata(&entry.dot_git_abs_path).await, Ok(None));
-
-            if exists_in_snapshot || dot_git_present {
-                ids_to_preserve.insert(work_directory_id);
+                    // Retarget changes which common dir's info/exclude applies; dirty so
+                    // B's rules reload instead of retaining A's.
+                    state
+                        .snapshot
+                        .repo_exclude_by_work_dir_abs_path
+                        .entry(work_directory_abs_path.clone())
+                        .or_insert_with(|| (Arc::new(Gitignore::empty()), true))
+                        .1 = true;
+                    affected_repo_roots.push(work_directory_abs_path);
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if let Some(entry) = state.snapshot.git_repositories.remove(&id) {
+                        state
+                            .snapshot
+                            .repo_exclude_by_work_dir_abs_path
+                            .remove(&entry.work_directory_abs_path);
+                        affected_repo_roots.push(entry.work_directory_abs_path);
+                    }
+                }
+                Err(error) => log::debug!(
+                    "preserving repository at {dot_git_abs_path:?} after transient resolve error: {error:#}"
+                ),
             }
         }
-
-        snapshot
-            .git_repositories
-            .retain(|work_directory_id, entry| {
-                let preserve = ids_to_preserve.contains(work_directory_id);
-                if !preserve {
-                    affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
-                    snapshot
-                        .repo_exclude_by_work_dir_abs_path
-                        .remove(&entry.work_directory_abs_path);
-                }
-                preserve
-            });
 
         affected_repo_roots
     }
@@ -6119,7 +6369,13 @@ async fn discover_ancestor_git_repo(
                 ancestor_dot_git.clone()
             };
             let dot_git_abs_path: Arc<Path> = dot_git_abs_path.as_path().into();
-            let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
+
+            // Keep walking up past an invalid `.git`.
+            let Some((_, common_dir_abs_path)) =
+                discover_valid_git_repository(&dot_git_abs_path, fs.as_ref()).await
+            else {
+                continue;
+            };
 
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) =
@@ -6852,33 +7108,6 @@ impl CreatedEntry {
     }
 }
 
-fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
-    let path = content
-        .strip_prefix("gitdir:")
-        .with_context(|| format!("parsing gitfile content {content:?}"))?;
-    Ok(Path::new(path.trim()))
-}
-
-fn resolve_gitfile_path(dot_git_abs_path: &Path, gitfile_path: &Path) -> PathBuf {
-    if gitfile_path.is_absolute() {
-        gitfile_path.into()
-    } else {
-        dot_git_abs_path
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .join(gitfile_path)
-    }
-}
-
-fn resolve_commondir_path(repository_dir_abs_path: &Path, commondir_path: &str) -> PathBuf {
-    let commondir_path = Path::new(commondir_path.trim());
-    if commondir_path.is_absolute() {
-        commondir_path.into()
-    } else {
-        repository_dir_abs_path.join(commondir_path)
-    }
-}
-
 pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
     discover_root_repo_metadata(root_abs_path, fs)
         .await
@@ -6889,43 +7118,28 @@ async fn discover_root_repo_metadata(
     root_abs_path: &Path,
     fs: &dyn Fs,
 ) -> Option<(Arc<Path>, bool)> {
-    let root_dot_git = root_abs_path.join(DOT_GIT);
-    if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
-        return None;
-    }
-    let dot_git_path: Arc<Path> = root_dot_git.into();
-    let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
+    let (repository_dir, common_dir) =
+        discover_valid_git_repository(&root_abs_path.join(DOT_GIT), fs).await?;
     let is_linked_worktree = repository_dir != common_dir;
     Some((common_dir, is_linked_worktree))
 }
 
-async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
-    let mut repository_dir_abs_path = dot_git_abs_path.clone();
-    let mut common_dir_abs_path = dot_git_abs_path.clone();
-
-    if let Some(path) = fs
-        .load(dot_git_abs_path)
-        .await
-        .ok()
-        .as_ref()
-        .and_then(|contents| parse_gitfile(contents).log_err())
-    {
-        let path = resolve_gitfile_path(dot_git_abs_path, path);
-        if let Some(path) = fs.canonicalize(&path).await.log_err() {
-            repository_dir_abs_path = Path::new(&path).into();
-            common_dir_abs_path = repository_dir_abs_path.clone();
-
-            if let Some(commondir_contents) = fs.load(&path.join("commondir")).await.ok()
-                && let Some(commondir_path) = fs
-                    .canonicalize(&resolve_commondir_path(&path, &commondir_contents))
-                    .await
-                    .log_err()
-            {
-                common_dir_abs_path = commondir_path.as_path().into();
-            }
+/// Adapts [`fs::resolve_git_repository`] to the `Arc<Path>` identities discovery stores.
+/// A transient I/O error is collapsed to `None` here (a later rescan retries) — unlike
+/// event revalidation, which must tell a transient failure apart from a confirmed
+/// removal and so calls the resolver directly.
+async fn discover_valid_git_repository(
+    dot_git_abs_path: &Path,
+    fs: &dyn Fs,
+) -> Option<(Arc<Path>, Arc<Path>)> {
+    match fs::resolve_git_repository(dot_git_abs_path, fs).await {
+        Ok(Some((repository_dir, common_dir))) => Some((repository_dir.into(), common_dir.into())),
+        Ok(None) => None,
+        Err(error) => {
+            log::debug!("failed to resolve git repository at {dot_git_abs_path:?}: {error:#}");
+            None
         }
-    };
-    (repository_dir_abs_path, common_dir_abs_path)
+    }
 }
 
 struct NullWatcher;
@@ -7129,6 +7343,51 @@ mod tests {
             result,
             ByteContent::Binary,
             "LE 16-bit binary with control characters should be detected as Binary"
+        );
+    }
+
+    fn sample_repo_entry(
+        work_directory_id: ProjectEntryId,
+        repository_dir: &str,
+        common_dir: &str,
+        git_dir_scan_id: usize,
+    ) -> LocalRepositoryEntry {
+        let work_dir: Arc<Path> = Path::new("/linked").into();
+        LocalRepositoryEntry {
+            work_directory_id,
+            work_directory: WorkDirectory::InProject {
+                relative_path: RelPath::empty_arc(),
+            },
+            work_directory_abs_path: work_dir,
+            git_dir_scan_id,
+            dot_git_abs_path: Path::new("/linked/.git").into(),
+            repository_dir_abs_path: Path::new(repository_dir).into(),
+            common_dir_abs_path: Path::new(common_dir).into(),
+        }
+    }
+
+    #[test]
+    fn test_repository_identity_change_emits_without_scan_id_bump() {
+        let work_directory_id = ProjectEntryId::from_proto(1);
+        let old_repo = sample_repo_entry(
+            work_directory_id,
+            "/repo_a/.git/worktrees/feature",
+            "/repo_a/.git",
+            0,
+        );
+        let new_repo = sample_repo_entry(
+            work_directory_id,
+            "/repo_b/.git/worktrees/feature",
+            "/repo_b/.git",
+            0, // same scan token as old — identity-only change
+        );
+        assert!(
+            repository_identity_or_scan_changed(&old_repo, &new_repo),
+            "retarget of repository_dir/common_dir must emit even when git_dir_scan_id is unchanged"
+        );
+        assert!(
+            !repository_identity_or_scan_changed(&old_repo, &old_repo),
+            "identical registration must not look changed"
         );
     }
 

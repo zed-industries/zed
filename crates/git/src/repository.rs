@@ -79,12 +79,9 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
     let dot_git_path = worktree_path.join(".git");
-    let git_file = std::fs::read_to_string(&dot_git_path)
+    let git_file = std::fs::read(&dot_git_path)
         .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
-    let git_dir = git_file
-        .strip_prefix("gitdir:")
-        .context("worktree .git file missing gitdir pointer")?
-        .trim();
+    let git_dir = crate::parse_gitfile(&git_file)?;
     Ok(worktree_path.join(git_dir))
 }
 
@@ -1255,37 +1252,21 @@ impl RealGitRepository {
             None
         };
 
+        // Gitfile/commondir grammar is shared with discovery via `git::parse_gitfile`/
+        // `git::parse_commondir`. `Path::join` already replaces the base for an absolute
+        // pointer, so it handles both absolute and relative targets.
         let git_dir = if dotgit_path.is_file() {
-            let content =
-                std::fs::read_to_string(dotgit_path).context("reading .git worktree file")?;
-            let path_str = content
-                .strip_prefix("gitdir: ")
-                .context("expected .git file to start with 'gitdir: '")?
-                .trim();
-            let resolved = PathBuf::from(path_str);
-            let resolved = if resolved.is_absolute() {
-                resolved
-            } else {
-                dotgit_parent.join(resolved)
-            };
-            normalize_git_metadata_path(resolved)?
+            let content = std::fs::read(dotgit_path).context("reading .git worktree file")?;
+            normalize_git_metadata_path(dotgit_parent.join(crate::parse_gitfile(&content)?))?
         } else {
             normalize_git_metadata_path(dotgit_path.to_path_buf())?
         };
 
         let common_dir = {
-            let commondir_file = git_dir.join("commondir");
+            let commondir_file = git_dir.join(crate::COMMONDIR);
             if commondir_file.is_file() {
-                let content =
-                    std::fs::read_to_string(&commondir_file).context("reading commondir file")?;
-                let path_str = content.trim();
-                let resolved = PathBuf::from(path_str);
-                let resolved = if resolved.is_absolute() {
-                    resolved
-                } else {
-                    git_dir.join(resolved)
-                };
-                normalize_git_metadata_path(resolved)?
+                let content = std::fs::read(&commondir_file).context("reading commondir file")?;
+                normalize_git_metadata_path(git_dir.join(crate::parse_commondir(&content)?))?
             } else {
                 git_dir.clone()
             }
@@ -3635,9 +3616,25 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self.git_directory.join("info").join("exclude");
-
-        GitExcludeOverride::new(path).await
+        // `info/exclude` lives in the common dir, which differs from this per-worktree
+        // git dir for a linked worktree; follow its `commondir` pointer when present,
+        // using the shared grammar so this agrees with repository discovery.
+        let common_dir = match smol::fs::read(self.git_directory.join(crate::COMMONDIR)).await {
+            // `Path::join` replaces the base for an absolute `commondir` pointer.
+            Ok(contents) => self.git_directory.join(crate::parse_commondir(&contents)?),
+            // Only a missing `commondir` means "this dir is the common dir"; a transient
+            // read error must not silently route excludes to the wrong location.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                self.git_directory.clone()
+            }
+            Err(error) => return Err(error).context("reading commondir"),
+        };
+        GitExcludeOverride::new(common_dir.join(crate::REPO_EXCLUDE)).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
@@ -4573,9 +4570,7 @@ mod tests {
         };
 
         assert!(
-            error
-                .to_string()
-                .contains("expected .git file to start with 'gitdir: '"),
+            error.to_string().contains("gitfile must begin with"),
             "unexpected error: {error:#}"
         );
     }
