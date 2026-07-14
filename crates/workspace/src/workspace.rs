@@ -2642,6 +2642,14 @@ impl Workspace {
         self.project.read(cx).path_style(cx)
     }
 
+    pub fn is_empty(&self, cx: &App) -> bool {
+        let project = self.project.read(cx);
+
+        !project.is_via_collab()
+            && project.worktrees(cx).next().is_none()
+            && !self.items(cx).any(|item| item.is_dirty(cx))
+    }
+
     pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
         let mut history: HashMap<EntityId, usize> = HashMap::default();
 
@@ -3612,12 +3620,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
-        let is_remote = self.project.read(cx).is_via_collab();
-        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
-        let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
-        let workspace_is_empty = !is_remote && !has_worktree && !has_dirty_items;
-        if workspace_is_empty {
+        if self.is_empty(cx) {
             open_mode = OpenMode::Activate;
         }
 
@@ -10192,6 +10196,24 @@ pub async fn find_existing_workspace(
         }
     }
     (existing, open_visible)
+}
+
+pub fn find_open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    cx: &App,
+) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+    cx.windows().into_iter().find_map(|window| {
+        let multi_workspace = window.downcast::<MultiWorkspace>()?;
+
+        let workspace = multi_workspace
+            .read(cx)
+            .ok()?
+            .workspaces()
+            .find(|workspace| workspace.read(cx).database_id() == Some(workspace_id))?
+            .clone();
+
+        Some((multi_workspace, workspace))
+    })
 }
 
 /// Controls whether to reuse an existing workspace whose worktrees contain the

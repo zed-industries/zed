@@ -47,7 +47,7 @@ use util::{ResultExt, paths::PathExt};
 use workspace::{
     HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
     RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
-    notifications::DetachAndPromptErr, with_active_or_new_workspace,
+    WorkspaceMatching, notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
@@ -2191,16 +2191,49 @@ impl RecentProjectsDelegate {
                             });
                         }
                         return;
-                    } else {
-                        workspace
-                            .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
-                            .detach_and_prompt_err(
-                                "Failed to open project",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            );
                     }
+
+                    if let Some((existing_window, existing_workspace)) =
+                        workspace::find_open_workspace_by_id(candidate_workspace_id, cx)
+                    {
+                        cx.defer(move |cx| {
+                            existing_window
+                                .update(cx, |multi_workspace, window, cx| {
+                                    window.activate_window();
+                                    multi_workspace.activate(existing_workspace, None, window, cx);
+                                })
+                                .log_err();
+                        });
+
+                        return;
+                    }
+
+                    let (open_mode, requesting_window) = if workspace.is_empty(cx) {
+                        (
+                            OpenMode::Activate,
+                            window.window_handle().downcast::<MultiWorkspace>(),
+                        )
+                    } else {
+                        (OpenMode::NewWindow, None)
+                    };
+
+                    workspace::open_paths(
+                        &paths,
+                        workspace.app_state().clone(),
+                        OpenOptions {
+                            requesting_window,
+                            open_mode,
+                            workspace_matching: WorkspaceMatching::None,
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .detach_and_prompt_err(
+                        "Failed to open project",
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    );
                 }
                 SerializedWorkspaceLocation::Remote(mut connection) => {
                     let app_state = workspace.app_state().clone();
@@ -2528,6 +2561,51 @@ mod tests {
 
     fn recent_workspaces() -> Vec<RecentWorkspace> {
         (0..RECENT_PROJECT_COUNT).map(recent_workspace).collect()
+    }
+
+    async fn open_test_project(
+        cx: &mut TestAppContext,
+        app_state: Arc<AppState>,
+        path: PathBuf,
+        open_mode: OpenMode,
+    ) -> workspace::OpenResult {
+        cx.update(|cx| {
+            open_paths(
+                &[path],
+                app_state,
+                workspace::OpenOptions {
+                    open_mode,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+    }
+
+    fn picker_with_recent_workspace(
+        cx: &mut TestAppContext,
+        window_handle: gpui::WindowHandle<MultiWorkspace>,
+        workspace: Entity<Workspace>,
+        recent_workspace: RecentWorkspace,
+    ) -> Entity<Picker<RecentProjectsDelegate>> {
+        window_handle
+            .update(cx, |_, window, cx| {
+                let mut delegate = RecentProjectsDelegate::new(
+                    workspace.downgrade(),
+                    false,
+                    cx.focus_handle(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    ProjectPickerStyle::Modal,
+                );
+
+                delegate.set_workspaces(vec![recent_workspace]);
+                cx.new(|cx| Picker::list(delegate, window, cx))
+            })
+            .unwrap()
     }
 
     fn draw(cx: &mut VisualTestContext) {
@@ -3009,6 +3087,178 @@ mod tests {
             initial_window_count + 1,
             "open_local_project with create_new_window=true should open a new window"
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_recent_project_new_window_activates_existing_window(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-a"), json!({ "foo": "" }))
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-b"), json!({ "bar": "" }))
+            .await;
+
+        let project_a = open_test_project(
+            cx,
+            app_state.clone(),
+            PathBuf::from(path!("/project-a")),
+            OpenMode::Activate,
+        )
+        .await;
+
+        let project_b = open_test_project(
+            cx,
+            app_state,
+            PathBuf::from(path!("/project-b")),
+            OpenMode::NewWindow,
+        )
+        .await;
+
+        cx.run_until_parked();
+
+        let initial_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(initial_window_count, 2);
+
+        let workspace_a = project_a.workspace;
+
+        let workspace_b_id = project_b
+            .workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
+            .unwrap();
+
+        let window_a = project_a.window;
+        let window_b = project_b.window;
+
+        let picker = picker_with_recent_workspace(
+            cx,
+            window_a,
+            workspace_a,
+            RecentWorkspace {
+                workspace_id: workspace_b_id,
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&[PathBuf::from(path!("/project-b"))]),
+                identity_paths: PathList::new(&[PathBuf::from(path!("/project-b"))]),
+                timestamp: Utc::now(),
+            },
+        );
+
+        {
+            let cx = &mut VisualTestContext::from_window(window_a.into(), cx);
+
+            picker.update_in(cx, |picker, window, cx| {
+                picker.delegate.open_recent_projects(0, true, window, cx);
+            });
+        }
+
+        cx.run_until_parked();
+
+        let final_window_count = cx.update(|cx| cx.windows().len());
+
+        assert_eq!(final_window_count, initial_window_count);
+        assert_eq!(cx.update(|cx| cx.active_window()), Some(window_b.into()));
+    }
+
+    #[gpui::test]
+    async fn test_open_recent_project_new_window_ignores_partial_existing_workspace_match(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/current-project"), json!({ "foo": "" }))
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-a"), json!({ "bar": "" }))
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project-b"), json!({ "baz": "" }))
+            .await;
+
+        let current_project = open_test_project(
+            cx,
+            app_state.clone(),
+            PathBuf::from(path!("/current-project")),
+            OpenMode::Activate,
+        )
+        .await;
+
+        open_test_project(
+            cx,
+            app_state,
+            PathBuf::from(path!("/project-a")),
+            OpenMode::NewWindow,
+        )
+        .await;
+
+        cx.run_until_parked();
+
+        let initial_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(initial_window_count, 2);
+
+        let current_workspace = current_project.workspace;
+
+        let current_window = current_project.window;
+
+        let recent_paths = [
+            PathBuf::from(path!("/project-a")),
+            PathBuf::from(path!("/project-b")),
+        ];
+
+        let picker = picker_with_recent_workspace(
+            cx,
+            current_window,
+            current_workspace,
+            RecentWorkspace {
+                workspace_id: WorkspaceId::from_i64(999),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&recent_paths),
+                identity_paths: PathList::new(&recent_paths),
+                timestamp: Utc::now(),
+            },
+        );
+
+        {
+            let cx = &mut VisualTestContext::from_window(current_window.into(), cx);
+
+            picker.update_in(cx, |picker, window, cx| {
+                picker.delegate.open_recent_projects(0, true, window, cx);
+            });
+        }
+
+        cx.run_until_parked();
+
+        let final_window_count = cx.update(|cx| cx.windows().len());
+
+        assert_eq!(final_window_count, initial_window_count + 1);
+
+        let active_paths = cx.update(|cx| {
+            let window = cx
+                .active_window()
+                .unwrap()
+                .downcast::<MultiWorkspace>()
+                .unwrap();
+
+            window.read(cx).unwrap().workspace().read(cx).root_paths(cx)
+        });
+
+        assert_eq!(PathList::new(&active_paths), PathList::new(&recent_paths));
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
