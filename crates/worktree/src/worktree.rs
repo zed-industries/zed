@@ -5947,7 +5947,22 @@ impl BackgroundScanner {
     }
 
     fn should_scan_directory(&self, state: &BackgroundScannerState, entry: &Entry) -> bool {
+        // `scan_symlinks` is documented as "only scan symlinked directories when
+        // they've been expanded" (the default), so symlink entries — which are
+        // exactly the entries carrying a `canonical_path` — defer their scan
+        // regardless of where the link points. This matters even for targets
+        // *inside* the worktree: the target is scanned at its real path anyway,
+        // and eagerly following aliases multiplies the scan under symlink farms
+        // like macOS's `~/Library/Containers/*/Data`, which alias the same large
+        // directories hundreds of times. The root entry is exempt: it may itself
+        // be reached via a symlinked path, and deferring it would leave the whole
+        // worktree unloaded.
+        let follow_symlinks = self.settings.scan_symlinks
+            == settings::ScanSymlinksSetting::Always
+            || entry.path.is_empty()
+            || entry.canonical_path.is_none();
         let scannable = state.scanning_enabled
+            && follow_symlinks
             && (!entry.is_external
                 || self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always)
             && (!entry.is_ignored || entry.is_always_included);

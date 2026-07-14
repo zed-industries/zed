@@ -477,6 +477,106 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_symlinks_pointing_inside_the_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "aliases": {
+                // symlinks here
+            },
+            "target": {
+                "a.rs": "",
+                "b.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    // These symlinks point to a directory *inside* the worktree root, which is
+    // scanned at its real path anyway. Following them eagerly would scan the
+    // target once per alias — explosive under symlink farms like macOS's
+    // `~/Library/Containers/*/Data`, which alias the same directories hundreds
+    // of times — so like external symlinks, they are only scanned on expansion.
+    fs.create_symlink("/root/aliases/alias-1".as_ref(), "../target".into())
+        .await
+        .unwrap();
+    fs.create_symlink("/root/aliases/alias-2".as_ref(), "../target".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // The target is scanned once at its real path; the aliases are recorded
+    // but their contents are not scanned.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("aliases"),
+                rel_path("aliases/alias-1"),
+                rel_path("aliases/alias-2"),
+                rel_path("target"),
+                rel_path("target/a.rs"),
+                rel_path("target/b.rs"),
+            ]
+        );
+
+        assert_eq!(
+            tree.entry_for_path(rel_path("aliases/alias-1"))
+                .unwrap()
+                .kind,
+            EntryKind::UnloadedDir
+        );
+    });
+
+    // Expanding an alias loads its contents on demand.
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("aliases/alias-1").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("aliases"),
+                rel_path("aliases/alias-1"),
+                rel_path("aliases/alias-1/a.rs"),
+                rel_path("aliases/alias-1/b.rs"),
+                rel_path("aliases/alias-2"),
+                rel_path("target"),
+                rel_path("target/a.rs"),
+                rel_path("target/b.rs"),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_renaming_subdir_under_symlinked_root_keeps_children(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -595,6 +695,41 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
+    // Like other symlinked directories, the alias is not scanned until it is
+    // expanded; its target is scanned at its real path.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("links"), false),
+                (rel_path("links/internal"), false),
+                (rel_path("real-dir"), false),
+                (rel_path("real-dir/existing.rs"), false),
+                (rel_path("real-dir/nested"), false),
+                (rel_path("real-dir/nested/deep.rs"), false),
+            ]
+        );
+
+        assert_eq!(
+            tree.entry_for_path(rel_path("links/internal"))
+                .unwrap()
+                .kind,
+            EntryKind::UnloadedDir
+        );
+    });
+
+    // Expanding the alias loads its contents.
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("links/internal").into()])
+    })
+    .recv()
+    .await;
+
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
@@ -612,13 +747,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
                 (rel_path("real-dir/nested"), false),
                 (rel_path("real-dir/nested/deep.rs"), false),
             ]
-        );
-
-        assert_eq!(
-            tree.entry_for_path(rel_path("links/internal"))
-                .unwrap()
-                .kind,
-            EntryKind::Dir
         );
     });
 
@@ -1237,6 +1365,15 @@ async fn test_internal_symlink_updates_preserve_entry_ids(cx: &mut TestAppContex
 
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
+
+    // The alias is not scanned until expanded; load it so its entries exist.
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("links/internal").into()])
+    })
+    .recv()
+    .await;
 
     let (real_entry_id, symlink_entry_id, old_mtime) = tree.read_with(cx, |tree, _| {
         let real_entry = tree
