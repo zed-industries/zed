@@ -433,7 +433,7 @@ mod tests {
                 a: 1.,
             },
             thickness: ScaledPixels(1.),
-            wavy: 0,
+            wavy: false.into(),
         }
     }
 

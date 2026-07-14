@@ -4,10 +4,10 @@ mod tests {
     use cocoa::{base::nil, foundation::NSAutoreleasePool};
     use gpui::{
         AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask,
-        Corners, DevicePixels, Edges, Hsla, ImageId, MonochromeSprite, Path, Pixels, PlatformAtlas,
-        PlatformHeadlessRenderer, Point, PolychromeSprite, Primitive, Quad, RenderImageParams,
-        RenderSvgParams, ScaledPixels, Scene, SceneDamage, Shadow, SharedString, Size, TileId,
-        TransformationMatrix, Underline, px,
+        Corners, DevicePixels, Edges, Hsla, ImageId, MonochromeSprite, PaddedBool32, Path, Pixels,
+        PlatformAtlas, PlatformHeadlessRenderer, Point, PolychromeSprite, Primitive, Quad,
+        RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneDamage, Shadow, SharedString,
+        Size, TileId, TransformationMatrix, Underline, px,
     };
     use image::RgbaImage;
     use proptest::prelude::*;
@@ -276,7 +276,7 @@ mod tests {
                     content_mask: full_mask(),
                     color,
                     thickness: ScaledPixels(thickness as f32),
-                    wavy: u32::from(wavy),
+                    wavy: wavy.into(),
                 })
             ),
             (bounds_strategy(), color_strategy(), 0i32..=6, any::<bool>()).prop_map(
@@ -300,7 +300,7 @@ mod tests {
                     Primitive::PolychromeSprite(PolychromeSprite {
                         order: 0,
                         pad: 0,
-                        grayscale,
+                        grayscale: grayscale.into(),
                         opacity,
                         bounds,
                         content_mask: full_mask(),
@@ -546,7 +546,7 @@ mod tests {
             Primitive::SubpixelSprite(sprite) => sprite.color = color,
             Primitive::PolychromeSprite(sprite) => {
                 sprite.opacity = color.a.max(0.1);
-                sprite.grayscale = color.s < 0.5;
+                sprite.grayscale = (color.s < 0.5).into();
             }
             Primitive::Surface(_) => {}
         }
@@ -563,7 +563,7 @@ mod tests {
                 quad.border_widths = edges(ScaledPixels(width));
                 quad.corner_radii = corners(ScaledPixels(width * 2.0));
             }
-            Primitive::Underline(underline) => underline.wavy ^= 1,
+            Primitive::Underline(underline) => toggle_padded_bool(&mut underline.wavy),
             Primitive::Shadow(shadow) => {
                 shadow.inset = 0;
                 shadow.blur_radius = ScaledPixels(6.0);
@@ -591,9 +591,13 @@ mod tests {
             Primitive::SubpixelSprite(sprite) => {
                 sprite.color.a = if sprite.color.a < 1.0 { 1.0 } else { 0.5 };
             }
-            Primitive::PolychromeSprite(sprite) => sprite.grayscale = !sprite.grayscale,
+            Primitive::PolychromeSprite(sprite) => toggle_padded_bool(&mut sprite.grayscale),
             Primitive::Surface(_) => {}
         }
+    }
+
+    fn toggle_padded_bool(value: &mut PaddedBool32) {
+        *value = (*value == PaddedBool32::from(false)).into();
     }
 
     fn overlapping_quad_primitive(bounds: Bounds<ScaledPixels>, color: Hsla) -> Primitive {
