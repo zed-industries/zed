@@ -3560,6 +3560,21 @@ impl LspCommand for GetCodeActions {
         }
     }
 
+    fn to_lsp_params_or_response(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        cx: &App,
+    ) -> Result<LspParamsOrResponse<lsp::CodeActionParams, Vec<CodeAction>>> {
+        Ok(LspParamsOrResponse::Params(self.to_lsp(
+            path,
+            buffer,
+            language_server,
+            cx,
+        )?))
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -3587,27 +3602,6 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(diagnostic);
         }
 
-        let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) =
-                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
-            {
-                let filtered = requested
-                    .iter()
-                    .filter(|requested_kind| {
-                        supported_kinds.iter().any(|supported_kind| {
-                            code_action_kind_matches(requested_kind, supported_kind)
-                        })
-                    })
-                    .cloned()
-                    .collect();
-                Some(filtered)
-            } else {
-                Some(requested.clone())
-            }
-        } else {
-            None
-        };
-
         Ok(lsp::CodeActionParams {
             text_document: make_text_document_identifier(path)?,
             range: range_to_lsp(self.range.to_point_utf16(buffer))?,
@@ -3615,7 +3609,7 @@ impl LspCommand for GetCodeActions {
             partial_result_params: Default::default(),
             context: lsp::CodeActionContext {
                 diagnostics: relevant_diagnostics,
-                only,
+                only: self.kinds.clone(),
                 ..lsp::CodeActionContext::default()
             },
         })

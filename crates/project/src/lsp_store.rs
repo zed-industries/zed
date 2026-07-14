@@ -7994,21 +7994,39 @@ impl LspStore {
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
                 self.running_language_servers_for_local_buffer(buffer, cx)
-                    .map(|(_, server)| server.clone())
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             });
 
             let pull_diagnostics = servers
                 .into_iter()
-                .flat_map(|server| {
+                .flat_map(|(adapter, server)| {
                     let result = maybe!({
                         let local = self.as_local()?;
                         let server_id = server.server_id();
-                        let providers_with_identifiers = local
+                        let registrations = local
                             .language_server_dynamic_registrations
-                            .get(&server_id)
-                            .into_iter()
-                            .flat_map(|registrations| &registrations.diagnostics)
+                            .get(&server_id)?;
+                        let diagnostic_registrations =
+                            registrations.text_documents.get("textDocument/diagnostic");
+                        let providers_with_identifiers = registrations
+                            .diagnostics
+                            .iter()
+                            .filter(|(source, _)| {
+                                source.registration_id().is_none_or(|registration_id| {
+                                    diagnostic_registrations
+                                        .and_then(|registrations| {
+                                            registrations.get(registration_id)
+                                        })
+                                        .is_some_and(|registration| {
+                                            dynamic_text_document_registration_allows_buffer(
+                                                registration,
+                                                buffer.read(cx),
+                                                &adapter,
+                                            )
+                                        })
+                                })
+                            })
                             .map(|(source, dynamic_caps)| {
                                 (
                                     source.registration_id().map(str::to_string),
@@ -14203,38 +14221,54 @@ fn completion_trigger_characters_for_buffer(
     adapter: &CachedLspAdapter,
     buffer: &Buffer,
 ) -> BTreeSet<String> {
-    let mut triggers = BTreeSet::new();
-
-    if let Some(provider) = local
-        .initial_server_capabilities
-        .get(&server_id)
-        .and_then(|capabilities| capabilities.completion_provider.as_ref())
-        && let Some(characters) = &provider.trigger_characters
-    {
-        triggers.extend(characters.iter().cloned());
+    fn extend_triggers(triggers: &mut BTreeSet<String>, options: &lsp::CompletionOptions) {
+        if let Some(characters) = &options.trigger_characters {
+            triggers.extend(characters.iter().cloned());
+        }
     }
 
-    if let Some(registrations) = local
-        .language_server_dynamic_registrations
+    let initial_options = local
+        .initial_server_capabilities
         .get(&server_id)
-        .and_then(|registrations| registrations.text_documents.get("textDocument/completion"))
-    {
-        for registration in registrations.values() {
-            if !dynamic_text_document_registration_allows_buffer(registration, buffer, adapter) {
-                continue;
-            }
+        .and_then(|capabilities| capabilities.completion_provider.as_ref());
+    let Some(registrations) = local.language_server_dynamic_registrations.get(&server_id) else {
+        return initial_options
+            .and_then(|options| options.trigger_characters.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    };
 
-            if let Some(characters) = registration
-                .server_capabilities
-                .completion_provider
-                .as_ref()
-                .and_then(|options| options.trigger_characters.as_ref())
-            {
-                triggers.extend(characters.iter().cloned());
+    let text_document_registrations = registrations.text_documents.get("textDocument/completion");
+    let mut triggers = BTreeSet::new();
+    let mut static_options = initial_options;
+    let mut global_dynamic_options = None;
+    for (source, options) in &registrations.completion {
+        match source {
+            RegistrationSource::Static => static_options = Some(options),
+            RegistrationSource::Dynamic(registration_id) => {
+                let registration = text_document_registrations
+                    .and_then(|registrations| registrations.get(registration_id));
+                if let Some(registration) = registration
+                    && registration.document_selector.is_some()
+                {
+                    if dynamic_text_document_registration_allows_buffer(
+                        registration,
+                        buffer,
+                        adapter,
+                    ) {
+                        extend_triggers(&mut triggers, options);
+                    }
+                } else {
+                    global_dynamic_options = Some(options);
+                }
             }
         }
     }
 
+    if let Some(options) = global_dynamic_options.or(static_options) {
+        extend_triggers(&mut triggers, options);
+    }
     triggers
 }
 
