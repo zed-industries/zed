@@ -9,11 +9,12 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
+use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    ProviderConfigurationView, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, ProviderSettingsView, ZED_CLOUD_PROVIDER_ID,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -359,30 +360,48 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         })
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|_| ConfigurationView::new(self.state.clone()))
-            .into()
-    }
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.read(cx);
+        let user_store = state.user_store.read(cx);
+        let is_zed_model_provider_enabled = user_store
+            .current_organization_configuration()
+            .map_or(true, |config| config.is_zed_model_provider_enabled);
+        let description = InlineDescription::Text(
+            zed_ai_description(
+                !state.is_signed_out(cx),
+                user_store.plan(),
+                is_zed_model_provider_enabled,
+                user_store.trial_started_at().is_none(),
+            )
+            .into(),
+        );
 
-    fn configuration_view_v2(
-        &self,
-        target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        // The Zed sign-in/plan control is small enough that sending users to a
-        // dedicated sub-page just to reach it would be annoying, so render it
-        // inline even though it isn't an API-key field.
-        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
-    }
+        let title = if state.is_signed_out(cx) {
+            None
+        } else {
+            match state.user_store.read(cx).plan() {
+                Some(Plan::ZedPro) => Some("Subscribed to Pro".into()),
+                Some(Plan::ZedProTrial) => Some("Subscribed to Pro Trial".into()),
+                Some(Plan::ZedStudent) => Some("Subscribed to Student".into()),
+                Some(Plan::ZedBusiness) => Some("Subscribed to Business".into()),
+                Some(Plan::ZedVip) => Some("Subscribed to VIP".into()),
+                Some(Plan::ZedFree) | None => None,
+            }
+        };
 
-    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description: Some(description),
+                create_view: Arc::new({
+                    let state = self.state.clone();
+                    move |_window, cx| {
+                        cx.new(|_| ConfigurationView::new(state.clone(), true))
+                            .into()
+                    }
+                }),
+            },
+        ))
     }
 
     fn authentication_error_message(&self) -> SharedString {
@@ -413,58 +432,86 @@ struct ZedAiConfiguration {
     is_zed_model_provider_enabled: bool,
     eligible_for_trial: bool,
     account_too_young: bool,
+    compact: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+}
+
+fn zed_ai_description(
+    is_connected: bool,
+    plan: Option<Plan>,
+    is_zed_model_provider_enabled: bool,
+    eligible_for_trial: bool,
+) -> &'static str {
+    if !is_connected {
+        return "Sign in to have access to Zed's complete agentic experience with hosted models.";
+    }
+
+    match plan {
+        Some(Plan::ZedPro) => {
+            "You have access to Zed's hosted models through your Pro subscription."
+        }
+        Some(Plan::ZedProTrial) => "You have access to Zed's hosted models through your Pro trial.",
+        Some(Plan::ZedStudent) => {
+            "You have access to Zed's hosted models through your Student subscription."
+        }
+        Some(Plan::ZedBusiness) => {
+            if is_zed_model_provider_enabled {
+                "You have access to Zed's hosted models through your organization."
+            } else {
+                "Zed's hosted models are disabled by your organization's configuration."
+            }
+        }
+        Some(Plan::ZedVip) => {
+            "You have access to Zed's hosted models through your VIP subscription."
+        }
+        Some(Plan::ZedFree) | None => {
+            if eligible_for_trial {
+                "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+            } else {
+                "Subscribe for access to Zed's hosted models."
+            }
+        }
+    }
 }
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let (subscription_text, has_paid_plan) = match self.plan {
-            Some(Plan::ZedPro) => (
-                "You have access to Zed's hosted models through your Pro subscription.",
-                true,
-            ),
-            Some(Plan::ZedProTrial) => (
-                "You have access to Zed's hosted models through your Pro trial.",
-                false,
-            ),
-            Some(Plan::ZedStudent) => (
-                "You have access to Zed's hosted models through your Student subscription.",
-                true,
-            ),
-            Some(Plan::ZedBusiness) => (
-                if self.is_zed_model_provider_enabled {
-                    "You have access to Zed's hosted models through your organization."
-                } else {
-                    "Zed's hosted models are disabled by your organization's configuration."
-                },
-                true,
-            ),
-            Some(Plan::ZedFree) | None => (
-                if self.eligible_for_trial {
-                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
-                } else {
-                    "Subscribe for access to Zed's hosted models."
-                },
-                false,
-            ),
-        };
+        let has_paid_plan = matches!(
+            self.plan,
+            Some(Plan::ZedPro | Plan::ZedStudent | Plan::ZedBusiness | Plan::ZedVip)
+        );
+
+        let description = zed_ai_description(
+            self.is_connected,
+            self.plan,
+            self.is_zed_model_provider_enabled,
+            self.eligible_for_trial,
+        );
 
         let manage_subscription_buttons = if has_paid_plan {
             Button::new("manage_settings", "Manage Subscription")
-                .full_width()
-                .label_size(LabelSize::Small)
+                .when(!self.compact, |this| {
+                    this.full_width().label_size(LabelSize::Small)
+                })
+                .when(self.compact, |this| this.size(ButtonSize::Medium))
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
             Button::new("start_trial", "Start 14-day Free Pro Trial")
-                .full_width()
+                .when(!self.compact, |this| {
+                    this.full_width().label_size(LabelSize::Small)
+                })
+                .when(self.compact, |this| this.size(ButtonSize::Medium))
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
                 .into_any_element()
         } else {
             Button::new("upgrade", "Upgrade to Pro")
-                .full_width()
+                .when(!self.compact, |this| {
+                    this.full_width().label_size(LabelSize::Small)
+                })
+                .when(self.compact, |this| this.size(ButtonSize::Medium))
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
                 .into_any_element()
@@ -473,11 +520,15 @@ impl RenderOnce for ZedAiConfiguration {
         if !self.is_connected {
             return v_flex()
                 .gap_2()
-                .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
+                .when(!self.compact, |this| this.child(Label::new(description)))
                 .child(
                     Button::new("sign_in", "Sign In to use Zed AI")
-                        .start_icon(Icon::new(IconName::Github).size(IconSize::Small).color(Color::Muted))
-                        .full_width()
+                        .start_icon(
+                            Icon::new(IconName::Github)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .when(!self.compact, |this| this.full_width())
                         .on_click({
                             let callback = self.sign_in_callback.clone();
                             move |_, window, cx| (callback)(window, cx)
@@ -485,30 +536,35 @@ impl RenderOnce for ZedAiConfiguration {
                 );
         }
 
-        v_flex().gap_2().w_full().map(|this| {
-            if self.account_too_young {
-                this.child(YoungAccountBanner).child(
-                    Button::new("upgrade", "Upgrade to Pro")
-                        .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
-                        .full_width()
-                        .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
-                )
-            } else {
-                this.text_sm()
-                    .child(subscription_text)
-                    .child(manage_subscription_buttons)
-            }
-        })
+        v_flex()
+            .gap_2()
+            .when(!self.compact, |this| this.w_full())
+            .map(|this| {
+                if self.account_too_young {
+                    this.child(YoungAccountBanner).child(
+                        Button::new("upgrade", "Upgrade to Pro")
+                            .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .when(!self.compact, |this| this.full_width())
+                            .on_click(|_, _, cx| {
+                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                            }),
+                    )
+                } else {
+                    this.when(!self.compact, |this| this.text_sm().child(description))
+                        .child(manage_subscription_buttons)
+                }
+            })
     }
 }
 
 struct ConfigurationView {
     state: Entity<State>,
+    compact: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl ConfigurationView {
-    fn new(state: Entity<State>) -> Self {
+    fn new(state: Entity<State>, compact: bool) -> Self {
         let sign_in_callback = Arc::new({
             let state = state.clone();
             move |_window: &mut Window, cx: &mut App| {
@@ -520,6 +576,7 @@ impl ConfigurationView {
 
         Self {
             state,
+            compact,
             sign_in_callback,
         }
     }
@@ -540,6 +597,7 @@ impl Render for ConfigurationView {
             is_zed_model_provider_enabled,
             eligible_for_trial: user_store.trial_started_at().is_none(),
             account_too_young: user_store.account_too_young(),
+            compact: self.compact,
             sign_in_callback: self.sign_in_callback.clone(),
         }
     }
@@ -657,6 +715,31 @@ mod tests {
         sign_in_task
     }
 
+    fn test_cloud_model(
+        model_id: cloud_llm_client::LanguageModelId,
+    ) -> cloud_llm_client::LanguageModel {
+        cloud_llm_client::LanguageModel {
+            provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+            id: model_id,
+            display_name: "Test Model".to_string(),
+            is_latest: true,
+            max_token_count: 200_000,
+            max_token_count_in_max_mode: None,
+            max_output_tokens: 8_192,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+            supports_disabling_thinking: false,
+            supports_fast_mode: false,
+            supports_server_side_compaction: false,
+            supported_effort_levels: Vec::new(),
+            supports_streaming_tools: false,
+            supports_parallel_tool_calls: false,
+            is_disabled: false,
+            disabled_reason: None,
+        }
+    }
+
     #[gpui::test]
     async fn provider_authenticate_does_not_start_sign_in_when_signed_out(cx: &mut TestAppContext) {
         let (client, _user_store, provider) = cx.update(init_test);
@@ -750,6 +833,41 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn provided_models_surface_disabled_reason(cx: &mut TestAppContext) {
+        let (_client, _user_store, provider) = cx.update(init_test);
+        let model_id = cloud_llm_client::LanguageModelId(Arc::from("disabled-model"));
+        let disabled_reason = "This model is temporarily unavailable.";
+
+        cx.update(|cx| {
+            let cloud_model_provider = provider.state.read(cx).provider.clone();
+            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
+                let mut model = test_cloud_model(model_id.clone());
+                model.is_disabled = true;
+                model.disabled_reason = Some(disabled_reason.to_string());
+                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+                    models: vec![model],
+                    default_model: Some(model_id.clone()),
+                    default_fast_model: None,
+                    recommended_models: vec![model_id],
+                });
+                cx.notify();
+            });
+        });
+
+        let model = cx.read(|cx| {
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .next()
+                .expect("disabled model should be provided")
+        });
+        assert_eq!(
+            model.is_disabled(),
+            Some(language_model::DisabledReason::new(disabled_reason))
+        );
+    }
+
+    #[gpui::test]
     async fn sign_out_hides_cached_cloud_models(cx: &mut TestAppContext) {
         let (client, _user_store, provider) = cx.update(init_test);
         let (authenticate_tx, authenticate_rx) = futures::channel::oneshot::channel();
@@ -775,24 +893,7 @@ mod tests {
             let cloud_model_provider = provider.state.read(cx).provider.clone();
             cloud_model_provider.update(cx, |cloud_model_provider, cx| {
                 cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
-                    models: vec![cloud_llm_client::LanguageModel {
-                        provider: cloud_llm_client::LanguageModelProvider::Anthropic,
-                        id: model_id.clone(),
-                        display_name: "Test Model".to_string(),
-                        is_latest: true,
-                        max_token_count: 200_000,
-                        max_token_count_in_max_mode: None,
-                        max_output_tokens: 8_192,
-                        supports_tools: true,
-                        supports_images: false,
-                        supports_thinking: false,
-                        supports_disabling_thinking: false,
-                        supports_fast_mode: false,
-                        supports_server_side_compaction: false,
-                        supported_effort_levels: Vec::new(),
-                        supports_streaming_tools: false,
-                        supports_parallel_tool_calls: false,
-                    }],
+                    models: vec![test_cloud_model(model_id.clone())],
                     default_model: Some(model_id.clone()),
                     default_fast_model: None,
                     recommended_models: vec![model_id],
@@ -856,6 +957,7 @@ impl Component for ZedAiConfiguration {
                 is_zed_model_provider_enabled: config.is_zed_model_provider_enabled,
                 eligible_for_trial: config.eligible_for_trial,
                 account_too_young: false,
+                compact: false,
                 sign_in_callback: Arc::new(|_, _| {}),
             }
             .into_any_element()

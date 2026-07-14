@@ -55,6 +55,7 @@ prompt_store.workspace = true
 quick-xml.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -77,6 +78,11 @@ watch.workspace = true
 web_search.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
+
+# Used only on Windows to resolve the running release channel/version so the WSL
+# sandbox helper can fetch a matching Linux `zed`.
+[target.'cfg(target_os = "windows")'.dependencies]
+release_channel.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

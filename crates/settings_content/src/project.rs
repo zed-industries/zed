@@ -481,6 +481,7 @@ pub struct OAuthClientSettings {
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
     pub path: PathBuf,
+    #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
@@ -615,6 +616,28 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineBlameLocation {
+    /// Show git blame inline at the current line.
+    #[default]
+    Inline,
+    /// Show git blame in the status bar at the bottom of the window.
+    StatusBar,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -629,6 +652,10 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<DelayMs>,
+    /// Where to render the blame information when enabled.
+    ///
+    /// Default: inline
+    pub location: Option<InlineBlameLocation>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -846,4 +873,28 @@ pub enum GitHostingProviderKind {
     Gitea,
     Forgejo,
     SourceHut,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stdio_context_server_without_args() {
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo" }"#)
+                .expect("stdio context server without `args` should parse");
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.path, PathBuf::from("echo"));
+        assert!(command.args.is_empty());
+
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo", "args": ["hello"] }"#).unwrap();
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.args, vec!["hello".to_string()]);
+    }
 }

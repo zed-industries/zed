@@ -8,7 +8,7 @@ use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
@@ -24,6 +24,7 @@ use workspace::{
 };
 
 use crate::git_panel::show_error_toast;
+use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
 use zed_actions::{
     CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, SwitchWorktree,
 };
@@ -127,8 +128,7 @@ impl WorktreePicker {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .modal(false)
-                .max_height(Some(rems(20.).into()))
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -240,7 +240,6 @@ impl Render for WorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("WorktreePicker")
-            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
@@ -279,30 +278,6 @@ enum WorktreeEntry {
         from_branch: Option<RemoteBranchName>,
         disabled_reason: Option<String>,
     },
-}
-
-#[derive(Clone)]
-struct RemoteBranchName {
-    remote_name: String,
-    branch_name: String,
-}
-
-impl RemoteBranchName {
-    fn parse(name: &str) -> Option<Self> {
-        let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
-        let (remote_name, branch_name) = name.split_once('/')?;
-        if remote_name.is_empty() || branch_name.is_empty() {
-            return None;
-        }
-        Some(Self {
-            remote_name: remote_name.to_string(),
-            branch_name: branch_name.to_string(),
-        })
-    }
-
-    fn display_name(&self) -> String {
-        format!("{}/{}", self.remote_name, self.branch_name)
-    }
 }
 
 struct WorktreePickerDelegate {
@@ -427,26 +402,19 @@ impl Render for DeleteWorktreeTooltip {
 
 impl WorktreePickerDelegate {
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
-        let mut entries = Vec::new();
-
-        if self.has_multiple_repositories {
-            entries.push(WorktreeEntry::CreateFromCurrentBranch);
-        } else if let Some(ref default_branch) = self.default_branch {
-            let is_different = self
-                .current_branch_name
-                .as_ref()
-                .is_none_or(|current| current != &default_branch.branch_name);
-            entries.push(WorktreeEntry::CreateFromDefaultBranch {
-                default_branch: default_branch.clone(),
-            });
-            if is_different {
-                entries.push(WorktreeEntry::CreateFromCurrentBranch);
+        worktree_create_targets(
+            self.has_multiple_repositories,
+            self.default_branch.clone(),
+            self.current_branch_name.as_deref(),
+        )
+        .into_iter()
+        .map(|target| match target {
+            WorktreeCreateTarget::CurrentBranch => WorktreeEntry::CreateFromCurrentBranch,
+            WorktreeCreateTarget::DefaultBranch(default_branch) => {
+                WorktreeEntry::CreateFromDefaultBranch { default_branch }
             }
-        } else {
-            entries.push(WorktreeEntry::CreateFromCurrentBranch);
-        }
-
-        entries
+        })
+        .collect()
     }
 
     fn all_repo_worktrees(&self) -> &[GitWorktree] {
@@ -761,6 +729,10 @@ impl WorktreePickerDelegate {
 
 impl PickerDelegate for WorktreePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "worktree picker"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select or type to create a worktree…".into()
@@ -1102,13 +1074,10 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .into_any_element(),
             ),
             WorktreeEntry::CreateFromCurrentBranch => {
-                let branch_label = if self.has_multiple_repositories {
-                    "current branches".to_string()
-                } else {
-                    self.current_branch_name
-                        .clone()
-                        .unwrap_or_else(|| "HEAD".to_string())
-                };
+                let branch_label = WorktreeCreateTarget::CurrentBranch.branch_label(
+                    self.has_multiple_repositories,
+                    self.current_branch_name.as_deref(),
+                );
 
                 let label = format!("Create new worktree based on {branch_label}");
 
@@ -1122,8 +1091,12 @@ impl PickerDelegate for WorktreePickerDelegate {
                 Some(item.into_any_element())
             }
             WorktreeEntry::CreateFromDefaultBranch { default_branch } => {
-                let default_branch_name = default_branch.display_name();
-                let label = format!("Create new worktree based on {default_branch_name}");
+                let branch_label = WorktreeCreateTarget::DefaultBranch(default_branch.clone())
+                    .branch_label(
+                        self.has_multiple_repositories,
+                        self.current_branch_name.as_deref(),
+                    );
+                let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),

@@ -33,6 +33,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+buffer_diff.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

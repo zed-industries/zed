@@ -258,16 +258,44 @@ impl BenchDispatcher {
         }
     }
 
-    /// Forgets all pending timers so timers armed by one benchmark can't fire
+    /// Runs all main-thread tasks that are queued right now, without waiting for
+    /// background work or timers to finish.
+    pub fn run_ready_main_tasks(&self) -> bool {
+        assert!(
+            self.is_main_thread(),
+            "run_ready_main_tasks must be called on the benchmark main thread"
+        );
+        self.drain_main_queue()
+    }
+
+    /// Cancels all pending timers so timers armed by one benchmark can't fire
     /// during a later benchmark sharing this process-lifetime dispatcher.
     ///
-    /// The runnables are leaked rather than dropped, since dropping one wakes
-    /// the awaiting task as if the timer had fired.
-    pub fn forget_pending_timers(&self) {
-        let mut state = self.timers.state.lock();
-        for entry in state.heap.drain() {
-            std::mem::forget(entry.runnable);
-        }
+    /// Dropping a timer runnable drops its completion sender, waking the task
+    /// awaiting the timer. Call [`Self::run_until_idle`] after this method to
+    /// drain any work that cancellation unblocks.
+    pub fn cancel_pending_timers(&self) -> usize {
+        let timers = {
+            let mut state = self.timers.state.lock();
+            let timers: Vec<_> = state.heap.drain().collect();
+            self.timers.condvar.notify_all();
+            timers
+        };
+        let canceled = timers.len();
+        drop(timers);
+        canceled
+    }
+
+    /// Describes the dispatcher's idle-tracking state, for diagnosing
+    /// benchmarks that fail to reach quiescence.
+    pub fn debug_state(&self) -> String {
+        let inflight = *self.idle.inflight.lock();
+        let timers = self.timers.state.lock().heap.len();
+        let main_queue_has_work = self.main_queue_has_work();
+        format!(
+            "BenchDispatcher {{ inflight: {inflight}, pending_timers: {timers}, \
+             main_queue_has_work: {main_queue_has_work} }}"
+        )
     }
 
     fn has_due_timer(&self) -> bool {
@@ -362,6 +390,38 @@ mod tests {
     use crate::{BackgroundExecutor, ForegroundExecutor};
 
     #[test]
+    fn run_ready_main_tasks_does_not_wait_for_background_handoffs() {
+        let dispatcher = Arc::new(BenchDispatcher::new());
+        let background = BackgroundExecutor::new(dispatcher.clone());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        background
+            .spawn(async move {
+                thread::sleep(Duration::from_millis(10));
+                sender.send(()).ok();
+            })
+            .detach();
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    receiver.await.ok();
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        assert!(dispatcher.run_ready_main_tasks());
+        assert!(!completed.load(Ordering::SeqCst));
+
+        dispatcher.run_until_idle();
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn run_until_idle_completes_background_to_main_handoffs() {
         let dispatcher = Arc::new(BenchDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher.clone());
@@ -415,12 +475,12 @@ mod tests {
     }
 
     #[test]
-    fn forget_pending_timers_prevents_stale_timers_from_firing() {
+    fn cancel_pending_timers_wakes_waiters_without_waiting_for_deadline() {
         let dispatcher = Arc::new(BenchDispatcher::new());
         let background = BackgroundExecutor::new(dispatcher.clone());
 
         let fired = Arc::new(AtomicBool::new(false));
-        let timer = background.timer(Duration::from_millis(250));
+        let timer = background.timer(Duration::from_secs(10));
         background
             .spawn({
                 let fired = fired.clone();
@@ -432,10 +492,10 @@ mod tests {
             .detach();
 
         dispatcher.run_until_idle();
-        dispatcher.forget_pending_timers();
-
-        thread::sleep(Duration::from_millis(400));
+        assert_eq!(dispatcher.cancel_pending_timers(), 1);
         dispatcher.run_until_idle();
-        assert!(!fired.load(Ordering::SeqCst));
+
+        assert!(fired.load(Ordering::SeqCst));
+        assert_eq!(dispatcher.cancel_pending_timers(), 0);
     }
 }

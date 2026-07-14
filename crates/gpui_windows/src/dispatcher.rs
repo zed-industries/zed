@@ -1,4 +1,6 @@
 use std::{
+    ffi::c_void,
+    ptr::NonNull,
     sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
     time::Duration,
@@ -6,16 +8,17 @@ use std::{
 
 use anyhow::Context;
 use gpui_util::ResultExt;
-use windows::{
+use windows::Win32::{
+    Foundation::{FILETIME, LPARAM, WPARAM},
+    Media::{timeBeginPeriod, timeEndPeriod},
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
+        CloseThreadpoolTimer, CloseThreadpoolWork, CreateThreadpoolTimer, CreateThreadpoolWork,
+        GetCurrentThread, PTP_CALLBACK_INSTANCE, PTP_TIMER, PTP_WORK, SetThreadPriority,
+        SetThreadpoolTimer, SubmitThreadpoolWork, THREAD_PRIORITY_TIME_CRITICAL,
+        TP_CALLBACK_ENVIRON_V3, TP_CALLBACK_PRIORITY, TP_CALLBACK_PRIORITY_HIGH,
+        TP_CALLBACK_PRIORITY_LOW, TP_CALLBACK_PRIORITY_NORMAL,
     },
-    Win32::{
-        Foundation::{LPARAM, WPARAM},
-        Media::{timeBeginPeriod, timeEndPeriod},
-        System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL},
-        UI::WindowsAndMessaging::PostMessageW,
-    },
+    UI::WindowsAndMessaging::PostMessageW,
 };
 
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
@@ -49,29 +52,44 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
-        let handler = {
-            let mut task_wrapper = Some(runnable);
-            WorkItemHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
-                Ok(())
-            })
+    fn dispatch_on_threadpool(&self, priority: TP_CALLBACK_PRIORITY, runnable: RunnableVariant) {
+        let environ = TP_CALLBACK_ENVIRON_V3 {
+            Version: 3,
+            CallbackPriority: priority,
+            Size: size_of::<TP_CALLBACK_ENVIRON_V3>() as u32,
+            ..Default::default()
         };
 
-        ThreadPool::RunWithPriorityAsync(&handler, priority).log_err();
+        // If the thread pool never runs our callback, the matching `from_raw` is never called, which leaks the runnable.
+        // Dropping the scheduled runnable would cancel its task and make the next poll of any awaiter panic. Since we expect
+        // the scenario to usually happen during shutdown, this leak is acceptable.
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
+
+        unsafe {
+            if let Ok(work) =
+                CreateThreadpoolWork(Some(run_work_callback), Some(context), Some(&environ))
+            {
+                SubmitThreadpoolWork(work);
+            }
+        }
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
-        let handler = {
-            let mut task_wrapper = Some(runnable);
-            TimerElapsedHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
-                Ok(())
-            })
-        };
-        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
+
+        unsafe {
+            if let Ok(timer) = CreateThreadpoolTimer(Some(run_timer_callback), Some(context), None)
+            {
+                // Negative FILETIME expresses a relative delay in 100ns ticks
+                let ticks = (duration.as_nanos() / 100).min(i64::MAX as u128) as i64;
+                let due = (-ticks) as u64;
+                let due_time = FILETIME {
+                    dwLowDateTime: due as u32,
+                    dwHighDateTime: (due >> 32) as u32,
+                };
+                SetThreadpoolTimer(timer, Some(&due_time), 0, None);
+            }
+        }
     }
 
     #[inline(always)]
@@ -94,9 +112,9 @@ impl PlatformDispatcher for WindowsDispatcher {
             Priority::RealtimeAudio => {
                 panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
             }
-            Priority::High => WorkItemPriority::High,
-            Priority::Medium => WorkItemPriority::Normal,
-            Priority::Low => WorkItemPriority::Low,
+            Priority::High => TP_CALLBACK_PRIORITY_HIGH,
+            Priority::Medium => TP_CALLBACK_PRIORITY_NORMAL,
+            Priority::Low => TP_CALLBACK_PRIORITY_LOW,
         };
         self.dispatch_on_threadpool(priority, runnable);
     }
@@ -156,4 +174,24 @@ impl PlatformDispatcher for WindowsDispatcher {
             timeEndPeriod(1);
         }))
     }
+}
+
+unsafe extern "system" fn run_work_callback(
+    _instance: PTP_CALLBACK_INSTANCE,
+    context: *mut c_void,
+    work: PTP_WORK,
+) {
+    let runnable = unsafe { RunnableVariant::from_raw(NonNull::new_unchecked(context as *mut ())) };
+    WindowsDispatcher::execute_runnable(runnable);
+    unsafe { CloseThreadpoolWork(work) };
+}
+
+unsafe extern "system" fn run_timer_callback(
+    _instance: PTP_CALLBACK_INSTANCE,
+    context: *mut c_void,
+    timer: PTP_TIMER,
+) {
+    let runnable = unsafe { RunnableVariant::from_raw(NonNull::new_unchecked(context as *mut ())) };
+    WindowsDispatcher::execute_runnable(runnable);
+    unsafe { CloseThreadpoolTimer(timer) };
 }

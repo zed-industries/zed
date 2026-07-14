@@ -13,6 +13,8 @@ use http_proxy::{
 };
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::thread;
 use std::time::Duration;
 
@@ -95,13 +97,30 @@ fn spawn_proxy_with_upstream(
     })
     .expect("proxy spawn");
 
-    // Drain the Ready event so callers see RequestAttempt as the first.
+    drain_ready(&proxy, &mut events_rx);
+    (proxy, events_rx)
+}
+
+#[cfg(unix)]
+fn spawn_unix_proxy(allowlist: Allowlist) -> (ProxyHandle, mpsc::UnboundedReceiver<ProxyEvent>) {
+    let (events_tx, mut events_rx) = mpsc::unbounded();
+    let proxy = ProxyHandle::spawn_unix_temp(ProxyConfig {
+        allowlist,
+        upstream: None,
+        events: events_tx,
+    })
+    .expect("proxy spawn");
+
+    drain_ready(&proxy, &mut events_rx);
+    (proxy, events_rx)
+}
+
+fn drain_ready(proxy: &ProxyHandle, events_rx: &mut mpsc::UnboundedReceiver<ProxyEvent>) {
     let ready = futures::executor::block_on(events_rx.next());
     match ready {
         Some(ProxyEvent::Ready { port }) => assert_eq!(port, proxy.port()),
         other => panic!("expected Ready event first, got {other:?}"),
     }
-    (proxy, events_rx)
 }
 
 fn next_event(events: &mut mpsc::UnboundedReceiver<ProxyEvent>) -> ProxyEvent {
@@ -167,6 +186,46 @@ fn connect_allowed_host_completes_tunnel_and_emits_events() {
             assert_eq!(host, "localhost");
         }
         other => panic!("expected RequestCompleted, got {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_listener_denied_host_returns_511() {
+    let allowlist = Allowlist::from_patterns([HostPattern::parse("github.com").unwrap()]);
+    let (proxy, mut events) = spawn_unix_proxy(allowlist);
+    let socket_path = proxy
+        .socket_path()
+        .expect("Unix proxy socket path")
+        .to_path_buf();
+
+    let mut client = UnixStream::connect(socket_path).unwrap();
+    client.set_read_timeout(Some(TEST_TIMEOUT)).unwrap();
+    client
+        .write_all(b"CONNECT denied.example:443 HTTP/1.1\r\nHost: denied.example:443\r\n\r\n")
+        .unwrap();
+
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(
+        response.starts_with("HTTP/1.1 511 "),
+        "expected 511, got: {response}"
+    );
+    assert!(response.contains("denied.example"));
+
+    match next_event(&mut events) {
+        ProxyEvent::RequestAttempt {
+            host,
+            port,
+            method,
+            outcome,
+        } => {
+            assert_eq!(host, "denied.example");
+            assert_eq!(port, 443);
+            assert_eq!(method, RequestMethod::Connect);
+            assert!(matches!(outcome, RequestOutcome::Denied { .. }));
+        }
+        other => panic!("expected RequestAttempt(Denied), got {other:?}"),
     }
 }
 

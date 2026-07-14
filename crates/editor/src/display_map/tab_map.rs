@@ -506,6 +506,10 @@ pub struct TabPointCursor<'this> {
 }
 
 impl TabPointCursor<'_> {
+    /// No-op; this cursor is stateless. Provided for symmetry with the other
+    /// display-map layer cursors.
+    pub fn reset(&mut self) {}
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: FoldPoint) -> TabPoint {
         self.this.fold_point_to_tab_point(point)

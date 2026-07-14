@@ -626,7 +626,7 @@ impl DiffState {
                     this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -660,8 +660,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::BaseTextChanged
-                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),
@@ -2115,6 +2114,9 @@ impl MultiBuffer {
         self.title.as_deref()
     }
 
+    /// The title used for buffers not backed by a file and with no title of their own.
+    pub const DEFAULT_TITLE: &str = "untitled";
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();
@@ -2132,7 +2134,7 @@ impl MultiBuffer {
             }
         };
 
-        "untitled".into()
+        Self::DEFAULT_TITLE.into()
     }
 
     fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {

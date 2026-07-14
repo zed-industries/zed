@@ -14,7 +14,7 @@ use language::{
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::{LanguageServerBinary, Uri};
+use lsp::{CompletionItemKind, LanguageServerBinary, Uri};
 use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
@@ -193,16 +193,8 @@ fn label_for_pyright_completion(
     let label = &item.label;
     let label_len = label.len();
     let grammar = language.grammar()?;
-    let highlight_id = match item.kind? {
-        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-        _ => {
-            return None;
-        }
-    };
+    let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
+
     let mut text = label.clone();
     if let Some(completion_details) = item
         .label_details
@@ -253,6 +245,24 @@ fn label_for_python_symbol(
         filter_range,
         language.highlight_text(&text.as_str().into(), display_range),
     ))
+}
+
+/// Returns the highlight ID for the given completion item kind, if it is supported.
+///
+/// The outer `Option` is `None` if the item kind returned by the language server is not covered.
+/// The inner `Option` is `None` if the item kind is covered, but the highlight name is not present in the grammar.
+fn highlight_id_for_completion(
+    item_kind: CompletionItemKind,
+    grammar: &Arc<language::Grammar>,
+) -> Option<Option<language::HighlightId>> {
+    match item_kind {
+        CompletionItemKind::METHOD => Some(grammar.highlight_id_for_name("function.method.call")),
+        CompletionItemKind::FUNCTION => Some(grammar.highlight_id_for_name("function.call")),
+        CompletionItemKind::CLASS => Some(grammar.highlight_id_for_name("type")),
+        CompletionItemKind::CONSTANT => Some(grammar.highlight_id_for_name("constant")),
+        CompletionItemKind::VARIABLE => Some(grammar.highlight_id_for_name("variable")),
+        _ => None,
+    }
 }
 
 pub struct TyLspAdapter {
@@ -320,16 +330,7 @@ impl LspAdapter for TyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
 
         let mut text = label.clone();
         if let Some(completion_details) = item
@@ -1814,13 +1815,7 @@ impl LspAdapter for PyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)??;
         Some(language::CodeLabel::filtered(
             label.clone(),
             label_len,

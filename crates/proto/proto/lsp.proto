@@ -378,6 +378,16 @@ message ApplyCodeAction {
   CodeAction action = 3;
 }
 
+message ResolveCodeAction {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CodeAction action = 3;
+}
+
+message ResolveCodeActionResponse {
+  CodeAction action = 1;
+}
+
 message ApplyCodeActionResponse {
   ProjectTransaction transaction = 1;
 }

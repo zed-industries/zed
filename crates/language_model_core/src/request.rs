@@ -3,7 +3,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
+use crate::{
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, SharedString,
+};
 
 /// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -346,8 +348,52 @@ impl LanguageModelRequestMessage {
 pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
-    pub input_schema: serde_json::Value,
-    pub use_input_streaming: bool,
+    pub input: LanguageModelRequestToolInput,
+}
+
+impl LanguageModelRequestTool {
+    pub fn function(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            input: LanguageModelRequestToolInput::Function {
+                input_schema,
+                use_input_streaming,
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelRequestToolInput {
+    Function {
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    },
+    Custom {
+        format: Option<LanguageModelCustomToolFormat>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCustomToolFormat {
+    Text,
+    Grammar {
+        syntax: LanguageModelCustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageModelCustomToolGrammarSyntax {
+    Lark,
+    Regex,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
@@ -387,6 +433,25 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
+}
+
+impl LanguageModelRequest {
+    pub fn contains_custom_tool_input(&self) -> bool {
+        self.tools
+            .iter()
+            .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+            || self.messages.iter().any(|message| {
+                message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            input: LanguageModelToolUseInput::Text(_),
+                            ..
+                        })
+                    )
+                })
+            })
+    }
 }
 
 #[derive(

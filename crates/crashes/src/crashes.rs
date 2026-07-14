@@ -41,9 +41,9 @@ pub fn force_backtrace() {
 
 /// Install crash signal handlers and spawn the crash-handler subprocess.
 ///
-/// The synchronous portion (signal handlers, panic hook) runs inline.
-/// The async keepalive task is passed to `spawn` so the caller decides
-/// which executor to schedule it on.
+/// All work happens lazily in the returned future, so it runs on whichever
+/// executor polls it. The keepalive task is passed to `spawn` so the caller
+/// decides which executor to schedule it on.
 pub fn init<F, S, C, P>(
     crash_init: InitCrashHandler,
     spawn: S,
@@ -60,13 +60,14 @@ where
 }
 
 /// Spawn the crash-handler subprocess, connect the IPC client, and run the
-/// keepalive ping loop. Called on a background executor by [`init`].
-fn connect_and_keepalive<F, C, S, P>(
+/// keepalive ping loop. This is the future returned by [`init`], so it runs on
+/// whichever executor the caller polls it with.
+async fn connect_and_keepalive<F, C, S, P>(
     crash_init: InitCrashHandler,
     socket_path: P,
     wait_timer: C,
     spawn: S,
-) -> impl Future<Output = Arc<Client>> + use<F, C, S, P>
+) -> Arc<Client>
 where
     F: Future<Output = ()> + Send + Sync + 'static,
     C: (Fn(Duration) -> F) + Send + Sync + 'static,
@@ -77,93 +78,91 @@ where
     let socket_path = socket_path(process::id());
     let mut _crash_handler = spawn_crash_handler(&exe, &socket_path);
     info!("spawning crash handler process");
-    async move {
-        let mut elapsed = Duration::ZERO;
-        let retry_frequency = Duration::from_millis(100);
-        let client = loop {
-            if let Ok(client) = Client::with_name(SocketName::Path(&socket_path)) {
-                info!("connected to crash handler process after {elapsed:?}");
-                break client;
-            }
-            elapsed += retry_frequency;
-            wait_timer(retry_frequency).await;
-        };
-        let client = Arc::new(client);
+    let mut elapsed = Duration::ZERO;
+    let retry_frequency = Duration::from_millis(100);
+    let client = loop {
+        if let Ok(client) = Client::with_name(SocketName::Path(&socket_path)) {
+            info!("connected to crash handler process after {elapsed:?}");
+            break client;
+        }
+        elapsed += retry_frequency;
+        wait_timer(retry_frequency).await;
+    };
+    let client = Arc::new(client);
 
-        panic::set_hook({
-            let client = client.clone();
-            Box::new(move |payload| {
-                panic_hook(
-                    client.clone(),
-                    payload.payload_as_str().unwrap_or("Box<Any>"),
-                    payload.location(),
-                )
-            })
-        });
-        info!("panic handler registered");
-        let handler = CrashHandler::attach(unsafe {
-            let client = client.clone();
-            let handler = move |crash_context: &crash_handler::CrashContext| {
-                // set when the first minidump request is made to avoid generating duplicate crash reports
-                static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
-
-                // only request a minidump once
-                let res = if REQUESTED_MINIDUMP
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    #[cfg(target_os = "macos")]
-                    macos::suspend_all_other_threads();
-
-                    // on macos this "ping" is needed to ensure that all our
-                    // `client.send_message` calls have been processed before we trigger the
-                    // minidump request.
-                    client.ping().ok();
-                    let r = client.request_dump(crash_context);
-                    if let Err(e) = &r {
-                        eprintln!("failed to request dump: {:?}", e);
-                    }
-                    #[cfg(target_os = "macos")]
-                    macos::resume_all_other_threads();
-                    r.is_ok()
-                } else {
-                    true
-                };
-                CrashEventResult::Handled(res)
-            };
-            crash_handler::make_crash_event(handler)
+    panic::set_hook({
+        let client = client.clone();
+        Box::new(move |payload| {
+            panic_hook(
+                client.clone(),
+                payload.payload_as_str().unwrap_or("Box<Any>"),
+                payload.location(),
+            )
         })
-        .expect("failed to attach signal handler");
+    });
+    info!("panic handler registered");
+    let handler = CrashHandler::attach(unsafe {
+        let client = client.clone();
+        let handler = move |crash_context: &crash_handler::CrashContext| {
+            // set when the first minidump request is made to avoid generating duplicate crash reports
+            static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 
-        info!("crash signal handlers installed");
-        send_crash_server_message(&client, CrashServerMessage::Init(crash_init));
+            // only request a minidump once
+            let res = if REQUESTED_MINIDUMP
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                #[cfg(target_os = "macos")]
+                macos::suspend_all_other_threads();
 
-        #[cfg(target_os = "linux")]
-        handler.set_ptracer(Some(_crash_handler.id()));
-
-        info!("crash handler registered");
-        spawn(Box::pin({
-            let client = client.clone();
-            async move {
-                let _handler = { handler };
-                loop {
-                    if let Err(e) = client.ping() {
-                        #[cfg(not(target_os = "windows"))]
-                        log::error!(
-                            "ping failed: {:?}, process exit status: {:?}",
-                            e,
-                            _crash_handler.try_status()
-                        );
-                        #[cfg(target_os = "windows")]
-                        log::error!("ping failed: {:?}", e,);
-                        break;
-                    };
-                    wait_timer(Duration::from_secs(10)).await;
+                // on macos this "ping" is needed to ensure that all our
+                // `client.send_message` calls have been processed before we trigger the
+                // minidump request.
+                client.ping().ok();
+                let r = client.request_dump(crash_context);
+                if let Err(e) = &r {
+                    eprintln!("failed to request dump: {:?}", e);
                 }
+                #[cfg(target_os = "macos")]
+                macos::resume_all_other_threads();
+                r.is_ok()
+            } else {
+                true
+            };
+            CrashEventResult::Handled(res)
+        };
+        crash_handler::make_crash_event(handler)
+    })
+    .expect("failed to attach signal handler");
+
+    info!("crash signal handlers installed");
+    send_crash_server_message(&client, CrashServerMessage::Init(crash_init));
+
+    #[cfg(target_os = "linux")]
+    handler.set_ptracer(Some(_crash_handler.id()));
+
+    info!("crash handler registered");
+    spawn(Box::pin({
+        let client = client.clone();
+        async move {
+            let _handler = { handler };
+            loop {
+                if let Err(e) = client.ping() {
+                    #[cfg(not(target_os = "windows"))]
+                    log::error!(
+                        "ping failed: {:?}, process exit status: {:?}",
+                        e,
+                        _crash_handler.try_status()
+                    );
+                    #[cfg(target_os = "windows")]
+                    log::error!("ping failed: {:?}", e,);
+                    break;
+                };
+                wait_timer(Duration::from_secs(10)).await;
             }
-        }));
-        client
-    }
+        }
+    }));
+    client
 }
 
 pub struct CrashServer {

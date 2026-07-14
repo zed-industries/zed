@@ -36,7 +36,6 @@ client.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true

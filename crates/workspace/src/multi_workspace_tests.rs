@@ -507,6 +507,67 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
 }
 
 #[gpui::test]
+async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a.clone(), None, window, cx);
+    });
+
+    let removed = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            let excluded = vec![workspace_a.clone()];
+            mw.remove(
+                excluded.clone(),
+                move |this, window, cx| {
+                    this.find_or_create_workspace(
+                        PathList::new(&[PathBuf::from("/root_a")]),
+                        None,
+                        None,
+                        |_options, _window, _cx| Task::ready(Ok(None)),
+                        &excluded,
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("removing the active workspace should succeed");
+    assert!(removed, "the workspace should have been removed");
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "the non-excluded workspace should become active"
+        );
+        assert!(
+            mw.workspaces()
+                .all(|workspace| workspace.entity_id() != workspace_a.entity_id()),
+            "the removed workspace should be gone"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sidebar_open(
     cx: &mut TestAppContext,
 ) {
@@ -785,6 +846,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
     cx.run_until_parked();

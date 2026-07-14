@@ -77,6 +77,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to optimize Zed's interface for assistive technology such as
+    /// screen readers.
+    ///
+    /// Default: false
+    pub accessible_mode: Option<bool>,
     /// Whether to use the system provided dialogs for Open and Save As.
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
@@ -408,8 +413,7 @@ pub enum CliDefaultOpenBehavior {
     #[default]
     #[strum(serialize = "Add to Existing Window")]
     ExistingWindow,
-    /// Open directories in a new window, but reuse an existing window when
-    /// opening files that are already part of an open project.
+    /// Open paths in a new window unless they are subpaths of an existing project.
     #[strum(serialize = "Open a New Window")]
     NewWindow,
 }

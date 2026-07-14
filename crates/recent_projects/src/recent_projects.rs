@@ -36,7 +36,6 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
-use ui_input::ErasedEditor;
 use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
@@ -604,7 +603,6 @@ pub fn add_wsl_distro(
 
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
-    rem_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -633,6 +631,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
+                .initial_width(rems(rem_width))
                 .show_scrollbar(true)
         });
 
@@ -677,7 +676,6 @@ impl RecentProjects {
         .detach();
         Self {
             picker,
-            rem_width,
             _subscriptions: subscriptions,
         }
     }
@@ -706,7 +704,7 @@ impl RecentProjects {
                 ProjectPickerStyle::Modal,
             );
 
-            Self::new(delegate, fs, 34., window, cx)
+            Self::new(delegate, fs, 42., window, cx)
         })
     }
 
@@ -852,7 +850,6 @@ impl Render for RecentProjects {
             .on_action(cx.listener(Self::handle_toggle_open_menu))
             .on_action(cx.listener(Self::handle_remove_selected))
             .on_action(cx.listener(Self::handle_add_to_workspace))
-            .w(rems(self.rem_width))
             .child(self.picker.clone())
     }
 }
@@ -932,24 +929,12 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+    fn name() -> &'static str {
+        "recent projects"
     }
 
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search projects…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -1579,7 +1564,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
+                            IconButton::new("add_to_workspace", IconName::FolderInclude)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = self.focus_handle.clone();
@@ -2569,7 +2554,7 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .max_height(Some(px(240.).into()))
+                .max_height(Rems::from_pixels(px(240.0), window))
         });
         draw(cx);
         (picker, cx)

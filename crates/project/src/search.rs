@@ -1,5 +1,5 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
@@ -44,6 +44,8 @@ pub struct SearchInputs {
     match_full_paths: bool,
     buffers: Option<Vec<Entity<Buffer>>>,
 }
+
+pub type LineHint = u32;
 
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
@@ -249,6 +251,7 @@ impl SearchQuery {
 
         let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!case_sensitive)
+            .crlf(true)
             .build()?;
         Ok(Self::Regex {
             regex,
@@ -390,10 +393,10 @@ impl SearchQuery {
     pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<bool> {
+    ) -> Result<Option<LineHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Yield from this function every 20KB scanned.
@@ -405,12 +408,17 @@ impl SearchQuery {
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
-                    Ok(search.is_match(&text))
+                    if search.is_match(&text) {
+                        Ok(Some(LineHint::default()))
+                    } else {
+                        Ok(None)
+                    }
                 } else {
                     let mut bytes_read = 0;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
-                            return Ok(true);
+                            return Ok(Some(line_number));
                         }
                         bytes_read += text.len();
                         if bytes_read >= YIELD_THRESHOLD {
@@ -418,8 +426,9 @@ impl SearchQuery {
                             smol::future::yield_now().await;
                         }
                         text.clear();
+                        line_number += 1;
                     }
-                    Ok(false)
+                    Ok(None)
                 }
             }
             Self::Regex {
@@ -429,12 +438,17 @@ impl SearchQuery {
                 if *multiline {
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
-                    Ok(regex.is_match(&text)?)
+                    if regex.is_match(&text)? {
+                        Ok(Some(LineHint::default()))
+                    } else {
+                        Ok(None)
+                    }
                 } else {
                     let mut bytes_read = 0;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if regex.is_match(&text)? {
-                            return Ok(true);
+                            return Ok(Some(line_number));
                         }
                         bytes_read += text.len();
                         if bytes_read >= YIELD_THRESHOLD {
@@ -442,8 +456,9 @@ impl SearchQuery {
                             smol::future::yield_now().await;
                         }
                         text.clear();
+                        line_number += 1;
                     }
-                    Ok(false)
+                    Ok(None)
                 }
             }
         }
@@ -556,7 +571,7 @@ impl SearchQuery {
                             yield_now().await;
                         }
 
-                        if let Ok(mat) = mat {
+                        if let std::result::Result::Ok(mat) = mat {
                             matches.push(mat.start()..mat.end());
                         }
                     }
