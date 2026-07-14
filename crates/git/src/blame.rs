@@ -43,7 +43,7 @@ impl Blame {
                 match get_tag_names(git, &shas).await {
                     Ok(tag_names) => Ok(tag_names),
                     Err(error) => {
-                        log::debug!("failed to get commit tag names: {error:#}");
+                        log::warn!("failed to get commit tag names: {error:#}");
                         Ok(HashMap::default())
                     }
                 }
