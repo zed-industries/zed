@@ -2407,7 +2407,7 @@
       },
     },
     "SystemVerilog": {
-      "language_servers": ["!slang", "..."],
+      "language_servers": ["slang"],
       "use_on_type_format": false,
     },
     "Vue.js": {
