@@ -405,6 +405,8 @@ impl BlameRenderer for GitBlameRenderer {
                                     .w_full()
                                     .justify_between()
                                     .pt_1()
+                                    .gap_1()
+                                    .flex_wrap()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(absolute_timestamp)
@@ -412,6 +414,7 @@ impl BlameRenderer for GitBlameRenderer {
                                         h_flex()
                                             .gap_1()
                                             .min_w_0()
+                                            .children(commit_tag_chips(&tag_names))
                                             .when_some(pull_request, |this, pr| {
                                                 this.child(
                                                     Button::new(
@@ -430,10 +433,6 @@ impl BlameRenderer for GitBlameRenderer {
                                                     }),
                                                 )
                                                 .child(Divider::vertical())
-                                            })
-                                            .children(commit_tag_chips(&tag_names))
-                                            .when(!tag_names.is_empty(), |this| {
-                                                this.child(Divider::vertical())
                                             })
                                             .child(
                                                 Button::new(

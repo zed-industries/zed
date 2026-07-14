@@ -17,8 +17,6 @@ use time::{OffsetDateTime, UtcOffset};
 use ui::{Avatar, Chip, CopyButton, Divider, Tooltip, prelude::*, tooltip_container};
 use workspace::Workspace;
 
-const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 3;
-
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
     pub sha: SharedString,
@@ -29,38 +27,47 @@ pub struct CommitDetails {
     pub tag_names: Vec<SharedString>,
 }
 
+const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 2;
+
 pub(crate) fn commit_tag_chips(tag_names: &[SharedString]) -> Option<impl IntoElement> {
     if tag_names.is_empty() {
         return None;
     }
 
-    let hidden_tag_count = tag_names.len().saturating_sub(MAX_COMMIT_TOOLTIP_TAG_CHIPS);
+    let (visible_tags, hidden_tags) =
+        tag_names.split_at(tag_names.len().min(MAX_COMMIT_TOOLTIP_TAG_CHIPS));
+
     Some(
-        h_flex()
-            .gap_1()
-            .min_w_0()
-            .children(
-                tag_names
-                    .iter()
-                    .take(MAX_COMMIT_TOOLTIP_TAG_CHIPS)
-                    .cloned()
-                    .map(|tag_name| {
-                        Chip::new(tag_name.clone())
-                            .truncate()
-                            .tooltip(Tooltip::text(tag_name))
-                    }),
-            )
-            .when(hidden_tag_count > 0, |this| {
-                let hidden_tag_names = tag_names[MAX_COMMIT_TOOLTIP_TAG_CHIPS..]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                this.child(
-                    Chip::new(format!("+{hidden_tag_count}"))
-                        .tooltip(Tooltip::text(hidden_tag_names)),
+        h_flex().max_w(relative(0.6)).gap_1().child(
+            h_flex()
+                .gap_1()
+                .min_w_0()
+                .children(
+                    visible_tags
+                        .iter()
+                        .map(|tag_name| Chip::new(tag_name.clone()).truncate()),
                 )
-            }),
+                .when(!hidden_tags.is_empty(), |this| {
+                    let hidden_tags = hidden_tags.to_vec();
+                    this.child(Chip::new(format!("+{}", hidden_tags.len())).tooltip(
+                        Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .children(itertools::Itertools::intersperse_with(
+                                    hidden_tags.iter().map(|tag_name| {
+                                        Label::new(tag_name.clone())
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .into_any_element()
+                                    }),
+                                    || Divider::horizontal().into_any_element(),
+                                ))
+                                .into_any_element()
+                        }),
+                    ))
+                })
+                .child(Divider::vertical()),
+        ),
     )
 }
 
@@ -377,6 +384,8 @@ impl Render for CommitTooltip {
                                 .w_full()
                                 .justify_between()
                                 .pt_1()
+                                .gap_1()
+                                .flex_wrap()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(absolute_timestamp)
@@ -384,6 +393,7 @@ impl Render for CommitTooltip {
                                     h_flex()
                                         .gap_1()
                                         .min_w_0()
+                                        .children(commit_tag_chips(&tag_names))
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(
@@ -402,10 +412,6 @@ impl Render for CommitTooltip {
                                                 }),
                                             )
                                             .child(Divider::vertical())
-                                        })
-                                        .children(commit_tag_chips(&tag_names))
-                                        .when(!tag_names.is_empty(), |this| {
-                                            this.child(Divider::vertical())
                                         })
                                         .child(
                                             Button::new(
