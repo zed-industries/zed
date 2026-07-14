@@ -159,7 +159,7 @@ pub struct SettledEditPredictionSampleData {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub buffer_diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub editable_context: Vec<zeta_prompt::RelatedFile>,
+    pub editable_context: Vec<zeta_prompt::ContextFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub future_edit_history_events: Vec<Arc<zeta_prompt::Event>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -122,6 +122,33 @@ pub fn compute_syntax_ranges(
     ranges
 }
 
+pub fn compute_syntax_row_ranges(
+    snapshot: &BufferSnapshot,
+    cursor_offset: usize,
+) -> Vec<Range<u32>> {
+    let cursor_point = cursor_offset.to_point(snapshot);
+    let range = cursor_point..cursor_point;
+    let mut current = snapshot.syntax_ancestor(range);
+    let mut ranges = Vec::new();
+    let mut last_range: Option<(u32, u32)> = None;
+
+    while let Some(node) = current.take() {
+        let start = node.start_byte().to_point(snapshot).row;
+        let end = node.end_byte().to_point(snapshot).row;
+        let key = (start, end);
+
+        current = node.parent();
+
+        if last_range == Some(key) {
+            continue;
+        }
+        last_range = Some(key);
+        ranges.push(start..end);
+    }
+
+    ranges
+}
+
 /// Expands context by first trying to reach syntax boundaries,
 /// then expanding line-wise only if no syntax expansion occurred.
 pub fn expand_context_syntactically_then_linewise(
@@ -518,11 +545,23 @@ mod tests {
                     .collect();
                 let syntax_ranges =
                     compute_syntax_ranges(&snapshot, cursor_offset, &excerpt_offset_range);
+                let syntax_row_ranges = syntax_ranges
+                    .iter()
+                    .map(|range| {
+                        (excerpt_offset_range.start + range.start)
+                            .to_point(&snapshot)
+                            .row
+                            ..(excerpt_offset_range.start + range.end)
+                                .to_point(&snapshot)
+                                .row
+                    })
+                    .collect::<Vec<_>>();
 
                 let (actual_editable, actual_context) = compute_editable_and_context_ranges(
                     &excerpt_text,
                     cursor_offset_in_excerpt,
-                    &syntax_ranges,
+                    &syntax_row_ranges,
+                    excerpt_offset_range.start.to_point(&snapshot).row,
                     test_case.editable_token_limit,
                     test_case.context_token_limit,
                 );

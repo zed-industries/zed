@@ -74,7 +74,15 @@ fn run() -> Result<(), String> {
 fn get_context_excerpts(example: &JsonExample) -> Vec<Excerpt> {
     let mut context = vec![get_cursor_excerpt(example)];
 
-    if let Some(related) = &example.prompt_inputs.related_files {
+    if let Some(related) = &example.prompt_inputs.editable_context {
+        context.extend(related.iter().flat_map(|file| {
+            file.chunks.iter().map(|chunk| Excerpt {
+                path: file.path.clone(),
+                row_range: chunk.row_range.clone(),
+                content: chunk.text.clone(),
+            })
+        }));
+    } else if let Some(related) = &example.prompt_inputs.related_files {
         context.extend(related.iter().flat_map(|file| {
             file.excerpts.iter().map(|excerpt| Excerpt {
                 path: file.path.clone(),
@@ -468,7 +476,23 @@ struct JsonExample {
 struct PromptInputs {
     cursor_excerpt: String,
     excerpt_start_row: u32,
+    #[serde(default)]
+    pub editable_context: Option<Vec<ContextFile>>,
+    #[serde(default)]
     pub related_files: Option<Vec<RelatedFile>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct ContextFile {
+    pub path: String,
+    pub max_row: u32,
+    pub chunks: Vec<Chunk>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct Chunk {
+    pub row_range: std::ops::Range<u32>,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Deserialize)]

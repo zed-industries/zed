@@ -8,7 +8,6 @@ use crate::{
     progress::{ExampleProgress, Step},
 };
 use anyhow::Context as _;
-use edit_prediction_context::limit_retrieved_context_to_bytes;
 use edit_prediction_metrics::{
     ActualPredictionCursor, Excerpt, PredictionReversalContext, PredictionScoringInput,
 };
@@ -221,7 +220,7 @@ fn context_excerpts(
     if let Some(related_files) = &prompt_inputs.related_files {
         let related_files = filtered_related_files(related_files, context_source_filter);
         let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
-            limit_retrieved_context_to_bytes(&related_files, max_bytes)
+            limit_related_files_to_bytes(&related_files, max_bytes)
         } else {
             related_files
         };
@@ -286,7 +285,7 @@ fn retrieved_context_bytes(
     let related_files = example.prompt_inputs.as_ref()?.related_files.as_ref()?;
     let related_files = filtered_related_files(related_files, context_source_filter);
     let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
-        limit_retrieved_context_to_bytes(&related_files, max_bytes)
+        limit_related_files_to_bytes(&related_files, max_bytes)
     } else {
         related_files
     };
@@ -297,6 +296,58 @@ fn retrieved_context_bytes(
             .map(|excerpt| excerpt.text.len())
             .sum::<usize>(),
     )
+}
+
+fn limit_related_files_to_bytes(
+    related_files: &[RelatedFile],
+    max_bytes: usize,
+) -> Vec<RelatedFile> {
+    let mut candidates = related_files
+        .iter()
+        .enumerate()
+        .flat_map(|(file_index, file)| {
+            file.excerpts
+                .iter()
+                .enumerate()
+                .map(move |(excerpt_index, excerpt)| (excerpt.order, file_index, excerpt_index))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+
+    let mut selected = related_files
+        .iter()
+        .map(|file| vec![false; file.excerpts.len()])
+        .collect::<Vec<_>>();
+    let mut used_bytes = 0usize;
+    for (_, file_index, excerpt_index) in candidates {
+        let excerpt = &related_files[file_index].excerpts[excerpt_index];
+        if used_bytes.saturating_add(excerpt.text.len()) > max_bytes {
+            continue;
+        }
+        used_bytes += excerpt.text.len();
+        selected[file_index][excerpt_index] = true;
+    }
+
+    related_files
+        .iter()
+        .enumerate()
+        .filter_map(|(file_index, file)| {
+            let excerpts = file
+                .excerpts
+                .iter()
+                .enumerate()
+                .filter_map(|(excerpt_index, excerpt)| {
+                    selected[file_index][excerpt_index].then(|| excerpt.clone())
+                })
+                .collect::<Vec<_>>();
+            (!excerpts.is_empty()).then(|| RelatedFile {
+                path: file.path.clone(),
+                max_row: file.max_row,
+                excerpts,
+                in_open_source_repo: file.in_open_source_repo,
+            })
+        })
+        .collect()
 }
 
 pub fn print_report(

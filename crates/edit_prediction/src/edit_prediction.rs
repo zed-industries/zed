@@ -24,7 +24,9 @@ use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
-use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
+use edit_prediction_context::{
+    ContextFile, RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile,
+};
 use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
@@ -198,7 +200,7 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
-    editable_context: Option<Task<anyhow::Result<Vec<RelatedFile>>>>,
+    editable_context: Option<Task<anyhow::Result<Vec<ContextFile>>>>,
     mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
@@ -3109,7 +3111,7 @@ impl EditPredictionStore {
         oracle_targets: Vec<edit_prediction_context::OracleTarget>,
         context_sources: Vec<ContextSource>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
+    ) -> Task<anyhow::Result<Vec<ContextFile>>> {
         use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
 
         let buffers_by_id = project.read(cx).opened_buffers(cx).into_iter().fold(
