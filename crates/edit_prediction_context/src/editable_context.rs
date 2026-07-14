@@ -9,7 +9,10 @@ use std::{
 };
 use text::Anchor;
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile, multi_region::is_good_block_start};
+use zeta_prompt::{
+    Chunk, ContextFile, ContextSource, Retrieval, default_retrieval_policy_key,
+    multi_region::is_good_block_start,
+};
 
 use crate::{
     bm25_context::{Bm25ContextCandidate, collect_bm25_context},
@@ -27,12 +30,7 @@ const ORACLE_SNIPPET_MAX_CONTEXT_LINE_COUNT: u32 = 40;
 /// How far excerpt boundaries may be nudged to land on a natural block
 /// boundary, mirroring `zeta_prompt::multi_region`'s marker placement.
 const BOUNDARY_SNAP_LINE_COUNT: u32 = 5;
-/// Maximum number of rows between two excerpts of the same buffer that get
-/// bridged into one contiguous excerpt instead of rendering an elision
-/// marker between them.
-const BRIDGED_GAP_LINE_COUNT: u32 = 3;
-
-type RangesByBuffer = HashMap<EntityId, (Entity<Buffer>, Vec<EditableContextRange>)>;
+type RangesByBuffer = HashMap<EntityId, (Entity<Buffer>, Vec<PendingRetrieval>)>;
 
 #[derive(Clone)]
 pub struct EditHistoryContextEntry {
@@ -50,16 +48,18 @@ pub struct OracleTarget {
     pub row_ranges: Vec<Range<u32>>,
 }
 
-struct EditableContextRange {
+struct PendingRetrieval {
     range: Range<Anchor>,
-    order: usize,
-    context_source: ContextSource,
+    rank: usize,
+    source: ContextSource,
+    score: Option<f32>,
 }
 
-struct ResolvedEditableContextRange {
+struct ResolvedPendingRetrieval {
     range: Range<Point>,
-    order: usize,
-    context_source: ContextSource,
+    rank: usize,
+    source: ContextSource,
+    score: Option<f32>,
 }
 
 pub async fn collect_editable_context(
@@ -70,7 +70,7 @@ pub async fn collect_editable_context(
     oracle_targets: Vec<OracleTarget>,
     context_sources: Vec<ContextSource>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<Vec<RelatedFile>> {
+) -> anyhow::Result<Vec<ContextFile>> {
     let mut ranges_by_buffer = RangesByBuffer::default();
 
     if context_sources.contains(&ContextSource::CursorExcerpt) {
@@ -127,122 +127,122 @@ pub async fn collect_editable_context(
 
     Ok(cx.update(|cx| {
         let project = project.read(cx);
-        let mut related_files = ranges_by_buffer
+        let mut context_files = ranges_by_buffer
             .into_values()
-            .filter_map(|(buffer, ranges)| related_file_for_ranges(&project, &buffer, ranges, cx))
+            .filter_map(|(buffer, ranges)| context_file_for_ranges(&project, &buffer, ranges, cx))
             .collect::<Vec<_>>();
-        related_files.sort_by_key(|file| {
-            file.excerpts
+        context_files.sort_by_key(|file| {
+            file.retrievals
                 .iter()
-                .map(|excerpt| excerpt.order)
+                .enumerate()
+                .map(|(index, retrieval)| default_retrieval_policy_key(0, index, retrieval))
                 .min()
-                .unwrap_or(usize::MAX)
+                .unwrap_or((usize::MAX, usize::MAX, usize::MAX, usize::MAX))
         });
-        related_files
+        context_files
     }))
 }
 
 pub fn limit_retrieved_context_to_bytes(
-    related_files: &[RelatedFile],
+    context_files: &[ContextFile],
     max_bytes: usize,
-) -> Vec<RelatedFile> {
-    struct ExcerptCandidate {
+) -> Vec<ContextFile> {
+    struct RetrievalCandidate {
         file_index: usize,
-        excerpt_index: usize,
-        order: usize,
+        retrieval_index: usize,
     }
 
-    let mut candidates = related_files
+    let mut candidates = context_files
         .iter()
         .enumerate()
         .flat_map(|(file_index, file)| {
-            file.excerpts
+            file.retrievals
                 .iter()
                 .enumerate()
-                .map(move |(excerpt_index, excerpt)| ExcerptCandidate {
+                .map(move |(retrieval_index, _)| RetrievalCandidate {
                     file_index,
-                    excerpt_index,
-                    order: excerpt.order,
+                    retrieval_index,
                 })
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|candidate| {
-        (
-            candidate.order,
-            candidate.file_index,
-            candidate.excerpt_index,
-        )
+        let retrieval = &context_files[candidate.file_index].retrievals[candidate.retrieval_index];
+        default_retrieval_policy_key(candidate.file_index, candidate.retrieval_index, retrieval)
     });
 
-    let mut selected_excerpts = related_files
-        .iter()
-        .map(|file| vec![false; file.excerpts.len()])
-        .collect::<Vec<_>>();
-    let mut covered_ranges_by_file = vec![Vec::<Range<u32>>::new(); related_files.len()];
+    let mut covered_ranges_by_file = vec![Vec::<Range<u32>>::new(); context_files.len()];
     let mut selected_bytes: usize = 0;
 
     for candidate in candidates {
-        let file = &related_files[candidate.file_index];
-        let excerpt = &file.excerpts[candidate.excerpt_index];
-        let added_bytes =
-            uncovered_excerpt_bytes(excerpt, &covered_ranges_by_file[candidate.file_index]);
+        let file = &context_files[candidate.file_index];
+        let retrieval = &file.retrievals[candidate.retrieval_index];
+        let added_bytes = uncovered_retrieval_bytes(
+            file,
+            retrieval,
+            &covered_ranges_by_file[candidate.file_index],
+        );
         if added_bytes == 0 || selected_bytes.saturating_add(added_bytes) > max_bytes {
             continue;
         }
 
         selected_bytes += added_bytes;
-        selected_excerpts[candidate.file_index][candidate.excerpt_index] = true;
-        push_covered_range(
+        push_merged_row_range(
             &mut covered_ranges_by_file[candidate.file_index],
-            excerpt.row_range.clone(),
+            retrieval.row_range.clone(),
         );
     }
 
-    related_files
+    context_files
         .iter()
         .enumerate()
         .filter_map(|(file_index, file)| {
-            let excerpts = file
-                .excerpts
-                .iter()
-                .enumerate()
-                .filter_map(|(excerpt_index, excerpt)| {
-                    selected_excerpts[file_index][excerpt_index].then(|| excerpt.clone())
-                })
-                .collect::<Vec<_>>();
-            if excerpts.is_empty() {
+            let chunks = chunks_for_row_ranges(file, &covered_ranges_by_file[file_index]);
+            if chunks.is_empty() {
                 return None;
             }
 
-            Some(RelatedFile {
+            Some(ContextFile {
                 path: file.path.clone(),
                 max_row: file.max_row,
-                excerpts,
-                in_open_source_repo: file.in_open_source_repo,
+                chunks,
+                retrievals: file.retrievals.clone(),
+                syntax_ranges: file.syntax_ranges.clone(),
             })
         })
         .collect()
 }
 
-fn uncovered_excerpt_bytes(excerpt: &RelatedExcerpt, covered_ranges: &[Range<u32>]) -> usize {
+fn uncovered_retrieval_bytes(
+    file: &ContextFile,
+    retrieval: &Retrieval,
+    covered_ranges: &[Range<u32>],
+) -> usize {
     let mut bytes = 0;
 
-    for (row, line) in (excerpt.row_range.start..).zip(excerpt.text.split_inclusive('\n')) {
-        if row >= excerpt.row_range.end {
-            break;
+    for chunk in &file.chunks {
+        let start = retrieval.row_range.start.max(chunk.row_range.start);
+        let end = retrieval.row_range.end.min(chunk.row_range.end);
+        if start >= end {
+            continue;
         }
-        if !covered_ranges
-            .iter()
-            .any(|covered_range| covered_range.contains(&row))
-        {
-            bytes += line.len();
+        for (row, line) in (chunk.row_range.start..).zip(chunk.text.split_inclusive('\n')) {
+            if row >= end {
+                break;
+            }
+            if row >= start
+                && !covered_ranges
+                    .iter()
+                    .any(|covered_range| covered_range.contains(&row))
+            {
+                bytes += line.len();
+            }
         }
     }
 
     bytes
 }
 
-fn push_covered_range(covered_ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
+fn push_merged_row_range(covered_ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
     covered_ranges.push(range);
     covered_ranges.sort_by_key(|range| (range.start, range.end));
 
@@ -282,6 +282,7 @@ fn collect_cursor_excerpt_context(
         cursor_range,
         0,
         ContextSource::CursorExcerpt,
+        None,
     );
 }
 
@@ -317,8 +318,9 @@ fn collect_edit_history_context(
             ranges_by_buffer,
             entry.buffer.clone(),
             edit_history_range,
-            index + 1,
+            index,
             ContextSource::EditHistory,
+            None,
         );
     }
 }
@@ -328,7 +330,6 @@ fn collect_edit_history_file_context(
     edit_history: &[EditHistoryContextEntry],
     cx: &mut AsyncApp,
 ) {
-    let next_order = next_context_order(ranges_by_buffer);
     let mut seen_buffers = HashSet::default();
     let mut index = 0;
 
@@ -340,7 +341,7 @@ fn collect_edit_history_file_context(
         collect_full_buffer_context(
             ranges_by_buffer,
             entry.buffer.clone(),
-            next_order + index,
+            index,
             ContextSource::EditHistoryFile,
             cx,
         );
@@ -356,13 +357,11 @@ async fn collect_bm25_context_ranges(
     edit_history: &[EditHistoryContextEntry],
     cx: &mut AsyncApp,
 ) {
-    let next_order = next_context_order(ranges_by_buffer);
     let candidates = collect_bm25_context(
         project.clone(),
         active_buffer,
         cursor_position,
         edit_history,
-        next_order,
         cx,
     )
     .await;
@@ -406,8 +405,9 @@ async fn collect_bm25_candidate_context(
         ranges_by_buffer,
         buffer,
         range,
-        candidate.order,
+        candidate.rank,
         ContextSource::Bm25,
+        candidate.score,
     );
 }
 
@@ -436,7 +436,6 @@ async fn collect_oracle_file_context(
     oracle_targets: &[OracleTarget],
     cx: &mut AsyncApp,
 ) {
-    let next_order = next_context_order(ranges_by_buffer);
     let mut seen_buffers = HashSet::default();
     let mut index = 0;
 
@@ -463,7 +462,7 @@ async fn collect_oracle_file_context(
         collect_full_buffer_context(
             ranges_by_buffer,
             buffer,
-            next_order + index,
+            index,
             ContextSource::OracleFile,
             cx,
         );
@@ -477,7 +476,6 @@ async fn collect_oracle_snippet_context(
     oracle_targets: &[OracleTarget],
     cx: &mut AsyncApp,
 ) {
-    let next_order = next_context_order(ranges_by_buffer);
     let mut index = 0;
 
     for target in oracle_targets {
@@ -530,8 +528,9 @@ async fn collect_oracle_snippet_context(
                 ranges_by_buffer,
                 buffer.clone(),
                 range,
-                next_order + index,
+                index,
                 ContextSource::OracleSnippet,
+                None,
             );
             index += 1;
         }
@@ -584,12 +583,12 @@ async fn open_buffer_for_path(
 fn collect_full_buffer_context(
     ranges_by_buffer: &mut RangesByBuffer,
     buffer: Entity<Buffer>,
-    order: usize,
-    context_source: ContextSource,
+    rank: usize,
+    source: ContextSource,
     cx: &mut AsyncApp,
 ) {
     let range = buffer.read_with(cx, |buffer, _cx| full_file_anchor_range(&buffer.snapshot()));
-    push_context_range(ranges_by_buffer, buffer, range, order, context_source);
+    push_context_range(ranges_by_buffer, buffer, range, rank, source, None);
 }
 
 fn full_file_anchor_range(snapshot: &BufferSnapshot) -> Range<Anchor> {
@@ -597,14 +596,6 @@ fn full_file_anchor_range(snapshot: &BufferSnapshot) -> Range<Anchor> {
     let max_point = snapshot.max_point();
     let end = snapshot.anchor_after(max_point);
     start..end
-}
-
-fn next_context_order(ranges_by_buffer: &RangesByBuffer) -> usize {
-    ranges_by_buffer
-        .values()
-        .flat_map(|(_, ranges)| ranges.iter().map(|range| range.order))
-        .max()
-        .map_or(0, |order| order + 1)
 }
 
 async fn collect_git_log_context(
@@ -645,8 +636,6 @@ async fn collect_git_log_context(
         }
     };
 
-    let next_order = next_context_order(ranges_by_buffer);
-
     for (index, related_path) in index
         .get_related(active_path.as_std_path(), GIT_LOG_CONTEXT_FILE_COUNT)
         .into_iter()
@@ -681,8 +670,9 @@ async fn collect_git_log_context(
             ranges_by_buffer,
             buffer,
             range,
-            next_order + index,
+            index,
             ContextSource::GitLog,
+            None,
         );
     }
 }
@@ -768,26 +758,28 @@ fn push_context_range(
     ranges_by_buffer: &mut RangesByBuffer,
     buffer: Entity<Buffer>,
     range: Range<Anchor>,
-    order: usize,
-    context_source: ContextSource,
+    rank: usize,
+    source: ContextSource,
+    score: Option<f32>,
 ) {
     ranges_by_buffer
         .entry(buffer.entity_id())
         .or_insert_with(|| (buffer.clone(), Vec::new()))
         .1
-        .push(EditableContextRange {
+        .push(PendingRetrieval {
             range,
-            order,
-            context_source,
+            rank,
+            source,
+            score,
         });
 }
 
-fn related_file_for_ranges(
+fn context_file_for_ranges(
     project: &Project,
     buffer: &Entity<Buffer>,
-    ranges: Vec<EditableContextRange>,
+    ranges: Vec<PendingRetrieval>,
     cx: &App,
-) -> Option<RelatedFile> {
+) -> Option<ContextFile> {
     let buffer = buffer.read(cx);
     let snapshot = buffer.snapshot();
     let file = snapshot.file()?;
@@ -799,34 +791,91 @@ fn related_file_for_ranges(
     ))
     .into();
 
-    let mut ranges = resolved_context_ranges(ranges, &snapshot);
-    split_overlapping_ranges(&mut ranges);
-
-    let excerpts = ranges
+    let retrievals = resolved_context_ranges(ranges, &snapshot)
         .into_iter()
-        .map(|range| RelatedExcerpt {
-            row_range: range.range.start.row..range.range.end.row,
-            text: snapshot
-                .text_for_range(range.range)
-                .collect::<String>()
-                .into(),
-            order: range.order,
-            context_source: range.context_source,
+        .filter_map(|range| {
+            let row_range = range.range.start.row..range.range.end.row;
+            (row_range.start < row_range.end).then(|| Retrieval {
+                source: range.source,
+                row_range,
+                rank: range.rank,
+                score: range.score,
+            })
         })
         .collect::<Vec<_>>();
+    if retrievals.is_empty() {
+        return None;
+    }
 
-    Some(RelatedFile {
+    let mut chunk_row_ranges = Vec::new();
+    for retrieval in &retrievals {
+        push_merged_row_range(&mut chunk_row_ranges, retrieval.row_range.clone());
+    }
+    let chunks = chunks_for_snapshot_ranges(&snapshot, &chunk_row_ranges);
+
+    Some(ContextFile {
         path,
         max_row: snapshot.max_point().row,
-        excerpts,
-        in_open_source_repo: false,
+        chunks,
+        retrievals,
+        syntax_ranges: Vec::new(),
     })
 }
 
+fn chunks_for_row_ranges(file: &ContextFile, row_ranges: &[Range<u32>]) -> Vec<Chunk> {
+    row_ranges
+        .iter()
+        .filter_map(|row_range| {
+            let mut text = String::new();
+            for chunk in &file.chunks {
+                let start = row_range.start.max(chunk.row_range.start);
+                let end = row_range.end.min(chunk.row_range.end);
+                if start >= end {
+                    continue;
+                }
+                for (row, line) in (chunk.row_range.start..).zip(chunk.text.split_inclusive('\n')) {
+                    if row >= end {
+                        break;
+                    }
+                    if row >= start {
+                        text.push_str(line);
+                    }
+                }
+            }
+            (!text.is_empty()).then(|| Chunk {
+                row_range: row_range.clone(),
+                text: text.into(),
+            })
+        })
+        .collect()
+}
+
+fn chunks_for_snapshot_ranges(snapshot: &BufferSnapshot, row_ranges: &[Range<u32>]) -> Vec<Chunk> {
+    row_ranges
+        .iter()
+        .filter_map(|row_range| {
+            if row_range.start >= row_range.end {
+                return None;
+            }
+            let start = Point::new(row_range.start, 0);
+            let end = if row_range.end > snapshot.max_point().row {
+                snapshot.max_point()
+            } else {
+                Point::new(row_range.end, 0)
+            };
+            let text = snapshot.text_for_range(start..end).collect::<String>();
+            (!text.is_empty()).then(|| Chunk {
+                row_range: row_range.clone(),
+                text: text.into(),
+            })
+        })
+        .collect()
+}
+
 fn resolved_context_ranges(
-    ranges: Vec<EditableContextRange>,
+    ranges: Vec<PendingRetrieval>,
     snapshot: &BufferSnapshot,
-) -> Vec<ResolvedEditableContextRange> {
+) -> Vec<ResolvedPendingRetrieval> {
     ranges
         .into_iter()
         .filter_map(|range| {
@@ -836,155 +885,14 @@ fn resolved_context_ranges(
                 return None;
             }
 
-            Some(ResolvedEditableContextRange {
+            Some(ResolvedPendingRetrieval {
                 range: start..end,
-                order: range.order,
-                context_source: range.context_source,
+                rank: range.rank,
+                source: range.source,
+                score: range.score,
             })
         })
         .collect()
-}
-
-/// Split overlapping ranges into disjoint segments instead of merging them
-/// into one range. Each segment keeps the minimum order and highest-priority
-/// source among the ranges covering it, and adjacent segments with equal
-/// order are coalesced. This preserves priority granularity: a small
-/// high-priority snippet inside a large low-priority range remains its own
-/// excerpt, so byte-budget selection can retain it even when the surrounding
-/// range doesn't fit. The resulting segments are disjoint and sorted by
-/// position.
-///
-/// Ranges separated by at most `BRIDGED_GAP_LINE_COUNT` rows are bridged:
-/// the small gap is attached to the preceding segment so the excerpts render
-/// as one contiguous block instead of being separated by an elision marker.
-fn split_overlapping_ranges(ranges: &mut Vec<ResolvedEditableContextRange>) {
-    ranges.sort_by_key(|range| (range.range.start, range.range.end));
-    let mut output: Vec<ResolvedEditableContextRange> = Vec::new();
-    let mut cluster: Vec<ResolvedEditableContextRange> = Vec::new();
-    let mut cluster_end = Point::zero();
-
-    for range in ranges.drain(..) {
-        let bridge_limit_row = row_aligned_end(cluster_end)
-            .row
-            .saturating_add(BRIDGED_GAP_LINE_COUNT);
-        if cluster.is_empty() || range.range.start.row <= bridge_limit_row {
-            cluster_end = cluster_end.max(range.range.end);
-            cluster.push(range);
-        } else {
-            split_cluster(std::mem::take(&mut cluster), cluster_end, &mut output);
-            cluster_end = range.range.end;
-            cluster.push(range);
-        }
-    }
-    if !cluster.is_empty() {
-        split_cluster(cluster, cluster_end, &mut output);
-    }
-
-    *ranges = output;
-}
-
-fn split_cluster(
-    cluster: Vec<ResolvedEditableContextRange>,
-    cluster_end: Point,
-    output: &mut Vec<ResolvedEditableContextRange>,
-) {
-    if cluster.len() == 1 {
-        output.extend(cluster);
-        return;
-    }
-
-    let cluster_start = cluster[0].range.start;
-    let mut boundaries = Vec::with_capacity(cluster.len() * 2 + 1);
-    boundaries.push(cluster_start);
-    for range in &cluster {
-        boundaries.push(range.range.start);
-        boundaries.push(row_aligned_end(range.range.end));
-    }
-    boundaries.retain(|boundary| *boundary >= cluster_start && *boundary < cluster_end);
-    boundaries.sort();
-    boundaries.dedup();
-    boundaries.push(cluster_end);
-
-    for window in boundaries.windows(2) {
-        let segment = window[0]..window[1];
-        // The segment is attributed to the lowest-order covering range
-        // (breaking ties by source priority), so that its source label is
-        // consistent with the order that drives budget selection.
-        let mut order_and_source: Option<(usize, ContextSource)> = None;
-        for range in &cluster {
-            if range.range.start <= segment.start && row_aligned_end(range.range.end) >= segment.end
-            {
-                let candidate = (range.order, range.context_source);
-                if order_and_source.is_none_or(|(order, context_source)| {
-                    (candidate.0, context_source_order(candidate.1))
-                        < (order, context_source_order(context_source))
-                }) {
-                    order_and_source = Some(candidate);
-                }
-            }
-        }
-        let Some((order, context_source)) = order_and_source else {
-            // A bridged gap between two nearby ranges: no range covers it, so
-            // attach it to the preceding segment to form contiguous output.
-            if let Some(last) = output.last_mut()
-                && last.range.end == segment.start
-            {
-                last.range.end = segment.end;
-            }
-            continue;
-        };
-
-        if let Some(last) = output.last_mut()
-            && last.range.end == segment.start
-            && last.order == order
-        {
-            last.range.end = segment.end;
-            if context_source_order(context_source) < context_source_order(last.context_source) {
-                last.context_source = context_source;
-            }
-            continue;
-        }
-
-        output.push(ResolvedEditableContextRange {
-            range: segment,
-            order,
-            context_source,
-        });
-    }
-}
-
-/// Context ranges always cover whole lines: their ends sit either at a line
-/// start (column 0) or at the end of a line's content. Cutting a segment at
-/// the end of a line's content would attribute the trailing newline to the
-/// next segment, so nudge such ends forward to the next line start.
-fn row_aligned_end(point: Point) -> Point {
-    if point.column > 0 {
-        Point::new(point.row + 1, 0)
-    } else {
-        point
-    }
-}
-
-#[allow(dead_code)]
-fn push_context_source(context_sources: &mut Vec<ContextSource>, context_source: ContextSource) {
-    if !context_sources.contains(&context_source) {
-        context_sources.push(context_source);
-        context_sources.sort_by_key(|context_source| context_source_order(*context_source));
-    }
-}
-
-fn context_source_order(context_source: ContextSource) -> usize {
-    match context_source {
-        ContextSource::Lsp => 0,
-        ContextSource::CursorExcerpt => 1,
-        ContextSource::CurrentFile => 2,
-        ContextSource::EditHistory => 3,
-        ContextSource::EditHistoryFile => 4,
-        ContextSource::GitLog => 5,
-        ContextSource::Bm25 => 6,
-        ContextSource::OracleSnippet => 7,
-        ContextSource::OracleFile => 8,
-    }
 }
 
 #[cfg(test)]
@@ -999,153 +907,6 @@ mod tests {
         )
         .snapshot()
         .clone()
-    }
-
-    fn resolved_range(
-        start_row: u32,
-        end_row: u32,
-        order: usize,
-        context_source: ContextSource,
-    ) -> ResolvedEditableContextRange {
-        ResolvedEditableContextRange {
-            range: Point::new(start_row, 0)..Point::new(end_row, 0),
-            order,
-            context_source,
-        }
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_coalesces_equal_orders() {
-        // A full-file current-file range plus edit-history windows inside it:
-        // every segment is covered by the order-0 full-file range, so they
-        // coalesce back into a single range with the highest-priority source.
-        let mut ranges = vec![
-            resolved_range(6, 46, 1, ContextSource::EditHistory),
-            resolved_range(0, 281, 0, ContextSource::CurrentFile),
-            resolved_range(17, 79, 2, ContextSource::EditHistory),
-            resolved_range(85, 125, 3, ContextSource::EditHistory),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(281, 0));
-        assert_eq!(ranges[0].order, 0);
-        assert_eq!(ranges[0].context_source, ContextSource::CurrentFile);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_keeps_disjoint_ranges() {
-        let mut ranges = vec![
-            resolved_range(50, 60, 1, ContextSource::EditHistory),
-            resolved_range(0, 10, 0, ContextSource::CursorExcerpt),
-            resolved_range(5, 12, 2, ContextSource::EditHistory),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 3);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(10, 0));
-        assert_eq!(ranges[0].order, 0);
-        assert_eq!(ranges[0].context_source, ContextSource::CursorExcerpt);
-        assert_eq!(ranges[1].range, Point::new(10, 0)..Point::new(12, 0));
-        assert_eq!(ranges[1].order, 2);
-        assert_eq!(ranges[1].context_source, ContextSource::EditHistory);
-        assert_eq!(ranges[2].range, Point::new(50, 0)..Point::new(60, 0));
-        assert_eq!(ranges[2].order, 1);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_keeps_adjacent_ranges_with_distinct_orders() {
-        let mut ranges = vec![
-            resolved_range(0, 10, 0, ContextSource::EditHistory),
-            resolved_range(10, 20, 1, ContextSource::EditHistory),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(10, 0));
-        assert_eq!(ranges[0].order, 0);
-        assert_eq!(ranges[1].range, Point::new(10, 0)..Point::new(20, 0));
-        assert_eq!(ranges[1].order, 1);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_preserves_high_priority_snippet_inside_large_range() {
-        // A small high-priority snippet inside a large low-priority range
-        // stays its own segment, so byte-budget selection can keep it even
-        // when the surrounding range doesn't fit.
-        let mut ranges = vec![
-            resolved_range(0, 200, 8, ContextSource::GitLog),
-            resolved_range(50, 60, 2, ContextSource::OracleSnippet),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 3);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(50, 0));
-        assert_eq!(ranges[0].order, 8);
-        assert_eq!(ranges[0].context_source, ContextSource::GitLog);
-        assert_eq!(ranges[1].range, Point::new(50, 0)..Point::new(60, 0));
-        assert_eq!(ranges[1].order, 2);
-        assert_eq!(ranges[1].context_source, ContextSource::OracleSnippet);
-        assert_eq!(ranges[2].range, Point::new(60, 0)..Point::new(200, 0));
-        assert_eq!(ranges[2].order, 8);
-        assert_eq!(ranges[2].context_source, ContextSource::GitLog);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_aligns_mid_line_ends_to_row_starts() {
-        // Ranges ending at a line's content end (column > 0) are treated as
-        // covering through that whole line, so equal-order overlapping ranges
-        // still coalesce into one segment.
-        let mut ranges = vec![
-            ResolvedEditableContextRange {
-                range: Point::new(0, 0)..Point::new(10, 5),
-                order: 1,
-                context_source: ContextSource::EditHistory,
-            },
-            resolved_range(5, 20, 1, ContextSource::EditHistory),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(20, 0));
-        assert_eq!(ranges[0].order, 1);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_bridges_small_gaps() {
-        // Ranges separated by a few rows are bridged: the gap is attached to
-        // the preceding segment, producing contiguous excerpts.
-        let mut ranges = vec![
-            resolved_range(0, 10, 0, ContextSource::EditHistory),
-            resolved_range(13, 20, 1, ContextSource::Bm25),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(13, 0));
-        assert_eq!(ranges[0].order, 0);
-        assert_eq!(ranges[0].context_source, ContextSource::EditHistory);
-        assert_eq!(ranges[1].range, Point::new(13, 0)..Point::new(20, 0));
-        assert_eq!(ranges[1].order, 1);
-        assert_eq!(ranges[1].context_source, ContextSource::Bm25);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_bridged_equal_orders_coalesce() {
-        let mut ranges = vec![
-            resolved_range(0, 10, 1, ContextSource::EditHistory),
-            resolved_range(12, 20, 1, ContextSource::EditHistory),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(20, 0));
-        assert_eq!(ranges[0].order, 1);
-    }
-
-    #[test]
-    fn test_split_overlapping_ranges_does_not_bridge_large_gaps() {
-        let mut ranges = vec![
-            resolved_range(0, 10, 0, ContextSource::EditHistory),
-            resolved_range(14, 20, 1, ContextSource::Bm25),
-        ];
-        split_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(10, 0));
-        assert_eq!(ranges[1].range, Point::new(14, 0)..Point::new(20, 0));
     }
 
     #[test]
@@ -1205,34 +966,62 @@ mod tests {
     #[test]
     fn test_limit_retrieved_context_keeps_high_priority_snippet_under_tight_budget() {
         let line = "0123456789\n";
-        let excerpt = |row_range: Range<u32>, order: usize, context_source: ContextSource| {
-            let text = line.repeat((row_range.end - row_range.start) as usize);
-            RelatedExcerpt {
-                row_range,
-                text: text.into(),
-                order,
-                context_source,
-            }
+        let chunk = |row_range: Range<u32>| Chunk {
+            text: line
+                .repeat((row_range.end - row_range.start) as usize)
+                .into(),
+            row_range,
         };
-        let related_files = vec![RelatedFile {
+        let retrieval = |row_range: Range<u32>, rank: usize, source: ContextSource| Retrieval {
+            source,
+            row_range,
+            rank,
+            score: None,
+        };
+        let context_files = vec![ContextFile {
             path: Path::new("root/file.rs").into(),
             max_row: 200,
-            excerpts: vec![
-                excerpt(0..50, 8, ContextSource::GitLog),
-                excerpt(50..60, 2, ContextSource::OracleSnippet),
-                excerpt(60..200, 8, ContextSource::GitLog),
+            chunks: vec![chunk(0..200)],
+            retrievals: vec![
+                retrieval(0..50, 8, ContextSource::GitLog),
+                retrieval(50..60, 2, ContextSource::OracleSnippet),
+                retrieval(60..200, 8, ContextSource::GitLog),
             ],
-            in_open_source_repo: false,
+            syntax_ranges: Vec::new(),
         }];
 
-        // Budget fits the snippet but not the surrounding segments.
-        let limited = limit_retrieved_context_to_bytes(&related_files, 20 * line.len());
-        assert_eq!(limited.len(), 1);
-        assert_eq!(limited[0].excerpts.len(), 1);
-        assert_eq!(limited[0].excerpts[0].row_range, 50..60);
+        let limited = limit_retrieved_context_to_bytes(&context_files, 20 * line.len());
         assert_eq!(
-            limited[0].excerpts[0].context_source,
-            ContextSource::OracleSnippet
+            limited,
+            vec![ContextFile {
+                path: Path::new("root/file.rs").into(),
+                max_row: 200,
+                chunks: vec![Chunk {
+                    row_range: 50..60,
+                    text: line.repeat(10).into(),
+                }],
+                retrievals: vec![
+                    Retrieval {
+                        source: ContextSource::GitLog,
+                        row_range: 0..50,
+                        rank: 8,
+                        score: None,
+                    },
+                    Retrieval {
+                        source: ContextSource::OracleSnippet,
+                        row_range: 50..60,
+                        rank: 2,
+                        score: None,
+                    },
+                    Retrieval {
+                        source: ContextSource::GitLog,
+                        row_range: 60..200,
+                        rank: 8,
+                        score: None,
+                    },
+                ],
+                syntax_ranges: Vec::new(),
+            }]
         );
     }
 }

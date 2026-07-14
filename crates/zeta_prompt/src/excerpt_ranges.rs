@@ -37,11 +37,19 @@ pub fn compute_legacy_excerpt_ranges(
     cursor_offset: usize,
     syntax_ranges: &[Range<usize>],
 ) -> ExcerptRanges {
+    let line_starts = compute_line_starts(cursor_excerpt);
+    let syntax_row_ranges = syntax_ranges
+        .iter()
+        .map(|range| {
+            offset_to_row(&line_starts, range.start)..offset_to_row(&line_starts, range.end)
+        })
+        .collect::<Vec<_>>();
     let compute = |editable_tokens, context_tokens| {
         compute_editable_and_context_ranges(
             cursor_excerpt,
             cursor_offset,
-            syntax_ranges,
+            &syntax_row_ranges,
+            0,
             editable_tokens,
             context_tokens,
         )
@@ -81,7 +89,8 @@ pub fn compute_legacy_excerpt_ranges(
 pub fn compute_editable_and_context_ranges(
     cursor_excerpt: &str,
     cursor_offset: usize,
-    syntax_ranges: &[Range<usize>],
+    syntax_ranges: &[Range<u32>],
+    row_offset: u32,
     editable_token_limit: usize,
     context_token_limit: usize,
 ) -> (Range<usize>, Range<usize>) {
@@ -95,6 +104,7 @@ pub fn compute_editable_and_context_ranges(
         cursor_row,
         max_row,
         syntax_ranges,
+        row_offset,
         editable_token_limit,
     );
 
@@ -104,6 +114,7 @@ pub fn compute_editable_and_context_ranges(
         max_row,
         &editable_range,
         syntax_ranges,
+        row_offset,
         context_token_limit,
     );
 
@@ -175,8 +186,8 @@ fn line_token_count_from_text(text: &str, line_starts: &[usize], row: u32) -> us
 /// Returns syntax boundaries (as row ranges) that contain the given row range
 /// and extend beyond it, ordered from smallest to largest.
 fn containing_syntax_boundaries_from_ranges(
-    line_starts: &[usize],
-    syntax_ranges: &[Range<usize>],
+    syntax_ranges: &[Range<u32>],
+    row_offset: u32,
     start_row: u32,
     end_row: u32,
 ) -> Vec<(u32, u32)> {
@@ -185,8 +196,8 @@ fn containing_syntax_boundaries_from_ranges(
 
     // syntax_ranges is innermost to outermost, so iterate in order.
     for range in syntax_ranges {
-        let node_start_row = offset_to_row(line_starts, range.start);
-        let node_end_row = offset_to_row(line_starts, range.end);
+        let node_start_row = range.start.saturating_sub(row_offset);
+        let node_end_row = range.end.saturating_sub(row_offset);
 
         // Skip nodes that don't extend beyond the current range.
         if node_start_row >= start_row && node_end_row <= end_row {
@@ -210,7 +221,8 @@ fn compute_editable_range_from_text(
     line_starts: &[usize],
     cursor_row: u32,
     max_row: u32,
-    syntax_ranges: &[Range<usize>],
+    syntax_ranges: &[Range<u32>],
+    row_offset: u32,
     token_limit: usize,
 ) -> Range<usize> {
     // Phase 1: Expand symmetrically from cursor using 75% of budget.
@@ -225,7 +237,7 @@ fn compute_editable_range_from_text(
 
     // Phase 2: Expand to syntax boundaries that fit within budget.
     let boundaries =
-        containing_syntax_boundaries_from_ranges(line_starts, syntax_ranges, start_row, end_row);
+        containing_syntax_boundaries_from_ranges(syntax_ranges, row_offset, start_row, end_row);
     for (boundary_start, boundary_end) in &boundaries {
         let tokens_for_start = if *boundary_start < start_row {
             estimate_tokens_for_row_range(text, line_starts, *boundary_start, start_row)
@@ -275,7 +287,8 @@ fn expand_context_from_text(
     line_starts: &[usize],
     max_row: u32,
     editable_range: &Range<usize>,
-    syntax_ranges: &[Range<usize>],
+    syntax_ranges: &[Range<u32>],
+    row_offset: u32,
     context_token_limit: usize,
 ) -> Range<usize> {
     let mut start_row = offset_to_row(line_starts, editable_range.start);
@@ -284,7 +297,7 @@ fn expand_context_from_text(
     let mut did_syntax_expand = false;
 
     let boundaries =
-        containing_syntax_boundaries_from_ranges(line_starts, syntax_ranges, start_row, end_row);
+        containing_syntax_boundaries_from_ranges(syntax_ranges, row_offset, start_row, end_row);
     for (boundary_start, boundary_end) in &boundaries {
         let tokens_for_start = if *boundary_start < start_row {
             estimate_tokens_for_row_range(text, line_starts, *boundary_start, start_row)

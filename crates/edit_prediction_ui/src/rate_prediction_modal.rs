@@ -27,7 +27,7 @@ use ui::{
     Tooltip, prelude::*,
 };
 use workspace::{ModalView, Workspace};
-use zeta_prompt::{ContextSource, FilePosition, RelatedExcerpt, RelatedFile, Zeta3PromptInput};
+use zeta_prompt::{Chunk, ContextFile, FilePosition, RelatedFile, Zeta3PromptInput};
 
 actions!(
     zeta,
@@ -429,7 +429,7 @@ impl RatePredictionsModal {
             }
             EditPredictionInputs::V3(inputs) => {
                 Self::write_events(formatted_inputs, &inputs.events);
-                Self::write_related_files(formatted_inputs, &inputs.editable_context);
+                Self::write_context_files(formatted_inputs, &inputs.editable_context);
                 Self::write_zeta3_cursor_excerpt(formatted_inputs, inputs);
             }
         }
@@ -463,28 +463,59 @@ impl RatePredictionsModal {
         }
     }
 
+    fn write_context_files(formatted_inputs: &mut String, included_files: &[ContextFile]) {
+        write!(formatted_inputs, "## Related files\n\n").unwrap();
+
+        for included_file in included_files {
+            write!(formatted_inputs, "### {}\n\n", included_file.path.display()).unwrap();
+
+            for chunk in included_file.chunks.iter() {
+                let sources = included_file
+                    .retrievals
+                    .iter()
+                    .filter(|retrieval| {
+                        retrieval.row_range.start < chunk.row_range.end
+                            && chunk.row_range.start < retrieval.row_range.end
+                    })
+                    .map(|retrieval| format!("{:?}#{}", retrieval.source, retrieval.rank))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !sources.is_empty() {
+                    writeln!(formatted_inputs, "`{sources}`").unwrap();
+                }
+                write!(
+                    formatted_inputs,
+                    "```{}\n{}\n```\n",
+                    included_file.path.display(),
+                    chunk.text
+                )
+                .unwrap();
+            }
+        }
+    }
+
     fn write_zeta3_cursor_excerpt(formatted_inputs: &mut String, inputs: &Zeta3PromptInput) {
-        let current_excerpt = inputs
+        let current_chunk = inputs
             .editable_context
             .iter()
-            .filter(|file| file.path == inputs.cursor_path)
-            .flat_map(|file| file.excerpts.iter())
-            .find_map(|excerpt| {
-                if excerpt.context_source != ContextSource::CurrentFile {
-                    return None;
-                }
-
-                Some((
-                    excerpt,
-                    Self::offset_for_position_in_excerpt(excerpt, inputs.cursor_position)?,
-                ))
+            .find(|file| file.path == inputs.cursor_path)
+            .and_then(|file| {
+                file.chunks
+                    .iter()
+                    .find(|chunk| chunk.row_range.contains(&inputs.cursor_position.row))
+                    .map(|chunk| {
+                        (
+                            chunk,
+                            Self::offset_for_position_in_chunk(chunk, inputs.cursor_position),
+                        )
+                    })
             });
 
-        if let Some((excerpt, cursor_offset)) = current_excerpt {
+        if let Some((chunk, Some(cursor_offset))) = current_chunk {
             Self::write_cursor_excerpt(
                 formatted_inputs,
                 inputs.cursor_path.as_ref(),
-                excerpt.text.as_ref(),
+                chunk.text.as_ref(),
                 cursor_offset,
             );
         } else {
@@ -498,6 +529,32 @@ impl RatePredictionsModal {
             )
             .unwrap();
         }
+    }
+
+    fn offset_for_position_in_chunk(chunk: &Chunk, position: FilePosition) -> Option<usize> {
+        if position.row < chunk.row_range.start {
+            return None;
+        }
+
+        let relative_row = (position.row - chunk.row_range.start) as usize;
+        let text = chunk.text.as_ref();
+        let mut row_start = 0;
+
+        for row in 0..=relative_row {
+            if row == relative_row {
+                let row_end = text[row_start..]
+                    .find('\n')
+                    .map_or(text.len(), |offset| row_start + offset);
+                let row_text = &text[row_start..row_end];
+                let column =
+                    row_text.floor_char_boundary((position.column as usize).min(row_text.len()));
+                return Some(row_start + column);
+            }
+
+            row_start += text[row_start..].find('\n')? + 1;
+        }
+
+        None
     }
 
     fn write_cursor_excerpt(
@@ -520,35 +577,6 @@ impl RatePredictionsModal {
             &cursor_excerpt[cursor_offset..],
         )
         .unwrap();
-    }
-
-    fn offset_for_position_in_excerpt(
-        excerpt: &RelatedExcerpt,
-        position: FilePosition,
-    ) -> Option<usize> {
-        if position.row < excerpt.row_range.start {
-            return None;
-        }
-
-        let relative_row = (position.row - excerpt.row_range.start) as usize;
-        let text = excerpt.text.as_ref();
-        let mut row_start = 0;
-
-        for row in 0..=relative_row {
-            if row == relative_row {
-                let row_end = text[row_start..]
-                    .find('\n')
-                    .map_or(text.len(), |offset| row_start + offset);
-                let row_text = &text[row_start..row_end];
-                let column =
-                    row_text.floor_char_boundary((position.column as usize).min(row_text.len()));
-                return Some(row_start + column);
-            }
-
-            row_start += text[row_start..].find('\n')? + 1;
-        }
-
-        None
     }
 
     pub fn select_completion(
