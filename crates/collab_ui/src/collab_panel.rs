@@ -2964,8 +2964,9 @@ impl CollabPanel {
             Section::Channels => {
                 Some(
                     h_flex()
+                        .gap_px()
                         .child(
-                            IconButton::new("filter-occupied-channels", IconName::ListFilter)
+                            IconButton::new("filter-occupied-channels", IconName::OnCall)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(self.filter_occupied_channels)
                                 .on_click(cx.listener(|this, _, _window, cx| {

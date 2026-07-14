@@ -1252,7 +1252,7 @@ impl PickerDelegate for BranchListDelegate {
                                             .log_err();
                                     }))
                                     .trigger(
-                                        IconButton::new("branch-filter", IconName::ListFilter)
+                                        IconButton::new("branch-filter", IconName::Filter)
                                             .toggle_state(branch_filter != BranchFilter::All)
                                             .when(branch_filter != BranchFilter::All, |this| {
                                                 this.indicator(Indicator::dot().color(Color::Info))

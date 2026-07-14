@@ -911,7 +911,7 @@ impl StackFrameList {
             .child(
                 IconButton::new(
                     "filter-by-visible-worktree-stack-frame-list",
-                    IconName::ListFilter,
+                    IconName::Filter,
                 )
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)
