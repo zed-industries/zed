@@ -3,10 +3,11 @@
 use collections::HashSet;
 use fs::{FakeFs, Fs};
 use gpui::{Entity, VisualTestContext};
-use project::Project;
+use project::{Project, ProjectPath};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
+use util::rel_path::rel_path;
 use workspace::MultiWorkspace;
 
 use crate::project_panel_tests::{self, find_project_entry, select_path};
@@ -258,6 +259,57 @@ async fn rename_undo_redo(cx: &mut gpui::TestAppContext) {
 
     cx.redo().await;
     cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+}
+
+#[gpui::test]
+async fn rename_with_dir_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    // Renaming a file like `a.txt` to `files/a.txt` will create the `files`
+    // directory, in case it doesn't exist yet.
+    cx.rename("a.txt", "files/a.txt").await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
+
+    // Undoing the rename operation should also delete the `files` directory, as
+    // it was created specifically for the rename operation.
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    // Redoing the rename operation should recreate the `files` directory and
+    // move `a.txt` back into it.
+    cx.redo().await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
+
+    // Lastly, let's insert a different file into the `files` directory to
+    // ensure that, when undoing the `Rename` operation, we don't delete the
+    // directory, as it is not empty.
+    // The file will be created directly through the `Project` layer instead of
+    // the `ProjectPanel`, to ensure that it doesn't get recorded and, when undo
+    // is called, we're undoing the rename.
+    cx.panel
+        .update(&mut cx.cx, |panel, cx| {
+            panel.project.update(cx, |project, cx| {
+                let worktree_id = project
+                    .worktrees(cx)
+                    .next()
+                    .expect("project should have a worktree")
+                    .read(cx)
+                    .id();
+
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: rel_path("files/external.txt").into(),
+                };
+
+                project.create_entry(project_path, false, cx)
+            })
+        })
+        .await
+        .unwrap();
+    cx.cx.run_until_parked();
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "files/", "files/external.txt"]);
 }
 
 #[gpui::test]
