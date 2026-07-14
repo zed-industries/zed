@@ -233,6 +233,9 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -265,6 +268,15 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to reduce non-essential motion in the UI, such as loading
+  // spinners and pulsating labels, by rendering them in a static state.
+  //
+  // May take 2 values:
+  // 1. Always reduce motion:
+  //    "on"
+  // 2. Never reduce motion:
+  //    "off"
+  "reduce_motion": "off",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,

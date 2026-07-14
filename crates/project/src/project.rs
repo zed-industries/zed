@@ -2520,17 +2520,20 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
-                let is_dir = relative_path
-                    .as_ref()
-                    .and_then(|p| worktree.entry_for_path(p))
-                    .is_some_and(|e| e.is_dir());
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
                 // Don't exclude the worktree root itself, only actual subdirectories
-                let is_subdir = relative_path
-                    .as_ref()
-                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
-                let contains =
-                    relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
+                let is_subpath = !relative_path.is_empty();
+                // Gitignored subtrees aren't scanned, so their contents don't
+                // meaningfully belong to this project (e.g. nested checkouts
+                // in an ignored directory). Treat such paths as not contained
+                // so opening them behaves like opening an unrelated path.
+                if is_subpath && worktree.is_path_ignored(&relative_path) {
+                    return None;
+                }
+                let is_dir = worktree
+                    .entry_for_path(&relative_path)
+                    .is_some_and(|e| e.is_dir());
+                let contains = !exclude_sub_dirs || !is_dir || !is_subpath;
                 contains.then(|| worktree.is_visible())
             })
             .max()
@@ -2551,10 +2554,9 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
-                let is_subpath = relative_path
-                    .as_ref()
-                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let is_subpath =
+                    !relative_path.is_empty() && !worktree.is_path_ignored(&relative_path);
                 is_subpath.then(|| worktree.is_visible())
             })
             .max()
