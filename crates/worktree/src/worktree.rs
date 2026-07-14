@@ -2808,6 +2808,17 @@ impl Snapshot {
         })
     }
 
+    /// Whether `path` is gitignored, or lies inside a gitignored directory.
+    ///
+    /// The contents of ignored directories aren't scanned until explicitly
+    /// expanded, so when `path` has no entry this falls back to the ignore
+    /// status of its nearest scanned ancestor.
+    pub fn is_path_ignored(&self, path: &RelPath) -> bool {
+        path.ancestors()
+            .find_map(|ancestor| self.entry_for_path(ancestor))
+            .is_some_and(|entry| entry.is_ignored)
+    }
+
     /// Resolves a path to an executable using the following heuristics:
     ///
     /// 1. If the path starts with `~`, it is expanded to the user's home directory.

@@ -14,9 +14,9 @@ use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
-    TaskExt, WeakEntity, Window, actions, rems,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, TaskExt,
+    WeakEntity, Window, actions, rems,
 };
 use language::{BufferSnapshot, Point};
 use open_path_prompt::{
@@ -40,7 +40,7 @@ use std::{
     },
     time::Duration,
 };
-use ui::{HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{Checkbox, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -1768,12 +1768,9 @@ impl PickerDelegate for FileFinderDelegate {
             "Include Ignored Files"
         };
 
-        let filter_button = IconButton::new("filter-ignored", IconName::Sliders)
+        let filter_button = IconButton::new("filter-ignored", IconName::FileIgnored)
             .icon_size(IconSize::Small)
             .toggle_state(including_ignored)
-            .when(self.include_ignored.is_some(), |this| {
-                this.indicator(Indicator::dot().color(Color::Info))
-            })
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
             })
@@ -2034,65 +2031,18 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let settings = FileFinderSettings::get_global(cx);
+        self.render_match_impl(ix, selected, None, window, cx)
+    }
 
-        let path_match = self.matches.get(ix)?;
-
-        let end_icon = match path_match {
-            Match::History { .. } => Icon::new(IconName::HistoryRerun)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .into_any_element(),
-            Match::Search(_) => v_flex()
-                .flex_none()
-                .size(IconSize::Small.rems())
-                .into_any_element(),
-            Match::Channel { .. } => v_flex()
-                .flex_none()
-                .size(IconSize::Small.rems())
-                .into_any_element(),
-            Match::CreateNew(_) => Empty.into_any_element(),
-        };
-
-        let is_create_new = matches!(path_match, Match::CreateNew(_));
-
-        let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx);
-
-        let file_icon = match path_match {
-            Match::Channel { .. } => Some(Icon::new(IconName::Hash).color(Color::Muted)),
-            _ => maybe!({
-                if !settings.file_icons {
-                    return None;
-                }
-                let abs_path = path_match.abs_path(&self.project, cx)?;
-                let file_name = abs_path.file_name()?;
-                let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-                Some(Icon::from_path(icon).color(Color::Muted))
-            }),
-        };
-
-        Some(
-            ListItem::new(ix)
-                .spacing(ListItemSpacing::Sparse)
-                .inset(true)
-                .toggle_state(selected)
-                .map(|this| {
-                    if is_create_new {
-                        this.start_slot(Icon::new(IconName::Plus).size(IconSize::Small))
-                    } else {
-                        this.start_slot::<Icon>(file_icon)
-                    }
-                })
-                .child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_1p5()
-                        .child(file_name_label.truncate_middle())
-                        .child(full_path_label.truncate_start()),
-                )
-                .end_slot::<AnyElement>(end_icon),
-        )
+    fn render_match_with_checkbox(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, Some(checkbox), window, cx)
     }
 
     fn actions_menu(
@@ -2114,6 +2064,92 @@ impl PickerDelegate for FileFinderDelegate {
             picker::PickerAction::separator(),
             picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
         ]
+    }
+}
+
+impl FileFinderDelegate {
+    fn render_match_impl(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: Option<AnyElement>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<ListItem> {
+        let settings = FileFinderSettings::get_global(cx);
+
+        let path_match = self.matches.get(ix)?;
+
+        let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx);
+
+        let start_icon = match path_match {
+            Match::CreateNew(_) => Some(Icon::new(IconName::Plus).size(IconSize::Small)),
+            Match::Channel { .. } => Some(Icon::new(IconName::Hash).color(Color::Muted)),
+            _ => maybe!({
+                if !settings.file_icons {
+                    return None;
+                }
+                let abs_path = path_match.abs_path(&self.project, cx)?;
+                let file_name = abs_path.file_name()?;
+                let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
+                Some(Icon::from_path(icon).color(Color::Muted))
+            }),
+        };
+
+        let checkbox = checkbox.map(|checkbox| {
+            if matches!(path_match, Match::CreateNew(_) | Match::Channel { .. }) {
+                div()
+                    .flex_none()
+                    .size(Checkbox::container_size())
+                    .into_any_element()
+            } else {
+                checkbox
+            }
+        });
+
+        let start_slot: Option<AnyElement> = match (checkbox, start_icon) {
+            (Some(checkbox), icon) => Some(
+                h_flex()
+                    .gap_1p5()
+                    .child(checkbox)
+                    .children(icon)
+                    .into_any_element(),
+            ),
+            (None, icon) => icon.map(IntoElement::into_any_element),
+        };
+
+        let end_slot: Option<AnyElement> = match path_match {
+            Match::History { .. } => Some(
+                Icon::new(IconName::HistoryRerun)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element(),
+            ),
+            Match::Search(_) | Match::Channel { .. } => Some(
+                div()
+                    .flex_none()
+                    .size(IconSize::Small.rems())
+                    .into_any_element(),
+            ),
+            Match::CreateNew(_) => None,
+        };
+
+        Some(
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
+                .toggle_state(selected)
+                .start_slot::<AnyElement>(start_slot)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(file_name_label.truncate_middle())
+                        .child(full_path_label.truncate_start()),
+                )
+                .end_slot::<AnyElement>(end_slot),
+        )
     }
 }
 
