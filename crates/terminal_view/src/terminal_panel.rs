@@ -77,6 +77,7 @@ pub fn init(cx: &mut App) {
 pub struct TerminalPanel {
     pub(crate) active_pane: Entity<Pane>,
     pub(crate) center: PaneGroup,
+    focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     pending_serialization: Task<Option<()>>,
@@ -94,6 +95,7 @@ impl TerminalPanel {
         let terminal_panel = Self {
             center,
             active_pane: pane,
+            focus_handle: cx.focus_handle(),
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
@@ -1362,19 +1364,22 @@ impl Render for TerminalPanel {
             .unwrap_or_else(div);
         self.workspace
             .update(cx, |workspace, cx| {
-                registrar.size_full().child(self.center.render(
-                    workspace.zoomed_item(),
-                    &workspace::PaneRenderContext {
-                        follower_states: &HashMap::default(),
-                        active_call: workspace.active_call(),
-                        active_pane: &self.active_pane,
-                        app_state: workspace.app_state(),
-                        project: workspace.project(),
-                        workspace: &workspace.weak_handle(),
-                    },
-                    window,
-                    cx,
-                ))
+                registrar
+                    .track_focus(&self.focus_handle)
+                    .size_full()
+                    .child(self.center.render(
+                        workspace.zoomed_item(),
+                        &workspace::PaneRenderContext {
+                            follower_states: &HashMap::default(),
+                            active_call: workspace.active_call(),
+                            active_pane: &self.active_pane,
+                            app_state: workspace.app_state(),
+                            project: workspace.project(),
+                            workspace: &workspace.weak_handle(),
+                        },
+                        window,
+                        cx,
+                    ))
             })
             .ok()
             .map(|div| {
@@ -1520,12 +1525,16 @@ impl Render for TerminalPanel {
 }
 
 impl Focusable for TerminalPanel {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.active_pane.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
 impl Panel for TerminalPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.active_pane.focus_handle(cx)
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         TerminalSettings::get_global(cx).dock.into()
     }

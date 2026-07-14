@@ -1696,7 +1696,7 @@ impl MultiWorkspace {
                 if dock.is_open() {
                     if let Some(panel) = dock.active_panel() {
                         if panel.is_zoomed(window, cx) {
-                            target = Some(panel.panel_focus_handle(cx));
+                            target = Some(panel.activation_focus_handle(cx));
                             break;
                         }
                     }

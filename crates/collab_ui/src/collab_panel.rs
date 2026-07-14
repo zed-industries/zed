@@ -6,7 +6,7 @@ use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
-use client::{ChannelId, Client, Contact, Notification, User, UserStore};
+use client::{ChannelId, Client, Contact, Notification, Status, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KeyValueStore;
@@ -339,6 +339,17 @@ enum ListEntry {
 }
 
 impl CollabPanel {
+    fn is_collaboration_disabled_by_organization(&self, cx: &App) -> bool {
+        self.user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled)
+    }
+
+    fn is_signed_in_view_visible(status: Status, is_collaboration_disabled: bool) -> bool {
+        !is_collaboration_disabled && status.is_or_was_connected() && !status.is_signing_in()
+    }
+
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -1451,7 +1462,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -1635,7 +1646,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -1698,7 +1709,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -1931,7 +1942,7 @@ impl CollabPanel {
                     cx.notify();
                 }
             }
-            cx.focus_self(window);
+            self.activation_focus_handle(cx).focus(window, cx);
             true
         } else {
             false
@@ -1998,7 +2009,7 @@ impl CollabPanel {
         self.serialize(cx);
         self.update_entries(true, cx);
         cx.notify();
-        cx.focus_self(window);
+        self.activation_focus_handle(cx).focus(window, cx);
     }
 
     fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
@@ -2511,8 +2522,10 @@ impl CollabPanel {
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_workspace_async_err(workspace, &mut cx);
-                    this.update_in(cx, |_, window, cx| cx.focus_self(window))
-                        .ok();
+                    this.update_in(cx, |this, window, cx| {
+                        this.activation_focus_handle(cx).focus(window, cx);
+                    })
+                    .ok();
                 }
                 anyhow::Ok(())
             })
@@ -3708,11 +3721,9 @@ impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = *self.client.status().borrow();
 
-        let is_collaboration_disabled = self
-            .user_store
-            .read(cx)
-            .current_organization_configuration()
-            .is_some_and(|config| !config.is_collaboration_enabled);
+        let is_collaboration_disabled = self.is_collaboration_disabled_by_organization(cx);
+        let is_signed_in_view_visible =
+            Self::is_signed_in_view_visible(status, is_collaboration_disabled);
 
         v_flex()
             .key_context(self.dispatch_context(window, cx))
@@ -3735,10 +3746,10 @@ impl Render for CollabPanel {
             .size_full()
             .child(if is_collaboration_disabled {
                 self.render_disabled_by_organization(cx)
-            } else if !status.is_or_was_connected() || status.is_signing_in() {
-                self.render_signed_out(cx)
-            } else {
+            } else if is_signed_in_view_visible {
                 self.render_signed_in(window, cx)
+            } else {
+                self.render_signed_out(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
@@ -3755,6 +3766,17 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        let status = *self.client.status().borrow();
+        let is_collaboration_disabled = self.is_collaboration_disabled_by_organization(cx);
+
+        if Self::is_signed_in_view_visible(status, is_collaboration_disabled) {
+            self.filter_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
@@ -3827,8 +3849,8 @@ impl Panel for CollabPanel {
 }
 
 impl Focusable for CollabPanel {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
