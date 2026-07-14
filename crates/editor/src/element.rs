@@ -6950,10 +6950,12 @@ fn render_blame_entry_popover(
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
     let repository = blame.repository(cx, buffer)?;
+    let tag_names = blame.tag_names_for_entry(buffer, &blame_entry);
     renderer.render_blame_entry_popover(
         blame_entry,
         scroll_handle,
         commit_message,
+        tag_names,
         markdown,
         repository,
         workspace,
@@ -6990,11 +6992,13 @@ fn render_blame_entry(
 
     let blame = blame.read(cx);
     let details = blame.details_for_entry(buffer, &blame_entry);
+    let tag_names = blame.tag_names_for_entry(buffer, &blame_entry);
     let repository = blame.repository(cx, buffer)?;
     renderer.render_blame_entry(
         &style.text,
         blame_entry,
         details,
+        tag_names,
         repository,
         workspace.downgrade(),
         editor,

@@ -9649,7 +9649,11 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    Some(Blame { entries, messages })
+    Some(Blame {
+        entries,
+        messages,
+        tag_names: Default::default(),
+    })
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
