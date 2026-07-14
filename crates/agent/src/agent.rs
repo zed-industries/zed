@@ -29,9 +29,8 @@ pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentModelId, AgentModelSelector, AgentSessionInfo,
-    AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId,
-    TokenUsageRatio,
+    AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
