@@ -171,6 +171,7 @@ impl CsvPreviewView {
             .px_1()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().panel_background)
             .h_full()
             .text_ui(cx)
             // Row identifiers are always centered

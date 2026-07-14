@@ -15,7 +15,7 @@ use acp_thread::AgentConnection;
 use agent_client_protocol::schema::v1 as acp_schema;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, Task};
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use std::{any::Any, rc::Rc, sync::Arc};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -71,14 +71,14 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
+    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<AgentConfigOptionValue> {
         None
     }
 
     fn set_default_config_option(
         &self,
         _config_id: &str,
-        _value_id: Option<&str>,
+        _value: Option<AgentConfigOptionValue>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
     ) {

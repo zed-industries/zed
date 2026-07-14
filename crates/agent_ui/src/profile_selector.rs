@@ -18,8 +18,9 @@ use std::{
 };
 use ui::{
     DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem, ListItemSpacing,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
+use workspace::ToggleWorktreeSecurity;
 
 /// Trait for types that can provide and manage agent profiles
 pub trait ProfileProvider {
@@ -34,6 +35,22 @@ pub trait ProfileProvider {
 
     /// Check if there is a model selected in the current context.
     fn model_selected(&self, cx: &App) -> bool;
+
+    /// Whether the current workspace is restricted (has untrusted worktrees).
+    ///
+    /// In a restricted workspace, profiles that enable tools forbidden in
+    /// restricted mode are flagged, and the active built-in `write`/`ask`
+    /// profiles are downgraded to `minimal`.
+    fn is_restricted(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Whether the active profile has been downgraded to `minimal` because the
+    /// workspace is restricted (i.e. the user selected `write`/`ask`, but those
+    /// profiles aren't honored while restricted).
+    fn profile_downgraded(&self, _cx: &App) -> bool {
+        false
+    }
 }
 
 pub struct ProfileSelector {
@@ -188,9 +205,23 @@ impl Render for ProfileSelector {
             IconName::ChevronDown
         };
 
+        // Warn when the active profile is affected by a restricted workspace:
+        // either it was downgraded to `minimal`, or it still enables tools that
+        // are forbidden while restricted.
+        let show_warning = self.provider.is_restricted(cx)
+            && (self.provider.profile_downgraded(cx)
+                || !ProfilePickerDelegate::restricted_forbidden_tools(&profile_id, cx).is_empty());
+
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
+            .when(show_warning, |this| {
+                this.start_icon(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::XSmall)
+                        .color(Color::Warning),
+                )
+            })
             .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
 
         let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = Box::new(Tooltip::element({
@@ -336,6 +367,22 @@ impl ProfilePickerDelegate {
             .iter()
             .enumerate()
             .map(|(index, candidate)| StringMatchCandidate::new(index, candidate.name.as_ref()))
+            .collect()
+    }
+
+    /// Tools enabled by a profile that are forbidden while the workspace is
+    /// restricted. Returns an empty list for profiles that are safe to use.
+    fn restricted_forbidden_tools(profile_id: &AgentProfileId, cx: &App) -> Vec<SharedString> {
+        let Some(profile) = AgentSettings::get_global(cx).profiles.get(profile_id) else {
+            return Vec::new();
+        };
+        profile
+            .tools
+            .iter()
+            .filter(|(name, enabled)| {
+                **enabled && !agent::tool_allowed_in_restricted_mode(name.as_ref())
+            })
+            .map(|(name, _)| SharedString::from(name.to_string()))
             .collect()
     }
 
@@ -594,10 +641,17 @@ impl PickerDelegate for ProfilePickerDelegate {
                 let is_active = active_id == candidate.id;
                 let has_documentation = Self::documentation(candidate).is_some();
 
+                let has_warning = self.provider.is_restricted(cx)
+                    && !Self::restricted_forbidden_tools(&candidate.id, cx).is_empty();
+                // The warning details are merged into the documentation aside,
+                // so hovering either the row or the icon shows a single popup.
+                let track_hover = has_documentation || has_warning;
+                let has_end_slot = is_active || has_warning;
+
                 Some(
                     div()
                         .id(("profile-picker-item", ix))
-                        .when(has_documentation, |this| {
+                        .when(track_hover, |this| {
                             this.on_hover(cx.listener(move |picker, hovered, _, cx| {
                                 if *hovered {
                                     picker.delegate.hovered_index = Some(ix);
@@ -616,11 +670,23 @@ impl PickerDelegate for ProfilePickerDelegate {
                                     candidate.name.clone(),
                                     entry.positions.clone(),
                                 ))
-                                .when(is_active, |this| {
+                                .when(has_end_slot, |this| {
                                     this.end_slot(
-                                        div()
+                                        h_flex()
+                                            .gap_1()
                                             .pr_2()
-                                            .child(Icon::new(IconName::Check).color(Color::Accent)),
+                                            .when(has_warning, |this| {
+                                                this.child(
+                                                    Icon::new(IconName::Warning)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Warning),
+                                                )
+                                            })
+                                            .when(is_active, |this| {
+                                                this.child(
+                                                    Icon::new(IconName::Check).color(Color::Accent),
+                                                )
+                                            }),
                                     )
                                 }),
                         )
@@ -644,13 +710,61 @@ impl PickerDelegate for ProfilePickerDelegate {
         };
 
         let candidate = self.candidates.get(entry.candidate_index)?;
-        let docs_aside = Self::documentation(candidate)?.to_string();
+        let description = Self::documentation(candidate).map(|docs| docs.to_string());
+        let forbidden_tools = if self.provider.is_restricted(cx) {
+            Self::restricted_forbidden_tools(&candidate.id, cx)
+        } else {
+            Vec::new()
+        };
+
+        // Nothing to show: no description and no restricted-tool warning.
+        if description.is_none() && forbidden_tools.is_empty() {
+            return None;
+        }
 
         let side = documentation_aside_side(cx);
 
         Some(DocumentationAside {
             side,
-            render: Rc::new(move |_| Label::new(docs_aside.clone()).into_any_element()),
+            render: Rc::new(move |cx| {
+                v_flex()
+                    .gap_1p5()
+                    .when_some(description.clone(), |this, description| {
+                        this.child(Label::new(description))
+                    })
+                    .when(!forbidden_tools.is_empty(), |this| {
+                        this.when(description.is_some(), |this| {
+                            this.child(
+                                div()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant),
+                            )
+                        })
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::Warning)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Warning),
+                                        )
+                                        .child(
+                                            Label::new("Disabled in Restricted Mode")
+                                                .size(LabelSize::Small),
+                                        ),
+                                )
+                                .children(forbidden_tools.iter().map(|tool| {
+                                    Label::new(format!("• {tool}"))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                })),
+                        )
+                    })
+                    .into_any_element()
+            }),
         })
     }
 
@@ -664,29 +778,66 @@ impl PickerDelegate for ProfilePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let is_restricted = self.provider.is_restricted(cx);
 
         Some(
-            h_flex()
+            v_flex()
                 .w_full()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1p5()
                 .child(
-                    Button::new("configure", "Configure")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .key_binding(
-                            KeyBinding::for_action_in(
-                                &ManageProfiles::default(),
-                                &focus_handle,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
-                        }),
+                    h_flex()
+                        .w_full()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .p_1p5()
+                        .child(
+                            Button::new("configure", "Configure")
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ManageProfiles::default(),
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        ManageProfiles::default().boxed_clone(),
+                                        cx,
+                                    );
+                                }),
+                        ),
                 )
+                .when(is_restricted, |this| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .p_1p5()
+                            .child(
+                                Button::new("restricted-mode", "Restricted Mode")
+                                    .full_width()
+                                    .style(ButtonStyle::Tinted(TintColor::Warning))
+                                    .color(Color::Warning)
+                                    .start_icon(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .tooltip(Tooltip::text(
+                                        "Some tools are disabled. Click to review trust settings.",
+                                    ))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            ToggleWorktreeSecurity.boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            ),
+                    )
+                })
                 .into_any(),
         )
     }

@@ -173,9 +173,10 @@ pub fn setup_node() -> Step<Use> {
     named::uses(
         "actions",
         "setup-node",
-        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+        "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", // v6.4
     )
-    .add_with(("node-version", "20"))
+    .add_with(("node-version", "24"))
+    .add_with(("check-latest", true))
 }
 
 pub fn setup_sentry() -> Step<Use> {
@@ -375,6 +376,16 @@ impl CommonJobConditions for Job {
     }
 }
 
+pub trait CommonPermissionSets: Sized {
+    fn with_minimal_permissions(self) -> Self;
+}
+
+impl CommonPermissionSets for Workflow {
+    fn with_minimal_permissions(self) -> Self {
+        self.permissions(Permissions::default().contents(Level::Read))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .with_repository_owner_guard()
@@ -502,6 +513,7 @@ pub mod named {
                     .collect::<Vec<_>>()
                     .join("::"),
             )
+            .permissions(Permissions::default())
             .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 

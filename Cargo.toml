@@ -126,6 +126,7 @@ members = [
     "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
+    "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
     "crates/markdown",
@@ -152,6 +153,7 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
+    "crates/picker_preview",
     "crates/platform_title_bar",
     "crates/prettier",
     "crates/project",
@@ -384,6 +386,7 @@ languages = { path = "crates/languages" }
 line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
+llama_cpp = { path = "crates/llama_cpp" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
@@ -413,6 +416,7 @@ panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
+picker_preview = { path = "crates/picker_preview" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
@@ -500,11 +504,11 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-accesskit = "0.24.0"
+accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
-agent-client-protocol = { version = "=1.0.0", features = ["unstable"] }
+agent-client-protocol = { version = "=1.1.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -539,6 +543,7 @@ aws-credential-types = { version = "1.2.8", features = [
 aws-sdk-bedrockruntime = { version = "1.112.0", features = [
     "behavior-version-latest",
 ] }
+aws-sigv4 = { version = "1.4.0", features = ["http1"] }
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
@@ -585,13 +590,14 @@ dirs = "6.0"
 documented = "0.9.1"
 dotenvy = "0.15.0"
 dunce = "1.0"
-ec4rs = "1.1"
+ec4rs = { version = "1.2", features = ["allow-empty-values"] }
 emojis = "0.6.1"
 env_logger = "0.11"
 encoding_rs = "0.8"
 exec = "0.3.1"
-fancy-regex = "0.17.0"
+fancy-regex = "0.18.0"
 fork = "0.4.0"
+flume = "0.12"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
@@ -612,7 +618,25 @@ http-body = "1.0"
 httparse = "1.10"
 idna = "1.0"
 ignore = "0.4.22"
-image = "0.25.1"
+# image's default features minus "avif", which only adds an encoder (rav1e);
+# decoding AVIF would additionally need the non-default "avif-native" feature.
+image = { version = "0.25.1", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+] }
 imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
@@ -739,6 +763,7 @@ rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
+seccompiler = "0.5"
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
@@ -805,7 +830,7 @@ tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex",
 tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
-tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "b596e737286780d7bfa9fcddceaeeb754574b352" } # fork of 9a23c1a with serialize() buffer-overflow fix; https://github.com/tree-sitter-grammars/tree-sitter-markdown/issues/243
 tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
@@ -824,8 +849,8 @@ usvg = { version = "0.46.0", default-features = false }
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
-wasm-encoder = "0.221"
-wasmparser = "0.221"
+wasm-encoder = "0.252"
+wasmparser = "0.252"
 wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
@@ -841,7 +866,7 @@ which = "6.0.0"
 wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88" }
+wgpu = "29.0.4"
 windows-core = "0.61"
 yaml-rust2 = "0.8"
 yawc = "0.2.5"
@@ -977,6 +1002,7 @@ edit_prediction_ui = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
 json_schema_store = { codegen-units = 1 }
+llama_cpp = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }
@@ -1065,3 +1091,10 @@ ignored = [
     "documented",
     "sea-orm-macros",
 ]
+
+# Dylint discovers our custom lints through this entry, so `cargo dylint --all`
+# runs them without a `--path` argument. The `lints` package pins its own
+# nightly toolchain (see `tooling/lints/rust-toolchain.toml`) and is kept out of
+# this workspace on purpose.
+[workspace.metadata.dylint]
+libraries = [{ path = "tooling/lints" }]

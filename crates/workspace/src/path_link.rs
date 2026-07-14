@@ -1,7 +1,7 @@
 use crate::Workspace;
-use gpui::{App, AppContext, Task, WeakEntity};
+use gpui::{App, AppContext, Entity, Task, WeakEntity};
 use itertools::Itertools;
-use project::{Entry, Metadata};
+use project::{Entry, Worktree};
 use std::path::{Path, PathBuf};
 use util::{
     paths::{PathStyle, PathWithPosition, normalize_lexically},
@@ -13,13 +13,13 @@ use util::{
 pub enum OpenTargetFoundBy {
     WorktreeExact,
     WorktreeScan,
-    FileSystemBackground,
+    BackgroundPathResolution,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum BackgroundFsChecks {
-    Enabled,
-    Disabled,
+pub enum BackgroundPathChecks {
+    LocalFileSystem,
+    ProjectPathResolution,
 }
 
 #[derive(Debug, Clone)]
@@ -29,28 +29,32 @@ pub enum OpenTarget {
         Entry,
         #[cfg(any(test, feature = "test-support"))] OpenTargetFoundBy,
     ),
-    File(PathWithPosition, Metadata),
+    Path(
+        PathWithPosition,
+        bool,
+        #[cfg(any(test, feature = "test-support"))] OpenTargetFoundBy,
+    ),
 }
 
 impl OpenTarget {
     pub fn is_file(&self) -> bool {
         match self {
             OpenTarget::Worktree(_, entry, ..) => entry.is_file(),
-            OpenTarget::File(_, metadata) => !metadata.is_dir,
+            OpenTarget::Path(_, is_dir, ..) => !is_dir,
         }
     }
 
     pub fn is_dir(&self) -> bool {
         match self {
             OpenTarget::Worktree(_, entry, ..) => entry.is_dir(),
-            OpenTarget::File(_, metadata) => metadata.is_dir,
+            OpenTarget::Path(_, is_dir, ..) => *is_dir,
         }
     }
 
     pub fn path(&self) -> &PathWithPosition {
         match self {
             OpenTarget::Worktree(path, ..) => path,
-            OpenTarget::File(path, _) => path,
+            OpenTarget::Path(path, ..) => path,
         }
     }
 
@@ -58,7 +62,7 @@ impl OpenTarget {
     pub fn found_by(&self) -> OpenTargetFoundBy {
         match self {
             OpenTarget::Worktree(.., found_by) => *found_by,
-            OpenTarget::File(..) => OpenTargetFoundBy::FileSystemBackground,
+            OpenTarget::Path(.., found_by) => *found_by,
         }
     }
 }
@@ -137,9 +141,9 @@ pub fn possible_open_target_with_fs_checks(
     maybe_path: &str,
     cwd: Option<&Path>,
     cx: &App,
-    background_fs_checks: BackgroundFsChecks,
+    background_path_checks: BackgroundPathChecks,
 ) -> Task<Option<OpenTarget>> {
-    possible_open_target_internal(workspace, maybe_path, cwd, cx, Some(background_fs_checks))
+    possible_open_target_internal(workspace, maybe_path, cwd, cx, Some(background_path_checks))
 }
 
 fn possible_open_target_internal(
@@ -147,7 +151,7 @@ fn possible_open_target_internal(
     maybe_path: &str,
     cwd: Option<&Path>,
     cx: &App,
-    background_fs_checks: Option<BackgroundFsChecks>,
+    background_path_checks: Option<BackgroundPathChecks>,
 ) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
@@ -287,105 +291,96 @@ fn possible_open_target_internal(
         }
     }
 
-    let enable_background_fs_checks = background_fs_checks
-        .map(|background_fs_checks| background_fs_checks == BackgroundFsChecks::Enabled)
-        .unwrap_or_else(|| workspace.read(cx).project().read(cx).is_local());
-
     if open_target.is_some() {
-        if !enable_background_fs_checks || is_cwd_in_worktree {
+        if is_cwd_in_worktree {
             return Task::ready(open_target);
         }
     }
 
-    let fs_paths_to_check = if enable_background_fs_checks {
-        let fs_cwd_paths_to_check = cwd
-            .iter()
-            .flat_map(|cwd| {
-                let mut paths_to_check = Vec::new();
-                for path_to_check in &potential_paths {
-                    let maybe_path = &path_to_check.path;
-                    if path_to_check.path.is_relative() {
-                        paths_to_check.push(PathWithPosition {
-                            path: cwd.join(maybe_path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        });
-                    }
-                }
-                paths_to_check
-            })
-            .collect::<Vec<_>>();
-        fs_cwd_paths_to_check
-            .into_iter()
-            .chain(
-                potential_paths
-                    .into_iter()
-                    .flat_map(|path_to_check| {
-                        let mut paths_to_check = Vec::new();
-                        let maybe_path = &path_to_check.path;
-                        if maybe_path.starts_with("~") {
-                            if let Some(home_path) = maybe_path
-                                .strip_prefix("~")
-                                .ok()
-                                .and_then(|stripped| Some(dirs::home_dir()?.join(stripped)))
-                            {
-                                paths_to_check.push(PathWithPosition {
-                                    path: home_path,
-                                    row: path_to_check.row,
-                                    column: path_to_check.column,
-                                });
-                            }
-                        } else {
-                            paths_to_check.push(PathWithPosition {
-                                path: maybe_path.clone(),
-                                row: path_to_check.row,
-                                column: path_to_check.column,
-                            });
-                            if maybe_path.is_relative() {
-                                for worktree in &worktree_candidates {
-                                    if !worktree.read(cx).is_single_file() {
-                                        paths_to_check.push(PathWithPosition {
-                                            path: worktree.read(cx).abs_path().join(maybe_path),
-                                            row: path_to_check.row,
-                                            column: path_to_check.column,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                        paths_to_check
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let fs = workspace.read(cx).project().read(cx).fs().clone();
-    let background_fs_checks_task = cx.background_spawn(async move {
-        for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
-                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
-            {
-                if open_target
-                    .as_ref()
-                    .map(|open_target| open_target.path().path != fs_path_to_check)
-                    .unwrap_or(true)
-                {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
-
-                break;
-            }
+    let project = workspace.read(cx).project().clone();
+    let background_path_checks = background_path_checks.unwrap_or_else(|| {
+        if project.read(cx).is_local() {
+            BackgroundPathChecks::LocalFileSystem
+        } else {
+            BackgroundPathChecks::ProjectPathResolution
         }
-
-        open_target
     });
 
+    let background_resolution_task = match background_path_checks {
+        BackgroundPathChecks::LocalFileSystem => {
+            let fs_paths_to_check =
+                local_paths_to_check(&potential_paths, cwd, &worktree_candidates, cx);
+            let fs = project.read(cx).fs().clone();
+            cx.background_spawn(async move {
+                for mut path_to_check in fs_paths_to_check {
+                    if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
+                        && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
+                    {
+                        if open_target
+                            .as_ref()
+                            .map(|open_target| open_target.path().path != fs_path_to_check)
+                            .unwrap_or(true)
+                        {
+                            path_to_check.path = fs_path_to_check;
+                            return Some(OpenTarget::Path(
+                                path_to_check,
+                                metadata.is_dir,
+                                #[cfg(any(test, feature = "test-support"))]
+                                OpenTargetFoundBy::BackgroundPathResolution,
+                            ));
+                        }
+
+                        break;
+                    }
+                }
+
+                open_target
+            })
+        }
+        BackgroundPathChecks::ProjectPathResolution => {
+            let paths_to_check = project_paths_to_check(&potential_paths, cwd);
+            cx.spawn(async move |cx| {
+                for mut path_to_check in paths_to_check {
+                    let path = path_to_check.path.to_string_lossy();
+                    let resolve_task = project.update(cx, |project, cx| {
+                        project.resolve_abs_path(path.as_ref(), cx)
+                    });
+
+                    if let Some(resolved_path) = resolve_task.await
+                        && let Some(resolved_abs_path) = {
+                            let is_dir = resolved_path.is_dir();
+                            resolved_path
+                                .into_abs_path()
+                                .map(|resolved_abs_path| (resolved_abs_path, is_dir))
+                        }
+                    {
+                        let (resolved_abs_path, is_dir) = resolved_abs_path;
+                        let resolved_abs_path = PathBuf::from(resolved_abs_path);
+                        if open_target
+                            .as_ref()
+                            .map(|open_target| open_target.path().path != resolved_abs_path)
+                            .unwrap_or(true)
+                        {
+                            path_to_check.path = resolved_abs_path;
+                            return Some(OpenTarget::Path(
+                                path_to_check,
+                                is_dir,
+                                #[cfg(any(test, feature = "test-support"))]
+                                OpenTargetFoundBy::BackgroundPathResolution,
+                            ));
+                        }
+
+                        break;
+                    }
+                }
+
+                open_target
+            })
+        }
+    };
+
     cx.spawn(async move |cx| {
-        background_fs_checks_task.await.or_else(|| {
+        background_resolution_task.await.or_else(|| {
             for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
                 if let Some(found_entry) =
                     worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
@@ -419,4 +414,93 @@ fn possible_open_target_internal(
             None
         })
     })
+}
+
+fn local_paths_to_check(
+    potential_paths: &[PathWithPosition],
+    cwd: Option<&Path>,
+    worktree_candidates: &[Entity<Worktree>],
+    cx: &App,
+) -> Vec<PathWithPosition> {
+    cwd.iter()
+        .flat_map(|cwd| {
+            potential_paths.iter().filter_map(|path_to_check| {
+                path_to_check.path.is_relative().then(|| PathWithPosition {
+                    path: cwd.join(&path_to_check.path),
+                    row: path_to_check.row,
+                    column: path_to_check.column,
+                })
+            })
+        })
+        .chain(potential_paths.iter().flat_map(|path_to_check| {
+            let mut paths_to_check = Vec::new();
+            let maybe_path = &path_to_check.path;
+            if maybe_path.starts_with("~") {
+                if let Some(home_path) =
+                    maybe_path
+                        .strip_prefix("~")
+                        .ok()
+                        .and_then(|stripped_maybe_path| {
+                            Some(dirs::home_dir()?.join(stripped_maybe_path))
+                        })
+                {
+                    paths_to_check.push(PathWithPosition {
+                        path: home_path,
+                        row: path_to_check.row,
+                        column: path_to_check.column,
+                    });
+                }
+            } else {
+                paths_to_check.push(PathWithPosition {
+                    path: maybe_path.clone(),
+                    row: path_to_check.row,
+                    column: path_to_check.column,
+                });
+                if maybe_path.is_relative() {
+                    for worktree in worktree_candidates {
+                        if !worktree.read(cx).is_single_file() {
+                            paths_to_check.push(PathWithPosition {
+                                path: worktree.read(cx).abs_path().join(maybe_path),
+                                row: path_to_check.row,
+                                column: path_to_check.column,
+                            });
+                        }
+                    }
+                }
+            }
+            paths_to_check
+        }))
+        .collect()
+}
+
+fn project_paths_to_check(
+    potential_paths: &[PathWithPosition],
+    cwd: Option<&Path>,
+) -> Vec<PathWithPosition> {
+    cwd.iter()
+        .flat_map(|cwd| {
+            potential_paths
+                .iter()
+                .filter_map(|path_to_check| normalize_absolute_candidate(cwd, path_to_check))
+        })
+        .chain(potential_paths.iter().filter_map(|path_to_check| {
+            let maybe_path = &path_to_check.path;
+            (maybe_path.starts_with("~") || maybe_path.is_absolute()).then(|| path_to_check.clone())
+        }))
+        .collect()
+}
+
+fn normalize_absolute_candidate(
+    cwd: &Path,
+    path_to_check: &PathWithPosition,
+) -> Option<PathWithPosition> {
+    path_to_check.path.is_relative().then(|| {
+        normalize_lexically(&cwd.join(&path_to_check.path))
+            .ok()
+            .map(|path| PathWithPosition {
+                path,
+                row: path_to_check.row,
+                column: path_to_check.column,
+            })
+    })?
 }
