@@ -1271,3 +1271,178 @@ async fn test_stack_frame_filter_persistence(
         );
     });
 }
+
+#[gpui::test]
+async fn test_go_to_source_reference_frame(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+           "src": {
+               "main.js": "console.log('hello');",
+           }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let _ = workspace.update(cx, |workspace, window, cx| {
+        workspace.toggle_dock(workspace::dock::DockPosition::Bottom, window, cx);
+    });
+
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
+        })
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
+
+    let source_content = "function internal() {\n  return 42;\n}\n";
+
+    client.on_request::<dap::requests::Source, _>(move |_, args| {
+        assert_eq!(42, args.source_reference);
+        Ok(dap::SourceResponse {
+            content: source_content.to_string(),
+            mime_type: None,
+        })
+    });
+
+    let stack_frames = vec![StackFrame {
+        id: 1,
+        name: "internal".into(),
+        source: Some(dap::Source {
+            name: Some("runtime_internals.js".into()),
+            path: None,
+            source_reference: Some(42),
+            presentation_hint: None,
+            origin: None,
+            sources: None,
+            adapter_data: None,
+            checksums: None,
+        }),
+        line: 2,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    }];
+
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
+    });
+
+    cx.run_until_parked();
+
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.run_until_parked();
+
+    let stack_frame_list = workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_panel_item = debug_panel
+                .update(cx, |this, _| this.active_session())
+                .unwrap();
+
+            active_debug_panel_item
+                .read(cx)
+                .running_state()
+                .read(cx)
+                .stack_frame_list()
+                .clone()
+        })
+        .unwrap();
+
+    // Verify editor opened with source reference content
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+            assert_eq!(1, editors.len(), "Should have exactly one editor open");
+
+            let editor_text = editors[0].read(cx).text(cx);
+            assert_eq!(
+                source_content, editor_text,
+                "Editor should contain the source reference content"
+            );
+
+            assert!(
+                editors[0].read(cx).read_only(cx),
+                "Source reference editor should be read-only"
+            );
+        })
+        .unwrap();
+
+    stack_frame_list
+        .update_in(cx, |stack_frame_list, window, cx| {
+            stack_frame_list.go_to_stack_frame(stack_frames[0].id, window, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+            assert_eq!(
+                1,
+                editors.len(),
+                "Should still have exactly one editor (no duplicate)"
+            );
+        })
+        .unwrap();
+}

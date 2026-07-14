@@ -7,7 +7,7 @@ use super::{
 use remote::Interactive;
 
 use crate::{
-    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, buffer_store,
     debugger::session::SessionQuirks,
     project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
@@ -95,6 +95,8 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
+    buffer_store: Entity<buffer_store::BufferStore>,
+    languages: Arc<language::LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
@@ -139,6 +141,8 @@ impl DapStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         worktree_store: Entity<WorktreeStore>,
         breakpoint_store: Entity<BreakpointStore>,
+        buffer_store: Entity<buffer_store::BufferStore>,
+        languages: Arc<language::LanguageRegistry>,
         is_headless: bool,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -151,13 +155,16 @@ impl DapStore {
             is_headless,
         });
 
-        Self::new(mode, breakpoint_store, worktree_store, fs, cx)
+        Self::new(mode, breakpoint_store, buffer_store, languages, worktree_store, fs, cx)
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub fn new_remote(
         project_id: u64,
         remote_client: Entity<RemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
+        buffer_store: Entity<buffer_store::BufferStore>,
+        languages: Arc<language::LanguageRegistry>,
         worktree_store: Entity<WorktreeStore>,
         node_runtime: NodeRuntime,
         http_client: Arc<dyn HttpClient>,
@@ -172,13 +179,15 @@ impl DapStore {
             http_client,
         });
 
-        Self::new(mode, breakpoint_store, worktree_store, fs, cx)
+        Self::new(mode, breakpoint_store, buffer_store, languages, worktree_store, fs, cx)
     }
 
     pub fn new_collab(
         _project_id: u64,
         _upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
+        buffer_store: Entity<buffer_store::BufferStore>,
+        languages: Arc<language::LanguageRegistry>,
         worktree_store: Entity<WorktreeStore>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -186,6 +195,8 @@ impl DapStore {
         Self::new(
             DapStoreMode::Collab,
             breakpoint_store,
+            buffer_store,
+            languages,
             worktree_store,
             fs,
             cx,
@@ -195,6 +206,8 @@ impl DapStore {
     fn new(
         mode: DapStoreMode,
         breakpoint_store: Entity<BreakpointStore>,
+        buffer_store: Entity<buffer_store::BufferStore>,
+        languages: Arc<language::LanguageRegistry>,
         worktree_store: Entity<WorktreeStore>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -234,6 +247,8 @@ impl DapStore {
             next_session_id: 0,
             downstream_client: None,
             breakpoint_store,
+            buffer_store,
+            languages,
             worktree_store,
             sessions: Default::default(),
             adapter_options: Default::default(),
@@ -475,6 +490,8 @@ impl DapStore {
         };
         let session = Session::new(
             self.breakpoint_store.clone(),
+            self.buffer_store.clone(),
+            self.languages.clone(),
             session_id,
             parent_session,
             label,
