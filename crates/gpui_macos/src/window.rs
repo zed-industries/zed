@@ -289,6 +289,12 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+                opaque_rect_for_window_move_when_in_titlebar
+                    as extern "C" fn(&Object, Sel) -> NSRect,
+            );
+
+            decl.add_method(
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
@@ -512,6 +518,11 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    // When true, the whole content view is reported as app-owned titlebar content via
+    // `_opaqueRectForWindowMoveWhenInTitlebar`, so AppKit does not drag the window from
+    // the titlebar or delay titlebar clicks (a delay first observed on macOS 27). Such
+    // windows draw their own titlebar and move the window via `start_window_move`.
+    app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -746,6 +757,7 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             is_resizable,
             is_minimizable,
             focus,
@@ -907,6 +919,7 @@ impl MacWindow {
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
+                app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -2854,6 +2867,25 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+// Reports which region of the view AppKit should treat as app-owned titlebar content
+// (rather than a system-owned window-move region). When `app_owns_titlebar_drag` is
+// true, we claim the entire view so AppKit neither drags the window from the titlebar
+// nor waits to disambiguate double-clicks before delivering titlebar clicks (the macOS
+// 27 delay); such windows implement dragging themselves via [`Window::start_window_move`].
+// Otherwise we return an empty rect so AppKit's native titlebar dragging keeps working.
+// This is independent of `NSWindow.isMovable`, so the Window-menu tiling items stay
+// enabled regardless.
+extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
+    let zero_rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+    let window_state = unsafe { get_window_state(this) };
+    let app_owns_titlebar_drag = window_state.as_ref().lock().app_owns_titlebar_drag;
+    if app_owns_titlebar_drag {
+        unsafe { msg_send![this, bounds] }
+    } else {
+        zero_rect
+    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
