@@ -25,7 +25,8 @@ use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
+use ui::{ContextMenu, LinkPreview, WithScrollbar, prelude::*, right_click_menu};
+use util::ResultExt;
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
 use workspace::notifications::NotifyResultExt;
@@ -55,6 +56,7 @@ pub struct MarkdownPreviewView {
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
+    hovered_url: Option<SharedString>,
     mode: MarkdownPreviewMode,
 }
 
@@ -286,6 +288,7 @@ impl MarkdownPreviewView {
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
+                hovered_url: None,
                 mode,
             };
 
@@ -433,6 +436,7 @@ impl MarkdownPreviewView {
         );
 
         self.base_directory = Self::get_folder_for_active_editor(editor.read(cx), cx);
+        self.hovered_url = None;
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,
@@ -544,6 +548,7 @@ impl MarkdownPreviewView {
 
             view.update(cx, move |view, cx| {
                 if let Some((contents, selection_start)) = update {
+                    view.hovered_url = None;
                     view.markdown.update(cx, |markdown, cx| {
                         markdown.reset(contents, cx);
                     });
@@ -913,6 +918,19 @@ impl MarkdownPreviewView {
                         cx,
                     );
                 }
+            })
+            .on_url_hover({
+                let view_handle = cx.entity().downgrade();
+                move |hovered_url, _window, cx| {
+                    view_handle
+                        .update(cx, |view, cx| {
+                            if view.hovered_url != hovered_url {
+                                view.hovered_url = hovered_url;
+                                cx.notify();
+                            }
+                        })
+                        .log_err();
+                }
             });
 
         if let Some(active_editor) = active_editor {
@@ -1268,11 +1286,17 @@ impl Render for MarkdownPreviewView {
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
         let preview_font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+        let hovered_url = self.hovered_url.clone();
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_hover(cx.listener(|view, hovered, _window, cx| {
+                if !hovered && view.hovered_url.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up))
@@ -1288,6 +1312,7 @@ impl Render for MarkdownPreviewView {
             .w_full()
             .flex_1()
             .min_h_0()
+            .relative()
             .bg(bg_color)
             .child(
                 WithRemSize::new(preview_font_size).size_full().child(
@@ -1365,6 +1390,17 @@ impl Render for MarkdownPreviewView {
                 ),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+            .when_some(hovered_url, |this, hovered_url| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_2()
+                        .left_0()
+                        .max_w_full()
+                        .overflow_hidden()
+                        .child(LinkPreview::new(hovered_url.as_ref(), cx)),
+                )
+            })
     }
 }
 
