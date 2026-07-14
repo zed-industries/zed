@@ -1531,7 +1531,7 @@ impl App {
         // a frame, they would otherwise only redraw on the next window event.
         for window in self.windows.values() {
             if let Some(window) = window.as_deref() {
-                window.request_redraw_if_needed();
+                window.schedule_frame_if_needed();
             }
         }
     }

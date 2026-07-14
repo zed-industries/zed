@@ -1497,7 +1497,7 @@ impl Window {
                         // (Wayland) retry the skipped frame instead of parking.
                         handle
                             .update(&mut cx, |_, window, _| {
-                                window.platform_window.request_redraw();
+                                window.platform_window.schedule_frame();
                                 window.complete_frame();
                             })
                             .log_err();
@@ -1551,7 +1551,7 @@ impl Window {
                         // The sustain is invisible to window dirtiness, request
                         // the next frame explicitly.
                         if high_rate_input {
-                            window.platform_window.request_redraw();
+                            window.platform_window.schedule_frame();
                         }
                         window.complete_frame();
                     })
@@ -2629,12 +2629,12 @@ impl Window {
     }
 
     /// Wakes an idle platform frame loop if this window still needs a frame.
-    pub(crate) fn request_redraw_if_needed(&self) {
+    pub(crate) fn schedule_frame_if_needed(&self) {
         if self.invalidator.is_dirty()
             || self.needs_present.get()
             || !self.next_frame_callbacks.borrow().is_empty()
         {
-            self.platform_window.request_redraw();
+            self.platform_window.schedule_frame();
         }
     }
 

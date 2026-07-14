@@ -662,9 +662,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
-    /// Ask for another `request_frame` callback even if the window is idle.
+    /// Schedules another `request_frame` callback even if the window is idle.
     /// A no-op on platforms whose frame loop runs continuously while visible.
-    fn request_redraw(&self) {}
+    fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 

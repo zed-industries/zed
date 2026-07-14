@@ -634,12 +634,12 @@ impl WaylandWindowStatePtr {
             state.awaiting_frame_callback = true;
         }
         // Otherwise the frame loop parks, costing no wake-ups until
-        // request_redraw arms the still pending frame request.
+        // schedule_frame arms the still pending frame request.
         state.redraw_requested = false;
         state.renderer_presented = false;
     }
 
-    pub fn request_redraw(&self) {
+    pub fn schedule_frame(&self) {
         let mut state = self.state.borrow_mut();
         if state.frame_in_progress {
             state.redraw_requested = true;
@@ -1483,8 +1483,8 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn request_redraw(&self) {
-        self.0.request_redraw();
+    fn schedule_frame(&self) {
+        self.0.schedule_frame();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
