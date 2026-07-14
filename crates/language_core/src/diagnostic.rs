@@ -74,3 +74,160 @@ impl Default for Diagnostic {
         }
     }
 }
+
+pub fn format_diagnostic_for_clipboard(
+    diagnostic: &Diagnostic,
+    file_path: Option<&str>,
+    line: u32,
+    column: u32,
+) -> String {
+    let mut result = String::new();
+
+    let severity_label = match diagnostic.severity {
+        DiagnosticSeverity::ERROR => "error",
+        DiagnosticSeverity::WARNING => "warning",
+        DiagnosticSeverity::INFORMATION => "info",
+        DiagnosticSeverity::HINT => "hint",
+        _ => "diagnostic",
+    };
+    result.push_str(severity_label);
+
+    if let Some(code) = &diagnostic.code {
+        result.push('[');
+        result.push_str(&code.to_string());
+        result.push(']');
+    }
+
+    if let Some(source) = &diagnostic.source {
+        result.push_str(" (");
+        result.push_str(source);
+        result.push(')');
+    }
+
+    result.push_str(": ");
+    result.push_str(&diagnostic.message);
+
+    if let Some(path) = file_path {
+        result.push_str("\n  --> ");
+        result.push_str(path);
+        result.push(':');
+        result.push_str(&line.to_string());
+        result.push(':');
+        result.push_str(&column.to_string());
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_diagnostic(
+        severity: DiagnosticSeverity,
+        message: &str,
+        source: Option<&str>,
+        code: Option<lsp::NumberOrString>,
+    ) -> Diagnostic {
+        Diagnostic {
+            severity,
+            message: message.to_string(),
+            source: source.map(|s| s.to_string()),
+            code,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_format_all_fields() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::ERROR,
+            "Type 'string' is not assignable to type 'number'",
+            Some("typescript"),
+            Some(lsp::NumberOrString::String("ts(2322)".to_string())),
+        );
+        let result = format_diagnostic_for_clipboard(
+            &diagnostic,
+            Some("src/components/App.tsx"),
+            42,
+            5,
+        );
+        assert_eq!(
+            result,
+            "error[ts(2322)] (typescript): Type 'string' is not assignable to type 'number'\n  --> src/components/App.tsx:42:5"
+        );
+    }
+
+    #[test]
+    fn test_format_no_code() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::WARNING,
+            "Unused variable",
+            Some("eslint"),
+            None,
+        );
+        let result = format_diagnostic_for_clipboard(&diagnostic, Some("src/main.rs"), 10, 1);
+        assert_eq!(
+            result,
+            "warning (eslint): Unused variable\n  --> src/main.rs:10:1"
+        );
+    }
+
+    #[test]
+    fn test_format_no_source() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::ERROR,
+            "expected semicolon",
+            None,
+            Some(lsp::NumberOrString::Number(1002)),
+        );
+        let result = format_diagnostic_for_clipboard(&diagnostic, Some("lib.rs"), 5, 20);
+        assert_eq!(
+            result,
+            "error[1002]: expected semicolon\n  --> lib.rs:5:20"
+        );
+    }
+
+    #[test]
+    fn test_format_no_code_no_source() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::HINT,
+            "Consider refactoring",
+            None,
+            None,
+        );
+        let result = format_diagnostic_for_clipboard(&diagnostic, Some("app.py"), 1, 1);
+        assert_eq!(
+            result,
+            "hint: Consider refactoring\n  --> app.py:1:1"
+        );
+    }
+
+    #[test]
+    fn test_format_no_file_path() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::ERROR,
+            "syntax error",
+            Some("rustc"),
+            None,
+        );
+        let result = format_diagnostic_for_clipboard(&diagnostic, None, 1, 1);
+        assert_eq!(result, "error (rustc): syntax error");
+    }
+
+    #[test]
+    fn test_format_information_severity() {
+        let diagnostic = make_diagnostic(
+            DiagnosticSeverity::INFORMATION,
+            "Info message",
+            None,
+            None,
+        );
+        let result = format_diagnostic_for_clipboard(&diagnostic, Some("test.rs"), 3, 7);
+        assert_eq!(
+            result,
+            "info: Info message\n  --> test.rs:3:7"
+        );
+    }
+
+}

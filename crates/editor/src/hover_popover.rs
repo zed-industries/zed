@@ -15,7 +15,7 @@ use gpui::{
     TextStyleRefinement, Window, canvas, div, px,
 };
 use itertools::Itertools;
-use language::{DiagnosticEntry, Language, LanguageRegistry};
+use language::{DiagnosticEntry, Language, LanguageRegistry, format_diagnostic_for_clipboard};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
@@ -419,6 +419,22 @@ fn show_hover(
 
                 let scroll_handle = ScrollHandle::new();
 
+                let file_path = snapshot
+                    .buffer_snapshot()
+                    .buffer_for_id(buffer_id)
+                    .and_then(|buffer| buffer.file())
+                    .map(|file| file.path().as_unix_str().to_string());
+                let start_point = local_diagnostic
+                    .range
+                    .start
+                    .to_point(&snapshot.buffer_snapshot());
+                let copy_message = format_diagnostic_for_clipboard(
+                    &local_diagnostic.diagnostic,
+                    file_path.as_deref(),
+                    start_point.row + 1,
+                    start_point.column + 1,
+                );
+
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     markdown,
@@ -429,6 +445,7 @@ fn show_hover(
                     anchor,
                     last_bounds: Rc::new(Cell::new(None)),
                     _subscription: subscription,
+                    copy_message,
                 })
             } else {
                 None
@@ -1156,6 +1173,7 @@ pub struct DiagnosticPopover {
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subscription: Subscription,
     pub scroll_handle: ScrollHandle,
+    copy_message: String,
 }
 
 impl DiagnosticPopover {
@@ -1249,10 +1267,10 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
-                    .child(div().absolute().top_1().right_1().child({
-                        let message = self.local_diagnostic.diagnostic.message.clone();
-                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
-                    }))
+                    .child(div().absolute().top_1().right_1().child(
+                        CopyButton::new("copy-diagnostic", self.copy_message.clone())
+                            .tooltip_label("Copy Diagnostic"),
+                    ))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
                             .tracked_scroll_handle(&self.scroll_handle),
