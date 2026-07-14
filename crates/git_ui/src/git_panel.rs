@@ -2696,6 +2696,18 @@ impl GitPanel {
             return;
         };
 
+        // Mirror the checkbox: a resolved conflict is locked against toggling
+        // (the explicit git::UnstageFile action remains as an escape hatch).
+        if self.section_for_entry_index(selected_index) == Some(Section::Conflict)
+            && let Some(status_entry) = selected_entry.status_entry()
+            && self.active_repository.as_ref().is_some_and(|repo| {
+                GitPanel::stage_status_for_entry(status_entry, &repo.read(cx))
+                    == StageStatus::Staged
+            })
+        {
+            return;
+        }
+
         let intent = self.stage_intent_for_entry_index(selected_index);
         self.toggle_staged_for_entry(&selected_entry, intent, window, cx);
     }
@@ -2704,7 +2716,8 @@ impl GitPanel {
         let Some(index) = self.selected_entry else {
             return;
         };
-        self.stage_bulk(index, cx);
+        let stage = self.stage_intent_for_entry_index(index) != StageIntent::Unstage;
+        self.stage_bulk(index, stage, cx);
     }
 
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4675,10 +4688,8 @@ impl GitPanel {
             ]
         };
 
-        // Staged/Unstaged are workflow stages the user's own clicks move files
-        // through, so their headers stay pinned even when empty (as long as
-        // there is anything to show at all); this both keeps the layout stable
-        // during staging and makes an empty commit visible at a glance.
+        // Keep Staged/Unstaged headers pinned even when empty (as long as there's
+        // anything to show at all) so the layout stays stable while staging.
         let has_any_section_entries = section_entries
             .iter()
             .any(|(_, entries)| !entries.is_empty());
@@ -6827,7 +6838,7 @@ impl GitPanel {
                                             ));
                                         }
                                         Some(GitListEntry::EmptySection(section)) => {
-                                            items.push(this.render_empty_section(*section, cx));
+                                            items.push(this.render_empty_section(*section));
                                         }
                                         None => {}
                                     }
@@ -6897,6 +6908,10 @@ impl GitPanel {
         let stage_intent = StageIntent::for_section(section);
         let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header));
 
+        let all_conflicts_resolved = section == Section::Conflict
+            && self.conflicted_count > 0
+            && self.conflicted_staged_count == self.conflicted_count;
+
         let section_is_empty = !self
             .entries
             .get(ix + 1)
@@ -6911,7 +6926,7 @@ impl GitPanel {
             .pr_1()
             .gap_2()
             .justify_between()
-            .when(!section_is_empty, |this| {
+            .when(!section_is_empty && !all_conflicts_resolved, |this| {
                 this.cursor_pointer()
                     .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             })
@@ -6926,13 +6941,17 @@ impl GitPanel {
                 gpui::Empty.into_any_element()
             } else {
                 let checkbox = Checkbox::new(checkbox_id, toggle_state)
-                    .disabled(!has_write_access)
+                    .disabled(!has_write_access || all_conflicts_resolved)
                     .fill()
                     .elevation(ElevationIndex::Surface);
-                let tooltip_label = match stage_intent {
-                    StageIntent::Stage => Some("Stage All"),
-                    StageIntent::Unstage => Some("Unstage All"),
-                    StageIntent::Toggle => None,
+                let tooltip_label = if all_conflicts_resolved {
+                    Some("All conflicts marked as resolved")
+                } else {
+                    match stage_intent {
+                        StageIntent::Stage => Some("Stage All"),
+                        StageIntent::Unstage => Some("Unstage All"),
+                        StageIntent::Toggle => None,
+                    }
                 };
                 if let Some(label) = tooltip_label {
                     checkbox
@@ -6943,7 +6962,7 @@ impl GitPanel {
                 }
             })
             .on_click(move |_, window, cx| {
-                if !has_write_access || section_is_empty {
+                if !has_write_access || section_is_empty || all_conflicts_resolved {
                     return;
                 }
 
@@ -6961,7 +6980,7 @@ impl GitPanel {
             .into_any_element()
     }
 
-    fn render_empty_section(&self, section: Section, _cx: &Context<Self>) -> AnyElement {
+    fn render_empty_section(&self, section: Section) -> AnyElement {
         let message = match section {
             Section::Staged => "No staged changes yet",
             Section::Unstaged => "No unstaged changes",
@@ -7006,7 +7025,13 @@ impl GitPanel {
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = if stage_intent.resolve_with(|| entry.status.staging()) {
+        // Resolve against the pending-op-aware status (like the checkboxes do)
+        // so the menu label can't lag behind a just-clicked checkbox.
+        let repo = self.active_repository.as_ref().map(|repo| repo.read(cx));
+        let stage_title = if stage_intent.resolve_with(|| match repo {
+            Some(repo) => GitPanel::stage_status_for_entry(entry, repo),
+            None => entry.status.staging(),
+        }) {
             "Stage File"
         } else {
             "Unstage File"
@@ -7161,6 +7186,14 @@ impl GitPanel {
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let stage_intent = self.stage_intent_for_entry_index(ix);
+
+        // Unstaging a resolved conflict would rebuild the index entry from HEAD,
+        // silently discarding the unmerged (base/ours/theirs) stages, so once a
+        // conflict is marked resolved we lock the checkbox instead of offering a
+        // round-trip git can't actually perform.
+        let resolved_conflict = self.section_for_entry_index(ix) == Some(Section::Conflict)
+            && stage_status == StageStatus::Staged;
+
         let toggle_state = stage_intent.checkbox_state(|| {
             if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
                 ToggleState::Selected
@@ -7278,23 +7311,23 @@ impl GitPanel {
                     .cursor_pointer()
                     .child(
                         Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
                             .fill()
                             .elevation(ElevationIndex::Surface)
+                            .disabled(!has_write_access || resolved_conflict)
                             .on_click_ext({
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
                                 move |_, click, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        if !has_write_access {
+                                        if !has_write_access || resolved_conflict {
                                             return;
                                         }
-                                        // `stage_bulk` only ever stages, so skip it when the
-                                        // section forces unstaging.
-                                        if click.modifiers().shift
-                                            && stage_intent != StageIntent::Unstage
-                                        {
-                                            this.stage_bulk(ix, cx);
+                                        if click.modifiers().shift {
+                                            this.stage_bulk(
+                                                ix,
+                                                stage_intent != StageIntent::Unstage,
+                                                cx,
+                                            );
                                         } else {
                                             let list_entry =
                                                 if GitPanelSettings::get_global(cx).tree_view {
@@ -7318,8 +7351,12 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = stage_intent.label(|| stage_status);
-                                Tooltip::for_action(action, &ToggleStaged, cx)
+                                if resolved_conflict {
+                                    Tooltip::simple("Conflict marked as resolved", cx)
+                                } else {
+                                    let action = stage_intent.label(|| stage_status);
+                                    Tooltip::for_action(action, &ToggleStaged, cx)
+                                }
                             }),
                     ),
             )
@@ -7641,14 +7678,17 @@ impl GitPanel {
         })
     }
 
-    fn stage_bulk(&mut self, mut index: usize, cx: &mut Context<'_, Self>) {
+    fn stage_bulk(&mut self, mut index: usize, stage: bool, cx: &mut Context<'_, Self>) {
         let Some(op) = self.bulk_staging.as_ref() else {
             return;
         };
         let Some(mut anchor_index) = self.entry_by_path(&op.anchor) else {
             return;
         };
-        if let Some(entry) = self.entries.get(index)
+        // Only a staged anchor survives the next entries refresh, so there's no
+        // point re-anchoring on the entry we're about to unstage.
+        if stage
+            && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
         {
             self.set_bulk_staging_anchor(entry.repo_path.clone(), cx);
@@ -7663,7 +7703,7 @@ impl GitPanel {
             .iter()
             .filter_map(|entry| entry.status_entry().cloned())
             .collect::<Vec<_>>();
-        self.change_file_stage(true, entries, cx);
+        self.change_file_stage(stage, entries, cx);
     }
 
     fn set_bulk_staging_anchor(&mut self, path: RepoPath, cx: &mut Context<'_, GitPanel>) {
