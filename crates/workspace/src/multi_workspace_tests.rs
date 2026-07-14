@@ -1,12 +1,16 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use super::*;
 use crate::item::test::TestItem;
+use crate::persistence::model::{SerializedPane, SerializedPaneGroup};
 use agent_settings::AgentSettings;
 use client::proto;
+use collections::IndexSet;
 use fs::{FakeFs, Fs};
 use gpui::{TestAppContext, VisualTestContext};
+use language::{LanguageName, Toolchain, ToolchainScope};
 use project::DisableAiSettings;
+use remote::{MockConnectionOptions, RemoteConnectionOptions};
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use util::path;
@@ -868,6 +872,95 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
             "project groups should no longer contain the stale initial key; got {keys:?}"
         );
     });
+}
+
+#[gpui::test]
+async fn test_open_remote_project_restores_user_toolchains(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.py": "",
+            ".venv": {
+                "bin": {
+                    "python": ""
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace_id = cx
+        .update(|cx| WorkspaceDb::global(cx))
+        .next_id()
+        .await
+        .unwrap();
+
+    let toolchain = Toolchain {
+        language_name: LanguageName::new_static("Python"),
+        name: "Project Venv".into(),
+        path: path!("/project/.venv/bin/python").into(),
+        as_json: json!({ "kind": "venv" }),
+    };
+    let mut user_toolchains = BTreeMap::new();
+    user_toolchains.insert(
+        ToolchainScope::Project,
+        IndexSet::from_iter([toolchain.clone()]),
+    );
+
+    let serialized_workspace = SerializedWorkspace {
+        id: workspace_id,
+        location: SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Mock(
+            MockConnectionOptions { id: 1 },
+        )),
+        paths: PathList::new(&[path!("/project")]),
+        identity_paths: None,
+        center_group: SerializedPaneGroup::Pane(SerializedPane::default()),
+        window_bounds: None,
+        centered_layout: false,
+        display: None,
+        docks: DockStructure::default(),
+        session_id: None,
+        bookmarks: BTreeMap::new(),
+        breakpoints: BTreeMap::new(),
+        user_toolchains,
+        window_id: None,
+    };
+
+    let project_for_open = project.clone();
+    cx.update(|cx| {
+        cx.spawn(async move |cx| {
+            open_remote_project_inner(
+                project_for_open,
+                vec![PathBuf::from(path!("/project"))],
+                workspace_id,
+                Some(serialized_workspace),
+                app_state,
+                window,
+                None,
+                None,
+                cx,
+            )
+            .await
+        })
+    })
+    .await
+    .unwrap();
+
+    let restored_toolchains = project.read_with(cx, |project, cx| {
+        project
+            .user_toolchains(cx)
+            .unwrap_or_default()
+            .get(&ToolchainScope::Project)
+            .cloned()
+            .unwrap_or_default()
+    });
+    assert_eq!(restored_toolchains, IndexSet::from_iter([toolchain]));
 }
 
 #[gpui::test]

@@ -10831,6 +10831,15 @@ async fn open_remote_project_inner(
             })
             .await;
     }
+    if let Some(workspace) = serialized_workspace.as_ref() {
+        project.update(cx, |this, cx| {
+            for (scope, toolchains) in &workspace.user_toolchains {
+                for toolchain in toolchains {
+                    this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                }
+            }
+        });
+    }
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
