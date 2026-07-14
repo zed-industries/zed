@@ -1,3 +1,4 @@
+use call_hierarchy_panel;
 use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
@@ -40,6 +41,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Project Panel", project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
+        MenuItem::action("Call Hierarchy Panel", call_hierarchy_panel::ToggleFocus),
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::Toggle),
         MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
@@ -239,6 +241,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     "Find All References",
                     editor::actions::FindAllReferences::default(),
                 ),
+                MenuItem::action("Show Call Hierarchy", editor::actions::ShowCallHierarchy),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(

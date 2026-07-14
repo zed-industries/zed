@@ -489,7 +489,14 @@ message Envelope {
     GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
     TelemetryEvent telemetry_event = 459;
     ResolveCodeAction resolve_code_action = 460;
-    ResolveCodeActionResponse resolve_code_action_response = 461; // current max
+    ResolveCodeActionResponse resolve_code_action_response = 461;
+
+    PrepareCallHierarchy prepare_call_hierarchy = 462;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 463;
+    GetIncomingCalls get_incoming_calls = 464;
+    GetIncomingCallsResponse get_incoming_calls_response = 465;
+    GetOutgoingCalls get_outgoing_calls = 466;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 467; // current max
   }
 
   reserved 87 to 88;

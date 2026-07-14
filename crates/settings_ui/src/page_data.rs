@@ -5854,6 +5854,131 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
+    fn call_hierarchy_panel_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Call Hierarchy Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Call Hierarchy Panel Button",
+                description: "Show the call hierarchy panel button in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("call_hierarchy_panel.button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Call Hierarchy Panel Dock",
+                description: "Where to dock the call hierarchy panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("call_hierarchy_panel.dock"),
+                    pick: |settings_content| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .dock
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Call Hierarchy Panel Default Width",
+                description: "Default width of the call hierarchy panel in pixels.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("call_hierarchy_panel.default_width"),
+                    pick: |settings_content| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .default_width
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Indent Size",
+                description: "Amount of indentation for nested items.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("call_hierarchy_panel.indent_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .indent_size
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .indent_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Indent Guides",
+                description: "When to show indent guides in the call hierarchy panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("call_hierarchy_panel.indent_guides.show"),
+                    pick: |settings_content| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .indent_guides
+                            .as_ref()?
+                            .show
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .indent_guides
+                            .get_or_insert_default()
+                            .show = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_panel_section() -> [SettingsPageItem; 17] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
@@ -6406,6 +6531,7 @@ fn panels_page() -> SettingsPage {
             project_panel_section(),
             terminal_panel_section(),
             outline_panel_section(),
+            call_hierarchy_panel_section(),
             git_panel_section(),
             debugger_panel_section(),
             collaboration_panel_section(),
