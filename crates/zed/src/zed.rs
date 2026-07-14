@@ -6223,6 +6223,95 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_paths_in_gitignored_dir_opens_new_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    ".git": {},
+                    ".gitignore": ".checkouts/\n",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    },
+                    ".checkouts": {
+                        "worktrees": {
+                            "foo": {
+                                "README.md": "hello"
+                            }
+                        }
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // Opening a directory inside a gitignored folder must not be treated
+        // as contained by the open project: its contents were never scanned,
+        // and it may be an independent checkout (e.g. a git worktree kept in
+        // an ignored directory). It should become its own workspace root
+        // instead.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project/.checkouts/worktrees/foo"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let workspace_roots = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .flat_map(|window| {
+                    let mut roots = Vec::new();
+                    if let Ok(multi_workspace) = window.read(cx) {
+                        for workspace in multi_workspace.workspaces() {
+                            roots.push(
+                                workspace
+                                    .read(cx)
+                                    .worktrees(cx)
+                                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    roots
+                })
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            workspace_roots.contains(&vec![PathBuf::from(path!(
+                "/project/.checkouts/worktrees/foo"
+            ))]),
+            "the gitignored directory should be the root of its own workspace, got {workspace_roots:?}"
+        );
+        assert!(
+            workspace_roots.contains(&vec![PathBuf::from(path!("/project"))]),
+            "the original project workspace should be unchanged, got {workspace_roots:?}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_quit_checks_all_workspaces_for_dirty_items(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(init);
