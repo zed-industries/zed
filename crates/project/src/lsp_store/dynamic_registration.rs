@@ -76,7 +76,7 @@ pub(super) struct DynamicRegistrations {
     rename: CapabilityRegistrations<OneOf<bool, lsp::RenameOptions>>,
     code_action: CapabilityRegistrations<lsp::CodeActionProviderCapability>,
     definition: CapabilityRegistrations<OneOf<bool, lsp::DefinitionOptions>>,
-    completion: CapabilityRegistrations<lsp::CompletionOptions>,
+    pub(super) completion: CapabilityRegistrations<lsp::CompletionOptions>,
     hover: CapabilityRegistrations<lsp::HoverProviderCapability>,
     signature_help: CapabilityRegistrations<lsp::SignatureHelpOptions>,
     color: CapabilityRegistrations<lsp::ColorProviderCapability>,
