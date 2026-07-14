@@ -596,3 +596,136 @@ impl Editor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor_tests::init_test;
+    use crate::test::editor_test_context::EditorTestContext;
+    use gpui::TestAppContext;
+
+    // Verifies that `Editor::toggle_diagnostics` remains in the editor's
+    // command palette after the user has toggled diagnostics off, so the
+    // keybind keeps working and the user has a way to re-enable them.
+    #[gpui::test]
+    async fn test_toggle_diagnostics_action_remains_available_when_disabled(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.lsp_data_enabled(), "lsp_data should be enabled");
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should start enabled"
+            );
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should be available by default"
+            );
+        });
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, _, _| {
+            assert!(
+                !editor.diagnostics_enabled(),
+                "diagnostics should be disabled after dispatching ToggleDiagnostics"
+            );
+        });
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics must remain available after diagnostics are disabled \
+                 so the user can re-enable them"
+            );
+        });
+
+        // Re-enable diagnostics by dispatching the action a second time.
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, _, _| {
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should be re-enabled after a second dispatch of ToggleDiagnostics"
+            );
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should be available after diagnostics are re-enabled"
+            );
+        });
+    }
+
+    // Verifies that `Editor::toggle_inline_diagnostics` is available when
+    // diagnostics are on, removed from the command palette when diagnostics
+    // are off, and reappears when diagnostics are re-enabled.
+    #[gpui::test]
+    async fn test_toggle_inline_diagnostics_action_tracks_diagnostics_state(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        // Initial state: diagnostics on, inline diagnostics on. The action
+        // should be available.
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.lsp_data_enabled(), "lsp_data should be enabled");
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should start enabled"
+            );
+            assert!(
+                editor.inline_diagnostics_enabled(),
+                "inline diagnostics should start enabled"
+            );
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should be available by default"
+            );
+        });
+
+        // Disable diagnostics. The inline-diagnostics action should no
+        // longer be available because its gate is `diagnostics_enabled()`.
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, _, _| {
+            assert!(
+                !editor.diagnostics_enabled(),
+                "diagnostics should be disabled after dispatching ToggleDiagnostics"
+            );
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                !window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should not be available while diagnostics are disabled"
+            );
+        });
+
+        // Re-enable diagnostics. The inline-diagnostics action should be
+        // available again.
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, _, _| {
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should be re-enabled after a second dispatch of ToggleDiagnostics"
+            );
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should be available after diagnostics are re-enabled"
+            );
+        });
+    }
+}
