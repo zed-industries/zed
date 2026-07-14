@@ -2815,7 +2815,10 @@ mod test {
         rc::Rc,
     };
 
-    use crate::{AppContext, Context, Empty, IntoElement, Render, TestAppContext, Window};
+    use crate::{
+        AppContext, Context, Empty, IntoElement, Render, TestAppContext, Window,
+        WindowBackgroundAppearance, WindowDecorations, px,
+    };
 
     struct RenderCounter(Rc<Cell<usize>>);
 
@@ -2845,6 +2848,40 @@ mod test {
         cx.run_until_parked();
 
         assert_eq!(render_count.get(), render_count_before_refresh + 1);
+    }
+
+    #[gpui::test]
+    fn surface_metadata_changes_schedule_frames(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let did_schedule_frame = Rc::new(Cell::new(false));
+        cx.test_window(*window).on_schedule_frame({
+            let did_schedule_frame = did_schedule_frame.clone();
+            move || did_schedule_frame.set(true)
+        });
+
+        cx.update(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    window.set_background_appearance(WindowBackgroundAppearance::Transparent);
+                    assert!(
+                        did_schedule_frame.replace(false),
+                        "setting background appearance should schedule a frame"
+                    );
+
+                    window.request_decorations(WindowDecorations::Client);
+                    assert!(
+                        did_schedule_frame.replace(false),
+                        "requesting decorations should schedule a frame"
+                    );
+
+                    window.set_client_inset(px(8.));
+                    assert!(
+                        did_schedule_frame.replace(false),
+                        "setting the client inset should schedule a frame"
+                    );
+                })
+                .unwrap();
+        });
     }
 
     #[test]

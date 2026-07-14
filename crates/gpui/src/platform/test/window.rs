@@ -33,6 +33,7 @@ pub(crate) struct TestWindowState {
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    schedule_frame_callback: Option<Box<dyn Fn()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
 }
@@ -85,6 +86,7 @@ impl TestWindow {
             hover_status_change_callback: None,
             resize_callback: None,
             moved_callback: None,
+            schedule_frame_callback: None,
             input_handler: None,
             is_fullscreen: false,
         })))
@@ -101,6 +103,10 @@ impl TestWindow {
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
+    }
+
+    pub fn on_schedule_frame(&self, callback: impl Fn() + 'static) {
+        self.0.lock().schedule_frame_callback = Some(Box::new(callback));
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
@@ -259,6 +265,12 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+
+    fn schedule_frame(&self) {
+        if let Some(callback) = self.0.lock().schedule_frame_callback.as_ref() {
+            callback();
+        }
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)

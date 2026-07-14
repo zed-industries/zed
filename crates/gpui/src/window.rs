@@ -2428,6 +2428,7 @@ impl Window {
     /// Sets the size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
+        // TODO: Refresh the window when this is called outside an existing render cycle.
         self.rem_size = rem_size.into();
     }
 

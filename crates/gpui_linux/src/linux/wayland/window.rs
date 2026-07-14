@@ -89,6 +89,51 @@ struct InProgressConfigure {
     tiling: Tiling,
 }
 
+#[derive(Debug, Default)]
+struct WaylandFrameScheduler {
+    // A committed wl_surface.frame callback has not fired yet.
+    awaiting_frame_callback: bool,
+    // GPUI is processing a frame callback and may commit through presentation.
+    frame_in_progress: bool,
+    // Another frame is needed after the callback currently awaited or in progress.
+    reschedule_requested: bool,
+}
+
+impl WaylandFrameScheduler {
+    fn start_frame(&mut self) {
+        self.awaiting_frame_callback = false;
+        self.frame_in_progress = true;
+        self.reschedule_requested = false;
+    }
+
+    fn finish_frame(
+        &mut self,
+        renderer_presented: bool,
+        force_render_after_recovery: bool,
+        commit: impl FnOnce(),
+    ) {
+        self.frame_in_progress = false;
+        if renderer_presented {
+            // The renderer's present committed the frame request. A bare commit
+            // on top of it can race Mesa's attach+commit and cause flickering (#54214).
+            self.awaiting_frame_callback = true;
+        } else if self.reschedule_requested || force_render_after_recovery {
+            commit();
+            self.awaiting_frame_callback = true;
+        }
+        self.reschedule_requested = false;
+    }
+
+    fn schedule_frame(&mut self, acknowledged_first_configure: bool, commit: impl FnOnce()) {
+        if self.frame_in_progress {
+            self.reschedule_requested = true;
+        } else if !self.awaiting_frame_callback && acknowledged_first_configure {
+            commit();
+            self.awaiting_frame_callback = true;
+        }
+    }
+}
+
 pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
     acknowledged_first_configure: bool,
@@ -118,11 +163,7 @@ pub struct WaylandWindowState {
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
-    // A commit armed the pending wl_surface.frame request, so the compositor
-    // will send a frame callback once the surface is visible.
-    awaiting_frame_callback: bool,
-    frame_in_progress: bool,
-    redraw_requested: bool,
+    frame_scheduler: WaylandFrameScheduler,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -406,9 +447,7 @@ impl WaylandWindowState {
             hovered: false,
             force_render_after_recovery: false,
             renderer_presented: false,
-            awaiting_frame_callback: false,
-            frame_in_progress: false,
-            redraw_requested: false,
+            frame_scheduler: WaylandFrameScheduler::default(),
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -599,9 +638,7 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
-        state.awaiting_frame_callback = false;
-        state.frame_in_progress = true;
-        state.redraw_requested = false;
+        state.frame_scheduler.start_frame();
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
         let force_render = state.force_render_after_recovery;
@@ -619,35 +656,30 @@ impl WaylandWindowStatePtr {
         drop(cb);
 
         let mut state = self.state.borrow_mut();
-        state.frame_in_progress = false;
         if force_render && !state.renderer_presented {
             // The forced render was throttled, force it again on the next frame.
             state.force_render_after_recovery = true;
         }
-        if state.renderer_presented {
-            // The renderer's present committed the frame request from above.
-            // Never commit on top of it, a bare commit racing Mesa's
-            // attach+commit causes flickering (#54214).
-            state.awaiting_frame_callback = true;
-        } else if state.redraw_requested || state.force_render_after_recovery {
-            state.surface.commit();
-            state.awaiting_frame_callback = true;
-        }
+        let renderer_presented = state.renderer_presented;
+        let force_render_after_recovery = state.force_render_after_recovery;
+        let surface = state.surface.clone();
+        state
+            .frame_scheduler
+            .finish_frame(renderer_presented, force_render_after_recovery, || {
+                surface.commit()
+            });
         // Otherwise the frame loop parks, costing no wake-ups until
         // schedule_frame arms the still pending frame request.
-        state.redraw_requested = false;
         state.renderer_presented = false;
     }
 
     pub fn schedule_frame(&self) {
         let mut state = self.state.borrow_mut();
-        if state.frame_in_progress {
-            state.redraw_requested = true;
-        } else if !state.awaiting_frame_callback && state.acknowledged_first_configure {
-            // Arm the frame callback requested by the last frame().
-            state.surface.commit();
-            state.awaiting_frame_callback = true;
-        }
+        let acknowledged_first_configure = state.acknowledged_first_configure;
+        let surface = state.surface.clone();
+        state
+            .frame_scheduler
+            .schedule_frame(acknowledged_first_configure, || surface.commit());
     }
 
     fn update_ime_enabled(&self) {
@@ -1767,4 +1799,28 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::WaylandFrameScheduler;
+
+    #[test]
+    fn scheduling_while_awaiting_frame_callback_is_preserved() {
+        let mut scheduler = WaylandFrameScheduler::default();
+        let commit_count = Cell::new(0);
+        let commit = || commit_count.set(commit_count.get() + 1);
+
+        scheduler.schedule_frame(true, commit);
+        assert_eq!(commit_count.get(), 1);
+
+        scheduler.schedule_frame(true, commit);
+        assert_eq!(commit_count.get(), 1);
+
+        scheduler.start_frame();
+        scheduler.finish_frame(false, false, commit);
+        assert_eq!(commit_count.get(), 2);
+    }
 }
