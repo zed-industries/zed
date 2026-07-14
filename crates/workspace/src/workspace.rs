@@ -8320,15 +8320,13 @@ impl Workspace {
                 this.track_focus(&self.region_focus_handles.editor)
             })
             .size_full()
-            .child(
-                self.center.render(
-                    self.zoomed.as_ref(),
-                    self.maximized_pane.as_ref(),
-                    render_cx,
-                    window,
-                    cx,
-                ),
-            )
+            .child(self.center.render(
+                self.zoomed.as_ref(),
+                self.maximized_pane.as_ref(),
+                render_cx,
+                window,
+                cx,
+            ))
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {

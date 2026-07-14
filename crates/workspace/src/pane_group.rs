@@ -589,7 +589,10 @@ impl Member {
     pub fn contains_pane(&self, needle: &Entity<Pane>) -> bool {
         match self {
             Member::Pane(pane) => pane == needle,
-            Member::Axis(axis) => axis.members.iter().any(|member| member.contains_pane(needle)),
+            Member::Axis(axis) => axis
+                .members
+                .iter()
+                .any(|member| member.contains_pane(needle)),
         }
     }
 
@@ -952,7 +955,12 @@ impl PaneAxis {
                 for member in &self.members {
                     if member.contains_pane(&maximized_pane) {
                         return member.render(
-                            basis, zoomed, Some(maximized), render_cx, window, cx,
+                            basis,
+                            zoomed,
+                            Some(maximized),
+                            render_cx,
+                            window,
+                            cx,
                         );
                     }
                 }
@@ -982,8 +990,7 @@ impl PaneAxis {
                     }
                 }
 
-                let result =
-                    member.render((basis + ix) * 10, zoomed, None, render_cx, window, cx);
+                let result = member.render((basis + ix) * 10, zoomed, None, render_cx, window, cx);
                 if result.contains_active_pane {
                     contains_active_pane = true;
                 }
