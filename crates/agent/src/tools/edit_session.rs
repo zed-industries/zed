@@ -16,7 +16,7 @@ use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
-use reindent::{Reindenter, compute_indent_delta};
+use reindent::{Reindenter, compute_indent_delta, compute_rest_indent_delta};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::Range;
@@ -527,15 +527,34 @@ impl EditPipeline {
                 );
 
                 let buffer_indent = snapshot.line_indent_for_row(line);
+                let query_lines = matcher.query_lines();
                 let query_indent = text::LineIndent::from_iter(
-                    matcher
-                        .query_lines()
+                    query_lines
                         .first()
                         .map(|s| s.as_str())
                         .unwrap_or("")
                         .chars(),
                 );
-                let indent_delta = compute_indent_delta(buffer_indent, query_indent);
+                let first_line_delta = compute_indent_delta(buffer_indent, query_indent);
+
+                // Query row 0 is excluded: its delta is `first_line_delta`,
+                // which intentionally differs when the model stripped the
+                // first line's indentation.
+                let rest_delta = compute_rest_indent_delta(
+                    first_line_delta,
+                    matcher
+                        .line_pairs(&range)
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter(|(query_row, _)| *query_row != 0)
+                        .filter_map(|(query_row, buffer_row)| {
+                            let query_line = query_lines.get(*query_row as usize)?;
+                            Some((
+                                snapshot.line_indent_for_row(*buffer_row),
+                                text::LineIndent::from_iter(query_line.chars()),
+                            ))
+                        }),
+                );
 
                 let old_text_in_buffer = snapshot.text_for_range(range.clone()).collect::<String>();
 
@@ -551,7 +570,7 @@ impl EditPipeline {
                 self.current_edit = Some(EditPipelineEntry::StreamingNewText {
                     streaming_diff: StreamingDiff::new(old_text_in_buffer),
                     edit_cursor: range.start,
-                    reindenter: Reindenter::new(indent_delta),
+                    reindenter: Reindenter::with_deltas(first_line_delta, rest_delta),
                     original_snapshot: text_snapshot,
                 });
 

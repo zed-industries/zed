@@ -1,7 +1,6 @@
 use crate::LanguageName;
 use collections::{HashMap, HashSet, IndexSet};
 use gpui_shared_string::SharedString;
-use lsp::LanguageServerName;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -105,7 +104,7 @@ pub struct LanguageConfig {
     pub rewrap_prefixes: Vec<Regex>,
     /// A list of language servers that are allowed to run on subranges of a given language.
     #[serde(default)]
-    pub scope_opt_in_language_servers: Vec<LanguageServerName>,
+    pub scope_opt_in_language_servers: Vec<SharedString>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
     /// A list of characters that Zed should treat as word characters for the
@@ -377,7 +376,7 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub linked_edit_characters: Override<HashSet<char>>,
     #[serde(default)]
-    pub opt_into_language_servers: Vec<LanguageServerName>,
+    pub opt_into_language_servers: Vec<SharedString>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
 }

@@ -224,6 +224,11 @@ pub struct SandboxFallbackAuthorizationDetails {
     /// whether to run the command without a sandbox.
     #[serde(default)]
     pub reason: String,
+    /// Slug of the sandboxing docs section that best explains how to fix this
+    /// failure (see [`crate::LinuxWslSandboxError::docs_section`]), rendered as a
+    /// "Learn more" link. `None` when the cause is unknown.
+    #[serde(default)]
+    pub docs_section: Option<String>,
 }
 
 pub fn meta_with_sandbox_fallback_authorization(
