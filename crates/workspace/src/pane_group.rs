@@ -564,12 +564,11 @@ impl Member {
                     .relative()
                     .size_full()
                     .when(is_maximized, |this| {
-                        this.overflow_hidden()
-                            .bg(cx.theme().colors().background)
+                        this.bg(cx.theme().colors().background)
                             .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .rounded_md()
+                            .border_color(cx.theme().colors().border)
                             .shadow_lg()
+                            .overflow_hidden()
                     })
                     .child(
                         AnyView::from(pane.clone())
