@@ -12559,6 +12559,7 @@ dependencies = [
  "lsp",
  "menu",
  "picker",
+ "picker_preview",
  "project",
  "rope",
  "serde_json",
