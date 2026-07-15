@@ -4823,8 +4823,21 @@ impl LspStore {
 
                             let diagnostic_updates = local
                                 .language_servers
-                                .keys()
-                                .cloned()
+                                .iter()
+                                .filter_map(|(server_id, state)| {
+                                    let supports_workspace_diagnostics = match state {
+                                        LanguageServerState::Running {
+                                            workspace_diagnostics_refresh_tasks,
+                                            ..
+                                        } => !workspace_diagnostics_refresh_tasks.is_empty(),
+                                        _ => false,
+                                    };
+                                    if supports_workspace_diagnostics {
+                                        None
+                                    } else {
+                                        Some(*server_id)
+                                    }
+                                })
                                 .map(|server_id| DocumentDiagnosticsUpdate {
                                     diagnostics: DocumentDiagnostics {
                                         document_abs_path: buffer_abs_path.clone(),
