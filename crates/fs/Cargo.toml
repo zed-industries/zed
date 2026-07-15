@@ -48,6 +48,7 @@ trash = { git = "https://github.com/zed-industries/trash-rs", rev = "47761739192
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 dunce.workspace = true
+async-std.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
