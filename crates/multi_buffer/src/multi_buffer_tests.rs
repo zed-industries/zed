@@ -5636,6 +5636,19 @@ async fn test_word_diff_consecutive_modified_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_word_diff_modified_line_shifted_by_blank_lines(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "const message = \"hello world from zed\";\n";
+    let modified_text = "\n\n\nconst message = \"hello brave new world from zed\";\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, vec!["\n\n\n", " brave new"]);
+}
+
+#[gpui::test]
 async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppContext) {
     let settings_store = cx.update(|cx| SettingsStore::test(cx));
     cx.set_global(settings_store);
@@ -5647,9 +5660,61 @@ async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppCon
 
     assert_eq!(
         word_diffs,
-        Vec::<String>::new(),
-        "modified lines with a deleted line between should not produce word diffs"
+        vec!["bbb\ndeleted line", "ddd", "BBB", "DDD"],
+        "modified lines with a deleted line between should produce word diffs"
     );
+}
+
+#[gpui::test]
+async fn test_word_diff_skips_pure_addition(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "unchanged\n";
+    let modified_text = "unchanged\nadded line\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn test_word_diff_skips_pure_deletion(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "unchanged\ndeleted line\n";
+    let modified_text = "unchanged\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn test_word_diff_skips_hunk_when_base_exceeds_line_limit(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "\n\n\n\n\nhello world\n";
+    let modified_text = "hello WORLD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, Vec::<String>::new());
+}
+
+#[gpui::test]
+async fn test_word_diff_skips_hunk_when_buffer_exceeds_line_limit(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "hello world\n";
+    let modified_text = "\n\n\n\n\nhello WORLD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, Vec::<String>::new());
 }
 
 #[gpui::test]

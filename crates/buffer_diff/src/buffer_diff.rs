@@ -1273,9 +1273,10 @@ impl Sink for HunkSink<'_> {
         let buffer_line_count = new_end - new_start;
 
         let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = self.diff_options
-            && !buffer_row_range.is_empty()
-            && base_line_count == buffer_line_count
-            && diff_options.max_word_diff_line_count >= base_line_count
+            && base_line_count > 0
+            && buffer_line_count > 0
+            && base_line_count <= diff_options.max_word_diff_line_count
+            && buffer_line_count <= diff_options.max_word_diff_line_count
         {
             let base_text: String = self
                 .diff_base_rope
