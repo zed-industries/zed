@@ -41,7 +41,7 @@ use menu::{
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::{ConnectionState, RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
@@ -55,9 +55,9 @@ use std::sync::Arc;
 use theme::{ActiveTheme, CLIENT_SIDE_DECORATION_ROUNDING};
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
-    HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
-    Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
-    prelude::*, render_modifiers, right_click_menu,
+    HighlightedLabel, IconWithIndicator, Indicator, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProjectEmptyState, ScrollAxes, Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor,
+    Tooltip, WithScrollbar, prelude::*, render_modifiers, right_click_menu,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
@@ -393,6 +393,10 @@ enum ListEntry {
     ProjectHeader {
         key: ProjectGroupKey,
         label: SharedString,
+        /// Optional second line disambiguating dev containers that share the
+        /// same path-based `label` (e.g. multiple `devcontainer.json`s in one
+        /// project). `None` for the common single-project-per-path case.
+        subtitle: Option<SharedString>,
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
         waiting_thread_count: usize,
@@ -515,6 +519,15 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
+/// The aggregated connection state of a remote project group, used to color
+/// its icon in the sidebar.
+#[derive(Clone, Copy)]
+enum RemoteGroupConnection {
+    Connected,
+    Connecting,
+    Disconnected,
+}
+
 /// Identity-and-layout key for a [`ListEntry`] used to preserve measured list items
 /// across rebuilds. Equal shapes must render to the same height; add any new
 /// height-affecting state here.
@@ -527,6 +540,8 @@ enum EntryShape {
         // Determines whether the "No threads yet" row is rendered (only shown when
         // `!is_collapsed && !has_threads`).
         is_collapsed: bool,
+        // Presence/content of the subtitle line changes the header height.
+        subtitle: Option<SharedString>,
     },
     Thread(ThreadId),
     Terminal(TerminalId),
@@ -566,6 +581,54 @@ fn root_repository_snapshots(
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
+}
+
+/// The dev container's `devcontainer.json` made relative to the host project
+/// folder (e.g. `.devcontainer/backend/devcontainer.json`), so we never surface
+/// the potentially very long absolute host path. Falls back to the raw
+/// `config_file` if it isn't under `local_folder`.
+fn dev_container_config_relative(docker: &remote::DockerConnectionOptions) -> Option<PathBuf> {
+    let config_file = docker.config_file.as_ref()?;
+    let config_path = Path::new(config_file);
+    let relative = docker
+        .local_folder
+        .as_ref()
+        .and_then(|folder| config_path.strip_prefix(folder).ok())
+        .unwrap_or(config_path);
+    Some(relative.to_path_buf())
+}
+
+/// The dev container's `devcontainer.json` shown compactly for the sidebar
+/// subtitle: project-relative and with a leading `.devcontainer/` stripped, so
+/// `.../.devcontainer/backend/devcontainer.json` reads as
+/// `backend/devcontainer.json`. Used to tell apart multiple dev containers that
+/// mount the same repo at the same in-container path.
+fn dev_container_config_subtitle(docker: &remote::DockerConnectionOptions) -> Option<SharedString> {
+    let relative = dev_container_config_relative(docker)?;
+    // Keep the config's file name if stripping `.devcontainer` would leave
+    // nothing (e.g. a bare `.devcontainer` path).
+    let compact = match relative.strip_prefix(".devcontainer") {
+        Ok(stripped) if !stripped.as_os_str().is_empty() => stripped,
+        _ => relative.as_path(),
+    };
+    let text = compact.to_string_lossy();
+    (!text.is_empty()).then(|| SharedString::from(text.into_owned()))
+}
+
+/// The dev container descriptor shown in the remote-icon tooltip, as
+/// `"{name} - {project-relative devcontainer.json path}"`, degrading gracefully
+/// when either piece is missing.
+fn dev_container_tooltip_descriptor(docker: &remote::DockerConnectionOptions) -> String {
+    let name = docker.name.trim();
+    let path = dev_container_config_relative(docker)
+        .map(|path| path.to_string_lossy().into_owned())
+        .filter(|path| !path.is_empty());
+    match (name.is_empty(), path) {
+        (false, Some(path)) => format!("{name} - {path}"),
+        (true, Some(path)) => path,
+        (false, None) => name.to_string(),
+        (true, None) => "Dev Container".to_string(),
+    }
 }
 
 fn linked_worktree_path_lists_for_workspaces(
@@ -1317,6 +1380,59 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    /// Stops and removes the dev container backing `project_group_key`,
+    /// reclaiming its resources. Works whether or not the container is
+    /// currently connected: a stopped group has no live workspace, so we only
+    /// tear down connections for whatever workspaces are open.
+    ///
+    /// The container's local folder is reopened in this window *only* when the
+    /// group is backing the active workspace; otherwise deleting a
+    /// background/stopped group must never hijack the user's current window, so
+    /// we just remove the container and refresh the sidebar.
+    fn delete_dev_container_for_group(
+        &mut self,
+        project_group_key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(RemoteConnectionOptions::Docker(options)) = project_group_key.host() else {
+            return;
+        };
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let workspaces = multi_workspace
+            .read(cx)
+            .workspaces_for_project_group(project_group_key, cx)
+            .unwrap_or_default();
+        let active_workspace = multi_workspace.read(cx).workspace().clone();
+        let reopen_active = workspaces
+            .iter()
+            .any(|workspace| workspace == &active_workspace);
+        let app_state = workspaces
+            .first()
+            .map(|workspace| Arc::downgrade(workspace.read(cx).app_state()));
+        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+        let reopen = if reopen_active {
+            replace_window.zip(app_state)
+        } else {
+            None
+        };
+        let connected = workspaces
+            .iter()
+            .map(|workspace| workspace.downgrade())
+            .collect::<Vec<_>>();
+
+        cx.spawn_in(window, async move |this, cx| {
+            recent_projects::delete_dev_container_with_options(options, connected, reopen, cx)
+                .await;
+            this.update(cx, |sidebar, cx| sidebar.update_entries(cx))
+                .ok();
+        })
+        .detach();
+    }
+
     fn open_workspace_and_create_entry(
         &mut self,
         project_group_key: &ProjectGroupKey,
@@ -1448,6 +1564,62 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
+        // Disambiguate dev containers that collapse to the same path-based header
+        // label (e.g. several `devcontainer.json`s in one repo, each mounting it
+        // at the same in-container path). Only colliding groups get a subtitle,
+        // so the common single-container case stays a compact single line. Within
+        // a colliding label, prefer the dev container's name, falling back to its
+        // (compacted) config path when the name is absent or shared.
+        let group_subtitles: HashMap<ProjectGroupKey, SharedString> = {
+            let labels: Vec<SharedString> = groups
+                .iter()
+                .map(|group| group.key.display_name(&path_detail_map))
+                .collect();
+            let mut label_counts: HashMap<&SharedString, usize> = HashMap::new();
+            for label in &labels {
+                *label_counts.entry(label).or_default() += 1;
+            }
+            let mut name_counts: HashMap<(&SharedString, String), usize> = HashMap::new();
+            for (group, label) in groups.iter().zip(&labels) {
+                if label_counts[label] < 2 {
+                    continue;
+                }
+                if let Some(RemoteConnectionOptions::Docker(docker)) = group.key.host() {
+                    let name = docker.name.trim().to_string();
+                    if !name.is_empty() {
+                        *name_counts.entry((label, name)).or_default() += 1;
+                    }
+                }
+            }
+            let mut subtitles = HashMap::new();
+            for (group, label) in groups.iter().zip(&labels) {
+                if label_counts[label] < 2 {
+                    continue;
+                }
+                let Some(RemoteConnectionOptions::Docker(docker)) = group.key.host() else {
+                    continue;
+                };
+                let name = docker.name.trim();
+                let name_is_unique = !name.is_empty()
+                    && name_counts
+                        .get(&(label, name.to_string()))
+                        .copied()
+                        .unwrap_or(0)
+                        == 1;
+                let subtitle = if name_is_unique {
+                    SharedString::from(name.to_string())
+                } else if let Some(path) = dev_container_config_subtitle(&docker) {
+                    path
+                } else if !name.is_empty() {
+                    SharedString::from(name.to_string())
+                } else {
+                    continue;
+                };
+                subtitles.insert(group.key.clone(), subtitle);
+            }
+            subtitles
+        };
+
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
@@ -1573,6 +1745,7 @@ impl Sidebar {
             }
 
             let label = group_key.display_name(&path_detail_map);
+            let subtitle = group_subtitles.get(group_key).cloned();
 
             let is_collapsed = self.is_group_collapsed(group_key, cx);
             let should_load_threads = !is_collapsed || !query.is_empty();
@@ -1919,6 +2092,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
                     label,
+                    subtitle,
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
                     waiting_thread_count,
@@ -1965,6 +2139,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
                     label,
+                    subtitle,
                     highlight_positions: Vec::new(),
                     has_running_threads,
                     waiting_thread_count,
@@ -2090,7 +2265,10 @@ impl Sidebar {
     ) -> impl Iterator<Item = EntryShape> + 'a {
         self.contents.entries.iter().map(move |entry| match entry {
             ListEntry::ProjectHeader {
-                key, has_threads, ..
+                key,
+                has_threads,
+                subtitle,
+                ..
             } => EntryShape::ProjectHeader {
                 key: key.clone(),
                 has_threads: *has_threads,
@@ -2098,6 +2276,7 @@ impl Sidebar {
                     .group_state_by_key(key)
                     .map(|state| !state.expanded)
                     .unwrap_or(false),
+                subtitle: subtitle.clone(),
             },
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
@@ -2220,6 +2399,7 @@ impl Sidebar {
             ListEntry::ProjectHeader {
                 key,
                 label,
+                subtitle,
                 highlight_positions,
                 has_running_threads,
                 waiting_thread_count,
@@ -2237,6 +2417,7 @@ impl Sidebar {
                     false,
                     key,
                     label,
+                    subtitle.as_ref(),
                     highlight_positions,
                     *has_running_threads,
                     *waiting_thread_count,
@@ -2269,25 +2450,87 @@ impl Sidebar {
     fn render_remote_project_icon(
         &self,
         ix: usize,
-        host: Option<&RemoteConnectionOptions>,
+        key: &ProjectGroupKey,
+        cx: &App,
     ) -> Option<AnyElement> {
-        let remote_icon_per_type = match host? {
+        let host = key.host();
+        let host = host.as_ref()?;
+        let remote_icon_per_type = match host {
             RemoteConnectionOptions::Wsl(_) => IconName::Linux,
             RemoteConnectionOptions::Docker(_) => IconName::Box,
             _ => IconName::Server,
+        };
+
+        // Badge the remote icon with a colored status dot so a stopped or
+        // otherwise unreachable remote (e.g. a stopped dev container) is
+        // visually distinct from a live one. A tiny tint is easy to miss, so
+        // an explicit indicator dot carries the signal instead.
+        let (indicator_color, status_label) = match self.remote_group_connection_state(key, cx) {
+            RemoteGroupConnection::Connected => (Color::Success, "Connected"),
+            RemoteGroupConnection::Connecting => (Color::Warning, "Connecting…"),
+            RemoteGroupConnection::Disconnected => (Color::Error, "Disconnected"),
+        };
+
+        // For a dev container, name it (and point at its `devcontainer.json`) so
+        // multiple containers in one project are distinguishable on hover; other
+        // remotes keep the generic label.
+        let descriptor = match host {
+            RemoteConnectionOptions::Docker(docker) => dev_container_tooltip_descriptor(docker),
+            _ => "Remote Project".to_string(),
         };
 
         Some(
             div()
                 .id(format!("remote-project-icon-{}", ix))
                 .child(
-                    Icon::new(remote_icon_per_type)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
+                    IconWithIndicator::new(
+                        Icon::new(remote_icon_per_type)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                        Some(Indicator::dot().color(indicator_color)),
+                    )
+                    .indicator_border_color(Some(cx.theme().colors().panel_background)),
                 )
-                .tooltip(Tooltip::text("Remote Project"))
+                .tooltip(Tooltip::text(format!("{descriptor} — {status_label}")))
                 .into_any_element(),
         )
+    }
+
+    /// Aggregates the connection state of a remote project group across its
+    /// live workspaces. A group with no live workspace (e.g. a stopped dev
+    /// container that only survives as persisted threads) reports
+    /// `Disconnected`.
+    fn remote_group_connection_state(
+        &self,
+        key: &ProjectGroupKey,
+        cx: &App,
+    ) -> RemoteGroupConnection {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return RemoteGroupConnection::Disconnected;
+        };
+        let workspaces = multi_workspace
+            .read(cx)
+            .workspaces_for_project_group(key, cx)
+            .unwrap_or_default();
+
+        let mut status = RemoteGroupConnection::Disconnected;
+        for workspace in workspaces {
+            match workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_connection_state(cx)
+            {
+                Some(ConnectionState::Connected) => return RemoteGroupConnection::Connected,
+                Some(
+                    ConnectionState::Connecting
+                    | ConnectionState::Reconnecting
+                    | ConnectionState::HeartbeatMissed,
+                ) => status = RemoteGroupConnection::Connecting,
+                Some(ConnectionState::Disconnected) | None => {}
+            }
+        }
+        status
     }
 
     fn render_project_header(
@@ -2296,6 +2539,7 @@ impl Sidebar {
         is_sticky: bool,
         key: &ProjectGroupKey,
         label: &SharedString,
+        subtitle: Option<&SharedString>,
         highlight_positions: &[usize],
         has_running_threads: bool,
         waiting_thread_count: usize,
@@ -2305,8 +2549,6 @@ impl Sidebar {
         has_threads: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let host = key.host();
-
         let has_filter = self.has_filter_query(cx);
 
         let id_prefix = if is_sticky { "sticky-" } else { "" };
@@ -2390,7 +2632,7 @@ impl Sidebar {
                     .gap_1()
                     .child(label)
                     .when_some(
-                        self.render_remote_project_icon(ix, host.as_ref()),
+                        self.render_remote_project_icon(ix, key, cx),
                         |this, icon| this.child(icon),
                     )
                     .when(is_collapsed, |this| {
@@ -2486,25 +2728,43 @@ impl Sidebar {
             )
             .block_mouse_except_scroll();
 
-        if !is_collapsed && !has_threads {
+        let subtitle_row = subtitle
+            .filter(|subtitle| !subtitle.is_empty())
+            .map(|subtitle| {
+                h_flex().w_full().pl_2().pr_1p5().pb_1().child(
+                    Label::new(subtitle.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate(),
+                )
+            });
+
+        let empty_state_row = (!is_collapsed && !has_threads).then(|| {
+            h_flex()
+                .px_2()
+                .pt_1()
+                .pb_2()
+                .gap(px(7.))
+                .child(
+                    Icon::new(IconName::Circle)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(
+                            cx.theme().colors().icon_placeholder.opacity(0.1),
+                        )),
+                )
+                .child(
+                    Label::new("No threads yet")
+                        .size(LabelSize::Small)
+                        .color(Color::Placeholder),
+                )
+        });
+
+        if subtitle_row.is_some() || empty_state_row.is_some() {
             v_flex()
                 .w_full()
                 .child(header)
-                .child(
-                    h_flex()
-                        .px_2()
-                        .pt_1()
-                        .pb_2()
-                        .gap(px(7.))
-                        .child(Icon::new(IconName::Circle).size(IconSize::Small).color(
-                            Color::Custom(cx.theme().colors().icon_placeholder.opacity(0.1)),
-                        ))
-                        .child(
-                            Label::new("No threads yet")
-                                .size(LabelSize::Small)
-                                .color(Color::Placeholder),
-                        ),
-                )
+                .when_some(subtitle_row, |this, row| this.child(row))
+                .when_some(empty_state_row, |this, row| this.child(row))
                 .into_any_element()
         } else {
             header.into_any_element()
@@ -2814,6 +3074,10 @@ impl Sidebar {
     ) -> AnyElement {
         let multi_workspace = self.multi_workspace.clone();
         let project_group_key = project_group_key.clone();
+        let is_dev_container = matches!(
+            project_group_key.host(),
+            Some(RemoteConnectionOptions::Docker(_))
+        );
 
         let show_multi_project_entries = multi_workspace
             .read_with(cx, |mw, _| {
@@ -3135,6 +3399,30 @@ impl Sidebar {
                                 )
                         });
 
+                        let menu = menu.when(is_dev_container, |menu| {
+                            let delete_key = project_group_key.clone();
+                            let delete_this = this_for_menu.clone();
+                            let delete_weak_menu = weak_menu.clone();
+                            menu.separator().entry(
+                                "Delete Dev Container",
+                                None,
+                                move |window, cx| {
+                                    delete_this
+                                        .update(cx, |sidebar, cx| {
+                                            sidebar.delete_dev_container_for_group(
+                                                &delete_key,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                    delete_weak_menu
+                                        .update(cx, |_, cx| cx.emit(DismissEvent))
+                                        .ok();
+                                },
+                            )
+                        });
+
                         let project_group_key = project_group_key.clone();
                         let remove_multi_workspace = multi_workspace.clone();
                         menu.separator().entry("Remove", None, move |window, cx| {
@@ -3195,6 +3483,7 @@ impl Sidebar {
         let ListEntry::ProjectHeader {
             key,
             label,
+            subtitle,
             highlight_positions,
             has_running_threads,
             waiting_thread_count,
@@ -3214,6 +3503,7 @@ impl Sidebar {
             true,
             key,
             &label,
+            subtitle.as_ref(),
             &highlight_positions,
             *has_running_threads,
             *waiting_thread_count,
