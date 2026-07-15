@@ -1928,9 +1928,7 @@ impl Workspace {
                 paths_to_open = paths.ordered_paths().cloned().collect();
             }
 
-            // Get project paths for all of the abs_paths
-            let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
-                Vec::with_capacity(paths_to_open.len());
+            let mut project_paths = Vec::with_capacity(paths_to_open.len());
 
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
@@ -1940,9 +1938,61 @@ impl Workspace {
                     .await
                     .log_err()
                 {
-                    project_paths.push((path, Some(project_entry)));
+                    project_paths.push(ProjectPathToOpen {
+                        abs_path: path,
+                        project_path: Some(project_entry),
+                    });
                 } else {
-                    project_paths.push((path, None));
+                    project_paths.push(ProjectPathToOpen {
+                        abs_path: path,
+                        project_path: None,
+                    });
+                }
+            }
+
+            let mut opened_paths_are_directories = !project_paths.is_empty();
+            for path_to_open in &project_paths {
+                if !app_state.fs.is_dir(&path_to_open.abs_path).await {
+                    opened_paths_are_directories = false;
+                    break;
+                }
+            }
+
+            if serialized_workspace.is_none() && opened_paths_are_directories {
+                for ix in 0..project_paths.len() {
+                    let opens_worktree_root = project_paths[ix]
+                        .project_path
+                        .as_ref()
+                        .is_some_and(|project_path| project_path.path.as_unix_str().is_empty());
+                    if !opens_worktree_root {
+                        continue;
+                    }
+
+                    let root_path = project_paths[ix].abs_path.clone();
+                    let Some(readme_path) = project_readme_path(&app_state.fs, &root_path).await
+                    else {
+                        continue;
+                    };
+                    let Some((_, readme_project_path)) = cx
+                        .update(|cx| {
+                            Workspace::project_path_for_path(
+                                project_handle.clone(),
+                                &readme_path,
+                                true,
+                                cx,
+                            )
+                        })
+                        .await
+                        .log_err()
+                    else {
+                        continue;
+                    };
+
+                    project_paths[ix] = ProjectPathToOpen {
+                        abs_path: readme_path,
+                        project_path: Some(readme_project_path),
+                    };
+                    break;
                 }
             }
 
@@ -8680,9 +8730,14 @@ fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
         })
 }
 
+struct ProjectPathToOpen {
+    abs_path: PathBuf,
+    project_path: Option<ProjectPath>,
+}
+
 fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
-    mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
+    mut project_paths_to_open: Vec<ProjectPathToOpen>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
@@ -8691,7 +8746,7 @@ fn open_items(
             serialized_workspace,
             project_paths_to_open
                 .iter()
-                .map(|(_, project_path)| project_path)
+                .map(|path_to_open| &path_to_open.project_path)
                 .cloned()
                 .collect(),
             window,
@@ -8718,15 +8773,13 @@ fn open_items(
                 opened_items.push(restored_item.map(Ok));
             }
 
-            project_paths_to_open
-                .iter_mut()
-                .for_each(|(_, project_path)| {
-                    if let Some(project_path_to_open) = project_path
-                        && restored_project_paths.contains(project_path_to_open)
-                    {
-                        *project_path = None;
-                    }
-                });
+            project_paths_to_open.iter_mut().for_each(|path_to_open| {
+                if let Some(project_path_to_open) = &path_to_open.project_path
+                    && restored_project_paths.contains(project_path_to_open)
+                {
+                    path_to_open.project_path = None;
+                }
+            });
         } else {
             for _ in 0..project_paths_to_open.len() {
                 opened_items.push(None);
@@ -8734,45 +8787,40 @@ fn open_items(
         }
         assert!(opened_items.len() == project_paths_to_open.len());
 
-        let tasks =
-            project_paths_to_open
-                .into_iter()
-                .enumerate()
-                .map(|(ix, (abs_path, project_path))| {
-                    let workspace = workspace.clone();
-                    cx.spawn(async move |cx| {
-                        let file_project_path = project_path?;
-                        let abs_path_task = workspace.update(cx, |workspace, cx| {
-                            workspace.project().update(cx, |project, cx| {
-                                project.resolve_abs_path(abs_path.to_string_lossy().as_ref(), cx)
-                            })
-                        });
+        let tasks = project_paths_to_open
+            .into_iter()
+            .enumerate()
+            .map(|(ix, path_to_open)| {
+                let workspace = workspace.clone();
+                cx.spawn(async move |cx| {
+                    let file_project_path = path_to_open.project_path?;
+                    let abs_path_task = workspace.update(cx, |workspace, cx| {
+                        workspace.project().update(cx, |project, cx| {
+                            project.resolve_abs_path(
+                                path_to_open.abs_path.to_string_lossy().as_ref(),
+                                cx,
+                            )
+                        })
+                    });
 
-                        // We only want to open file paths here. If one of the items
-                        // here is a directory, it was already opened further above
-                        // with a `find_or_create_worktree`.
-                        if let Ok(task) = abs_path_task
-                            && task.await.is_none_or(|p| p.is_file())
-                        {
-                            return Some((
-                                ix,
-                                workspace
-                                    .update_in(cx, |workspace, window, cx| {
-                                        workspace.open_path(
-                                            file_project_path,
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .log_err()?
-                                    .await,
-                            ));
-                        }
-                        None
-                    })
-                });
+                    // We only want to open file paths here. If one of the items
+                    // here is a directory, it was already opened further above
+                    // with a `find_or_create_worktree`.
+                    if let Ok(task) = abs_path_task
+                        && task.await.is_none_or(|p| p.is_file())
+                    {
+                        let open_result = workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.open_path(file_project_path, None, true, window, cx)
+                            })
+                            .log_err()?
+                            .await;
+
+                        return Some((ix, open_result));
+                    }
+                    None
+                })
+            });
 
         let tasks = tasks.collect::<Vec<_>>();
 
@@ -10320,6 +10368,24 @@ pub struct OpenResult {
     pub opened_items: Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
 }
 
+const PROJECT_README_FILENAMES: &[&str] = &[
+    "README.md",
+    "README.markdown",
+    "README.txt",
+    "README",
+    "readme.md",
+];
+
+async fn project_readme_path(fs: &Arc<dyn Fs>, root_path: &Path) -> Option<PathBuf> {
+    for filename in PROJECT_README_FILENAMES {
+        let readme_path = root_path.join(filename);
+        if fs.is_file(&readme_path).await {
+            return Some(readme_path);
+        }
+    }
+    None
+}
+
 /// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
 pub fn open_workspace_by_id(
     workspace_id: WorkspaceId,
@@ -10820,7 +10886,10 @@ async fn open_remote_project_inner(
             .await;
         match result {
             Ok((_, project_path)) => {
-                project_paths_to_open.push((path, Some(project_path)));
+                project_paths_to_open.push(ProjectPathToOpen {
+                    abs_path: path,
+                    project_path: Some(project_path),
+                });
             }
             Err(error) => {
                 project_path_errors.push(error);

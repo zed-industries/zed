@@ -3897,6 +3897,99 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_project_opens_readme(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "README.md": "# Project",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            let item = pane.active_item().expect("README should be opened");
+            assert_eq!(
+                item.project_path(cx).unwrap().path.as_unix_str(),
+                "README.md"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_project_does_not_open_readme_when_opening_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "README.md": "# Project",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[
+                    PathBuf::from(path!("/project")),
+                    PathBuf::from(path!("/project/src/main.rs")),
+                ],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            let item = pane.active_item().expect("explicit file should be opened");
+            assert_eq!(
+                item.project_path(cx).unwrap().path.as_unix_str(),
+                "src/main.rs"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(|cx| {
