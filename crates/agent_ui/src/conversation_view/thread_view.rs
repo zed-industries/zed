@@ -8471,7 +8471,7 @@ impl ThreadView {
                         .bg(cx.theme().colors().editor_background)
                         .overflow_hidden()
                 } else {
-                    this.my_1()
+                    this.my_1p5()
                 }
             })
             .when(layout == ToolCallLayout::Standalone, |this| {
