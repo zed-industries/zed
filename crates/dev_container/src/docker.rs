@@ -40,6 +40,16 @@ pub(crate) struct DockerConfigLabels {
         deserialize_with = "deserialize_metadata"
     )]
     pub(crate) metadata: Option<Vec<HashMap<String, serde_json_lenient::Value>>>,
+    /// The local (host) project directory the container was created from.
+    /// Stamped on every container Zed creates (see `identifying_labels`), so
+    /// it can be recovered later to stop/rebuild a dev container from just
+    /// its container id.
+    #[serde(default, rename = "devcontainer.local_folder")]
+    pub(crate) local_folder: Option<String>,
+    /// The local (host) path to the devcontainer.json used to create the
+    /// container. See `local_folder` above.
+    #[serde(default, rename = "devcontainer.config_file")]
+    pub(crate) config_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -403,6 +413,49 @@ impl DockerClient for Docker {
         Ok(())
     }
 
+    async fn stop_container(&self, id: &str) -> Result<(), DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+
+        command.args(&["stop", id]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running docker stop: {e}");
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker stop: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn remove_container(&self, id: &str) -> Result<(), DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+
+        // `-f` also stops the container first if it's still running.
+        command.args(&["rm", "-f", id]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running docker rm: {e}");
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker rm: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn find_process_by_filters(
         &self,
         filters: Vec<String>,
@@ -489,6 +542,14 @@ pub(crate) trait DockerClient {
         inner_command: Command,
     ) -> Result<(), DevContainerError>;
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError>;
+    /// Stops a running container without removing it, so it can later be
+    /// resumed with `start_container`.
+    async fn stop_container(&self, id: &str) -> Result<(), DevContainerError>;
+    /// Forcibly stops (if needed) and removes a container. Used when
+    /// rebuilding a dev container, so the next `docker ps` lookup for this
+    /// project's identifying labels finds nothing and a fresh container gets
+    /// built.
+    async fn remove_container(&self, id: &str) -> Result<(), DevContainerError>;
     async fn find_process_by_filters(
         &self,
         filters: Vec<String>,
@@ -741,7 +802,7 @@ mod test {
     #[test]
     fn should_parse_simple_env_var() {
         let config = super::DockerInspectConfig {
-            labels: super::DockerConfigLabels { metadata: None },
+            labels: super::DockerConfigLabels::default(),
             image_user: None,
             env: vec!["KEY=value".to_string()],
         };
@@ -753,7 +814,7 @@ mod test {
     #[test]
     fn should_parse_env_var_with_equals_in_value() {
         let config = super::DockerInspectConfig {
-            labels: super::DockerConfigLabels { metadata: None },
+            labels: super::DockerConfigLabels::default(),
             image_user: None,
             env: vec!["COMPLEX=key=val other>=1.0".to_string()],
         };
@@ -765,7 +826,7 @@ mod test {
     #[test]
     fn should_parse_database_url_with_equals_in_query_string() {
         let config = super::DockerInspectConfig {
-            labels: super::DockerConfigLabels { metadata: None },
+            labels: super::DockerConfigLabels::default(),
             image_user: None,
             env: vec![
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
@@ -784,7 +845,7 @@ mod test {
     #[test]
     fn should_skip_env_var_without_equals() {
         let config = super::DockerInspectConfig {
-            labels: super::DockerConfigLabels { metadata: None },
+            labels: super::DockerConfigLabels::default(),
             image_user: None,
             env: vec![
                 "VALID_KEY=valid_value".to_string(),

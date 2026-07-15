@@ -66,6 +66,11 @@ pub struct RemoteServerProjects {
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscriptions: Vec<Subscription>,
     allow_dismissal: bool,
+    /// When set, dev container creation removes any existing container that
+    /// matches the chosen project/config before building, guaranteeing a
+    /// fresh build instead of resuming one. Used by "Rebuild Dev Container"
+    /// when triggered while in local mode.
+    force_rebuild: bool,
 }
 
 struct CreateRemoteServer {
@@ -1542,6 +1547,7 @@ impl RemoteServerProjects {
             dev_container_picker: None,
             _subscriptions: vec![settings_subscription, dismiss_subscription],
             allow_dismissal: true,
+            force_rebuild: false,
         }
     }
 
@@ -2240,12 +2246,15 @@ impl RemoteServerProjects {
     ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
         let app_state = Arc::downgrade(&app_state);
+        let force_rebuild = self.force_rebuild;
 
         cx.spawn_in(window, async move |entity, cx| {
             let environment = context.environment(cx).await;
 
             let (dev_container_connection, starting_dir) =
-                match start_dev_container_with_config(context, config, environment).await {
+                match start_dev_container_with_config(context, config, environment, force_rebuild)
+                    .await
+                {
                     Ok((c, s)) => (c, s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);

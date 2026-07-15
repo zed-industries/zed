@@ -19,7 +19,9 @@ use crate::{
     DevContainerContext, DevContainerFeature, DevContainerTemplate,
     devcontainer_json::DevContainer,
     devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
-    devcontainer_templates_repository, get_latest_oci_manifest, get_oci_token, ghcr_registry,
+    devcontainer_templates_repository,
+    docker::{Docker, DockerClient},
+    get_latest_oci_manifest, get_oci_token, ghcr_registry,
     oci::download_oci_tarball,
 };
 
@@ -44,6 +46,36 @@ impl DevContainerConfig {
         Self {
             name: "root".to_string(),
             config_path: PathBuf::from(".devcontainer.json"),
+        }
+    }
+
+    /// Reconstructs the config that was used to create a container from the
+    /// `devcontainer.local_folder`/`devcontainer.config_file` labels Zed
+    /// stamps on every container it creates (see `identifying_labels`). This
+    /// lets a recovery flow (e.g. rebuilding after a lost connection) recover
+    /// the build inputs from a persisted connection alone, without inspecting
+    /// the (possibly removed) container.
+    pub fn from_recovered_paths(local_folder: &Path, config_file: &Path) -> Self {
+        let relative = config_file
+            .strip_prefix(local_folder)
+            .unwrap_or(config_file);
+
+        if relative == Path::new(".devcontainer").join("devcontainer.json") {
+            return Self::default_config();
+        }
+        if relative == Path::new(".devcontainer.json") {
+            return Self::root_config();
+        }
+
+        let name = relative
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "default".to_string());
+
+        Self {
+            name,
+            config_path: relative.to_path_buf(),
         }
     }
 }
@@ -254,6 +286,7 @@ pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
+    force_rebuild: bool,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
 
@@ -266,6 +299,7 @@ pub async fn start_dev_container_with_config(
         environment.clone(),
         actual_config.clone(),
         context.project_directory.clone().as_ref(),
+        force_rebuild,
     )
     .await
     {
@@ -335,6 +369,137 @@ async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
             Err(DevContainerError::DockerNotAvailable)
         }
     }
+}
+
+/// The local (host) project directory and devcontainer config a running
+/// container was created from, recovered from the identifying
+/// `devcontainer.*` labels Zed stamps on every container it creates. This
+/// lets Zed manage a dev container's lifecycle (stopping, rebuilding) from
+/// nothing but the connection's `container_id`, even when the currently
+/// active project is the container itself (so its worktree paths are
+/// in-container paths, not host paths).
+pub struct DevContainerOrigin {
+    pub local_folder: PathBuf,
+    pub config: DevContainerConfig,
+}
+
+pub async fn dev_container_origin(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<DevContainerOrigin, DevContainerError> {
+    let docker = if use_podman {
+        Docker::new("podman", None).await
+    } else {
+        Docker::new("docker", None).await
+    };
+
+    let inspect = docker.inspect(&container_id.to_string()).await?;
+    let labels = &inspect.config.labels;
+
+    let local_folder = labels
+        .local_folder
+        .as_ref()
+        .map(PathBuf::from)
+        .ok_or_else(|| DevContainerError::ContainerNotValid(container_id.to_string()))?;
+
+    let config = labels
+        .config_file
+        .as_ref()
+        .map(|config_file| {
+            DevContainerConfig::from_recovered_paths(&local_folder, Path::new(config_file))
+        })
+        .unwrap_or_else(DevContainerConfig::default_config);
+
+    Ok(DevContainerOrigin {
+        local_folder,
+        config,
+    })
+}
+
+/// Stops a dev container without removing it, so it can be resumed later by
+/// `start_dev_container_with_config`.
+pub async fn stop_dev_container(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<(), DevContainerError> {
+    let docker = if use_podman {
+        Docker::new("podman", None).await
+    } else {
+        Docker::new("docker", None).await
+    };
+
+    docker.stop_container(container_id).await
+}
+
+/// Starts a stopped dev container (a `docker start`; a no-op if it is already
+/// running) so a subsequent connection attempt can reach it. This is the
+/// in-place counterpart to [`stop_dev_container`], used to reconnect to a
+/// container that was stopped out from under Zed without disturbing a running
+/// one.
+pub async fn start_dev_container(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<(), DevContainerError> {
+    let docker = if use_podman {
+        Docker::new("podman", None).await
+    } else {
+        Docker::new("docker", None).await
+    };
+
+    docker.start_container(container_id).await
+}
+
+/// Restarts a dev container in place (`docker stop` followed by `docker start`
+/// on the same container), keeping the container and its filesystem but killing
+/// every process inside it. This clears any wedged `zed-remote-server` left
+/// running from a previous session: on the next connection the proxy finds the
+/// stale pid file pointing at a dead process, removes it, and spawns a fresh
+/// server. It is the in-place recovery counterpart to a full rebuild.
+pub async fn restart_dev_container(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<(), DevContainerError> {
+    let docker = if use_podman {
+        Docker::new("podman", None).await
+    } else {
+        Docker::new("docker", None).await
+    };
+
+    docker.stop_container(container_id).await?;
+    docker.start_container(container_id).await
+}
+
+/// Stops (if running) and removes a dev container, freeing its resources (a
+/// `docker rm -f`). Unlike [`stop_dev_container`] this destroys the container:
+/// its writable layer and any state not held on a mounted volume are lost, and
+/// reconnecting later requires rebuilding it. Used by the "Delete Dev
+/// Container" lifecycle action to clean up without dropping to the CLI.
+pub async fn remove_dev_container(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<(), DevContainerError> {
+    let docker = if use_podman {
+        Docker::new("podman", None).await
+    } else {
+        Docker::new("docker", None).await
+    };
+
+    docker.remove_container(container_id).await
+}
+
+/// Removes any existing container matching this project/config (so a
+/// fresh build is guaranteed rather than resuming one), then builds and
+/// connects to it. Works whether or not a container currently exists,
+/// since the removal is a no-op when none is found - so this doubles as
+/// the entry point for both "rebuild the container I'm connected to" and
+/// "rebuild (or build for the first time) the container for this local
+/// project".
+pub async fn rebuild_dev_container(
+    context: DevContainerContext,
+    config: DevContainerConfig,
+    environment: HashMap<String, String>,
+) -> Result<(DevContainerConnection, String), DevContainerError> {
+    start_dev_container_with_config(context, Some(config), environment, true).await
 }
 
 pub(crate) async fn apply_devcontainer_template(
@@ -766,5 +931,56 @@ mod tests {
 
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0], DevContainerConfig::root_config());
+    }
+
+    /// `from_recovered_paths` must invert what `identifying_labels` stamps on a
+    /// container: given `local_folder` and the absolute `config_file`
+    /// (`local_folder` joined with the config's relative `config_path`), it
+    /// should reconstruct the original `DevContainerConfig`.
+    fn assert_recovers_config(config: DevContainerConfig) {
+        let local_folder = PathBuf::from(path!("/project"));
+        let config_file = local_folder.join(&config.config_path);
+
+        assert_eq!(
+            DevContainerConfig::from_recovered_paths(&local_folder, &config_file),
+            config,
+        );
+    }
+
+    #[test]
+    fn test_from_recovered_paths_default_config() {
+        assert_recovers_config(DevContainerConfig::default_config());
+    }
+
+    #[test]
+    fn test_from_recovered_paths_root_config() {
+        assert_recovers_config(DevContainerConfig::root_config());
+    }
+
+    #[test]
+    fn test_from_recovered_paths_subfolder_config() {
+        assert_recovers_config(DevContainerConfig {
+            name: "backend".to_string(),
+            config_path: PathBuf::from(".devcontainer")
+                .join("backend")
+                .join("devcontainer.json"),
+        });
+    }
+
+    #[test]
+    fn test_from_recovered_paths_falls_back_when_prefix_mismatched() {
+        // A config_file that doesn't live under local_folder can't be made
+        // relative, so we keep the absolute path and derive the name from the
+        // parent directory rather than panicking.
+        let local_folder = PathBuf::from(path!("/project"));
+        let config_file = PathBuf::from(path!("/elsewhere/backend/devcontainer.json"));
+
+        assert_eq!(
+            DevContainerConfig::from_recovered_paths(&local_folder, &config_file),
+            DevContainerConfig {
+                name: "backend".to_string(),
+                config_path: config_file,
+            },
+        );
     }
 }
