@@ -10,14 +10,14 @@ use gpui::AsyncApp;
 use std::ops::Range;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, ZetaPromptInput, format_edit_history_within_budget, format_expected_output,
+    Zeta2PromptInput, ZetaFormat, format_edit_history_within_budget, format_expected_output,
     format_zeta_prompt,
     hashed_regions::{self, SnippetMarkers},
     max_edit_event_count_for_format, resolve_cursor_region,
 };
 
 fn resolved_excerpt_ranges_for_format(
-    input: &zeta_prompt::ZetaPromptInput,
+    input: &zeta_prompt::Zeta2PromptInput,
     format: ZetaFormat,
 ) -> (Range<usize>, Range<usize>) {
     let (_, editable_range_in_context, context_range, _) = resolve_cursor_region(input, format);
@@ -457,7 +457,7 @@ impl TeacherJumpsPrompt {
         Ok((patch, actual_cursor))
     }
 
-    fn format_edit_history(prompt_inputs: &ZetaPromptInput) -> String {
+    fn format_edit_history(prompt_inputs: &Zeta2PromptInput) -> String {
         format_edit_history_within_budget(
             &prompt_inputs.events,
             "",
@@ -473,7 +473,7 @@ impl TeacherJumpsPrompt {
     /// is skipped: it renders in its own prompt section via
     /// `format_cursor_excerpt`, and including it here would duplicate it.
     fn format_context(
-        prompt_inputs: &ZetaPromptInput,
+        prompt_inputs: &Zeta2PromptInput,
         marker_table: &[SnippetMarkers],
         max_tokens: usize,
         cursor_file_ix: usize,
@@ -601,7 +601,7 @@ impl TeacherJumpsPrompt {
     /// content appears in the prompt exactly once.
     fn format_cursor_excerpt(
         example: &Example,
-        prompt_inputs: &ZetaPromptInput,
+        prompt_inputs: &Zeta2PromptInput,
         marker_table: &[SnippetMarkers],
         cursor: &hashed_regions::RelatedFileCursor,
     ) -> Result<String> {
@@ -841,7 +841,7 @@ mod tests {
                 human_feedback: Vec::new(),
                 rating: None,
             },
-            prompt_inputs: Some(zeta_prompt::ZetaPromptInput {
+            prompt_inputs: Some(zeta_prompt::Zeta2PromptInput {
                 cursor_path: std::path::Path::new("src/main.rs").into(),
                 cursor_excerpt: cursor_excerpt.into(),
                 cursor_offset_in_excerpt: cursor_offset,
@@ -1598,7 +1598,7 @@ mod tests {
             .map(|index| format!("line{index:02}\n"))
             .collect::<String>();
         let cursor_offset = excerpt.find("line40").expect("cursor line exists");
-        let prompt_inputs = zeta_prompt::ZetaPromptInput {
+        let prompt_inputs = zeta_prompt::Zeta2PromptInput {
             cursor_path: std::path::Path::new("src/main.rs").into(),
             cursor_excerpt: excerpt.clone().into(),
             cursor_offset_in_excerpt: cursor_offset,

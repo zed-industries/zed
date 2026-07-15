@@ -8,8 +8,8 @@ use git::{
     commit::ParsedCommitMessage,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
-    TextStyle, WeakEntity, Window,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, SharedString,
+    Subscription, Task, TextStyle, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{Bias, BufferSnapshot, Edit};
@@ -69,6 +69,7 @@ struct GitBlameBuffer {
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription<usize>,
     commit_details: HashMap<Oid, ParsedCommitMessage>,
+    commit_tag_names: HashMap<Oid, Vec<SharedString>>,
 }
 
 pub struct GitBlame {
@@ -91,6 +92,7 @@ pub trait BlameRenderer {
         _: &TextStyle,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
+        _: Vec<SharedString>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
@@ -112,6 +114,7 @@ pub trait BlameRenderer {
         _: BlameEntry,
         _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Vec<SharedString>,
         _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
@@ -139,6 +142,7 @@ impl BlameRenderer for () {
         _: &TextStyle,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
+        _: Vec<SharedString>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
@@ -164,6 +168,7 @@ impl BlameRenderer for () {
         _: BlameEntry,
         _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Vec<SharedString>,
         _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
@@ -287,6 +292,14 @@ impl GitBlame {
             .commit_details
             .get(&entry.sha)
             .cloned()
+    }
+
+    pub fn tag_names_for_entry(&self, buffer: BufferId, entry: &BlameEntry) -> Vec<SharedString> {
+        self.buffers
+            .get(&buffer)
+            .and_then(|buffer| buffer.commit_tag_names.get(&entry.sha))
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn blame_for_rows<'a>(
@@ -557,7 +570,11 @@ impl GitBlame {
                             let mut errors = vec![];
                             for (id, snapshot, buffer_edits, blame, remote_url) in blame {
                                 match blame {
-                                    Ok(Some(Blame { entries, messages })) => {
+                                    Ok(Some(Blame {
+                                        entries,
+                                        messages,
+                                        tag_names,
+                                    })) => {
                                         let entries = build_blame_entry_sum_tree(
                                             entries,
                                             snapshot.max_point().row,
@@ -575,12 +592,25 @@ impl GitBlame {
                                                 (oid, parsed_commit_message)
                                             })
                                             .collect();
+                                        let commit_tag_names = tag_names
+                                            .into_iter()
+                                            .map(|(oid, tag_names)| {
+                                                (
+                                                    oid,
+                                                    tag_names
+                                                        .into_iter()
+                                                        .map(SharedString::from)
+                                                        .collect(),
+                                                )
+                                            })
+                                            .collect();
                                         res.push((
                                             id,
                                             snapshot,
                                             buffer_edits,
                                             Some(entries),
                                             commit_details,
+                                            commit_tag_names,
                                         ));
                                     }
                                     Ok(None) => res.push((
@@ -588,6 +618,7 @@ impl GitBlame {
                                         snapshot,
                                         buffer_edits,
                                         None,
+                                        Default::default(),
                                         Default::default(),
                                     )),
                                     Err(e) => errors.push(e),
@@ -603,7 +634,9 @@ impl GitBlame {
 
             this.update(cx, |this, cx| {
                 this.buffers.clear();
-                for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
+                for (id, snapshot, buffer_edits, entries, commit_details, commit_tag_names) in
+                    all_results
+                {
                     let Some(entries) = entries else {
                         continue;
                     };
@@ -614,6 +647,7 @@ impl GitBlame {
                             buffer_snapshot: snapshot,
                             entries,
                             commit_details,
+                            commit_tag_names,
                         },
                     );
                 }
@@ -1294,5 +1328,102 @@ mod tests {
             previous: None,
             filename: String::new(),
         }
+    }
+
+    #[gpui::test]
+    async fn test_blame_hover_shows_popover_on_first_trigger(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            use gpui::UpdateGlobal;
+            settings::SettingsStore::update_global(
+                cx,
+                |store: &mut settings::SettingsStore, cx| {
+                    store
+                        .set_user_settings(r#"{"git": {"inline_blame": {"enabled": false}}}"#, cx)
+                        .expect("failed to set user settings");
+                },
+            );
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/my-repo",
+            json!({
+                ".git": {},
+                "file.txt": "line 1\nline 2\nline 3\n"
+            }),
+        )
+        .await;
+
+        fs.set_blame_for_repo(
+            Path::new("/my-repo/.git"),
+            vec![(
+                repo_path("file.txt"),
+                Blame {
+                    entries: vec![
+                        blame_entry("1b1b1b", 0..1),
+                        blame_entry("2c2c2c", 1..2),
+                        blame_entry("3d3d3d", 2..3),
+                    ],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let project = project::Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            crate::test::build_editor_with_project(project, multi_buffer, window, cx)
+        });
+
+        // Verify blame is not loaded yet
+        editor.update(cx, |editor, _cx| {
+            assert!(
+                editor.blame().is_none(),
+                "blame should not be loaded initially"
+            );
+        });
+
+        // Focus the editor so that blame generation proceeds
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle.focus(window, cx);
+        });
+
+        // Trigger BlameHover — this should start blame loading and defer showing the popover
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.blame().is_none());
+            editor.blame_hover(&crate::BlameHover, window, cx);
+            assert!(
+                editor.blame().is_some(),
+                "blame entity should be created after blame_hover"
+            );
+            assert!(
+                editor.pending_blame_hover_observation.is_some(),
+                "should have registered an observation to wait for blame data"
+            );
+        });
+
+        // Let the async blame generation complete
+        cx.run_until_parked();
+
+        // The observation should have fired and cleaned itself up
+        editor.update(cx, |editor, cx| {
+            assert!(
+                editor.pending_blame_hover_observation.is_none(),
+                "observation should be consumed after blame data is generated"
+            );
+            assert!(
+                editor.blame().unwrap().read(cx).has_generated_entries(),
+                "blame should have generated entries"
+            );
+        });
     }
 }

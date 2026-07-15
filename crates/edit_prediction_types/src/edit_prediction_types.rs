@@ -17,6 +17,11 @@ pub enum EditPredictionRequestTrigger {
     LSPCompletionAccepted,
     PredictionAccepted,
     PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
     #[default]
     Other,
 }
@@ -392,5 +397,5 @@ pub fn interpolate_edits(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() { None } else { Some(edits) }
+    Some(edits)
 }

@@ -15,6 +15,9 @@ impl Render for TextFinder {
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_up))
             .on_action(cx.listener(Self::split_down))
+            .on_action(cx.listener(Self::fold))
+            .on_action(cx.listener(Self::unfold))
+            .on_action(cx.listener(Self::toggle_fold_all))
             .child(self.picker.clone())
     }
 }
