@@ -8109,6 +8109,7 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-md",
  "tree-sitter-python",
+ "tree-sitter-r",
  "tree-sitter-regex",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -16420,6 +16421,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "send_code"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "language",
+ "log",
+ "settings",
+ "terminal",
+ "terminal_view",
+ "tree-sitter-bash",
+ "tree-sitter-python",
+ "tree-sitter-r",
+ "workspace",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19488,6 +19506,16 @@ name = "tree-sitter-python"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-r"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc9954ec870dcad6cffdd302b405306c68cf031ed79a78cd9746f6740d9fe20"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -23142,6 +23170,7 @@ dependencies = [
  "sandbox",
  "search",
  "semver",
+ "send_code",
  "serde",
  "serde_json",
  "session",

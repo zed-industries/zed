@@ -1,0 +1,30 @@
+[package]
+name = "send_code"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/send_code.rs"
+doctest = false
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+settings.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+tree-sitter-bash.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-r.workspace = true

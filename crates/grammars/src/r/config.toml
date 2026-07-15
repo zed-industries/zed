@@ -1,0 +1,14 @@
+name = "R"
+code_fence_block_name = "r"
+grammar = "r"
+path_suffixes = ["r", "R", "rscript", "Rscript", "rprofile", "Rprofile"]
+line_comments = ["# "]
+autoclose_before = "}])"
+brackets = [
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = false },
+    { start = "[[", end = "]]", close = true, newline = false },
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]

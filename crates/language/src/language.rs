@@ -45,13 +45,14 @@ use futures::future::FutureExt as _;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
-    DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
-    InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
-    LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
-    OverrideEntry, PromptResponseContext, RedactionConfig, RunnableCapture, RunnableConfig,
-    SoftWrap, Symbol, TaskListConfig, TextObject, TextObjectConfig, ToLspPosition,
-    WrapCharactersConfig, auto_indent_using_last_non_empty_line_default, deserialize_regex,
-    deserialize_regex_vec, regex_json_schema, regex_vec_json_schema, serialize_regex,
+    DecreaseIndentConfig, EvalConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig,
+    InjectionConfig, InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig,
+    LanguageConfigOverride, LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig,
+    Override, OverrideConfig, OverrideEntry, PromptResponseContext, RedactionConfig,
+    RunnableCapture, RunnableConfig, SoftWrap, Symbol, TaskListConfig, TextObject,
+    TextObjectConfig, ToLspPosition, WrapCharactersConfig,
+    auto_indent_using_last_non_empty_line_default, deserialize_regex, deserialize_regex_vec,
+    regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
@@ -915,6 +916,10 @@ impl Language {
         self.with_grammar_query(|grammar| grammar.with_runnable_query(source))
     }
 
+    pub fn with_eval_query(self, source: &str) -> Result<Self> {
+        self.with_grammar_query_and_name(|grammar, name| grammar.with_eval_query(source, name))
+    }
+
     pub fn with_outline_query(self, source: &str) -> Result<Self> {
         self.with_grammar_query_and_name(|grammar, name| grammar.with_outline_query(source, name))
     }
@@ -1598,6 +1603,7 @@ pub fn rust_lang() -> Arc<Language> {
         debugger: Some(Cow::from(include_str!(
             "../../grammars/src/rust/debugger.scm"
         ))),
+        eval: None,
     })
     .expect("Could not parse queries");
     Arc::new(language)

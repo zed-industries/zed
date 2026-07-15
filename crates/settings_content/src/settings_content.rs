@@ -210,6 +210,9 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
+    /// Settings for sending code from the editor to a terminal.
+    pub send_code: Option<SendCodeSettingsContent>,
+
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -306,6 +309,21 @@ pub struct InstrumentationSettingsContent {
     /// Configuration for the performance profiler, accessed via the
     /// `zed: open performance profiler` action.
     pub performance_profiler: Option<PerformanceProfilerSettingsContent>,
+}
+
+/// Settings for sending code from the editor to a terminal.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SendCodeSettingsContent {
+    /// Whether the SendCode actions are enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+
+    /// Whether to wrap multi-line sends in bracketed paste escape sequences.
+    ///
+    /// Default: true
+    pub bracketed_paste: Option<bool>,
 }
 
 /// Configuration for the performance profiler which collects timing data

@@ -40,6 +40,7 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
+    pub eval_config: Option<EvalConfig>,
     pub highlight_map: Mutex<HighlightMap>,
 }
 
@@ -157,6 +158,11 @@ pub struct RunnableConfig {
     pub supports_grouped_runnables: bool,
 }
 
+pub struct EvalConfig {
+    pub query: Query,
+    pub eval_capture_ix: u32,
+}
+
 pub struct OverrideConfig {
     pub query: Query,
     pub values: HashMap<u32, OverrideEntry>,
@@ -271,6 +277,7 @@ impl Grammar {
             runnable_config: None,
             error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
             debug_variables_config: None,
+            eval_config: None,
             ts_language,
             highlight_map: Default::default(),
         }
@@ -361,6 +368,11 @@ impl Grammar {
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
         }
+        if let Some(query) = queries.eval {
+            self = self
+                .with_eval_query(query.as_ref(), name)
+                .context("Error loading eval query")?;
+        }
         Ok(self)
     }
 
@@ -412,6 +424,24 @@ impl Grammar {
             supports_grouped_runnables,
         });
 
+        Ok(self)
+    }
+
+    pub fn with_eval_query(mut self, source: &str, language_name: &LanguageName) -> Result<Self> {
+        let query = Query::new(&self.ts_language, source)?;
+        let mut eval_capture_ix = 0;
+        if populate_capture_indices(
+            &query,
+            language_name,
+            "eval",
+            &[],
+            &mut [Capture::Required("eval", &mut eval_capture_ix)],
+        ) {
+            self.eval_config = Some(EvalConfig {
+                query,
+                eval_capture_ix,
+            });
+        }
         Ok(self)
     }
 

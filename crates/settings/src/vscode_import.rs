@@ -213,6 +213,7 @@ impl VsCodeSettings {
             }),
             remote: RemoteSettingsContent::default(),
             repl: None,
+            send_code: None,
             server_url: None,
             session: None,
             status_bar: self.status_bar_settings_content(),
