@@ -1648,6 +1648,23 @@ pub trait DetachAndPromptErr<R> {
     );
 }
 
+/// Whether the given error represents a lost dev container connection for the
+/// project in `window`'s active workspace. When true, error prompts offer the
+/// dev container recovery actions (Reconnect / Restart / Rebuild) instead of a
+/// dead-end acknowledgement.
+fn dev_container_reconnect_available(err: &anyhow::Error, window: &Window, cx: &App) -> bool {
+    use client::ErrorExt as _;
+
+    if !matches!(err.error_code(), client::ErrorCode::Disconnected) {
+        return false;
+    }
+    let Some(Some(multi_workspace)) = window.root::<MultiWorkspace>() else {
+        return false;
+    };
+    let workspace = multi_workspace.read(cx).workspace().clone();
+    workspace.read(cx).project().read(cx).is_dev_container(cx)
+}
+
 impl<R> DetachAndPromptErr<R> for Task<anyhow::Result<R>>
 where
     R: 'static,
@@ -1664,15 +1681,47 @@ where
             let result = self.await;
             if let Err(err) = result.as_ref() {
                 log::error!("{err:#}");
+                // If the failure is a lost dev container connection, offer to
+                // restart & reconnect instead of a dead-end acknowledgement.
+                let offer_reconnect = cx
+                    .update(|window, cx| dev_container_reconnect_available(err, window, cx))
+                    .unwrap_or(false);
+                let buttons: &[&str] = if offer_reconnect {
+                    &[
+                        "Reconnect Dev Container",
+                        "Restart Dev Container",
+                        "Rebuild Dev Container",
+                        "Cancel",
+                    ]
+                } else {
+                    &["OK"]
+                };
                 if let Ok(prompt) = cx.update(|window, cx| {
                     let mut display = format!("{err:#}");
                     if !display.ends_with('\n') {
                         display.push('.');
                     }
                     let detail = f(err, window, cx).unwrap_or(display);
-                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["OK"], cx)
+                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), buttons, cx)
                 }) {
-                    prompt.await.ok();
+                    let answer = prompt.await;
+                    if offer_reconnect {
+                        // Recovery ladder, lightest first: Reconnect (resume) →
+                        // Restart (stop + start, for a wedged-but-running
+                        // container) → Rebuild (destroy + rebuild).
+                        let action: Option<Box<dyn gpui::Action>> = match answer {
+                            Ok(0) => Some(Box::new(zed_actions::ReconnectDevContainer)),
+                            Ok(1) => Some(Box::new(zed_actions::RestartDevContainer)),
+                            Ok(2) => Some(Box::new(zed_actions::RebuildDevContainer)),
+                            _ => None,
+                        };
+                        if let Some(action) = action {
+                            cx.update(|window, cx| {
+                                window.dispatch_action(action, cx);
+                            })
+                            .ok();
+                        }
+                    }
                 }
                 return None;
             }

@@ -901,6 +901,7 @@ impl ProjectPanel {
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
                             let is_via_ssh = project.read(cx).is_via_remote_server();
+                            let is_dev_container = project.read(cx).is_dev_container(cx);
 
                             workspace
                                 .open_path_preview(
@@ -916,7 +917,9 @@ impl ProjectPanel {
                                 )
                                 .detach_and_prompt_err("Failed to open file", window, cx, move |e, _, _| {
                                     match e.error_code() {
-                                        ErrorCode::Disconnected => if is_via_ssh {
+                                        ErrorCode::Disconnected => if is_dev_container {
+                                            Some("Lost connection to the dev container.".to_string())
+                                        } else if is_via_ssh {
                                             Some("Disconnected from SSH host".to_string())
                                         } else {
                                             Some("Disconnected from remote project".to_string())
