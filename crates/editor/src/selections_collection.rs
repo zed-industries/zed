@@ -995,6 +995,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .collect();
 
         if changed {
+            self.collection.select_mode = SelectMode::Character;
             self.select(selections)
         }
     }
