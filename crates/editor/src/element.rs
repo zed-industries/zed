@@ -6005,7 +6005,8 @@ impl EditorElement {
         cx: &mut App,
     ) {
         self.editor.update(cx, |editor, cx| {
-            if editor.buffer_kind(cx) != ItemBufferKind::Singleton
+            if (editor.buffer_kind(cx) != ItemBufferKind::Singleton
+                && !editor.show_scrollbar_markers_in_multibuffer)
                 || !editor
                     .scrollbar_marker_state
                     .should_refresh(scrollbar_layout.hitbox.size)

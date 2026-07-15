@@ -121,6 +121,24 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_scrollbar_markers_in_multibuffer(
+        &mut self,
+        show: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_scrollbar_markers_in_multibuffer == show {
+            return;
+        }
+
+        self.show_scrollbar_markers_in_multibuffer = show;
+        if show {
+            self.scrollbar_marker_state.dirty = true;
+        } else {
+            self.scrollbar_marker_state = Default::default();
+        }
+        cx.notify();
+    }
+
     pub fn set_minimap_visibility(
         &mut self,
         minimap_visibility: MinimapVisibility,
