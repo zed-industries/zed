@@ -22,7 +22,7 @@ use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
 use remote::{Interactive, RemoteClient};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
@@ -280,9 +280,15 @@ enum ContextServerStoreState {
     },
 }
 
+#[derive(Clone, PartialEq)]
+struct ContextServerSettingsEntry {
+    worktree_id: Option<WorktreeId>,
+    settings: ContextServerSettings,
+}
+
 pub struct ContextServerStore {
     state: ContextServerStoreState,
-    context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
+    context_server_settings: HashMap<Arc<str>, ContextServerSettingsEntry>,
     servers: HashMap<ContextServerId, ContextServerState>,
     server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
@@ -365,7 +371,7 @@ impl ContextServerStore {
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
         self.context_server_settings
             .iter()
-            .filter(|(_, settings)| settings.enabled())
+            .filter(|(_, entry)| entry.settings.enabled())
             .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
@@ -451,12 +457,11 @@ impl ContextServerStore {
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
 
-            let settings =
-                &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
-            let settings_changed = &this.context_server_settings != settings;
+            let settings = Self::resolve_all_context_server_settings(&this.worktree_store, cx);
+            let settings_changed = this.context_server_settings != settings;
 
             if settings_changed {
-                this.context_server_settings = settings.clone();
+                this.context_server_settings = settings;
             }
 
             // When AI is disabled, stop all running servers
@@ -496,9 +501,7 @@ impl ContextServerStore {
         let mut this = Self {
             state,
             _subscriptions: subscriptions,
-            context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
-                .context_servers
-                .clone(),
+            context_server_settings: Self::resolve_all_context_server_settings(&worktree_store, cx),
             worktree_store,
             project: weak_project,
             registry,
@@ -542,7 +545,9 @@ impl ContextServerStore {
     /// or project settings. This is available regardless of whether the server is
     /// currently running, unlike [`Self::configuration_for_server`].
     pub fn settings_for_server(&self, id: &ContextServerId) -> Option<&ContextServerSettings> {
-        self.context_server_settings.get(&id.0)
+        self.context_server_settings
+            .get(&id.0)
+            .map(|entry| &entry.settings)
     }
 
     /// Returns whether a server is provided by an extension (as opposed to a
@@ -552,7 +557,7 @@ impl ContextServerStore {
     /// configuration, so it stays correct even when a custom server is disabled
     /// or has not been started yet (in which case it has no runtime state).
     pub fn is_extension_provided(&self, id: &ContextServerId, cx: &App) -> bool {
-        match self.context_server_settings.get(&id.0) {
+        match self.settings_for_server(id) {
             Some(ContextServerSettings::Stdio { .. } | ContextServerSettings::Http { .. }) => false,
             Some(ContextServerSettings::Extension { .. }) => true,
             // No custom settings entry: the server can only originate from an
@@ -624,13 +629,13 @@ impl ContextServerStore {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
             let id = server.id();
-            let settings = this
+            let settings_entry = this
                 .update(cx, |this, _| {
                     this.context_server_settings.get(&id.0).cloned()
                 })
                 .context("Failed to get context server settings")?;
 
-            if !settings.enabled() {
+            if !settings_entry.settings.enabled() {
                 return anyhow::Ok(());
             }
 
@@ -638,7 +643,7 @@ impl ContextServerStore {
                 (this.registry.clone(), this.worktree_store.clone())
             });
             let configuration = ContextServerConfiguration::from_settings(
-                settings,
+                settings_entry.settings,
                 id.clone(),
                 registry,
                 worktree_store,
@@ -981,8 +986,7 @@ impl ContextServerStore {
             };
 
         let server: Arc<ContextServer> = this.update(cx, |this, cx| {
-            let global_timeout =
-                Self::resolve_project_settings(&this.worktree_store, cx).context_server_timeout;
+            let global_timeout = this.timeout_for_server(&id, cx);
 
             match configuration.as_ref() {
                 ContextServerConfiguration::Http {
@@ -1039,31 +1043,37 @@ impl ContextServerStore {
     ) -> Result<proto::ContextServerCommand> {
         let server_id = ContextServerId(envelope.payload.server_id.into());
 
-        let (settings, registry, worktree_store) = this.update(&mut cx, |this, inner_cx| {
-            let ContextServerStoreState::Local {
-                is_headless: true, ..
-            } = &this.state
-            else {
-                anyhow::bail!("unexpected GetContextServerCommand request in a non-local project");
-            };
+        let (settings_entry, registry, worktree_store) =
+            this.update(&mut cx, |this, inner_cx| {
+                let ContextServerStoreState::Local {
+                    is_headless: true, ..
+                } = &this.state
+                else {
+                    anyhow::bail!(
+                        "unexpected GetContextServerCommand request in a non-local project"
+                    );
+                };
 
-            let settings = this
-                .context_server_settings
-                .get(&server_id.0)
-                .cloned()
-                .or_else(|| {
-                    this.registry
-                        .read(inner_cx)
-                        .context_server_descriptor(&server_id.0)
-                        .map(|_| ContextServerSettings::default_extension())
-                })
-                .with_context(|| format!("context server `{}` not found", server_id))?;
+                let settings = this
+                    .context_server_settings
+                    .get(&server_id.0)
+                    .cloned()
+                    .or_else(|| {
+                        this.registry
+                            .read(inner_cx)
+                            .context_server_descriptor(&server_id.0)
+                            .map(|_| ContextServerSettingsEntry {
+                                worktree_id: None,
+                                settings: ContextServerSettings::default_extension(),
+                            })
+                    })
+                    .with_context(|| format!("context server `{}` not found", server_id))?;
 
-            anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
-        })?;
+                anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
+            })?;
 
         let configuration = ContextServerConfiguration::from_settings(
-            settings,
+            settings_entry.settings,
             server_id.clone(),
             registry,
             worktree_store,
@@ -1087,19 +1097,29 @@ impl ContextServerStore {
         })
     }
 
-    fn resolve_project_settings<'a>(
-        worktree_store: &'a Entity<WorktreeStore>,
-        cx: &'a App,
-    ) -> &'a ProjectSettings {
-        let location = worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| settings::SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
+    /// Merges context server settings from all visible worktrees so that servers defined
+    /// in any project folder in a multi-root workspace are picked up.
+    fn resolve_all_context_server_settings(
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &App,
+    ) -> HashMap<Arc<str>, ContextServerSettingsEntry> {
+        let mut merged = HashMap::default();
+        for worktree in worktree_store.read(cx).visible_worktrees(cx) {
+            let worktree_id = worktree.read(cx).id();
+            let location = settings::SettingsLocation {
+                worktree_id,
                 path: RelPath::empty(),
-            });
-        ProjectSettings::get(location, cx)
+            };
+            for (id, settings) in &ProjectSettings::get(Some(location), cx).context_servers {
+                merged
+                    .entry(id.clone())
+                    .or_insert_with(|| ContextServerSettingsEntry {
+                        worktree_id: Some(worktree_id),
+                        settings: settings.clone(),
+                    });
+            }
+        }
+        merged
     }
 
     fn create_oauth_token_provider(
@@ -1134,6 +1154,23 @@ impl ContextServerStore {
         ))
     }
 
+    fn timeout_for_server(&self, id: &ContextServerId, cx: &App) -> u64 {
+        let worktree_id = self
+            .context_server_settings
+            .get(&id.0)
+            .as_ref()
+            .and_then(|entry| entry.worktree_id);
+
+        ProjectSettings::get(
+            worktree_id.map(|id| SettingsLocation {
+                worktree_id: id,
+                path: &RelPath::empty(),
+            }),
+            cx,
+        )
+        .context_server_timeout
+    }
+
     /// Initiate the OAuth browser flow for a server in the `AuthRequired` state.
     ///
     /// This starts a loopback HTTP callback server on an ephemeral port, builds
@@ -1146,6 +1183,7 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let state = self.servers.get(id).context("Context server not found")?;
+        let global_timeout = self.timeout_for_server(id, cx);
 
         let (discovery, server, configuration) = match state {
             ContextServerState::AuthRequired {
@@ -1204,6 +1242,7 @@ impl ContextServerStore {
                     id.clone(),
                     discovery.clone(),
                     configuration.clone(),
+                    global_timeout,
                     cx,
                 )
                 .await;
@@ -1247,6 +1286,7 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let state = self.servers.get(id).context("Context server not found")?;
+        let global_timeout = self.timeout_for_server(id, cx);
 
         let (server, configuration, discovery) = match state {
             ContextServerState::ClientSecretRequired {
@@ -1290,6 +1330,7 @@ impl ContextServerStore {
                     id.clone(),
                     discovery.clone(),
                     configuration.clone(),
+                    global_timeout,
                     cx,
                 )
                 .await;
@@ -1359,6 +1400,7 @@ impl ContextServerStore {
         id: ContextServerId,
         discovery: Arc<OAuthDiscovery>,
         configuration: Arc<ContextServerConfiguration>,
+        global_timeout: u64,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let resource = oauth::canonical_server_uri(&discovery.resource_metadata.resource);
@@ -1459,34 +1501,29 @@ impl ContextServerStore {
             cx,
         );
 
-        let new_server = this.update(cx, |this, cx| {
-            let global_timeout =
-                Self::resolve_project_settings(&this.worktree_store, cx).context_server_timeout;
-
-            match configuration.as_ref() {
-                ContextServerConfiguration::Http {
-                    url,
-                    headers,
-                    timeout,
-                    oauth: _,
-                } => {
-                    let transport = HttpTransport::new_with_token_provider(
-                        http_client.clone(),
-                        url.to_string(),
-                        headers.clone(),
-                        cx.background_executor().clone(),
-                        Some(token_provider.clone()),
-                    );
-                    Ok(Arc::new(ContextServer::new_with_timeout(
-                        id.clone(),
-                        Arc::new(transport),
-                        Some(Duration::from_secs(
-                            timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                        )),
-                    )))
-                }
-                _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
+        let new_server = this.update(cx, |_this, cx| match configuration.as_ref() {
+            ContextServerConfiguration::Http {
+                url,
+                headers,
+                timeout,
+                oauth: _,
+            } => {
+                let transport = HttpTransport::new_with_token_provider(
+                    http_client.clone(),
+                    url.to_string(),
+                    headers.clone(),
+                    cx.background_executor().clone(),
+                    Some(token_provider.clone()),
+                );
+                Ok(Arc::new(ContextServer::new_with_timeout(
+                    id.clone(),
+                    Arc::new(transport),
+                    Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    )),
+                )))
             }
+            _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         })??;
 
         this.update(cx, |this, cx| {
@@ -1681,29 +1718,33 @@ impl ContextServerStore {
         for (id, _) in registry.read_with(cx, |registry, _| registry.context_server_descriptors()) {
             configured_servers
                 .entry(id)
-                .or_insert(ContextServerSettings::default_extension());
+                .or_insert(ContextServerSettingsEntry {
+                    worktree_id: None,
+                    settings: ContextServerSettings::default_extension(),
+                });
         }
 
         let (enabled_servers, disabled_servers): (HashMap<_, _>, HashMap<_, _>) =
             configured_servers
                 .into_iter()
-                .partition(|(_, settings)| settings.enabled());
+                .partition(|(_, entry)| entry.settings.enabled());
 
-        let configured_servers = join_all(enabled_servers.into_iter().map(|(id, settings)| {
-            let id = ContextServerId(id);
-            ContextServerConfiguration::from_settings(
-                settings,
-                id.clone(),
-                registry.clone(),
-                worktree_store.clone(),
-                cx,
-            )
-            .map(move |config| (id, config))
-        }))
-        .await
-        .into_iter()
-        .filter_map(|(id, config)| config.map(|config| (id, config)))
-        .collect::<HashMap<_, _>>();
+        let configured_servers =
+            join_all(enabled_servers.into_iter().map(|(id, settings_entry)| {
+                let id = ContextServerId(id);
+                ContextServerConfiguration::from_settings(
+                    settings_entry.settings,
+                    id.clone(),
+                    registry.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+                .map(move |config| (id, config))
+            }))
+            .await
+            .into_iter()
+            .filter_map(|(id, config)| config.map(|config| (id, config)))
+            .collect::<HashMap<_, _>>();
 
         let mut servers_to_start = Vec::new();
         let mut servers_to_remove = HashSet::default();

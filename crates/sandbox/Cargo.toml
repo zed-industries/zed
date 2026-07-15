@@ -58,6 +58,10 @@ libc.workspace = true
 # Safe wrappers for the SCM_RIGHTS fd-passing and `fstat` the bind validator
 # needs, so that code doesn't hand-roll `msghdr`/`CMSG_*`/`mem::zeroed` unsafe.
 nix = { workspace = true, features = ["fs", "socket", "uio"] }
+# Builds the in-sandbox seccomp-BPF filter that blocks the untrusted command from
+# creating `AF_UNIX` (and other non-IP) sockets, `io_uring`, `ptrace`, etc. — the
+# syscall-level half of preventing session-IPC-socket sandbox escapes.
+seccompiler.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true

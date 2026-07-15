@@ -25,7 +25,7 @@ use buffer_diff::{
 };
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
-use fs::{FakeFs, PathEventKind};
+use fs::{FakeFs, PathEventKind, RealFs};
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -8637,6 +8637,74 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            ".gitignore": ".checkouts/\n",
+            "src": {
+                "main.rs": "fn main() {}"
+            },
+            ".checkouts": {
+                "worktrees": {
+                    "foo": {
+                        "README.md": "hello"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let root = PathBuf::from(path!("/dir"));
+        let file = PathBuf::from(path!("/dir/src/main.rs"));
+        let ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo"));
+        let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
+
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            Some(true)
+        );
+
+        // Paths inside gitignored directories aren't scanned, so they aren't
+        // considered contained by the project; opening one should behave like
+        // opening an unrelated path.
+        for path in [&ignored_dir, &file_in_ignored_dir] {
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                None,
+                "{path:?} should not be considered a contained subpath"
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -15463,6 +15531,44 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
         assert!(
             !buffer.read_only(),
             "Generated files should not be read-only when read_only_files is empty"
+        );
+    });
+}
+
+#[gpui::test]
+#[cfg(not(windows))]
+async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "test.txt": "hello",
+        },
+    }));
+    let file_path = root.path().join("project/test.txt");
+    let mut permissions = std::fs::metadata(&file_path).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file_path, permissions).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "OS read-only files should open as read-only"
         );
     });
 }

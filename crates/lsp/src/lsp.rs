@@ -6,10 +6,10 @@ pub use lsp_types::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::{
-    AsyncRead, AsyncWrite, Future, FutureExt,
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot::{self, Canceled},
     future::{self, Either},
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     select,
 };
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -19,12 +19,9 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-};
 use util::command::{Child, Stdio};
 
+use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
 use std::{
     any::TypeId,
@@ -42,7 +39,7 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
+use util::{ConnectionResult, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -99,8 +96,8 @@ struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
-    notification_tx: channel::Sender<NotificationSerializer>,
+    outbound_tx: async_channel::Sender<String>,
+    notification_tx: async_channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     version: Option<SharedString>,
     process_name: Arc<str>,
@@ -483,7 +480,7 @@ impl LanguageServer {
         Stderr: AsyncRead + Unpin + Send + 'static,
         F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
@@ -563,7 +560,8 @@ impl LanguageServer {
         }
         .into();
 
-        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        let (notification_tx, notification_rx) =
+            async_channel::unbounded::<NotificationSerializer>();
         cx.background_spawn({
             let outbound_tx = outbound_tx.clone();
             async move {
@@ -623,9 +621,8 @@ impl LanguageServer {
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
-        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
-        let _clear_response_handlers = util::defer({
+        let _clear_response_handlers = gpui_util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
@@ -667,7 +664,7 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
         input_handler.loop_handle.await
     }
@@ -703,13 +700,13 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
     }
 
     async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -1426,8 +1423,8 @@ impl LanguageServer {
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1489,7 +1486,7 @@ impl LanguageServer {
                 return ConnectionResult::Result(Err(e));
             }
 
-            let cancel_on_drop = util::defer(move || {
+            let cancel_on_drop = gpui_util::defer(move || {
                 if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &notification_serializers,
@@ -1536,8 +1533,8 @@ impl LanguageServer {
     fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         request_timeout: Duration,
         params: T::Params,
@@ -1588,7 +1585,7 @@ impl LanguageServer {
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<NotificationSerializer>,
         params: T::Params,
     ) -> Result<()> {
         let serializer = NotificationSerializer(Box::new(move || {
@@ -1822,7 +1819,7 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
-    notifications_rx: channel::Receiver<(String, String)>,
+    notifications_rx: async_channel::Receiver<(String, String)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1837,7 +1834,7 @@ impl FakeLanguageServer {
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        let (notifications_tx, notifications_rx) = channel::unbounded();
+        let (notifications_tx, notifications_rx) = async_channel::unbounded();
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
@@ -2105,8 +2102,8 @@ mod tests {
             &mut cx.to_async(),
         );
 
-        let (message_tx, message_rx) = channel::unbounded();
-        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
         server
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()

@@ -1548,6 +1548,7 @@ impl LocalLspStore {
         });
 
         let mut project_transaction = ProjectTransaction::default();
+        let mut format_error = None;
 
         for buffer in &buffers {
             zlog::debug!(
@@ -1601,10 +1602,16 @@ impl LocalLspStore {
                     .insert(cx.entity(), formatting_transaction);
             });
 
-            result?;
+            // Keep formatting the remaining buffers on failure, surfacing the first error.
+            if let Err(error) = result {
+                format_error.get_or_insert(error);
+            }
         }
 
-        Ok(project_transaction)
+        match format_error {
+            Some(error) => Err(error),
+            None => Ok(project_transaction),
+        }
     }
 
     async fn format_buffer_locally(
@@ -1747,8 +1754,13 @@ impl LocalLspStore {
             .flatten()
             .chain(formatters);
 
+        // Only explicitly configured formatters surface their failures;
+        // auto-resolved ones stay silent so a missing optional tool
+        // (e.g. prettier) does not warn on every save.
+        let mut format_error = None;
         for formatter in formatters {
-            let formatter = if formatter == &Formatter::Auto {
+            let is_auto = formatter == &Formatter::Auto;
+            let formatter = if is_auto {
                 if settings.prettier.allowed {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
                     &Formatter::Prettier
@@ -1774,10 +1786,16 @@ impl LocalLspStore {
             .await
             {
                 zlog::error!(logger => "Formatter failed, skipping: {err:#}");
+                if !is_auto {
+                    format_error.get_or_insert(err);
+                }
             }
         }
 
-        Ok(())
+        match format_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     async fn apply_formatter(
@@ -6154,30 +6172,8 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.definitions_with_filter(buffer, position, false, cx)
-    }
-
-    pub fn workspace_definitions(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.definitions_with_filter(buffer, position, true, cx)
-    }
-
-    fn definitions_with_filter(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        workspace_only: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitions {
-                position,
-                workspace_only,
-            };
+            let request = GetDefinitions { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6202,11 +6198,7 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitions {
-                        position,
-                        workspace_only,
-                    }
-                    .response_from_proto(
+                    GetDefinitions { position }.response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6229,10 +6221,7 @@ impl LspStore {
             let definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetDefinitions {
-                    position,
-                    workspace_only,
-                },
+                GetDefinitions { position },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6246,6 +6235,107 @@ impl LspStore {
                 ))
             })
         }
+    }
+
+    fn edit_prediction_definitions_for_command<C>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        request: C,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<EditPredictionDefinition>>>
+    where
+        C: LspCommand<Response = Vec<EditPredictionDefinition>> + Clone,
+        C::ProtoRequest: proto::LspRequestMessage,
+        <C::ProtoRequest as proto::LspRequestMessage>::Response:
+            Into<<C::ProtoRequest as proto::RequestMessage>::Response>,
+        <C::LspRequest as lsp::request::Request>::Result: Send,
+        <C::LspRequest as lsp::request::Request>::Params: Send,
+    {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
+            let request_task = upstream_client.request_lsp(
+                project_id,
+                None,
+                request_timeout,
+                cx.background_executor().clone(),
+                request.to_proto(project_id, buffer.read(cx)),
+            );
+            let buffer = buffer.clone();
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let Some(responses) = request_task.await? else {
+                    return Ok(Vec::new());
+                };
+                let actions = join_all(responses.payload.into_iter().map(|response| {
+                    request.clone().response_from_proto(
+                        response.response.into(),
+                        lsp_store.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let definitions_task =
+                self.request_multiple_lsp_locally(buffer, Some(position), request, cx);
+            cx.background_spawn(async move {
+                Ok(definitions_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, definitions)| definitions)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn edit_prediction_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        include_type_definitions: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<EditPredictionDefinition>>> {
+        let definitions = self.edit_prediction_definitions_for_command(
+            buffer,
+            GetEditPredictionDefinitions { position },
+            position,
+            cx,
+        );
+        let type_definitions = include_type_definitions.then(|| {
+            self.edit_prediction_definitions_for_command(
+                buffer,
+                GetEditPredictionTypeDefinitions { position },
+                position,
+                cx,
+            )
+        });
+        cx.background_spawn(async move {
+            let mut merged = definitions.await?;
+            if let Some(type_definitions) = type_definitions {
+                merged.extend(type_definitions.await?);
+            }
+            let mut seen = HashSet::default();
+            merged.retain(|definition| seen.insert(definition.clone()));
+            Ok(merged)
+        })
     }
 
     pub fn declarations(
@@ -6323,30 +6413,8 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.type_definitions_with_filter(buffer, position, false, cx)
-    }
-
-    pub fn workspace_type_definitions(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.type_definitions_with_filter(buffer, position, true, cx)
-    }
-
-    fn type_definitions_with_filter(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        workspace_only: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitions {
-                position,
-                workspace_only,
-            };
+            let request = GetTypeDefinitions { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6369,11 +6437,7 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitions {
-                        position,
-                        workspace_only,
-                    }
-                    .response_from_proto(
+                    GetTypeDefinitions { position }.response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6396,10 +6460,7 @@ impl LspStore {
             let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetTypeDefinitions {
-                    position,
-                    workspace_only,
-                },
+                GetTypeDefinitions { position },
                 cx,
             );
             cx.background_spawn(async move {
@@ -9597,6 +9658,22 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetEditPredictionDefinition(get_edit_prediction_definition) => {
+                let position = get_edit_prediction_definition
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp_locally::<GetEditPredictionDefinitions>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_edit_prediction_definition,
+                    position,
+                    &mut cx,
+                )
+                .await?;
+            }
             Request::GetDeclaration(get_declaration) => {
                 let position = get_declaration
                     .position
@@ -9624,6 +9701,22 @@ impl LspStore {
                     sender_id,
                     lsp_request_id,
                     get_type_definition,
+                    position,
+                    &mut cx,
+                )
+                .await?;
+            }
+            Request::GetEditPredictionTypeDefinition(get_edit_prediction_type_definition) => {
+                let position = get_edit_prediction_type_definition
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp_locally::<GetEditPredictionTypeDefinitions>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_edit_prediction_type_definition,
                     position,
                     &mut cx,
                 )
