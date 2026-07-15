@@ -1272,7 +1272,11 @@ impl FileFinderDelegate {
                         let full_path = if should_hide_root_in_entry_path(&worktree_store, cx) {
                             entry_path.project.path.clone()
                         } else {
-                            worktree.read(cx).root_name().join(&entry_path.project.path)
+                            worktree
+                                .read(cx)
+                                .root_name()
+                                .join(&entry_path.project.path)
+                                .into()
                         };
                         let mut components = full_path.components();
                         let filename = components.next_back().unwrap_or("");
@@ -1841,7 +1845,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::unix(prefix.split_at(1).0).unwrap())
+                            .entry_for_path(RelPath::from_unix_str(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {

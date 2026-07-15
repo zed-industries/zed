@@ -740,9 +740,9 @@ fn unused_image_path(
     let mut filename = format!("image.{extension}");
     let mut counter = 1u32;
     loop {
-        let candidate = dir_rel_path.join(RelPath::unix(&filename).ok()?);
+        let candidate = dir_rel_path.join(RelPath::from_unix_str(&filename).ok()?);
         if !exists(&candidate) {
-            return Some((filename, candidate));
+            return Some((filename, candidate.into()));
         }
         filename = format!("image_{counter}.{extension}");
         counter += 1;

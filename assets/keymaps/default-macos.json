@@ -644,7 +644,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-k v": "markdown::OpenPreviewToTheSide",
-      "cmd-shift-v": "markdown::OpenPreview"
+      "cmd-shift-v": "markdown::OpenPreview",
     },
   },
   {
@@ -1588,6 +1588,7 @@
       "cmd-shift-backspace": "branch_picker::DeleteBranch",
       "cmd-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
       "cmd-shift-i": "branch_picker::CycleBranchFilter",
+      "cmd-k": "branch_picker::ToggleFilterMenu",
     },
   },
   {

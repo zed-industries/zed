@@ -1678,7 +1678,7 @@ impl KeymapEditor {
                 y: px(2.0),
             })
             .trigger_with_tooltip(
-                IconButton::new("KeymapEditorFilterMenuButton", IconName::Sliders)
+                IconButton::new("KeymapEditorFilterMenuButton", IconName::Filter)
                     .icon_size(IconSize::Small)
                     .when(
                         self.keybinding_conflict_state.any_user_binding_conflicts(),
@@ -1701,7 +1701,7 @@ impl KeymapEditor {
                 menu.toggleable_entry(
                     name,
                     toggled,
-                    IconPosition::End,
+                    IconPosition::Start,
                     action.as_ref().map(|a| a.boxed_clone()),
                     move |window, cx| {
                         window.focus(&focus_handle, cx);
@@ -2018,7 +2018,6 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_center()
                             .child(
                                 h_flex()
                                     .key_context({
@@ -2029,9 +2028,7 @@ impl Render for KeymapEditor {
                                     .flex_1()
                                     .min_w_0()
                                     .h_8()
-                                    .pl_2()
-                                    .pr_1()
-                                    .py_1()
+                                    .px_2()
                                     .border_1()
                                     .border_color(theme.colors().border)
                                     .rounded_md()
@@ -2041,7 +2038,9 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_1()
                                     .flex_none()
-                                    .items_center()
+                                    // Make sure this min-width value aligns with the spacer
+                                    // div in the keystroke search input
+                                    .min_w_80()
                                     .child(
                                         IconButton::new(
                                             "KeymapEditorKeystrokeSearchButton",
@@ -2075,7 +2074,6 @@ impl Render for KeymapEditor {
                                     )
                                     .child(
                                         Button::new("edit-in-json", "Edit in JSON")
-                                            .style(ButtonStyle::Subtle)
                                             .key_binding(
                                                 ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
                                                     .map(|kb| kb.size(rems_from_px(10.))),
@@ -2110,7 +2108,7 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(div().min_w_96()), // Spacer div to align with the search input
+                                    .child(div().min_w_80()), // Spacer div to align with the search input
                             )
                         },
                     ),

@@ -208,13 +208,7 @@ impl<D: PickerDelegate> Picker<D> {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
                         let editor = editor.clone();
-                        Some(
-                            h_flex().w_full().child(
-                                div()
-                                    .flex_1()
-                                    .child(self.render_editor(&editor, window, cx)),
-                            ),
-                        )
+                        Some(self.render_editor(&editor, window, cx))
                     } else {
                         None
                     }

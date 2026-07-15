@@ -4432,6 +4432,219 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
+async fn test_diagnostic_summaries_cleared_on_buffer_close_without_workspace_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-no-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: false,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error no-ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer);
+        drop(handle);
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostic_summaries_retained_on_buffer_close_with_workspace_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                            lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer);
+        drop(handle);
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8634,6 +8847,74 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         )]),
         "With search including ignored prettier directory and excluding TS files, only one file should be found"
     );
+}
+
+#[gpui::test]
+async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            ".gitignore": ".checkouts/\n",
+            "src": {
+                "main.rs": "fn main() {}"
+            },
+            ".checkouts": {
+                "worktrees": {
+                    "foo": {
+                        "README.md": "hello"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let root = PathBuf::from(path!("/dir"));
+        let file = PathBuf::from(path!("/dir/src/main.rs"));
+        let ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo"));
+        let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
+
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            Some(true)
+        );
+
+        // Paths inside gitignored directories aren't scanned, so they aren't
+        // considered contained by the project; opening one should behave like
+        // opening an unrelated path.
+        for path in [&ignored_dir, &file_in_ignored_dir] {
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                None,
+                "{path:?} should not be considered a contained subpath"
+            );
+        }
+    });
 }
 
 #[gpui::test]
@@ -15651,7 +15932,7 @@ mod disable_ai_settings_tests {
 
         let worktree_id = WorktreeId::from_usize(1);
         let rel_path = |path: &str| -> std::sync::Arc<util::rel_path::RelPath> {
-            std::sync::Arc::from(util::rel_path::RelPath::unix(path).unwrap())
+            std::sync::Arc::from(util::rel_path::RelPath::from_unix_str(path).unwrap())
         };
         let project_path = rel_path("project");
         let settings_location = SettingsLocation {

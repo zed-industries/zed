@@ -5139,6 +5139,109 @@ async fn test_definition(
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_definition(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let capabilities = lsp::ServerCapabilities {
+        definition_provider: Some(OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "const ONE: usize = TWO;",
+                "b.rs": "const TWO: usize = 2;",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Uri::from_file_path(path!("/root/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let definitions = project_b
+        .update(cx_b, |project, cx| {
+            project.edit_prediction_definitions(&buffer_b, 19, false, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_b.read(|cx| {
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(
+            definitions[0].path,
+            ProjectPath {
+                worktree_id,
+                path: rel_path("b.rs").into(),
+            }
+        );
+        assert_eq!(
+            definitions[0].range.start.0,
+            language::PointUtf16::new(0, 6)
+        );
+        assert_eq!(definitions[0].range.end.0, language::PointUtf16::new(0, 9));
+        assert!(
+            project_b
+                .read(cx)
+                .get_open_buffer(&definitions[0].path, cx)
+                .is_none()
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_references(
     executor: BackgroundExecutor,

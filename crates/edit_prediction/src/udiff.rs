@@ -309,12 +309,12 @@ pub async fn refresh_worktree_entries(
 ) -> Result<()> {
     let mut rel_paths = Vec::new();
     for path in paths {
-        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
 
         let path_without_root: PathBuf = path.components().skip(1).collect();
-        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
     }

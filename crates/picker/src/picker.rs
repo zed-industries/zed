@@ -76,8 +76,6 @@ actions!(
         SetPreviewHidden,
         /// Opens the footer's actions menu.
         ToggleActionsMenu,
-        /// Take the picker's content and open it in a multibuffer
-        ToMultiBuffer,
         /// Toggles multi-select mode, in which clicking items adds them to
         /// the selection instead of opening them
         ToggleMultiSelect,

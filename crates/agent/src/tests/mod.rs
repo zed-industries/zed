@@ -3842,6 +3842,11 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), None);
         assert!(thread.has_failed_title_generation());
+        assert!(
+            thread
+                .title_generation_error()
+                .is_some_and(|error| error.contains("Internal server error"))
+        );
         assert!(!thread.is_generating_title());
     });
 
@@ -3852,6 +3857,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
 
     thread.read_with(cx, |thread, _| {
         assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
         assert!(thread.is_generating_title());
     });
 
@@ -3862,6 +3868,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Retried title".into()));
         assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
         assert!(!thread.is_generating_title());
     });
 }

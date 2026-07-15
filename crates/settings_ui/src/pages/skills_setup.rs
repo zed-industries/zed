@@ -227,8 +227,8 @@ fn render_skill_row(
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
                             cx.spawn(async move |settings_window, cx| {
-                                let remove_result = fs
-                                    .remove_dir(
+                                let trash_result = fs
+                                    .trash(
                                         &directory_path,
                                         RemoveOptions {
                                             recursive: true,
@@ -236,9 +236,9 @@ fn render_skill_row(
                                         },
                                     )
                                     .await;
-                                if let Err(error) = remove_result {
+                                if let Err(error) = trash_result {
                                     log::error!(
-                                        "failed to delete skill directory {}: {error:#}",
+                                        "failed to move skill directory {} to trash: {error:#}",
                                         directory_path.display()
                                     );
                                     settings_window

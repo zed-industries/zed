@@ -94,6 +94,10 @@ messages!(
     (GetDeclarationResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
+    (GetEditPredictionDefinition, Background),
+    (GetEditPredictionDefinitionResponse, Background),
+    (GetEditPredictionTypeDefinition, Background),
+    (GetEditPredictionTypeDefinitionResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetDocumentSymbols, Background),
@@ -415,6 +419,14 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
+    (
+        GetEditPredictionDefinition,
+        GetEditPredictionDefinitionResponse
+    ),
+    (
+        GetEditPredictionTypeDefinition,
+        GetEditPredictionTypeDefinitionResponse
+    ),
     (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
@@ -610,6 +622,16 @@ lsp_messages!(
     (GetCodeLens, GetCodeLensResponse, true),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse, true),
     (GetDefinition, GetDefinitionResponse, true),
+    (
+        GetEditPredictionDefinition,
+        GetEditPredictionDefinitionResponse,
+        true
+    ),
+    (
+        GetEditPredictionTypeDefinition,
+        GetEditPredictionTypeDefinitionResponse,
+        true
+    ),
     (GetDeclaration, GetDeclarationResponse, true),
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
@@ -650,6 +672,8 @@ entity_messages!(
     GetCodeLens,
     GetCompletions,
     GetDefinition,
+    GetEditPredictionDefinition,
+    GetEditPredictionTypeDefinition,
     GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
@@ -987,6 +1011,12 @@ impl LspQuery {
                 ("GetDocumentDiagnostics", false)
             }
             Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
+            Some(lsp_query::Request::GetEditPredictionDefinition(_)) => {
+                ("GetEditPredictionDefinition", false)
+            }
+            Some(lsp_query::Request::GetEditPredictionTypeDefinition(_)) => {
+                ("GetEditPredictionTypeDefinition", false)
+            }
             Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
             Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),

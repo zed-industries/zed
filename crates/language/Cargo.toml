@@ -68,7 +68,7 @@ tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 unicase = "2.6"
 util.workspace = true
 watch.workspace = true

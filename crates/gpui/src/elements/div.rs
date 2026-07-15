@@ -2223,6 +2223,7 @@ impl Interactivity {
             || self.has_pinch_listeners()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
+            || !self.drag_over_styles.is_empty()
             || self.tooltip_builder.is_some()
             || window.is_inspector_picking(cx)
     }

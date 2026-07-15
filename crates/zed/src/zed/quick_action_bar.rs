@@ -327,9 +327,8 @@ impl Render for QuickActionBar {
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
-                    IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                    IconButton::new("toggle_editor_settings_icon", IconName::Filter)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
                 )

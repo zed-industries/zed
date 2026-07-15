@@ -11,6 +11,7 @@ use futures::{
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use language::LanguageConfig;
+use path::PathExt;
 use semver::Version;
 use serde::Deserialize;
 use std::{
@@ -20,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, command::Stdio, rel_path::PathExt};
+use util::{ResultExt, command::Stdio};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
