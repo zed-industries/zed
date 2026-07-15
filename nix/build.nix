@@ -38,6 +38,9 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  lld,
+  libx11,
+  libxcb,
   nodejs_22,
   openssl,
   perl,
@@ -77,6 +80,7 @@ let
     builtins.elem firstComp topLevelIncludes;
 
   craneLib = crane.overrideToolchain rustToolchain;
+  gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
       zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
@@ -134,6 +138,8 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        # Provides `ld64.lld` for clang's `-fuse-ld=lld`.
+        lld
         (cargo-bundle.overrideAttrs (
           new: old: {
             version = "0.6.1-zed";
@@ -178,10 +184,10 @@ let
         libva
         libxkbcommon
         wayland
+        gpu-lib
         libglvnd
-        vulkan-loader
-        xorg.libX11
-        xorg.libxcb
+        libx11
+        libxcb
         libdrm
         libgbm
         libva
@@ -236,17 +242,21 @@ let
         # about them that's special is that they're manually dlopened at runtime
         NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
-            libglvnd
-            vulkan-loader
+            gpu-lib
             wayland
             libva
           ]
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
+      }
+      // lib.optionalAttrs stdenv'.hostPlatform.isDarwin {
+        # Link with lld on Darwin. nixpkgs' classic open-source ld64 fails to insert
+        # ARM64 branch thunks for this binary, producing `b(l) ARM64 branch out of range`.
+        NIX_CFLAGS_LINK = "-fuse-ld=lld";
       };
 
-      # prevent nix from removing the "unused" wayland rpaths
+      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
       dontPatchELF = stdenv'.hostPlatform.isLinux;
 
       # TODO: try craneLib.cargoNextest separate output
@@ -300,6 +310,13 @@ in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
+
+    # Expose the crane builder and shared arguments so other derivations (e.g.
+    # the docs preprocessor in the devshell) can build sibling workspace crates
+    # without duplicating all of the build inputs and environment setup.
+    passthru = {
+      inherit craneLib commonArgs cargoArtifacts;
+    };
 
     dontUseCmakeConfigure = true;
 

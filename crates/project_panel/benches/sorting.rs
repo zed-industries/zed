@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
-use project_panel::par_sort_worktree_entries_with_mode;
-use settings::ProjectPanelSortMode;
+use project_panel::par_sort_worktree_entries;
+use settings::{ProjectPanelSortMode, ProjectPanelSortOrder};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -45,38 +45,32 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
 fn criterion_benchmark(c: &mut Criterion) {
     let snapshot = load_linux_repo_snapshot();
 
-    c.bench_function("Sort linux worktree snapshot", |b| {
-        b.iter_batched(
-            || snapshot.clone(),
-            |mut snapshot| {
-                par_sort_worktree_entries_with_mode(
-                    &mut snapshot,
-                    ProjectPanelSortMode::DirectoriesFirst,
-                )
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
+    let modes = [
+        ("DirectoriesFirst", ProjectPanelSortMode::DirectoriesFirst),
+        ("Mixed", ProjectPanelSortMode::Mixed),
+        ("FilesFirst", ProjectPanelSortMode::FilesFirst),
+    ];
+    let orders = [
+        ("Default", ProjectPanelSortOrder::Default),
+        ("Upper", ProjectPanelSortOrder::Upper),
+        ("Lower", ProjectPanelSortOrder::Lower),
+        ("Unicode", ProjectPanelSortOrder::Unicode),
+    ];
 
-    c.bench_function("Sort linux worktree snapshot (Mixed)", |b| {
-        b.iter_batched(
-            || snapshot.clone(),
-            |mut snapshot| {
-                par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::Mixed)
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
-
-    c.bench_function("Sort linux worktree snapshot (FilesFirst)", |b| {
-        b.iter_batched(
-            || snapshot.clone(),
-            |mut snapshot| {
-                par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::FilesFirst)
-            },
-            criterion::BatchSize::LargeInput,
-        );
-    });
+    for (mode_name, mode) in &modes {
+        for (order_name, order) in &orders {
+            c.bench_function(
+                &format!("Sort linux worktree snapshot ({mode_name}, {order_name})"),
+                |b| {
+                    b.iter_batched(
+                        || snapshot.clone(),
+                        |mut snapshot| par_sort_worktree_entries(&mut snapshot, *mode, *order),
+                        criterion::BatchSize::LargeInput,
+                    );
+                },
+            );
+        }
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);

@@ -3,8 +3,6 @@ use crate::{
     room_participants,
 };
 use anyhow::{Result, anyhow};
-use assistant_slash_command::SlashCommandWorkingSet;
-use assistant_text_thread::TextThreadStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
@@ -34,7 +32,6 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
     search::{SearchQuery, SearchResult},
 };
-use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
@@ -53,7 +50,7 @@ use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
 use workspace::{Pane, ParticipantLocation};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -129,7 +126,7 @@ async fn test_basic_calls(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.calling_user.github_login, "user_a");
+    assert_eq!(call_b.calling_user.username, "user_a");
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -138,7 +135,7 @@ async fn test_basic_calls(
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     executor.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.calling_user.github_login, "user_a");
+    assert_eq!(call_b2.calling_user.username, "user_a");
 
     // User B joins the room using the first client.
     active_call_b
@@ -193,7 +190,7 @@ async fn test_basic_calls(
 
     // User C receives the call, but declines it.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.calling_user.github_login, "user_b");
+    assert_eq!(call_c.calling_user.username, "user_b");
     active_call_c.update(cx_c, |call, cx| call.decline_incoming(cx).unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
@@ -239,7 +236,7 @@ async fn test_basic_calls(
 
     // User C accepts the call.
     let call_c = incoming_call_c.next().await.unwrap().unwrap();
-    assert_eq!(call_c.calling_user.github_login, "user_a");
+    assert_eq!(call_c.calling_user.username, "user_a");
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
         .await
@@ -680,7 +677,7 @@ async fn test_room_uniqueness(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b1.calling_user.github_login, "user_a");
+    assert_eq!(call_b1.calling_user.username, "user_a");
 
     // Ensure calling users A and B from client C fails.
     active_call_c
@@ -742,7 +739,7 @@ async fn test_room_uniqueness(
         .unwrap();
     executor.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b2.calling_user.github_login, "user_c");
+    assert_eq!(call_b2.calling_user.username, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
@@ -1875,8 +1872,8 @@ async fn test_active_call_events(
         mem::take(&mut *events_b.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_a.user_id().unwrap(),
-                github_login: "user_a".into(),
+                legacy_id: client_a.user_id().unwrap(),
+                username: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
             }),
@@ -1894,8 +1891,8 @@ async fn test_active_call_events(
         mem::take(&mut *events_a.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_b.user_id().unwrap(),
-                github_login: "user_b".into(),
+                legacy_id: client_b.user_id().unwrap(),
+                username: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
             }),
@@ -2284,12 +2281,7 @@ async fn test_room_location(
         room.read_with(cx, |room, _| {
             room.remote_participants()
                 .values()
-                .map(|participant| {
-                    (
-                        participant.user.github_login.to_string(),
-                        participant.location,
-                    )
-                })
+                .map(|participant| (participant.user.username.to_string(), participant.location))
                 .collect()
         })
     }
@@ -2885,6 +2877,107 @@ async fn test_git_diff_base_change(
             buffer,
             &new_staged_text,
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_git_diff_index_matches_head(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let committed_text = "
+        one
+        two
+        three
+    "
+    .unindent();
+    let file_contents = "
+        one
+        TWO
+        three
+    "
+    .unindent();
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/dir",
+            json!({
+                ".git": {},
+                "a.txt": file_contents,
+            }),
+        )
+        .await;
+    client_a
+        .fs()
+        .set_head_and_index_for_repo(Path::new("/dir/.git"), &[("a.txt", committed_text.clone())]);
+
+    let (project_local, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let project_remote = client_b.join_remote_project(project_id, cx_b).await;
+
+    // Open the uncommitted diff on the guest, without opening it on the host
+    // first, so that the host loads the diff bases in response to the guest's
+    // request.
+    let remote_buffer = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let remote_uncommitted_diff = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_uncommitted_diff(remote_buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // The guest's index and head texts share one allocation, which is only
+    // possible if the host detected that the index matches the head and sent
+    // `Mode::IndexMatchesHead`.
+    let buffer_id = remote_buffer.read_with(cx_b, |buffer, _| buffer.remote_id());
+    project_remote.read_with(cx_b, |project, cx| {
+        assert!(
+            project
+                .git_store()
+                .read(cx)
+                .index_matches_head_for_buffer(buffer_id, cx),
+            "the host should send IndexMatchesHead when the index is clean"
+        );
+    });
+
+    remote_uncommitted_diff.read_with(cx_b, |diff, cx| {
+        let buffer = remote_buffer.read(cx);
+        assert_eq!(
+            diff.base_text_string(cx).as_deref(),
+            Some(committed_text.as_str())
+        );
+        assert_hunks(
+            diff.snapshot(cx).hunks_in_row_range(0..3, buffer),
+            buffer,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
         );
     });
 }
@@ -5046,6 +5139,109 @@ async fn test_definition(
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_definition(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let capabilities = lsp::ServerCapabilities {
+        definition_provider: Some(OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "const ONE: usize = TWO;",
+                "b.rs": "const TWO: usize = 2;",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Uri::from_file_path(path!("/root/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let definitions = project_b
+        .update(cx_b, |project, cx| {
+            project.edit_prediction_definitions(&buffer_b, 19, false, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_b.read(|cx| {
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(
+            definitions[0].path,
+            ProjectPath {
+                worktree_id,
+                path: rel_path("b.rs").into(),
+            }
+        );
+        assert_eq!(
+            definitions[0].range.start.0,
+            language::PointUtf16::new(0, 6)
+        );
+        assert_eq!(definitions[0].range.end.0, language::PointUtf16::new(0, 9));
+        assert!(
+            project_b
+                .read(cx)
+                .get_open_buffer(&definitions[0].path, cx)
+                .is_none()
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_references(
     executor: BackgroundExecutor,
@@ -5298,6 +5494,7 @@ async fn test_project_search(
                     "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
                 )
             }
+            SearchResult::WaitingForScan | SearchResult::Searching => {}
         };
     }
 
@@ -6294,7 +6491,7 @@ async fn test_contacts(
                 .iter()
                 .map(|contact| {
                     (
-                        contact.user.github_login.clone().to_string(),
+                        contact.user.username.clone().to_string(),
                         if contact.online { "online" } else { "offline" },
                         if contact.busy { "busy" } else { "free" },
                     )
@@ -6530,7 +6727,7 @@ async fn test_join_call_after_screen_was_shared(
 
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
-    assert_eq!(call_b.calling_user.github_login, "user_a");
+    assert_eq!(call_b.calling_user.username, "user_a");
 
     // User A shares their screen
     let display = gpui::TestScreenCaptureSource::new();
@@ -7095,141 +7292,6 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10)]
-async fn test_context_collaboration_with_reconnect(
-    executor: BackgroundExecutor,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    let mut server = TestServer::start(executor.clone()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    client_a.fs().insert_tree("/a", Default::default()).await;
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.join_remote_project(project_id, cx_b).await;
-
-    // Client A sees that a guest has joined.
-    executor.run_until_parked();
-
-    project_a.read_with(cx_a, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
-    project_b.read_with(cx_b, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
-
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let text_thread_store_a = cx_a
-        .update(|cx| {
-            TextThreadStore::new(
-                project_a.clone(),
-                prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    let text_thread_store_b = cx_b
-        .update(|cx| {
-            TextThreadStore::new(
-                project_b.clone(),
-                prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-    // Client A creates a new chats.
-    let text_thread_a = text_thread_store_a.update(cx_a, |store, cx| store.create(cx));
-    executor.run_until_parked();
-
-    // Client B retrieves host's contexts and joins one.
-    let text_thread_b = text_thread_store_b
-        .update(cx_b, |store, cx| {
-            let host_text_threads = store.host_text_threads().collect::<Vec<_>>();
-            assert_eq!(host_text_threads.len(), 1);
-            store.open_remote(host_text_threads[0].id.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    // Host and guest make changes
-    text_thread_a.update(cx_a, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Host change\n")], None, cx)
-        })
-    });
-    text_thread_b.update(cx_b, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Guest change\n")], None, cx)
-        })
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest change\nHost change\n"
-    );
-
-    // Disconnect client A and make some changes while disconnected.
-    server.disconnect_client(client_a.peer_id().unwrap());
-    server.forbid_connections();
-    text_thread_a.update(cx_a, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Host offline change\n")], None, cx)
-        })
-    });
-    text_thread_b.update(cx_b, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Guest offline change\n")], None, cx)
-        })
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Host offline change\nGuest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nGuest change\nHost change\n"
-    );
-
-    // Allow client A to reconnect and verify that contexts converge.
-    server.allow_connections();
-    executor.advance_clock(RECEIVE_TIMEOUT);
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
-    );
-
-    // Client A disconnects without being able to reconnect. Context B becomes readonly.
-    server.forbid_connections();
-    server.disconnect_client(client_a.peer_id().unwrap());
-    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    text_thread_b.read_with(cx_b, |text_thread, cx| {
-        assert!(text_thread.buffer().read(cx).read_only());
-    });
-}
-
 #[gpui::test]
 async fn test_remote_git_branches(
     executor: BackgroundExecutor,
@@ -7279,6 +7341,7 @@ async fn test_remote_git_branches(
     let new_branch = branches[2];
 
     let branches_b = branches_b
+        .branches
         .into_iter()
         .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
@@ -7350,6 +7413,20 @@ async fn test_remote_git_branches(
     });
 
     assert_eq!(host_branch.name(), "totally-new-branch");
+
+    let default_branch_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _cx| repository.default_branch(false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_b.as_deref(), Some("main"));
+
+    let default_branch_with_remote_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _cx| repository.default_branch(true)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_with_remote_b.as_deref(), Some("origin/main"));
 }
 
 #[gpui::test]

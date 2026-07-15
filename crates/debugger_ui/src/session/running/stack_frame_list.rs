@@ -8,7 +8,7 @@ use dap::adapters::DebugAdapterName;
 use db::kvp::KeyValueStore;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
-    Subscription, Task, WeakEntity, list,
+    Subscription, Task, TaskExt, WeakEntity, list,
 };
 use util::{
     debug_panic,
@@ -395,7 +395,10 @@ impl StackFrameList {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
+            return Task::ready(Err(anyhow!(
+                "no absolute source path in stack frame {stack_frame_id}, source: {:?}",
+                stack_frame.source
+            )));
         };
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
@@ -911,7 +914,7 @@ impl StackFrameList {
             .child(
                 IconButton::new(
                     "filter-by-visible-worktree-stack-frame-list",
-                    IconName::ListFilter,
+                    IconName::Filter,
                 )
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)

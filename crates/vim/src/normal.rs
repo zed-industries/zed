@@ -28,8 +28,8 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
-use language::{Point, SelectionGoal};
+use gpui::{Context, TaskExt, Window, actions};
+use language::{AutoIndentMode, Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
 
@@ -88,6 +88,8 @@ actions!(
         ConvertToRot47,
         /// Toggles comments for selected lines.
         ToggleComments,
+        /// Toggles block comments for selected lines.
+        ToggleBlockComments,
         /// Shows the current location in the file.
         ShowLocation,
         /// Undoes the last change.
@@ -125,6 +127,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
+    Vim::action(editor, cx, Vim::toggle_block_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
 
@@ -143,6 +146,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
+        let original_selections =
+            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
@@ -152,7 +157,18 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        vim.visual_delete(false, window, cx);
+        let transaction_id = vim.visual_delete(false, window, cx);
+        if let (Some(original_selections), Some(transaction_id)) =
+            (original_selections, transaction_id)
+            && !original_selections.is_empty()
+        {
+            let updated = vim.update_editor(cx, |_, editor, _| {
+                editor.modify_transaction_selection_history(transaction_id, |selections| {
+                    selections.undo = original_selections;
+                })
+            });
+            debug_assert_ne!(updated, Some(false));
+        }
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });
 
@@ -463,6 +479,9 @@ impl Vim {
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, forced_motion, window, cx)
             }
+            Some(Operator::ToggleBlockComments) => {
+                self.toggle_block_comments_motion(motion, times, forced_motion, window, cx)
+            }
             Some(Operator::ReplaceWithRegister) => {
                 self.replace_with_register_motion(motion, times, forced_motion, window, cx)
             }
@@ -533,6 +552,9 @@ impl Vim {
                 Some(Operator::ToggleComments) => {
                     self.toggle_comments_object(object, around, times, window, cx)
                 }
+                Some(Operator::ToggleBlockComments) => {
+                    self.toggle_block_comments_object(object, around, times, window, cx)
+                }
                 Some(Operator::ReplaceWithRegister) => {
                     self.replace_with_register_object(object, around, window, cx)
                 }
@@ -554,10 +576,13 @@ impl Vim {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
             Some(Operator::ChangeSurrounds { target: None, .. }) => {
-                if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
+                let bracket_anchors =
+                    self.prepare_and_move_to_valid_bracket_pair(object, window, cx);
+                if !bracket_anchors.is_empty() {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
                         opening,
+                        bracket_anchors,
                     });
                 }
             }
@@ -717,24 +742,50 @@ impl Vim {
                     .into_iter()
                     .map(|selection| selection.start.row)
                     .collect();
-                let edits = selection_start_rows
-                    .into_iter()
-                    .map(|row| {
-                        let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
-                            .chars()
-                            .collect::<String>();
 
-                        let start_of_line = Point::new(row, 0);
-                        (start_of_line..start_of_line, indent + "\n")
-                    })
-                    .collect::<Vec<_>>();
-                editor.edit_with_autoindent(edits, cx);
+                let mut auto_indent_edits = Vec::new();
+                let mut plain_edits = Vec::new();
+
+                for row in selection_start_rows {
+                    let auto_indent_mode = snapshot
+                        .language_settings_at(Point::new(row, 0), cx)
+                        .auto_indent;
+                    let indent = if auto_indent_mode == AutoIndentMode::None {
+                        String::new()
+                    } else {
+                        let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row)).len;
+                        let first_char = snapshot.chars_at(Point::new(row, indent_size)).next();
+                        let indent_row = if matches!(first_char, Some('}') | Some(')')) {
+                            snapshot
+                                .prev_non_blank_row(MultiBufferRow(row))
+                                .map(|r| r.0)
+                                .unwrap_or(row)
+                        } else {
+                            row
+                        };
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(indent_row), cx)
+                    };
+                    let start_of_line = Point::new(row, 0);
+                    let edit = (start_of_line..start_of_line, indent + "\n");
+                    if auto_indent_mode == AutoIndentMode::None {
+                        plain_edits.push(edit);
+                    } else {
+                        auto_indent_edits.push(edit);
+                    }
+                }
+
+                if !plain_edits.is_empty() {
+                    editor.edit(plain_edits, cx);
+                }
+                if !auto_indent_edits.is_empty() {
+                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                }
+
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(&mut |map, cursor, _| {
-                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
+                    s.move_with(&mut |map, selection| {
+                        let previous_line = map.start_of_relative_buffer_row(selection.start, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
-                        (insert_point, SelectionGoal::None)
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
             });
@@ -750,39 +801,63 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.end.row)
-                    .collect();
-                let edits = selection_end_rows
-                    .into_iter()
-                    .map(|row| {
-                        let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
-                            .chars()
-                            .collect::<String>();
-
-                        let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                        (end_of_line..end_of_line, "\n".to_string() + &indent)
+                    .map(|selection| {
+                        if !selection.is_empty() && selection.end.column == 0 {
+                            selection.end.row.saturating_sub(1)
+                        } else {
+                            selection.end.row
+                        }
                     })
-                    .collect::<Vec<_>>();
+                    .collect();
+
+                let mut auto_indent_edits = Vec::new();
+                let mut plain_edits = Vec::new();
+
+                for row in selection_end_rows {
+                    let auto_indent_mode = snapshot
+                        .language_settings_at(Point::new(row, 0), cx)
+                        .auto_indent;
+                    let indent = if auto_indent_mode == AutoIndentMode::None {
+                        String::new()
+                    } else {
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
+                    };
+                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                    let edit = (end_of_line..end_of_line, "\n".to_string() + &indent);
+                    if auto_indent_mode == AutoIndentMode::None {
+                        plain_edits.push(edit);
+                    } else {
+                        auto_indent_edits.push(edit);
+                    }
+                }
+
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.maybe_move_cursors_with(&mut |map, cursor, goal| {
-                        Motion::CurrentLine.move_point(
-                            map,
-                            cursor,
-                            goal,
-                            None,
-                            &text_layout_details,
-                        )
+                    s.move_with(&mut |map, selection| {
+                        let current_line = if !selection.is_empty() && selection.end.column() == 0 {
+                            // If this is an insert after a selection to the end of the line, the
+                            // cursor needs to be bumped back, because it'll be at the start of the
+                            // *next* line.
+                            map.start_of_relative_buffer_row(selection.end, -1)
+                        } else {
+                            selection.end
+                        };
+                        let insert_point = motion::end_of_line(map, false, current_line, 1);
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
-                editor.edit_with_autoindent(edits, cx);
+
+                if !plain_edits.is_empty() {
+                    editor.edit(plain_edits, cx);
+                }
+                if !auto_indent_edits.is_empty() {
+                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                }
             });
         });
     }
@@ -924,7 +999,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
-            let Some((buffer, point, _)) = editor
+            let Some((buffer, point)) = editor
                 .buffer()
                 .read(cx)
                 .point_to_buffer_point(selection.head(), cx)
@@ -969,6 +1044,38 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), window, cx);
+                vim.restore_selection_cursors(editor, window, cx, original_positions);
+            });
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, window, cx)
+        }
+    }
+
+    fn toggle_block_comments(
+        &mut self,
+        _: &ToggleBlockComments,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.store_visual_marks(window, cx);
+        let is_visual_line = self.mode == Mode::VisualLine;
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let original_positions = vim.save_selection_starts(editor, cx);
+                if is_visual_line {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let start_row = selection.start.to_point(map).row;
+                            let end_row = selection.end.to_point(map).row;
+                            let end_col = map.buffer_snapshot().line_len(MultiBufferRow(end_row));
+                            selection.start = Point::new(start_row, 0).to_display_point(map);
+                            selection.end = Point::new(end_row, end_col).to_display_point(map);
+                        });
+                    });
+                }
+                editor.toggle_block_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
         });
@@ -1088,6 +1195,7 @@ mod test {
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
     };
+    use language;
 
     #[gpui::test]
     async fn test_h(cx: &mut gpui::TestAppContext) {
@@ -1624,6 +1732,20 @@ mod test {
                 }"},
             Mode::Insert,
         );
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                    println!();
+                ˇ}"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
@@ -2045,6 +2167,62 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_o_auto_indent_none(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.project.all_languages.defaults.auto_indent = Some(language::AutoIndentMode::None);
+            });
+        });
+
+        // o: new line below starts at column 0 regardless of current indentation
+        cx.set_state("    let xˇ = 1;", Mode::Normal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("    let x = 1;\nˇ", Mode::Insert);
+
+        // O: new line above starts at column 0 regardless of current indentation
+        cx.set_state("    let xˇ = 1;", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("ˇ\n    let x = 1;", Mode::Insert);
+
+        // o on the first line: no crash and column 0
+        cx.set_state("ˇfoo", Mode::Normal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("foo\nˇ", Mode::Insert);
+
+        // O on the first line: no crash and column 0
+        cx.set_state("ˇfoo", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("ˇ\nfoo", Mode::Insert);
+
+        // o on an already-empty line: stays at column 0
+        cx.set_state("fooˇ\n\nbar", Mode::Normal);
+        cx.simulate_keystrokes("j o");
+        cx.assert_state("foo\n\nˇ\nbar", Mode::Insert);
+    }
+
+    #[gpui::test]
+    async fn test_o_preserve_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.project.all_languages.defaults.auto_indent =
+                    Some(language::AutoIndentMode::PreserveIndent);
+            });
+        });
+
+        // o: new line below copies current line's indentation
+        cx.set_state("    let xˇ = 1;", Mode::Normal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("    let x = 1;\n    ˇ", Mode::Insert);
+
+        // O: new line above copies current line's indentation
+        cx.set_state("    let xˇ = 1;", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("    ˇ\n    let x = 1;", Mode::Insert);
     }
 
     #[gpui::test]

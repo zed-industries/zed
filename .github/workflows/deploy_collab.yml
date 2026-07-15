@@ -7,6 +7,8 @@ on:
   push:
     tags:
     - collab-production
+permissions:
+  contents: read
 jobs:
   style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -17,7 +19,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -26,7 +28,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -48,7 +50,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -57,7 +59,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -66,14 +68,14 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: deploy_collab::tests::run_collab_tests
       run: cargo nextest run --package collab --no-fail-fast
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -87,13 +89,13 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: deploy_collab::publish::install_doctl
-      uses: digitalocean/action-doctl@v2
+      uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::publish::sign_into_registry
       run: doctl registry login
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: deploy_collab::publish::build_docker_image
@@ -113,11 +115,11 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: deploy_collab::deploy::install_doctl
-      uses: digitalocean/action-doctl@v2
+      uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::deploy::sign_into_kubernetes

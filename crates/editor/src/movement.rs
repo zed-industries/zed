@@ -582,28 +582,129 @@ pub fn end_of_paragraph(
     map.max_point()
 }
 
+/// Returns whether `row` is part of a comment paragraph: a line whose first
+/// non-whitespace character lies within a comment scope and which contains at
+/// least one alphanumeric character.
+///
+/// This intentionally excludes:
+/// - blank lines and code lines,
+/// - end-of-line comments preceded by code (the first non-whitespace character
+///   is then code, not a comment),
+/// - "blank"/divider comment lines such as a bare `//` or `// -----` (no
+///   alphanumeric content), which act as paragraph separators.
+fn is_comment_paragraph_line(snapshot: &MultiBufferSnapshot, row: u32) -> bool {
+    let buffer_row = MultiBufferRow(row);
+    if snapshot.is_line_blank(buffer_row) {
+        return false;
+    }
+    let indent_len = snapshot.indent_size_for_line(buffer_row).len;
+    let indent_end = Point::new(row, indent_len);
+    let in_comment = snapshot.language_scope_at(indent_end).is_some_and(|scope| {
+        matches!(
+            scope.override_name(),
+            Some("comment") | Some("comment.inclusive")
+        )
+    });
+    if !in_comment {
+        return false;
+    }
+    let line_end = Point::new(row, snapshot.line_len(buffer_row));
+    snapshot
+        .text_for_range(indent_end..line_end)
+        .flat_map(|chunk| chunk.chars())
+        .any(|c| c.is_alphanumeric())
+}
+
+/// Returns the position of the first non-whitespace character of the next or
+/// previous comment paragraph, relative to `from`.
+///
+/// A comment paragraph is a run of consecutive comment lines (see
+/// [`is_comment_paragraph_line`]); paragraphs are separated by blank lines, code
+/// lines, and blank/divider comment lines. If no such paragraph exists in the
+/// requested direction, `from` is returned unchanged.
+///
+/// Both directions always move to a *different* paragraph than the one the
+/// caret is in: when the caret is inside a comment paragraph, the entire
+/// current paragraph is skipped, so `Prev` lands on the previous paragraph's
+/// start rather than the current paragraph's own start.
+pub fn comment_paragraph(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let snapshot = map.buffer_snapshot();
+    let from_point = from.to_point(map);
+    let max_row = snapshot.max_row().0;
+
+    let is_paragraph_start = |row: u32| {
+        is_comment_paragraph_line(snapshot, row)
+            && (row == 0 || !is_comment_paragraph_line(snapshot, row - 1))
+    };
+    let paragraph_start_point =
+        |row: u32| Point::new(row, snapshot.indent_size_for_line(MultiBufferRow(row)).len);
+
+    let target = match direction {
+        Direction::Next => (from_point.row..=max_row).find_map(|row| {
+            let point = paragraph_start_point(row);
+            (point > from_point && is_paragraph_start(row)).then_some(point)
+        }),
+        Direction::Prev => {
+            // If the caret is within a comment paragraph, skip over the whole
+            // current paragraph so we land on the *previous* paragraph rather
+            // than stopping at the current paragraph's own start.
+            let mut boundary_row = from_point.row;
+            if is_comment_paragraph_line(snapshot, boundary_row) {
+                while boundary_row > 0 && is_comment_paragraph_line(snapshot, boundary_row - 1) {
+                    boundary_row -= 1;
+                }
+                (0..boundary_row)
+                    .rev()
+                    .find_map(|row| is_paragraph_start(row).then(|| paragraph_start_point(row)))
+            } else {
+                (0..=from_point.row).rev().find_map(|row| {
+                    let point = paragraph_start_point(row);
+                    (point < from_point && is_paragraph_start(row)).then_some(point)
+                })
+            }
+        }
+    };
+
+    match target {
+        Some(point) => map.clip_point(point.to_display_point(map), Bias::Right),
+        None => from,
+    }
+}
+
 pub fn start_of_excerpt(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let Some((_, excerpt_range)) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(map);
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
+                return display_point;
+            };
+            let mut start = start_anchor.to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
-                let Some(excerpt) = map.buffer_snapshot().excerpt_before(excerpt.id()) else {
+                let Some(excerpt) = map.buffer_snapshot().excerpt_before(start_anchor) else {
                     return display_point;
                 };
-                start = excerpt.start_anchor().to_display_point(map);
+                if let Some(start_anchor) = map.anchor_in_excerpt(excerpt.context.start) {
+                    start = start_anchor.to_display_point(map);
+                }
             }
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(map);
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
+                return display_point;
+            };
+            let mut end = end_anchor.to_display_point(map);
             *end.row_mut() += 1;
             map.clip_point(end, Bias::Right)
         }
@@ -616,12 +717,15 @@ pub fn end_of_excerpt(
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let Some((_, excerpt_range)) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(map);
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
+                return display_point;
+            };
+            let mut start = start_anchor.to_display_point(map);
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
@@ -630,18 +734,23 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(map);
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
+                return display_point;
+            };
+            let mut end = end_anchor.to_display_point(map);
             *end.column_mut() = 0;
             if end <= display_point {
                 *end.row_mut() += 1;
                 let point_end = map.display_point_to_point(end, Bias::Right);
-                let Some(excerpt) = map
+                let Some((_, excerpt_range)) = map
                     .buffer_snapshot()
                     .excerpt_containing(point_end..point_end)
                 else {
                     return display_point;
                 };
-                end = excerpt.end_anchor().to_display_point(map);
+                if let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) {
+                    end = end_anchor.to_display_point(map);
+                }
                 *end.column_mut() = 0;
             }
             end
@@ -722,7 +831,8 @@ pub fn find_boundary_point(
             && is_boundary(prev_ch, ch)
         {
             if return_point_before_boundary {
-                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                let point = prev_offset.to_point(map.buffer_snapshot());
+                return map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right);
             } else {
                 break;
             }
@@ -731,7 +841,8 @@ pub fn find_boundary_point(
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
-    map.clip_point(offset.to_display_point(map), Bias::Right)
+    let point = offset.to_point(map.buffer_snapshot());
+    map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
 }
 
 pub fn find_preceding_boundary_trail(
@@ -820,13 +931,15 @@ pub fn find_boundary_trail(
         prev_ch = Some(ch);
     }
 
-    let trail = trail_offset
-        .map(|trail_offset| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
+    let trail = trail_offset.map(|trail_offset| {
+        let point = trail_offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    });
 
-    (
-        trail,
-        map.clip_point(offset.to_display_point(map), Bias::Right),
-    )
+    (trail, {
+        let point = offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    })
 }
 
 pub fn find_boundary(
@@ -1390,10 +1503,100 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_word_movement_over_folds(cx: &mut gpui::App) {
+        use crate::display_map::Crease;
+
+        init_test(cx);
+
+        // Simulate a mention: `hello [@file.txt](file:///path) world`
+        // The fold covers `[@file.txt](file:///path)` and is replaced by "⋯".
+        // Display text: `hello ⋯ world`
+        let buffer_text = "hello [@file.txt](file:///path) world";
+        let buffer = MultiBuffer::build_simple(buffer_text, cx);
+        let font = font("Helvetica");
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                px(14.0),
+                None,
+                0,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        display_map.update(cx, |map, cx| {
+            // Fold the `[@file.txt](file:///path)` range (bytes 6..31)
+            map.fold(
+                vec![Crease::simple(
+                    Point::new(0, 6)..Point::new(0, 31),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+        });
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        // "hello " (6 bytes) + "⋯" (3 bytes) + " world" (6 bytes) = "hello ⋯ world"
+        assert_eq!(snapshot.text(), "hello ⋯ world");
+
+        // Ctrl+Right from before fold ("hello |⋯ world") should skip past the fold.
+        // Cursor at column 6 = start of fold.
+        let before_fold = DisplayPoint::new(DisplayRow(0), 6);
+        let after_fold = next_word_end(&snapshot, before_fold);
+        // Should land past the fold, not get stuck at fold start.
+        assert!(
+            after_fold > before_fold,
+            "next_word_end should move past the fold: got {:?}, started at {:?}",
+            after_fold,
+            before_fold
+        );
+
+        // Ctrl+Right from "hello" should jump past "hello" to the fold or past it.
+        let at_start = DisplayPoint::new(DisplayRow(0), 0);
+        let after_hello = next_word_end(&snapshot, at_start);
+        assert_eq!(
+            after_hello,
+            DisplayPoint::new(DisplayRow(0), 5),
+            "next_word_end from start should land at end of 'hello'"
+        );
+
+        // Ctrl+Left from after fold should move to before the fold.
+        // "⋯" ends at column 9. " world" starts at 9. Column 15 = end of "world".
+        let after_world = DisplayPoint::new(DisplayRow(0), 15);
+        let before_world = previous_word_start(&snapshot, after_world);
+        assert_eq!(
+            before_world,
+            DisplayPoint::new(DisplayRow(0), 10),
+            "previous_word_start from end should land at start of 'world'"
+        );
+
+        // Ctrl+Left from start of "world" should land before fold.
+        let start_of_world = DisplayPoint::new(DisplayRow(0), 10);
+        let landed = previous_word_start(&snapshot, start_of_world);
+        // The fold acts as a word, so we should land at the fold start (column 6).
+        assert_eq!(
+            landed,
+            DisplayPoint::new(DisplayRow(0), 6),
+            "previous_word_start from 'world' should land at fold start"
+        );
+
+        // End key from start should go to end of line (column 15), not fold start.
+        let end_pos = line_end(&snapshot, at_start, false);
+        assert_eq!(
+            end_pos,
+            DisplayPoint::new(DisplayRow(0), 15),
+            "line_end should go to actual end of line, not fold start"
+        );
+    }
+
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         crate::init(cx);
     }
 }

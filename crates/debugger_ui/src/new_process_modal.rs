@@ -16,7 +16,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity, actions,
+    KeyContext, Render, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -106,7 +106,7 @@ impl NewProcessModal {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
                         Picker::list(delegate, window, cx)
-                            .modal(false)
+                            .embedded()
                             .list_measure_all()
                     });
 
@@ -523,7 +523,7 @@ impl NewProcessModal {
         )
         .style(ui::DropdownStyle::Outlined)
         .tab_index(0)
-        .attach(gpui::Corner::BottomLeft)
+        .attach(gpui::Anchor::BottomLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -1207,6 +1207,10 @@ impl DebugDelegate {
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
 
+    fn name() -> &'static str {
+        "debug scenario picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -1337,11 +1341,10 @@ impl PickerDelegate for DebugDelegate {
         else {
             return;
         };
-        let file = location.buffer.read(cx).file();
-        let language = location.buffer.read(cx).language();
-        let language_name = language.as_ref().map(|l| l.name());
+        let buffer = location.buffer.read(cx);
+        let language = buffer.language();
         let Some(adapter): Option<DebugAdapterName> =
-            language::language_settings::language_settings(language_name, file, cx)
+            language::language_settings::LanguageSettings::for_buffer(buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -1589,6 +1592,8 @@ impl PickerDelegate for DebugDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
                         .when_some(subtitle, |this, subtitle_text| {

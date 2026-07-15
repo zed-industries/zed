@@ -1,6 +1,8 @@
 use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
+use agent_settings::AgentSettings;
 use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
+use settings::Settings;
 use text::{Anchor, BufferId};
 use ui::{Tooltip, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
@@ -46,6 +48,8 @@ impl Render for ToolbarControls {
             None => {}
         }
 
+        let is_agent_enabled = AgentSettings::get_global(cx).enabled(cx);
+
         let (warning_tooltip, warning_color) = if include_warnings {
             ("Exclude Warnings", Color::Warning)
         } else {
@@ -65,16 +69,18 @@ impl Render for ToolbarControls {
                         window.dispatch_action(Box::new(buffer_search::Deploy::find()), cx);
                     })
             })
-            .child({
-                IconButton::new("inline_assist", IconName::ZedAssistant)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::for_action_title(
-                        "Inline Assist",
-                        &InlineAssist::default(),
-                    ))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(InlineAssist::default()), cx);
-                    })
+            .when(is_agent_enabled, |this| {
+                this.child(
+                    IconButton::new("inline_assist", IconName::ZedAssistant)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::for_action_title(
+                            "Inline Assist",
+                            &InlineAssist::default(),
+                        ))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(InlineAssist::default()), cx);
+                        }),
+                )
             })
             .map(|div| {
                 if is_updating {

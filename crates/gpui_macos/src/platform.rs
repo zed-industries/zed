@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -30,8 +31,10 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
+    WindowParams, popup::PopupNotSupportedError,
 };
+use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
 use objc::{
     class,
@@ -51,11 +54,10 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock},
-};
-use util::{
-    ResultExt,
-    command::{new_command, new_std_command},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 #[allow(non_upper_case_globals)]
@@ -65,7 +67,7 @@ const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
-#[ctor]
+#[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
         APP_CLASS = {
@@ -75,7 +77,7 @@ unsafe fn build_classes() {
         }
     };
     unsafe {
-        APP_DELEGATE_CLASS = unsafe {
+        APP_DELEGATE_CLASS = {
             let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
             decl.add_method(
@@ -150,6 +152,11 @@ unsafe fn build_classes() {
                 on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(onSystemWake:),
+                on_system_wake as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -168,6 +175,8 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    on_system_wake: Option<Box<dyn FnMut()>>,
+    system_wake_observer_registered: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -178,6 +187,8 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
+    cursor_visible: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -188,7 +199,14 @@ impl MacPlatform {
         let text_system = Arc::new(crate::MacTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(gpui::NoopTextSystem::new());
+        let text_system = {
+            if !headless {
+                log::warn!(
+                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
+                );
+            }
+            Arc::new(gpui::NoopTextSystem::new())
+        };
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
@@ -212,8 +230,11 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
+            on_system_wake: None,
+            system_wake_observer_registered: false,
             menus: None,
             keyboard_mapper,
+            cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
     }
 
@@ -513,17 +534,19 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
-        let app_path = self
-            .app_path()
-            .ok()
-            // When the app is not bundled, `app_path` returns the
-            // directory containing the executable. Disregard this
-            // and get the path to the executable itself.
-            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+        let app_path = binary_path
+            .or_else(|| {
+                self.app_path()
+                    .ok()
+                    // When the app is not bundled, `app_path` returns the
+                    // directory containing the executable. Disregard this
+                    // and get the path to the executable itself.
+                    .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            })
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
         // Wait until this process has exited and then re-open this path.
@@ -618,12 +641,28 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let renderer_context = self.0.lock().renderer_context.clone();
+        // Native popups are not implemented on macOS yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = options.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
+        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_visible.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+            )
+        };
+
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            self.foreground_executor(),
-            self.background_executor(),
+            cursor_visible,
+            foreground_executor,
+            background_executor,
             renderer_context,
         )))
     }
@@ -854,14 +893,16 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_command("open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("open")
+                    .arg("--")
                     .arg(path)
-                    .spawn()
+                    .status()
                     .context("invoking open command")
-                    .log_err()
-                {
-                    child.status().await.log_err();
-                }
+                    .log_err();
             })
             .detach();
     }
@@ -892,6 +933,25 @@ impl Platform for MacPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_thermal_state_change = Some(callback);
+    }
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        let mut state = self.0.lock();
+        state.on_system_wake = Some(callback);
+        if state.system_wake_observer_registered {
+            return;
+        }
+        drop(state);
+
+        // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let delegate: id = msg_send![app, delegate];
+            if delegate != nil {
+                register_system_wake_observer(delegate);
+                self.0.lock().system_wake_observer_registered = true;
+            }
+        }
     }
 
     fn thermal_state(&self) -> ThermalState {
@@ -978,53 +1038,22 @@ impl Platform for MacPlatform {
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
-            if style == CursorStyle::None {
-                let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES];
-                return;
-            }
-
-            let new_cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-                // Undocumented, private class methods:
-                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-                CursorStyle::ResizeUpLeftDownRight => {
-                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
-                }
-                CursorStyle::ResizeUpRightDownLeft => {
-                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-                }
-
-                CursorStyle::IBeamCursorForVerticalLayout => {
-                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-                }
-                CursorStyle::OperationNotAllowed => {
-                    msg_send![class!(NSCursor), operationNotAllowedCursor]
-                }
-                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => unreachable!(),
-            };
-
-            let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
-            if new_cursor != old_cursor {
-                let _: () = msg_send![new_cursor, set];
-            }
+            set_active_window_cursor_style(style);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        let cursor_visible = self.0.lock().cursor_visible.clone();
+        if !cursor_visible.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.0.lock().cursor_visible.load(Ordering::Relaxed)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -1217,11 +1246,33 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
+        let observer = this as *mut Object as id;
         let platform = get_mac_platform(this);
-        let callback = platform.0.lock().finish_launching.take();
+        let callback = {
+            let mut state = platform.0.lock();
+            if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
+                register_system_wake_observer(observer);
+                state.system_wake_observer_registered = true;
+            }
+            state.finish_launching.take()
+        };
         if let Some(callback) = callback {
             callback();
         }
+    }
+}
+
+unsafe fn register_system_wake_observer(observer: id) {
+    // SAFETY: observer is an Objective-C object implementing onSystemWake:.
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
+        let wake_name = ns_string("NSWorkspaceDidWakeNotification");
+        let _: () = msg_send![workspace_center, addObserver: observer
+            selector: sel!(onSystemWake:)
+            name: wake_name
+            object: nil
+        ];
     }
 }
 
@@ -1284,6 +1335,27 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
                 .lock()
                 .on_thermal_state_change
                 .get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn on_system_wake(this: &mut Object, _: Sel, _: id) {
+    // SAFETY: this is the registered app delegate carrying MAC_PLATFORM_IVAR.
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    // SAFETY: platform lives for the process lifetime while callbacks are registered.
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_system_wake);
+    }
+
+    extern "C" fn on_system_wake(context: *mut c_void) {
+        // SAFETY: context is the MacPlatform pointer queued above.
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_system_wake.take() {
+            drop(lock);
+            callback();
+            platform.0.lock().on_system_wake.get_or_insert(callback);
         }
     }
 }
@@ -1389,6 +1461,7 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
@@ -1410,6 +1483,9 @@ unsafe extern "C" {
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
+    pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
 
 mod security {

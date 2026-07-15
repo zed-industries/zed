@@ -3,16 +3,16 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToPoint,
-    actions::DiffClipboardWithSelectionData,
+    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    SplittableEditor, ToPoint, actions::DiffClipboardWithSelectionData,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer, Point};
-use project::Project;
+use language::{self, Buffer, Capability, OffsetRangeExt, Point};
+use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -52,36 +52,26 @@ impl TextDiffView {
 
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer();
-            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
-            let first_selection = selections.first()?;
+            let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
+            let first_selection = editor.selections.newest_anchor();
 
-            let (source_buffer, buffer_start, start_excerpt) = multibuffer
-                .read(cx)
-                .point_to_buffer_point(first_selection.start, cx)?;
-            let buffer_end = multibuffer
-                .read(cx)
-                .point_to_buffer_point(first_selection.end, cx)
-                .and_then(|(buf, pt, end_excerpt)| {
-                    (buf.read(cx).remote_id() == source_buffer.read(cx).remote_id()
-                        && end_excerpt == start_excerpt)
-                        .then_some(pt)
-                })
-                .unwrap_or(buffer_start);
+            let (source_buffer, buffer_range) = multibuffer_snapshot
+                .anchor_range_to_buffer_anchor_range(first_selection.range())?;
+            let max_point = source_buffer.max_point();
+            let buffer_range = buffer_range.to_point(source_buffer);
+            let source_buffer = multibuffer.read(cx).buffer(source_buffer.remote_id())?;
 
-            let buffer_snapshot = source_buffer.read(cx);
-            let max_point = buffer_snapshot.max_point();
-
-            if first_selection.is_empty() {
+            if buffer_range.is_empty() {
                 let full_range = Point::new(0, 0)..max_point;
                 return Some((source_buffer, full_range));
             }
 
-            let expanded_start = Point::new(buffer_start.row, 0);
-            let expanded_end = if buffer_end.column > 0 {
-                let next_row = buffer_end.row + 1;
+            let expanded_start = Point::new(buffer_range.start.row, 0);
+            let expanded_end = if buffer_range.end.column > 0 {
+                let next_row = buffer_range.end.row + 1;
                 cmp::min(max_point, Point::new(next_row, 0))
             } else {
-                buffer_end
+                buffer_range.end
             };
             Some((source_buffer, expanded_start..expanded_end))
         });
@@ -120,16 +110,22 @@ impl TextDiffView {
         }
 
         let workspace = workspace.weak_handle();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
         let clipboard_buffer = build_clipboard_buffer(
             clipboard_text,
             &source_buffer,
             expanded_selection_range.clone(),
             cx,
         );
+        let diff_buffer = cx.new(|cx| {
+            BufferDiff::new_with_base_text_buffer(
+                &source_buffer_snapshot.text,
+                clipboard_buffer.clone(),
+                cx,
+            )
+        });
 
         let task = window.spawn(cx, async move |cx| {
-            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
@@ -188,15 +184,8 @@ impl TextDiffView {
                 window,
                 cx,
             );
-            splittable.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
-            splittable.rhs_editor().update(cx, |editor, cx| {
-                editor.start_temporary_diff_override();
-                editor.disable_diagnostics(cx);
-                editor.set_expand_all_diff_hunks(cx);
-            });
+            splittable
+                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             splittable
         });
 
@@ -229,7 +218,7 @@ impl TextDiffView {
                     .file()
                     .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
-            .unwrap_or("untitled".into());
+            .unwrap_or(MultiBuffer::DEFAULT_TITLE.into());
 
         let selection_location_path = selection_location_text
             .map(|text| format!("{} @ {}", path, text))
@@ -255,7 +244,7 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -274,11 +263,16 @@ fn build_clipboard_buffer(
     cx.new(|cx| {
         let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
         let language = source_buffer.read(cx).language().cloned();
+        if let Some(language_registry) = source_buffer.read(cx).language_registry() {
+            buffer.set_language_registry(language_registry);
+        }
         buffer.set_language(language, cx);
 
         let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
         let range_end = source_buffer_snapshot.point_to_offset(replacement_range.end);
         buffer.edit([(range_start..range_end, text)], None, cx);
+
+        buffer.set_capability(Capability::ReadOnly, cx);
 
         buffer
     })
@@ -289,32 +283,23 @@ async fn update_diff_buffer(
     source_buffer: &Entity<Buffer>,
     clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) {
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let language = source_buffer_snapshot.language().cloned();
-    let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
-
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = base_buffer_snapshot.text();
+    let base_text = Arc::<str>::from(base_buffer_snapshot.text());
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
-                Some(Arc::from(base_text.as_str())),
-                Some(true),
-                language.clone(),
+                &base_buffer_snapshot,
+                Some(base_text.clone()),
                 cx,
             )
         })
         .await;
 
-    diff.update(cx, |diff, cx| {
-        diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
-    })
-    .await;
-    Ok(())
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
 }
 
 impl EventEmitter<EditorEvent> for TextDiffView {}
@@ -390,6 +375,10 @@ impl Item for TextDiffView {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.diff_editor.read(cx).for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.diff_editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
@@ -499,7 +488,7 @@ mod tests {
                     settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
                 });
             });
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 

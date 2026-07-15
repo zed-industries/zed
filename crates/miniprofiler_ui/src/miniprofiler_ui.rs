@@ -5,14 +5,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
     SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
-    ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity, WindowBounds,
-    WindowOptions, div, prelude::FluentBuilder, px, relative, size, uniform_list,
+    TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity,
+    WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size,
+    uniform_list,
 };
 use rpc::{AnyProtoClient, proto};
+use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};
+use std::any::TypeId;
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -61,7 +65,49 @@ impl ProfileSource {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, RegisterSetting)]
+struct PerformanceProfilerSettings {
+    enabled: bool,
+}
+
+impl Settings for PerformanceProfilerSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        let instrumentation = content.instrumentation.as_ref().unwrap();
+        let profiler = instrumentation.performance_profiler.as_ref().unwrap();
+        Self {
+            enabled: profiler.enabled.unwrap(),
+        }
+    }
+}
+
 pub fn init(startup_time: Instant, cx: &mut App) {
+    let initial_enabled = PerformanceProfilerSettings::get_global(cx).enabled;
+    profiler::set_trace_enabled(initial_enabled);
+    update_command_palette_filter(initial_enabled, cx);
+
+    cx.observe_global::<SettingsStore>(|cx| {
+        let enabled = PerformanceProfilerSettings::get_global(cx).enabled;
+        // `set_enabled` reports whether the value actually changed, so skip the
+        // filter update and window cleanup on the common no-op path — the
+        // settings observer fires for every settings change.
+        if !profiler::set_trace_enabled(enabled) {
+            return;
+        }
+        update_command_palette_filter(enabled, cx);
+        if !enabled {
+            for window in cx
+                .windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<ProfilerWindow>())
+            {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
+            }
+        }
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut workspace::Workspace, _, cx| {
         let workspace_handle = cx.entity().downgrade();
         workspace.register_action(move |_workspace, _: &OpenPerformanceProfiler, window, cx| {
@@ -69,6 +115,17 @@ pub fn init(startup_time: Instant, cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn update_command_palette_filter(enabled: bool, cx: &mut App) {
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        let action = [TypeId::of::<OpenPerformanceProfiler>()];
+        if enabled {
+            filter.show_action_types(&action);
+        } else {
+            filter.hide_action_types(&action);
+        }
+    });
 }
 
 fn open_performance_profiler(
@@ -169,14 +226,13 @@ impl ProfilerWindow {
         self.has_remote = self.remote_proto_client(cx).is_some();
         match self.source {
             ProfileSource::Foreground => {
-                let dispatcher = cx.foreground_executor().dispatcher();
-                let current_thread = dispatcher.get_current_thread_timings();
+                let current_thread =
+                    gpui::profiler::get_current_thread_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(vec![current_thread]);
                 self.apply_deltas(deltas);
             }
             ProfileSource::AllThreads => {
-                let dispatcher = cx.foreground_executor().dispatcher();
-                let all_timings = dispatcher.get_all_timings();
+                let all_timings = gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(all_timings);
                 self.apply_deltas(deltas);
             }
@@ -456,7 +512,7 @@ impl Render for ProfilerWindow {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         if !self.paused {
             self.poll_timings(cx);
             window.request_animation_frame();

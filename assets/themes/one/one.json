@@ -261,7 +261,7 @@
           },
           "link_text": {
             "color": "#73ade9ff",
-            "font_style": "normal",
+            "font_style": "italic",
             "font_weight": null
           },
           "link_uri": {
@@ -290,7 +290,7 @@
             "font_weight": null
           },
           "preproc": {
-            "color": "#dce0e5ff",
+            "color": "#b477cfff",
             "font_style": null,
             "font_weight": null
           },
@@ -401,6 +401,16 @@
           },
           "variant": {
             "color": "#73ade9ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#98c379ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#e06c75ff",
             "font_style": null,
             "font_weight": null
           }
@@ -692,7 +702,7 @@
             "font_weight": null
           },
           "preproc": {
-            "color": "#242529ff",
+            "color": "#a449abff",
             "font_style": null,
             "font_weight": null
           },
@@ -803,6 +813,16 @@
           },
           "variant": {
             "color": "#5b79e3ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#50a14fff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#e45649ff",
             "font_style": null,
             "font_weight": null
           }

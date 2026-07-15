@@ -15,7 +15,7 @@ use crate::{
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
-    progress::{ExampleProgress, Step},
+    progress::{ExampleProgress, Progress, Step},
     word_diff::unified_to_word_diff,
 };
 use anyhow::{Context as _, Result};
@@ -75,6 +75,9 @@ pub struct RepairArgs {
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "anthropic")]
     pub backend: BatchProvider,
+    /// Wait for all batches to complete before exiting
+    #[clap(long)]
+    pub wait: bool,
 }
 
 fn model_for_backend(backend: BatchProvider) -> &'static str {
@@ -127,6 +130,18 @@ fn build_score_feedback(example: &Example) -> Option<String> {
              the expected editable region, or producing changes misaligned with the editable \
              region boundaries. Make sure the prediction only modifies code within the editable \
              region and is properly aligned."
+                .to_string(),
+        );
+    }
+
+    if score.discarded_chars.unwrap_or(0) > 80 && score.exact_lines_fp > 5 {
+        issues.push(
+            "Automated analysis detected that this prediction might be too large or speculative. \
+            Please review it and think if we should keep it or generate a more focused prediction. \
+            Examples of more focused predictions: \
+            - Predicting a function outline but not its body. \
+            - Predicting only the first logical step and not speculating about further steps.
+            In general, the smaller the prediction you make, the higher the chance it will be correct."
                 .to_string(),
         );
     }
@@ -352,7 +367,7 @@ pub async fn run_repair(
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
         BatchProvider::Openai => {
             let client = if args.no_batch {
@@ -373,6 +388,7 @@ pub async fn run_repair(
                 open_ai::RequestMessage::Assistant {
                     content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
                     tool_calls: vec![],
+                    reasoning_content: None,
                 },
                 // Turn 3: Repair critique and instructions
                 open_ai::RequestMessage::User {
@@ -398,13 +414,13 @@ pub async fn run_repair(
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>()
-                                .join(""),
+                                .concat(),
                         })
                     }
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
     };
 
@@ -454,12 +470,75 @@ pub async fn sync_batches(args: &RepairArgs) -> Result<()> {
     Ok(())
 }
 
+pub async fn reprocess_after_batch_wait(examples: &mut [Example], args: &RepairArgs) -> Result<()> {
+    let mut reprocessed = 0;
+    for example in examples.iter_mut() {
+        if has_successful_repair(example) || !needs_repair(example, args.confidence_threshold) {
+            continue;
+        }
+
+        let example_progress = Progress::global().start_group(&example.spec.name);
+        run_repair(example, args, &example_progress).await?;
+        reprocessed += 1;
+    }
+
+    if reprocessed > 0 {
+        eprintln!("Reprocessed {} example(s) with batch results", reprocessed);
+    }
+
+    Ok(())
+}
+
+pub async fn wait_for_batches(args: &RepairArgs) -> Result<()> {
+    if args.no_batch {
+        return Ok(());
+    }
+
+    let poll_interval = std::time::Duration::from_secs(30);
+
+    loop {
+        let pending = pending_batch_count(args)?;
+        if pending == 0 {
+            break;
+        }
+
+        eprintln!(
+            "Waiting for {} pending repair batch request(s) to complete... (polling every {}s)",
+            pending,
+            poll_interval.as_secs()
+        );
+        std::thread::sleep(poll_interval);
+
+        sync_batches(args).await?;
+    }
+
+    Ok(())
+}
+
+fn pending_batch_count(args: &RepairArgs) -> Result<usize> {
+    match args.backend {
+        BatchProvider::Anthropic => {
+            let client = ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                AnthropicClient::batch(&LLM_CACHE_DB).expect("Failed to create Anthropic client")
+            });
+            client.pending_batch_count()
+        }
+        BatchProvider::Openai => {
+            let client = OPENAI_CLIENT_BATCH.get_or_init(|| {
+                OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+            });
+            client.pending_batch_count()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{PredictionProvider, TeacherBackend};
     use edit_prediction::example_spec::ExampleSpec;
     use std::{path::Path, sync::Arc};
+    use zeta_prompt::ZetaFormat;
 
     fn example_with_previous_prediction() -> Example {
         Example {
@@ -470,6 +549,9 @@ mod tests {
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
+                uncommitted_diff_contains_edit_history: false,
                 cursor_path: Arc::from(Path::new("src/main.rs")),
                 cursor_position: "0:0".to_string(),
                 edit_history: String::new(),
@@ -492,7 +574,10 @@ mod tests {
                     editable_region_offset: Some(4),
                 }),
                 error: None,
-                provider: PredictionProvider::Teacher(TeacherBackend::Sonnet45),
+                provider: PredictionProvider::Teacher(
+                    TeacherBackend::Sonnet45,
+                    ZetaFormat::default(),
+                ),
                 cumulative_logprob: None,
                 avg_logprob: None,
             }],

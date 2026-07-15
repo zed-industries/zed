@@ -59,13 +59,13 @@ pub struct ActiveSettingsProfileName(pub String);
 impl Global for ActiveSettingsProfileName {}
 
 pub trait UserSettingsContentExt {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile>;
     fn for_release_channel(&self) -> Option<&SettingsContent>;
     fn for_os(&self) -> Option<&SettingsContent>;
 }
 
 impl UserSettingsContentExt for UserSettingsContent {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile> {
         let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
             return None;
         };
@@ -154,6 +154,17 @@ pub const VIM_KEYMAP_PATH: &str = "keymaps/vim.json";
 pub fn vim_keymap() -> Cow<'static, str> {
     asset_str::<SettingsAssets>(VIM_KEYMAP_PATH)
 }
+
+/// Specific keybinding overrides. Loaded after the base keymap so they win over
+/// conflicting base-keymap (and default `Editor`) bindings for the same chords,
+/// while still allowing user keymaps (loaded last) to override them. Shared
+/// across features - prefer adding a context block here over creating another
+/// override keymap file.
+#[cfg(target_os = "macos")]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides-macos.json";
+
+#[cfg(not(target_os = "macos"))]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides.json";
 
 pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")

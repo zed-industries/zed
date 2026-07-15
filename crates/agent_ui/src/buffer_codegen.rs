@@ -1,11 +1,9 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use uuid::Uuid;
-
-use cloud_llm_client::CompletionIntent;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
+use futures::FutureExt;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
@@ -14,12 +12,17 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
-use language::{Buffer, IndentKind, LanguageName, Point, TransactionId, line_diff};
+use language::{
+    Buffer, BufferEditSource, IndentKind, LanguageName, Point, TransactionId, line_diff,
+};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
-    LanguageModelToolUse, Role, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, TokenUsage,
+};
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -28,7 +31,6 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use smol::future::FutureExt;
 use std::{
     cmp,
     future::Future,
@@ -40,6 +42,7 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
+use uuid::Uuid;
 
 /// Use this tool when you cannot or should not make a rewrite. This includes:
 /// - The user's request is unclear, ambiguous, or nonsensical
@@ -302,7 +305,7 @@ impl CodegenAlternative {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         let (old_buffer, _, _) = snapshot
-            .range_to_buffer_ranges(range.start..=range.end)
+            .range_to_buffer_ranges(range.start..range.end)
             .pop()
             .unwrap();
         let old_buffer = cx.new(|cx| {
@@ -522,18 +525,18 @@ impl CodegenAlternative {
             messages.push(user_message);
 
             let tools = vec![
-                LanguageModelRequestTool {
-                    name: REWRITE_SECTION_TOOL_NAME.to_string(),
-                    description: "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
-                    input_schema: language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
-                    use_input_streaming: false,
-                },
-                LanguageModelRequestTool {
-                    name: FAILURE_MESSAGE_TOOL_NAME.to_string(),
-                    description: "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
-                    input_schema: language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
-                    use_input_streaming: false,
-                },
+                LanguageModelRequestTool::function(
+                    REWRITE_SECTION_TOOL_NAME.to_string(),
+                    "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
+                    language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
+                    false,
+                ),
+                LanguageModelRequestTool::function(
+                    FAILURE_MESSAGE_TOOL_NAME.to_string(),
+                    "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
+                    language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
+                    false,
+                ),
             ];
 
             LanguageModelRequest {
@@ -548,6 +551,7 @@ impl CodegenAlternative {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                compact_at_tokens: None,
             }
         }))
     }
@@ -628,6 +632,7 @@ impl CodegenAlternative {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                compact_at_tokens: None,
             }
         }))
     }
@@ -639,7 +644,7 @@ impl CodegenAlternative {
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let anthropic_reporter = language_model::AnthropicEventReporter::new(&model, cx);
+        let anthropic_reporter = AnthropicEventReporter::new(&model, cx);
         let session_id = self.session_id;
         let model_telemetry_id = model.telemetry_id();
         let model_provider_id = model.provider_id().to_string();
@@ -683,7 +688,7 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges = snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.start..self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())
@@ -832,9 +837,9 @@ impl CodegenAlternative {
                             error_message = error_message.as_deref(),
                         );
 
-                        anthropic_reporter.report(language_model::AnthropicEventData {
-                            completion_type: language_model::AnthropicCompletionType::Editor,
-                            event: language_model::AnthropicEventType::Response,
+                        anthropic_reporter.report(AnthropicEventData {
+                            completion_type: AnthropicCompletionType::Editor,
+                            event: AnthropicEventType::Response,
                             language_name: language_name.map(|n| n.to_string()),
                             message_id,
                         });
@@ -977,7 +982,7 @@ impl CodegenAlternative {
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
-            buffer.end_transaction(cx)
+            buffer.end_transaction_with_source(BufferEditSource::Agent, cx)
         });
 
         if let Some(transaction) = transaction {
@@ -1168,17 +1173,22 @@ impl CodegenAlternative {
                 Failure(String),
             }
 
-            let chars_read_so_far = Arc::new(Mutex::new(0usize));
+            let chars_read_by_tool_id: Arc<Mutex<HashMap<LanguageModelToolUseId, usize>>> =
+                Arc::new(Mutex::new(HashMap::default()));
             let process_tool_use = move |tool_use: LanguageModelToolUse| -> Option<ToolUseOutput> {
-                let mut chars_read_so_far = chars_read_so_far.lock();
+                let mut chars_read_by_tool_id = chars_read_by_tool_id.lock();
                 match tool_use.name.as_ref() {
                     REWRITE_SECTION_TOOL_NAME => {
-                        let Ok(input) =
-                            serde_json::from_value::<RewriteSectionInput>(tool_use.input)
+                        let Ok(input) = tool_use.input.parse::<RewriteSectionInput>() else {
+                            return None;
+                        };
+                        let chars_read_so_far =
+                            chars_read_by_tool_id.entry(tool_use.id).or_insert(0);
+                        let Some(text_slice) = input.replacement_text.get(*chars_read_so_far..)
                         else {
                             return None;
                         };
-                        let text = input.replacement_text[*chars_read_so_far..].to_string();
+                        let text = text_slice.to_string();
                         *chars_read_so_far = input.replacement_text.len();
                         Some(ToolUseOutput::Rewrite {
                             text,
@@ -1186,9 +1196,7 @@ impl CodegenAlternative {
                         })
                     }
                     FAILURE_MESSAGE_TOOL_NAME => {
-                        let Ok(mut input) =
-                            serde_json::from_value::<FailureMessageInput>(tool_use.input)
-                        else {
+                        let Ok(mut input) = tool_use.input.parse::<FailureMessageInput>() else {
                             return None;
                         };
                         Some(ToolUseOutput::Failure(std::mem::take(&mut input.message)))
@@ -1844,7 +1852,7 @@ mod tests {
             .unbounded_send(rewrite_tool_use("tool_1", &text[..chunk_len], false))
             .unwrap();
         events_tx
-            .unbounded_send(rewrite_tool_use("tool_2", &text, true))
+            .unbounded_send(rewrite_tool_use("tool_1", &text, true))
             .unwrap();
         events_tx
             .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
@@ -1855,6 +1863,52 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
             text
+        );
+    }
+
+    // Regression test: a second rewrite tool use with a *shorter* replacement_text
+    // than the first would cause an index-out-of-bounds panic because the
+    // chars_read_so_far counter was shared across all tool use IDs.
+    #[gpui::test]
+    async fn test_separate_tool_uses_have_independent_char_counters(cx: &mut TestAppContext) {
+        init_test(cx);
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(0, 0))
+        });
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let codegen = cx.new(|cx| {
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                prompt_builder,
+                Uuid::new_v4(),
+                cx,
+            )
+        });
+
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+        // tool_1 has longer text; tool_2 has shorter text. With the old shared
+        // counter, processing tool_2 would attempt replacement_text[N..] where
+        // N > replacement_text.len(), panicking with index out of bounds.
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "longer replacement text", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_2", "short", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            "longer replacement textshort"
         );
     }
 
@@ -1953,7 +2007,9 @@ mod tests {
             id: id.into(),
             name: REWRITE_SECTION_TOOL_NAME.into(),
             raw_input: serde_json::to_string(&input).unwrap(),
-            input: serde_json::to_value(&input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&input).unwrap(),
+            ),
             is_input_complete: is_complete,
             thought_signature: None,
         })

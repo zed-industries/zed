@@ -8,7 +8,8 @@ use editor::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
+    Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
+    actions,
 };
 use itertools::Itertools;
 use language::Point;
@@ -28,7 +29,7 @@ use std::{
     sync::OnceLock,
     time::Instant,
 };
-use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
+use task::{HideStrategy, RevealStrategy, SaveStrategy, Shell, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
     ResultExt,
@@ -344,15 +345,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             &["Cancel"],
             cx,
         );
-    });
-
-    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
-        })
     });
 
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
@@ -843,8 +835,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         {
                             let last_sel = editor.selections.disjoint_anchors_arc();
                             editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
-                                old.1 = Some(last_sel);
+                                old.undo = old.undo.get(..1).unwrap_or(&[]).into();
+                                old.redo = Some(last_sel);
                             });
                         }
                     });
@@ -1348,7 +1340,7 @@ impl Position {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
             Position::Line { row, offset } => {
-                if let Some(anchor) = editor.active_excerpt(cx).and_then(|(_, buffer, _)| {
+                if let Some(anchor) = editor.active_buffer(cx).and_then(|buffer| {
                     editor.buffer().read(cx).buffer_point_to_anchor(
                         &buffer,
                         Point::new(row.saturating_sub(1), 0),
@@ -1660,9 +1652,13 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             action.range.replace(range.clone());
             Some(Box::new(action))
         }),
-        VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("bn", "ext"), workspace::ActivateNextItem::default()).count(),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem::default()).count(),
+        VimCommand::new(
+            ("bp", "revious"),
+            workspace::ActivatePreviousItem::default(),
+        )
+        .count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -1670,9 +1666,13 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
-        VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
+        VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem::default()).count(),
+        VimCommand::new(
+            ("tabp", "revious"),
+            workspace::ActivatePreviousItem::default(),
+        )
+        .count(),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem::default()).count(),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {
@@ -1774,7 +1774,6 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
         VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
-        VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
@@ -2328,7 +2327,7 @@ impl Vim {
             match c {
                 '%' => {
                     self.update_editor(cx, |_, editor, cx| {
-                        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+                        if let Some(buffer) = editor.active_buffer(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
                         {
@@ -2469,7 +2468,7 @@ impl ShellExec {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let shell = Shell::System;
 
                 let spawn_in_terminal = SpawnInTerminal {
                     id: TaskId("vim".to_string()),
@@ -2541,7 +2540,7 @@ impl ShellExec {
             }
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
-                cx.theme().status().unreachable_background,
+                |cx| cx.theme().status().unreachable_background,
                 Default::default(),
                 cx,
             );

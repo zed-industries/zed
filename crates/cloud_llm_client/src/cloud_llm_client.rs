@@ -1,4 +1,7 @@
+#[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
+#[cfg(feature = "predict-edits")]
+pub mod predict_edits_v4;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -10,6 +13,9 @@ use uuid::Uuid;
 
 /// The name of the header used to indicate which version of Zed the client is running.
 pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
+
+/// The name of the header used to indicate which edit prediction experiment should be used.
+pub const PREFERRED_EXPERIMENT_HEADER_NAME: &str = "x-zed-preferred-experiment";
 
 /// The name of the header used to indicate when a request failed due to an
 /// expired LLM token.
@@ -111,12 +117,20 @@ pub struct PredictEditsBody {
     pub trigger: PredictEditsRequestTrigger,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr)]
+#[derive(
+    Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr, strum::EnumString,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum PredictEditsRequestTrigger {
     Testing,
     Diagnostics,
+    DiagnosticNavigation,
     Cli,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
     #[default]
     Other,
 }
@@ -182,6 +196,10 @@ pub enum EditPredictionRejectReason {
     Empty,
     /// Edits returned, but none remained after interpolation
     InterpolatedEmpty,
+    /// Edits returned, but could not be interpolated after buffer changes
+    InterpolateFailed,
+    /// A patch was returned, but could not be applied to the buffer
+    PatchApplyFailed,
     /// The new prediction was preferred over the current one
     Replaced,
     /// The current prediction was preferred over the new one
@@ -193,28 +211,12 @@ pub enum EditPredictionRejectReason {
     Rejected,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionIntent {
-    UserPrompt,
-    ToolResults,
-    ThreadSummarization,
-    ThreadContextSummarization,
-    CreateFile,
-    EditFile,
-    InlineAssist,
-    TerminalInlineAssist,
-    GenerateGitCommitMessage,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionBody {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thread_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub intent: Option<CompletionIntent>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,
@@ -280,18 +282,6 @@ pub struct WebSearchResult {
     pub text: String,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensBody {
-    pub provider: LanguageModelProvider,
-    pub model: String,
-    pub provider_request: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensResponse {
-    pub tokens: usize,
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelId(pub Arc<str>);
 
@@ -314,14 +304,26 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    /// Whether thinking can be turned off entirely for this model, allowing
+    /// clients to offer an "off" choice alongside `supported_effort_levels`.
+    /// Some models (e.g. Claude Fable 5) always think and cannot honor an
+    /// "off" request. Only meaningful when `supports_thinking` is `true`.
+    #[serde(default)]
+    pub supports_disabling_thinking: bool,
     #[serde(default)]
     pub supports_fast_mode: bool,
+    #[serde(default)]
+    pub supports_server_side_compaction: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+    #[serde(default)]
+    pub is_disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

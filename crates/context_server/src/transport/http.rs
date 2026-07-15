@@ -5,11 +5,11 @@ use futures::{Stream, StreamExt};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
+use crate::types;
 
 /// Typed errors returned by the HTTP transport that callers can downcast from
 /// `anyhow::Error` to handle specific failure modes.
@@ -34,6 +34,7 @@ impl std::error::Error for TransportError {}
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
+const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 
@@ -42,16 +43,25 @@ pub struct HttpTransport {
     http_client: Arc<dyn HttpClient>,
     endpoint: String,
     session_id: Arc<SyncMutex<Option<String>>>,
+    /// Negotiated MCP protocol version, populated by `set_protocol_version`
+    /// after the initialize handshake. From 2025-06-18 onward the server
+    /// requires clients to echo this in the `MCP-Protocol-Version` header on
+    /// every subsequent request.
+    protocol_version: Arc<SyncMutex<Option<String>>>,
     executor: BackgroundExecutor,
-    response_tx: channel::Sender<String>,
-    response_rx: channel::Receiver<String>,
-    error_tx: channel::Sender<String>,
-    error_rx: channel::Receiver<String>,
+    response_tx: async_channel::Sender<String>,
+    response_rx: async_channel::Receiver<String>,
+    error_tx: async_channel::Sender<String>,
+    error_rx: async_channel::Receiver<String>,
     /// Static headers to include in every request (e.g. from server config).
     headers: HashMap<String, String>,
     /// When set, the transport attaches `Authorization: Bearer` headers and
     /// handles 401 responses with token refresh + retry.
     token_provider: Option<Arc<dyn OAuthTokenProvider>>,
+    /// The challenge from the last 401 this transport gave up on; cleared at
+    /// the start of each send so it always describes the most recent attempt.
+    /// See [`Transport::auth_challenge`].
+    auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
 }
 
 impl HttpTransport {
@@ -71,20 +81,22 @@ impl HttpTransport {
         executor: BackgroundExecutor,
         token_provider: Option<Arc<dyn OAuthTokenProvider>>,
     ) -> Self {
-        let (response_tx, response_rx) = channel::unbounded();
-        let (error_tx, error_rx) = channel::unbounded();
+        let (response_tx, response_rx) = async_channel::unbounded();
+        let (error_tx, error_rx) = async_channel::unbounded();
 
         Self {
             http_client,
             executor,
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
+            protocol_version: Arc::new(SyncMutex::new(None)),
             response_tx,
             response_rx,
             error_tx,
             error_rx,
             headers,
             token_provider,
+            auth_challenge: SyncMutex::new(None),
         }
     }
 
@@ -115,11 +127,32 @@ impl HttpTransport {
             request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
         }
 
+        // Echo the negotiated protocol version once initialization has
+        // completed. Required by servers speaking MCP 2025-06-18 or later.
+        if let Some(ref version) = *self.protocol_version.lock()
+            && types::requires_protocol_version_header(version)
+        {
+            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
+        }
+
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
+    }
+
+    /// Record the challenge so it remains observable after the failed send
+    /// tears down the client (see [`Transport::auth_challenge`]), and build
+    /// the typed error for the send itself.
+    fn auth_required(&self, www_authenticate: WwwAuthenticate) -> anyhow::Error {
+        *self.auth_challenge.lock() = Some(www_authenticate.clone());
+        TransportError::AuthRequired { www_authenticate }.into()
     }
 
     /// Send a message and handle the response based on content type.
     async fn send_message(&self, message: String) -> Result<()> {
+        // The same server instance can be restarted over this transport; a
+        // challenge recorded by a previous client generation must not be
+        // observed by the current one.
+        *self.auth_challenge.lock() = None;
+
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
 
@@ -159,13 +192,13 @@ impl HttpTransport {
 
                     // If still 401 after refresh, give up.
                     if response.status().as_u16() == 401 {
-                        return Err(TransportError::AuthRequired { www_authenticate }.into());
+                        return Err(self.auth_required(www_authenticate));
                     }
                 } else {
-                    return Err(TransportError::AuthRequired { www_authenticate }.into());
+                    return Err(self.auth_required(www_authenticate));
                 }
             } else {
-                return Err(TransportError::AuthRequired { www_authenticate }.into());
+                return Err(self.auth_required(www_authenticate));
             }
         }
 
@@ -241,62 +274,63 @@ impl HttpTransport {
         let error_tx = self.error_tx.clone();
 
         // Spawn a task to handle the SSE stream
-        smol::spawn(async move {
-            let reader = futures::io::BufReader::new(response.body_mut());
-            let mut lines = futures::AsyncBufReadExt::lines(reader);
+        self.executor
+            .spawn(async move {
+                let reader = futures::io::BufReader::new(response.body_mut());
+                let mut lines = futures::AsyncBufReadExt::lines(reader);
 
-            let mut data_buffer = Vec::new();
-            let mut in_message = false;
+                let mut data_buffer = Vec::new();
+                let mut in_message = false;
 
-            while let Some(line_result) = lines.next().await {
-                match line_result {
-                    Ok(line) => {
-                        if line.is_empty() {
-                            // Empty line signals end of event
-                            if !data_buffer.is_empty() {
-                                let message = data_buffer.join("\n");
+                while let Some(line_result) = lines.next().await {
+                    match line_result {
+                        Ok(line) => {
+                            if line.is_empty() {
+                                // Empty line signals end of event
+                                if !data_buffer.is_empty() {
+                                    let message = data_buffer.join("\n");
 
-                                // Filter out ping messages and empty data
-                                if !message.trim().is_empty() && message != "ping" {
-                                    if let Err(e) = response_tx.send(message).await {
-                                        log::error!("Failed to send SSE message: {}", e);
-                                        break;
+                                    // Filter out ping messages and empty data
+                                    if !message.trim().is_empty() && message != "ping" {
+                                        if let Err(e) = response_tx.send(message).await {
+                                            log::error!("Failed to send SSE message: {}", e);
+                                            break;
+                                        }
                                     }
+                                    data_buffer.clear();
                                 }
-                                data_buffer.clear();
-                            }
-                            in_message = false;
-                        } else if let Some(data) = line.strip_prefix("data: ") {
-                            // Handle data lines
-                            let data = data.trim();
-                            if !data.is_empty() {
-                                // Check if this is a ping message
-                                if data == "ping" {
-                                    log::trace!("Received SSE ping");
-                                    continue;
+                                in_message = false;
+                            } else if let Some(data) = line.strip_prefix("data: ") {
+                                // Handle data lines
+                                let data = data.trim();
+                                if !data.is_empty() {
+                                    // Check if this is a ping message
+                                    if data == "ping" {
+                                        log::trace!("Received SSE ping");
+                                        continue;
+                                    }
+                                    data_buffer.push(data.to_string());
+                                    in_message = true;
                                 }
-                                data_buffer.push(data.to_string());
-                                in_message = true;
+                            } else if line.starts_with("event:")
+                                || line.starts_with("id:")
+                                || line.starts_with("retry:")
+                            {
+                                // Ignore other SSE fields
+                                continue;
+                            } else if in_message {
+                                // Continuation of data
+                                data_buffer.push(line);
                             }
-                        } else if line.starts_with("event:")
-                            || line.starts_with("id:")
-                            || line.starts_with("retry:")
-                        {
-                            // Ignore other SSE fields
-                            continue;
-                        } else if in_message {
-                            // Continuation of data
-                            data_buffer.push(line);
+                        }
+                        Err(e) => {
+                            let _ = error_tx.send(format!("SSE stream error: {}", e)).await;
+                            break;
                         }
                     }
-                    Err(e) => {
-                        let _ = error_tx.send(format!("SSE stream error: {}", e)).await;
-                        break;
-                    }
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
 
         Ok(())
     }
@@ -315,6 +349,14 @@ impl Transport for HttpTransport {
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         Box::pin(self.error_rx.clone())
     }
+
+    fn set_protocol_version(&self, version: &str) {
+        *self.protocol_version.lock() = Some(version.to_string());
+    }
+
+    fn auth_challenge(&self) -> Option<WwwAuthenticate> {
+        self.auth_challenge.lock().clone()
+    }
 }
 
 impl Drop for HttpTransport {
@@ -323,6 +365,7 @@ impl Drop for HttpTransport {
         let http_client = self.http_client.clone();
         let endpoint = self.endpoint.clone();
         let session_id = self.session_id.lock().clone();
+        let protocol_version = self.protocol_version.lock().clone();
         let headers = self.headers.clone();
         let access_token = self.token_provider.as_ref().and_then(|p| p.access_token());
 
@@ -343,6 +386,15 @@ impl Drop for HttpTransport {
                     if let Some(token) = access_token {
                         request_builder =
                             request_builder.header("Authorization", format!("Bearer {}", token));
+                    }
+
+                    // Stamp the negotiated MCP protocol version on the DELETE
+                    // too, matching what `build_request` does for POSTs.
+                    if let Some(ref version) = protocol_version
+                        && types::requires_protocol_version_header(version)
+                    {
+                        request_builder =
+                            request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
                     }
 
                     let request = request_builder.body(AsyncBody::empty());

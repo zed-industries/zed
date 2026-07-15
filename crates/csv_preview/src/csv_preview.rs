@@ -1,5 +1,5 @@
 use editor::{Editor, EditorEvent};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
@@ -8,8 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::table_data_engine::TableDataEngine;
-use ui::{SharedString, TableColumnWidths, TableInteractionState, prelude::*};
+use crate::table_data_engine::{DisplayToDataMapping, TableDataEngine};
+use ui::{
+    AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
+    TableResizeBehavior, prelude::*,
+};
 use workspace::{Item, SplitDirection, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
@@ -26,7 +29,9 @@ pub struct TabularDataPreviewFeatureFlag;
 
 impl FeatureFlag for TabularDataPreviewFeatureFlag {
     const NAME: &'static str = "tabular-data-preview";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(TabularDataPreviewFeatureFlag);
 
 pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,
@@ -36,6 +41,10 @@ pub struct CsvPreviewView {
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
+    pub(crate) is_parsing: bool,
+    /// Background task computing the display-to-data mapping after a filter/sort change.
+    /// Stored here so that a new change cancels the previous in-flight computation.
+    pub(crate) filter_sort_task: Option<Task<()>>,
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
@@ -52,6 +61,30 @@ pub fn init(cx: &mut App) {
 }
 
 impl CsvPreviewView {
+    pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
+        // plus 1 for the row identifier column
+        let cols = self.engine.contents.headers.cols() + 1;
+        let line_number_width = self.calculate_row_identifier_column_width();
+
+        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
+        widths[0] = AbsoluteLength::Pixels(px(line_number_width));
+
+        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
+        resize_behaviors[0] = TableResizeBehavior::None;
+
+        self.column_widths.widths.update(cx, |state, _cx| {
+            if state.cols() != cols {
+                *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
+            } else {
+                state.set_column_configuration(
+                    0,
+                    AbsoluteLength::Pixels(px(line_number_width)),
+                    TableResizeBehavior::None,
+                );
+            }
+        });
+    }
+
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
@@ -122,8 +155,9 @@ impl CsvPreviewView {
     fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
+                editor::EditorSettingsScrollbarProxy,
+            >())
         });
 
         cx.new(|cx| {
@@ -131,9 +165,7 @@ impl CsvPreviewView {
                 editor,
                 |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
                     match event {
-                        EditorEvent::Edited { .. }
-                        | EditorEvent::DirtyChanged
-                        | EditorEvent::ExcerptsEdited { .. } => {
+                        EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
                             this.parse_csv_from_active_editor(true, cx);
                         }
                         _ => {}
@@ -150,8 +182,11 @@ impl CsvPreviewView {
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
+                is_parsing: false,
+                filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
+                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
+                    .with_uniform_item_height(px(24.)),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -165,21 +200,54 @@ impl CsvPreviewView {
     pub(crate) fn editor_state(&self) -> &EditorState {
         &self.active_editor_state
     }
-    pub(crate) fn apply_sort(&mut self) {
-        self.performance_metrics.record("Sort", || {
-            self.engine.apply_sort();
-        });
+    pub(crate) fn apply_sort(&mut self, cx: &mut Context<Self>) {
+        self.apply_filter_sort(cx);
     }
 
-    /// Update ordered indices when ordering or content changes
-    pub(crate) fn apply_filter_sort(&mut self) {
-        self.performance_metrics.record("Filter&sort", || {
-            self.engine.calculate_d2d_mapping();
-        });
+    pub fn clear_filters(&mut self, col: types::AnyColumn, cx: &mut Context<Self>) {
+        self.engine.clear_filters_for_col(col);
+        self.apply_filter_sort(cx);
+    }
 
-        // Update list state with filtered row count
-        let visible_rows = self.engine.d2d_mapping().visible_row_count();
-        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(1.));
+    pub fn toggle_filter(
+        &mut self,
+        col: types::AnyColumn,
+        value: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(err) = self.engine.toggle_filter(col, value) {
+            log::error!("Failed to toggle filter: {err}");
+            return;
+        }
+        self.apply_filter_sort(cx);
+    }
+
+    /// Spawns a background task to recompute the display-to-data mapping after a filter or sort
+    /// change. Storing the task cancels any previous in-flight computation automatically.
+    pub(crate) fn apply_filter_sort(&mut self, cx: &mut Context<Self>) {
+        let contents = self.engine.contents.clone();
+        let filter_stack = self.engine.filter_stack.clone();
+        let sorting = self.engine.applied_sorting;
+
+        self.filter_sort_task = Some(cx.spawn(async move |this, cx| {
+            let mapping = cx
+                .background_spawn(async move {
+                    DisplayToDataMapping::compute(&contents, &filter_stack, sorting)
+                })
+                .await;
+
+            this.update(cx, |view, cx| {
+                view.engine.set_d2d_mapping(mapping);
+                let visible_rows = view.engine.d2d_mapping().visible_row_count();
+                // Approximation of single csv table row height. Will be re-measured on scrolling.
+                // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
+                let approximate_height = px(24.);
+                view.list_state
+                    .reset_with_uniform_height(visible_rows, approximate_height);
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     pub fn resolve_active_item_as_csv_editor(
@@ -271,7 +339,7 @@ impl PerformanceMetrics {
             .map(|(name, (duration, time))| {
                 let took = duration.as_secs_f32() * 1000.;
                 let ago = time.elapsed().as_secs();
-                format!("{name}: {took:.2}ms {ago}s ago")
+                format!("{name}: {took:.3}ms {ago}s ago")
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -285,18 +353,19 @@ impl PerformanceMetrics {
 
 /// Holds state of column widths for a table component in CSV preview.
 pub(crate) struct ColumnWidths {
-    pub widths: Entity<TableColumnWidths>,
+    pub widths: Entity<ResizableColumnsState>,
 }
 
 impl ColumnWidths {
     pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
         Self {
-            widths: cx.new(|cx| TableColumnWidths::new(cols, cx)),
+            widths: cx.new(|_cx| {
+                ResizableColumnsState::new(
+                    cols,
+                    vec![AbsoluteLength::Pixels(px(150.)); cols],
+                    vec![ui::TableResizeBehavior::Resizable; cols],
+                )
+            }),
         }
-    }
-    /// Replace the current `TableColumnWidths` entity with a new one for the given column count.
-    pub(crate) fn replace(&self, cx: &mut Context<CsvPreviewView>, cols: usize) {
-        self.widths
-            .update(cx, |entity, cx| *entity = TableColumnWidths::new(cols, cx));
     }
 }

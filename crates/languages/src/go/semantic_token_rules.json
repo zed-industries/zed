@@ -1,7 +1,0 @@
-[
-  {
-    "token_type": "variable",
-    "token_modifiers": ["readonly"],
-    "style": ["constant"]
-  }
-]

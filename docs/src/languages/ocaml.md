@@ -12,13 +12,13 @@ OCaml support is available through the [OCaml extension](https://github.com/zed-
 
 ## Setup Instructions
 
-If you have the development environment already setup, you can skip to [Launching Zed](#launching-zed)
+If you have the development environment already set up, you can skip to [Launching Zed](#launching-zed)
 
 ### Using Opam
 
 Opam is the official package manager for OCaml and is highly recommended for getting started with OCaml. To get started using Opam, please follow the instructions provided [here](https://ocaml.org/install).
 
-Once you install opam and setup a switch with your development environment as per the instructions, you can proceed.
+Once you install opam and set up a switch with your development environment as per the instructions, you can proceed.
 
 ### Launching Zed
 

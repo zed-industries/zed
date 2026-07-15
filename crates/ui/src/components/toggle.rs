@@ -1,8 +1,7 @@
 use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, KeybindingKeystroke, Keystroke,
-    Styled, Window, div, hsla, prelude::*,
+    Role, Styled, Toggled, Window, div, hsla, prelude::*,
 };
-use settings::KeybindSource;
 use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
@@ -348,6 +347,8 @@ pub struct Switch {
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
     tab_index: Option<isize>,
+    aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl Switch {
@@ -365,6 +366,8 @@ impl Switch {
             key_binding: None,
             color: SwitchColor::default(),
             tab_index: None,
+            aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -423,10 +426,24 @@ impl Switch {
         self.tab_index = Some(tab_index.into());
         self
     }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the switch's visible label, if any.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the switch's name, role, and state.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
         let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
 
@@ -448,9 +465,28 @@ impl RenderOnce for Switch {
 
         let group_id = format!("switch_group_{:?}", self.id);
         let label = self.label;
+        let aria_label = self.aria_label.or_else(|| label.clone());
+        let aria_description = self.aria_description;
+        let aria_keyshortcuts = self
+            .key_binding
+            .as_ref()
+            .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx));
 
         let switch = div()
             .id((self.id.clone(), "switch"))
+            .role(Role::Switch)
+            .when_some(aria_label, |this, label| this.aria_label(label))
+            .when_some(aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
+            .when_some(aria_description, |this, description| {
+                this.aria_description(description)
+            })
+            .aria_toggled(match self.toggle_state {
+                ToggleState::Selected => Toggled::True,
+                ToggleState::Indeterminate => Toggled::Mixed,
+                ToggleState::Unselected => Toggled::False,
+            })
             .p(px(1.0))
             .border_2()
             .border_color(cx.theme().colors().border_transparent)
@@ -697,131 +733,129 @@ impl Component for SwitchField {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A field component that combines a label, description, and switch")
+    fn description() -> &'static str {
+        "A field component that combines a label, description, and switch"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Unselected",
-                                SwitchField::new(
-                                    "switch_field_unselected",
-                                    Some("Enable notifications"),
-                                    Some("Receive notifications when new messages arrive.".into()),
-                                    ToggleState::Unselected,
-                                    |_, _, _| {},
-                                )
-                                .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                SwitchField::new(
-                                    "switch_field_selected",
-                                    Some("Enable notifications"),
-                                    Some("Receive notifications when new messages arrive.".into()),
-                                    ToggleState::Selected,
-                                    |_, _, _| {},
-                                )
-                                .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Colors",
-                        vec![
-                            single_example(
-                                "Default",
-                                SwitchField::new(
-                                    "switch_field_default",
-                                    Some("Default color"),
-                                    Some("This uses the default switch color.".into()),
-                                    ToggleState::Selected,
-                                    |_, _, _| {},
-                                )
-                                .into_any_element(),
-                            ),
-                            single_example(
-                                "Accent",
-                                SwitchField::new(
-                                    "switch_field_accent",
-                                    Some("Accent color"),
-                                    Some("This uses the accent color scheme.".into()),
-                                    ToggleState::Selected,
-                                    |_, _, _| {},
-                                )
-                                .color(SwitchColor::Accent)
-                                .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Disabled",
-                        vec![single_example(
-                            "Disabled",
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Unselected",
                             SwitchField::new(
-                                "switch_field_disabled",
-                                Some("Disabled field"),
-                                Some("This field is disabled and cannot be toggled.".into()),
+                                "switch_field_unselected",
+                                Some("Enable notifications"),
+                                Some("Receive notifications when new messages arrive.".into()),
+                                ToggleState::Unselected,
+                                |_, _, _| {},
+                            )
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            SwitchField::new(
+                                "switch_field_selected",
+                                Some("Enable notifications"),
+                                Some("Receive notifications when new messages arrive.".into()),
                                 ToggleState::Selected,
                                 |_, _, _| {},
                             )
-                            .disabled(true)
                             .into_any_element(),
-                        )],
-                    ),
-                    example_group_with_title(
-                        "No Description",
-                        vec![single_example(
-                            "No Description",
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Colors",
+                    vec![
+                        single_example(
+                            "Default",
                             SwitchField::new(
-                                "switch_field_disabled",
-                                Some("Disabled field"),
+                                "switch_field_default",
+                                Some("Default color"),
+                                Some("This uses the default switch color.".into()),
+                                ToggleState::Selected,
+                                |_, _, _| {},
+                            )
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Accent",
+                            SwitchField::new(
+                                "switch_field_accent",
+                                Some("Accent color"),
+                                Some("This uses the accent color scheme.".into()),
+                                ToggleState::Selected,
+                                |_, _, _| {},
+                            )
+                            .color(SwitchColor::Accent)
+                            .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Disabled",
+                    vec![single_example(
+                        "Disabled",
+                        SwitchField::new(
+                            "switch_field_disabled",
+                            Some("Disabled field"),
+                            Some("This field is disabled and cannot be toggled.".into()),
+                            ToggleState::Selected,
+                            |_, _, _| {},
+                        )
+                        .disabled(true)
+                        .into_any_element(),
+                    )],
+                ),
+                example_group_with_title(
+                    "No Description",
+                    vec![single_example(
+                        "No Description",
+                        SwitchField::new(
+                            "switch_field_disabled",
+                            Some("Disabled field"),
+                            None,
+                            ToggleState::Selected,
+                            |_, _, _| {},
+                        )
+                        .into_any_element(),
+                    )],
+                ),
+                example_group_with_title(
+                    "With Tooltip",
+                    vec![
+                        single_example(
+                            "Tooltip with Description",
+                            SwitchField::new(
+                                "switch_field_tooltip_with_desc",
+                                Some("Nice Feature"),
+                                Some("Enable advanced configuration options.".into()),
+                                ToggleState::Unselected,
+                                |_, _, _| {},
+                            )
+                            .tooltip(Tooltip::text("This is content for this tooltip!"))
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Tooltip without Description",
+                            SwitchField::new(
+                                "switch_field_tooltip_no_desc",
+                                Some("Nice Feature"),
                                 None,
                                 ToggleState::Selected,
                                 |_, _, _| {},
                             )
+                            .tooltip(Tooltip::text("This is content for this tooltip!"))
                             .into_any_element(),
-                        )],
-                    ),
-                    example_group_with_title(
-                        "With Tooltip",
-                        vec![
-                            single_example(
-                                "Tooltip with Description",
-                                SwitchField::new(
-                                    "switch_field_tooltip_with_desc",
-                                    Some("Nice Feature"),
-                                    Some("Enable advanced configuration options.".into()),
-                                    ToggleState::Unselected,
-                                    |_, _, _| {},
-                                )
-                                .tooltip(Tooltip::text("This is content for this tooltip!"))
-                                .into_any_element(),
-                            ),
-                            single_example(
-                                "Tooltip without Description",
-                                SwitchField::new(
-                                    "switch_field_tooltip_no_desc",
-                                    Some("Nice Feature"),
-                                    None,
-                                    ToggleState::Selected,
-                                    |_, _, _| {},
-                                )
-                                .tooltip(Tooltip::text("This is content for this tooltip!"))
-                                .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }
 
@@ -830,112 +864,105 @@ impl Component for Checkbox {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A checkbox component that can be used for multiple choice selections")
+    fn description() -> &'static str {
+        "A checkbox component that can be used for multiple choice selections"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Unselected",
-                                Checkbox::new("checkbox_unselected", ToggleState::Unselected)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Placeholder",
-                                Checkbox::new("checkbox_indeterminate", ToggleState::Selected)
-                                    .placeholder(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Indeterminate",
-                                Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                Checkbox::new("checkbox_selected", ToggleState::Selected)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Styles",
-                        vec![
-                            single_example(
-                                "Default",
-                                Checkbox::new("checkbox_default", ToggleState::Selected)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Filled",
-                                Checkbox::new("checkbox_filled", ToggleState::Selected)
-                                    .fill()
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "ElevationBased",
-                                Checkbox::new("checkbox_elevation", ToggleState::Selected)
-                                    .style(ToggleStyle::ElevationBased(
-                                        ElevationIndex::EditorSurface,
-                                    ))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Custom Color",
-                                Checkbox::new("checkbox_custom", ToggleState::Selected)
-                                    .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7)))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Disabled",
-                        vec![
-                            single_example(
-                                "Unselected",
-                                Checkbox::new(
-                                    "checkbox_disabled_unselected",
-                                    ToggleState::Unselected,
-                                )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Unselected",
+                            Checkbox::new("checkbox_unselected", ToggleState::Unselected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Placeholder",
+                            Checkbox::new("checkbox_indeterminate", ToggleState::Selected)
+                                .placeholder(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Indeterminate",
+                            Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Checkbox::new("checkbox_selected", ToggleState::Selected)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            Checkbox::new("checkbox_default", ToggleState::Selected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            Checkbox::new("checkbox_filled", ToggleState::Selected)
+                                .fill()
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "ElevationBased",
+                            Checkbox::new("checkbox_elevation", ToggleState::Selected)
+                                .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Custom Color",
+                            Checkbox::new("checkbox_custom", ToggleState::Selected)
+                                .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7)))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Disabled",
+                    vec![
+                        single_example(
+                            "Unselected",
+                            Checkbox::new("checkbox_disabled_unselected", ToggleState::Unselected)
                                 .disabled(true)
                                 .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
-                                    .disabled(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Label",
-                        vec![single_example(
-                            "Default",
-                            Checkbox::new("checkbox_with_label", ToggleState::Selected)
-                                .label("Always save on quit")
+                        ),
+                        single_example(
+                            "Selected",
+                            Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
+                                .disabled(true)
                                 .into_any_element(),
-                        )],
-                    ),
-                    example_group_with_title(
-                        "Extra",
-                        vec![single_example(
-                            "Visualization-Only",
-                            Checkbox::new("viz_only", ToggleState::Selected)
-                                .visualization_only(true)
-                                .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Label",
+                    vec![single_example(
+                        "Default",
+                        Checkbox::new("checkbox_with_label", ToggleState::Selected)
+                            .label("Always save on quit")
+                            .into_any_element(),
+                    )],
+                ),
+                example_group_with_title(
+                    "Extra",
+                    vec![single_example(
+                        "Visualization-Only",
+                        Checkbox::new("viz_only", ToggleState::Selected)
+                            .visualization_only(true)
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }
 
@@ -944,120 +971,115 @@ impl Component for Switch {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A switch component that represents binary states like on/off")
+    fn description() -> &'static str {
+        "A switch component that represents binary states like on/off"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Off",
-                                Switch::new("switch_off", ToggleState::Unselected)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "On",
-                                Switch::new("switch_on", ToggleState::Selected)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Colors",
-                        vec![
-                            single_example(
-                                "Accent (Default)",
-                                Switch::new("switch_accent_style", ToggleState::Selected)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Custom",
-                                Switch::new("switch_custom_style", ToggleState::Selected)
-                                    .color(SwitchColor::Custom(hsla(300.0 / 360.0, 0.6, 0.6, 1.0)))
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Disabled",
-                        vec![
-                            single_example(
-                                "Off",
-                                Switch::new("switch_disabled_off", ToggleState::Unselected)
-                                    .disabled(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "On",
-                                Switch::new("switch_disabled_on", ToggleState::Selected)
-                                    .disabled(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Label",
-                        vec![
-                            single_example(
-                                "Start Label",
-                                Switch::new("switch_with_label_start", ToggleState::Selected)
-                                    .label("Always save on quit")
-                                    .label_position(SwitchLabelPosition::Start)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "End Label",
-                                Switch::new("switch_with_label_end", ToggleState::Selected)
-                                    .label("Always save on quit")
-                                    .label_position(SwitchLabelPosition::End)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Default Size Label",
-                                Switch::new(
-                                    "switch_with_label_default_size",
-                                    ToggleState::Selected,
-                                )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Off",
+                            Switch::new("switch_off", ToggleState::Unselected)
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "On",
+                            Switch::new("switch_on", ToggleState::Selected)
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Colors",
+                    vec![
+                        single_example(
+                            "Accent (Default)",
+                            Switch::new("switch_accent_style", ToggleState::Selected)
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Custom",
+                            Switch::new("switch_custom_style", ToggleState::Selected)
+                                .color(SwitchColor::Custom(hsla(300.0 / 360.0, 0.6, 0.6, 1.0)))
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Disabled",
+                    vec![
+                        single_example(
+                            "Off",
+                            Switch::new("switch_disabled_off", ToggleState::Unselected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "On",
+                            Switch::new("switch_disabled_on", ToggleState::Selected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Label",
+                    vec![
+                        single_example(
+                            "Start Label",
+                            Switch::new("switch_with_label_start", ToggleState::Selected)
+                                .label("Always save on quit")
+                                .label_position(SwitchLabelPosition::Start)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "End Label",
+                            Switch::new("switch_with_label_end", ToggleState::Selected)
+                                .label("Always save on quit")
+                                .label_position(SwitchLabelPosition::End)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Default Size Label",
+                            Switch::new("switch_with_label_default_size", ToggleState::Selected)
                                 .label("Always save on quit")
                                 .label_size(LabelSize::Default)
                                 .into_any_element(),
-                            ),
-                            single_example(
-                                "Small Size Label",
-                                Switch::new("switch_with_label_small_size", ToggleState::Selected)
-                                    .label("Always save on quit")
-                                    .label_size(LabelSize::Small)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Keybinding",
-                        vec![single_example(
-                            "Keybinding",
-                            Switch::new("switch_with_keybinding", ToggleState::Selected)
-                                .key_binding(Some(KeyBinding::from_keystrokes(
-                                    vec![KeybindingKeystroke::from_keystroke(
-                                        Keystroke::parse("cmd-s").unwrap(),
-                                    )]
-                                    .into(),
-                                    KeybindSource::Base,
-                                )))
+                        ),
+                        single_example(
+                            "Small Size Label",
+                            Switch::new("switch_with_label_small_size", ToggleState::Selected)
+                                .label("Always save on quit")
+                                .label_size(LabelSize::Small)
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Keybinding",
+                    vec![single_example(
+                        "Keybinding",
+                        Switch::new("switch_with_keybinding", ToggleState::Selected)
+                            .key_binding(Some(KeyBinding::from_keystrokes(
+                                vec![KeybindingKeystroke::from_keystroke(
+                                    Keystroke::parse("cmd-s").unwrap(),
+                                )]
+                                .into(),
+                                false,
+                            )))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

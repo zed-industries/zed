@@ -18,8 +18,8 @@ use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
 use workspace::{
-    CloseWindow, CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
-    item::ItemHandle as _,
+    CloseWindow, CollaboratorId, Item, MultiWorkspace, ParticipantLocation, SplitDirection,
+    Workspace, item::ItemHandle as _,
 };
 
 use super::TestClient;
@@ -154,7 +154,7 @@ async fn test_basic_following(
             .unwrap()
     });
     assert_eq!(
-        cx_b.read(|cx| editor_b2.project_path(cx)),
+        cx_b.read(|cx| editor_b2.read(cx).active_project_path(cx)),
         Some((worktree_id, rel_path("2.txt")).into())
     );
     assert_eq!(
@@ -1866,7 +1866,7 @@ async fn test_following_into_excluded_file(
             .unwrap()
     });
     assert_eq!(
-        cx_b.read(|cx| editor_for_excluded_b.project_path(cx)),
+        cx_b.read(|cx| editor_for_excluded_b.read(cx).active_project_path(cx)),
         Some((worktree_id, rel_path(".git/COMMIT_EDITMSG")).into())
     );
     assert_eq!(
@@ -2184,6 +2184,7 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         );
         mb
     });
+    let multibuffer_snapshot = multibuffer.update(cx_a, |mb, cx| mb.snapshot(cx));
     let snapshot = buffer.update(cx_a, |buffer, _| buffer.snapshot());
     let editor: Entity<Editor> = cx_a.new_window_entity(|window, cx| {
         Editor::for_multibuffer(
@@ -2205,7 +2206,13 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         editor
             .selections
             .disjoint_anchor_ranges()
-            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .map(|range| {
+                multibuffer_snapshot
+                    .anchor_to_buffer_anchor(range.start)
+                    .unwrap()
+                    .0
+                    .to_point(&snapshot)
+            })
             .collect::<Vec<_>>()
     });
     multibuffer.update(cx_a, |multibuffer, cx| {
@@ -2232,7 +2239,13 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         editor
             .selections
             .disjoint_anchor_ranges()
-            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .map(|range| {
+                multibuffer_snapshot
+                    .anchor_to_buffer_anchor(range.start)
+                    .unwrap()
+                    .0
+                    .to_point(&snapshot)
+            })
             .collect::<Vec<_>>()
     });
     assert_eq!(positions, new_positions);
@@ -2367,4 +2380,107 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
         let editor = workspace.active_item_as::<Editor>(cx).unwrap();
         assert_eq!(editor.tab_content_text(0, cx), "2.js");
     });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_following_with_multibuffer_excerpts_at_unobserved_lamport(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(path!("/a"), json!({ "1.txt": sample_text(20, 5, 'a') }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("1.txt")), cx)
+        })
+        .await
+        .unwrap();
+    // B must already have the buffer open at a low Lamport so that A's
+    // subsequent edits create anchors B hasn't observed.
+    let _buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("1.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.follow(client_a.peer_id().unwrap(), window, cx)
+    });
+    executor.run_until_parked();
+
+    buffer_a.update(cx_a, |buf, cx| {
+        for i in 0..30 {
+            let len = buf.len();
+            buf.edit([(len..len, format!("\nappended line {i}"))], None, cx);
+        }
+    });
+    let multibuffer_a = cx_a.new(|cx| {
+        let mut mb = MultiBuffer::new(Capability::ReadWrite);
+        let max_row = buffer_a.read(cx).max_point().row;
+        mb.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer_a, cx),
+            buffer_a.clone(),
+            [Point::row_range(max_row.saturating_sub(5)..max_row)],
+            1,
+            cx,
+        );
+        mb
+    });
+    workspace_a.update_in(cx_a, |workspace, window, cx| {
+        let editor = cx
+            .new(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), window, cx));
+        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+    });
+
+    executor.run_until_parked();
+
+    let active_text = |workspace: &Entity<Workspace>, cx: &mut VisualTestContext| {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+                .update(cx, |editor, cx| editor.text(cx))
+        })
+    };
+    assert_eq!(
+        active_text(&workspace_a, cx_a),
+        active_text(&workspace_b, cx_b)
+    );
 }

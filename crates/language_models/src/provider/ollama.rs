@@ -1,15 +1,19 @@
 use anyhow::{Result, anyhow};
+use collections::HashMap;
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
-use http_client::HttpClient;
+use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    ProviderSettingsView, RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage,
+    env_var,
 };
 use menu;
 use ollama::{
@@ -19,11 +23,10 @@ use ollama::{
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::LazyLock;
-use std::{collections::HashMap, sync::Arc};
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
-    prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*,
 };
 use ui_input::InputField;
 
@@ -45,6 +48,7 @@ pub struct OllamaSettings {
     pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
     pub context_window: Option<u64>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -54,6 +58,7 @@ pub struct OllamaLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
@@ -65,10 +70,15 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         self.fetched_models.clear();
         cx.spawn(async move |this, cx| {
@@ -80,10 +90,14 @@ impl State {
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         // Always try to fetch models - if no API key is needed (local Ollama), it will work
         // If API key is needed and provided, it will work
@@ -98,12 +112,20 @@ impl State {
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let http_client = Arc::clone(&self.http_client);
+        let settings = OllamaLanguageModelProvider::settings(cx);
         let api_url = OllamaLanguageModelProvider::api_url(cx);
         let api_key = self.api_key_state.key(&api_url);
+        let extra_headers = settings.custom_headers.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let models = get_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                &extra_headers,
+            )
+            .await?;
 
             let tasks = models
                 .into_iter()
@@ -115,20 +137,35 @@ impl State {
                     let http_client = Arc::clone(&http_client);
                     let api_url = api_url.clone();
                     let api_key = api_key.clone();
+                    let extra_headers = extra_headers.clone();
                     async move {
                         let name = model.name.as_str();
-                        let model =
-                            show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
-                                .await?;
-                        let ollama_model = ollama::Model::new(
+
+                        show_model(
+                            http_client.as_ref(),
+                            &api_url,
+                            api_key.as_deref(),
                             name,
-                            None,
-                            model.context_length,
-                            Some(model.supports_tools()),
-                            Some(model.supports_vision()),
-                            Some(model.supports_thinking()),
-                        );
-                        Ok(ollama_model)
+                            &extra_headers,
+                        )
+                        .await
+                        .map_or_else(
+                            |error| {
+                                ollama::Model::new_disabled(
+                                    name,
+                                    format!("Failed to fetch model from API: {error}",),
+                                )
+                            },
+                            |model| {
+                                ollama::Model::new(
+                                    name,
+                                    model.context_length,
+                                    Some(model.supports_tools()),
+                                    Some(model.supports_vision()),
+                                    Some(model.supports_thinking()),
+                                )
+                            },
+                        )
                     }
                 });
 
@@ -136,10 +173,8 @@ impl State {
             // since there is an arbitrary number of models available
             let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
                 .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
+                .collect()
+                .await;
 
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -157,7 +192,11 @@ impl State {
 }
 
 impl OllamaLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let this = Self {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
@@ -170,6 +209,14 @@ impl OllamaLanguageModelProvider {
                             let url_changed = last_settings.api_url != current_settings.api_url;
                             last_settings = current_settings.clone();
                             if url_changed {
+                                let credentials_provider = this.credentials_provider.clone();
+                                let api_url = Self::api_url(cx);
+                                this.api_key_state.handle_url_change(
+                                    api_url,
+                                    |this| &mut this.api_key_state,
+                                    credentials_provider,
+                                    cx,
+                                );
                                 this.fetched_models.clear();
                                 this.authenticate(cx).detach();
                             }
@@ -184,6 +231,7 @@ impl OllamaLanguageModelProvider {
                     fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                    credentials_provider,
                 }
             }),
         };
@@ -242,16 +290,18 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         let settings = OllamaLanguageModelProvider::settings(cx);
 
-        // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            let mut model = model.clone();
-            if let Some(context_window) = settings.context_window {
-                model.max_tokens = context_window;
+        if settings.auto_discover {
+            // Add models from the Ollama API
+            for model in self.state.read(cx).fetched_models.iter() {
+                let mut model = model.clone();
+                if let Some(context_window) = settings.context_window {
+                    model.max_tokens = context_window;
+                }
+                models.insert(model.name.clone(), model);
             }
-            models.insert(model.name.clone(), model);
         }
 
         // Override with available models from settings
@@ -266,6 +316,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
+                    disabled: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
                     model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
@@ -285,20 +336,17 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local models on your machine with Ollama.".into(),
+            )),
+        ))
     }
 }
 
@@ -308,10 +356,15 @@ pub struct OllamaLanguageModel {
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
     state: Entity<State>,
+    disabled: Option<DisabledReason>,
 }
 
 impl OllamaLanguageModel {
-    fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
+    fn to_ollama_request(&self, request: LanguageModelRequest) -> Result<ChatRequest> {
+        if request.contains_custom_tool_input() {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+
         let supports_vision = self.model.supports_vision.unwrap_or(false);
 
         let mut messages = Vec::with_capacity(request.messages.len());
@@ -339,7 +392,7 @@ impl OllamaLanguageModel {
                             MessageContent::ToolResult(tool_result) => {
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
-                                    content: tool_result.content.to_str().unwrap_or("").to_string(),
+                                    content: tool_result.text_contents(),
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),
@@ -357,11 +410,14 @@ impl OllamaLanguageModel {
                     }
                 }
                 Role::Assistant => {
-                    let content = msg.string_contents();
+                    let mut text_content = String::new();
                     let mut thinking = None;
                     let mut tool_calls = Vec::new();
                     for content in msg.content.into_iter() {
                         match content {
+                            MessageContent::Text(text) => {
+                                text_content.push_str(&text);
+                            }
                             MessageContent::Thinking { text, .. } if !text.is_empty() => {
                                 thinking = Some(text)
                             }
@@ -370,7 +426,16 @@ impl OllamaLanguageModel {
                                     id: tool_use.id.to_string(),
                                     function: OllamaFunctionCall {
                                         name: tool_use.name.to_string(),
-                                        arguments: tool_use.input,
+                                        arguments: match tool_use.input {
+                                            language_model::LanguageModelToolUseInput::Json(
+                                                input,
+                                            ) => input,
+                                            language_model::LanguageModelToolUseInput::Text(_) => {
+                                                return Err(anyhow::anyhow!(
+                                                    "Ollama does not support custom tool calls"
+                                                ));
+                                            }
+                                        },
                                     },
                                 });
                             }
@@ -378,7 +443,7 @@ impl OllamaLanguageModel {
                         }
                     }
                     messages.push(ChatMessage::Assistant {
-                        content,
+                        content: text_content,
                         tool_calls: Some(tool_calls),
                         images: if images.is_empty() {
                             None
@@ -393,7 +458,7 @@ impl OllamaLanguageModel {
                 }),
             }
         }
-        ChatRequest {
+        Ok(ChatRequest {
             model: self.model.name.clone(),
             messages,
             keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
@@ -416,11 +481,15 @@ impl OllamaLanguageModel {
                 .supports_thinking
                 .map(|supports_thinking| supports_thinking && request.thinking_allowed),
             tools: if self.model.supports_tools.unwrap_or(false) {
-                request.tools.into_iter().map(tool_into_ollama).collect()
+                request
+                    .tools
+                    .into_iter()
+                    .map(tool_into_ollama)
+                    .collect::<Result<_>>()?
             } else {
                 vec![]
             },
-        }
+        })
     }
 }
 
@@ -465,25 +534,12 @@ impl LanguageModel for OllamaLanguageModel {
         format!("ollama/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        self.disabled.clone()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().chars().count())
-            .sum::<usize>()
-            / 4;
-
-        async move { Ok(token_count as u64) }.boxed()
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
     }
 
     fn stream_completion(
@@ -497,18 +553,29 @@ impl LanguageModel for OllamaLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_ollama_request(request);
+        let request = match self.to_ollama_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
 
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OllamaLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = OllamaLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
-            let stream =
-                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
-                    .await?;
+            let stream = stream_chat_completion(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                request,
+                &extra_headers,
+            )
+            .await?;
             let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });
@@ -574,7 +641,9 @@ fn map_to_language_model_completion_events(
                             id: LanguageModelToolUseId::from(id),
                             name: Arc::from(function.name),
                             raw_input: function.arguments.to_string(),
-                            input: function.arguments,
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                function.arguments,
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         });
@@ -782,31 +851,43 @@ impl ConfigurationView {
     fn render_instructions(cx: &App) -> Div {
         v_flex()
             .gap_2()
-            .child(Label::new(
-                "Run LLMs locally on your machine with Ollama, or connect to an Ollama server. \
+            .child(
+                Label::new(
+                    "Run LLMs locally on your machine with Ollama, or connect to an Ollama server. \
                 Can provide access to Llama, Mistral, Gemma, and hundreds of other models.",
-            ))
-            .child(Label::new("To use local Ollama:"))
+                )
+                .color(Color::Muted),
+            )
+            .child(Label::new("To use local Ollama:").color(Color::Muted))
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Download and install Ollama from"))
+                            .child(
+                                Label::new("Download and install Ollama from").color(Color::Muted),
+                            )
                             .child(ButtonLink::new("ollama.com", "https://ollama.com/download")),
                     )
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Start Ollama and download a model:"))
+                            .child(
+                                Label::new("Start Ollama and download a model:")
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
                     )
-                    .child(ListBulletItem::new(
-                        "Click 'Connect' below to start using Ollama in Zed",
-                    )),
+                    .child(
+                        ListBulletItem::new("Click 'Connect' below to start using Ollama in Zed")
+                            .label_color(Color::Muted),
+                    ),
             )
-            .child(Label::new(
-                "Alternatively, you can connect to an Ollama server by specifying its \
+            .child(
+                Label::new(
+                    "Alternatively, you can connect to an Ollama server by specifying its \
                 URL and API key (may not be required):",
-            ))
+                )
+                .color(Color::Muted),
+            )
     }
 
     fn render_api_key_editor(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -818,27 +899,30 @@ impl ConfigurationView {
             "API key configured".to_string()
         };
 
-        if !state.api_key_state.has_key() {
-            v_flex()
-              .on_action(cx.listener(Self::save_api_key))
-              .child(self.api_key_editor.clone())
-              .child(
-                  Label::new(
-                      format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
-                  )
-                  .size(LabelSize::Small)
-                  .color(Color::Muted),
-              )
-              .into_any_element()
+        let api_key_control = if !state.api_key_state.has_key() {
+            self.api_key_editor.clone().into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("ollama-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .when(env_var_set, |this| {
                     this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
                 })
                 .into_any_element()
-        }
+        };
+
+        v_flex()
+          .on_action(cx.listener(Self::save_api_key))
+          .child(api_key_control)
+          .gap_1p5()
+          .mb_2()
+          .child(
+              Label::new(
+                  format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
+              )
+              .size(LabelSize::Small)
+              .color(Color::Muted),
+          )
     }
 
     fn render_context_window_editor(&self, cx: &Context<Self>) -> Div {
@@ -847,26 +931,26 @@ impl ConfigurationView {
 
         if custom_context_window_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(format!(
+                        .child(Label::new(format!(
                             "Context Window: {}",
                             settings.context_window.unwrap()
-                        )))),
+                        ))),
                 )
                 .child(
                     Button::new("reset-context-window", "Reset")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.reset_context_window(window, cx)
@@ -881,6 +965,7 @@ impl ConfigurationView {
                     }),
                 )
                 .child(self.context_window_editor.clone())
+                .gap_1p5()
                 .child(
                     Label::new("Default: Model specific")
                         .size(LabelSize::Small)
@@ -895,23 +980,23 @@ impl ConfigurationView {
 
         if custom_api_url_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(api_url))),
+                        .child(Label::new(api_url)),
                 )
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
                         ),
@@ -934,15 +1019,18 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
+            .child(Headline::new("Ollama").size(HeadlineSize::Small))
             .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_context_window_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .child(Divider::horizontal())
             .child(
                 h_flex()
+                    .pt_2()
                     .w_full()
                     .justify_between()
-                    .gap_2()
+                    .gap_1()
                     .child(
                         h_flex()
                             .w_full()
@@ -951,7 +1039,8 @@ impl Render for ConfigurationView {
                                 if is_authenticated {
                                     this.child(
                                         Button::new("ollama-site", "Ollama")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -963,7 +1052,8 @@ impl Render for ConfigurationView {
                                 } else {
                                     this.child(
                                         Button::new("download_ollama_button", "Download Ollama")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -978,7 +1068,8 @@ impl Render for ConfigurationView {
                             })
                             .child(
                                 Button::new("view-models", "View All Models")
-                                    .style(ButtonStyle::Subtle)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .size(ButtonSize::Medium)
                                     .end_icon(
                                         Icon::new(IconName::ArrowUpRight)
                                             .size(IconSize::XSmall)
@@ -991,17 +1082,16 @@ impl Render for ConfigurationView {
                         if is_authenticated {
                             this.child(
                                 ButtonLike::new("connected")
-                                    .disabled(true)
-                                    .cursor_style(CursorStyle::Arrow)
+                                    .size(ButtonSize::Medium)
                                     .child(
                                         h_flex()
-                                            .gap_2()
+                                            .gap_1()
                                             .child(Icon::new(IconName::Check).color(Color::Success))
-                                            .child(Label::new("Connected"))
-                                            .into_any_element(),
+                                            .child(Label::new("Connected")),
                                     )
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .icon_size(IconSize::Small)
                                             .tooltip(Tooltip::text("Refresh Models"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
@@ -1014,6 +1104,8 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_ollama_models", "Connect")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
                                     .start_icon(
                                         Icon::new(IconName::PlayOutlined).size(IconSize::XSmall),
                                     )
@@ -1053,20 +1145,29 @@ fn merge_settings_into_models(
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
+                    disabled: None,
                 },
             );
         }
     }
 }
 
-fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
-    ollama::OllamaTool::Function {
+fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool> {
+    let input_schema = match tool.input {
+        language_model::LanguageModelRequestToolInput::Function { input_schema, .. } => {
+            input_schema
+        }
+        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+            anyhow::bail!("Ollama does not support custom tools");
+        }
+    };
+    Ok(ollama::OllamaTool::Function {
         function: OllamaFunctionTool {
             name: tool.name,
             description: Some(tool.description),
-            parameters: Some(tool.input_schema),
+            parameters: Some(input_schema),
         },
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1079,7 +1180,7 @@ mod tests {
         // When multiple models share the same base name (e.g., qwen2.5-coder:1.5b and qwen2.5-coder:3b),
         // each model should get its own display_name from settings, not a random one.
 
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         models.insert(
             "qwen2.5-coder:1.5b".to_string(),
             ollama::Model {
@@ -1090,6 +1191,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                disabled: None,
             },
         );
         models.insert(
@@ -1102,6 +1204,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                disabled: None,
             },
         );
 

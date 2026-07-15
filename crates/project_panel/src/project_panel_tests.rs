@@ -1,17 +1,23 @@
 use super::*;
+// use crate::undo::tests::{build_create_operation, build_rename_operation};
 use collections::HashSet;
-use editor::MultiBufferOffset;
+use editor::{Editor, MultiBufferOffset};
+use git::{
+    Oid,
+    repository::{InitialGraphCommitData, LogSource, RepoPath},
+};
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
 use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
-    item::{Item, ProjectItem},
+    item::{Item, ProjectItem, test::TestItem},
     register_project_item,
 };
 
@@ -164,6 +170,254 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+}
+
+#[gpui::test]
+async fn test_file_history_action_uses_focused_project_panel_selection(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test_with_git_ui(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        Path::new("/project"),
+        json!({
+            ".git": {},
+            "tracked1.txt": "tracked 1",
+            "tracked2.txt": "tracked 2",
+        }),
+    )
+    .await;
+
+    let commits = vec![Arc::new(InitialGraphCommitData {
+        sha: Oid::from_bytes(&[1; 20]).unwrap(),
+        parents: smallvec![],
+        ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+    })];
+    fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+    let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have active repository")
+    });
+    let project_panel_repo_path = RepoPath::new(&"tracked1.txt").unwrap();
+    let editor_repo_path = RepoPath::new(&"tracked2.txt").unwrap();
+    let project_panel_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&project_panel_repo_path, cx)
+        })
+        .expect("project panel path should resolve");
+    let editor_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&editor_repo_path, cx)
+        })
+        .expect("editor path should resolve");
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+        multi_workspace.workspace().clone()
+    });
+    let project_panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    let editor_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(editor_path.clone(), cx)
+        })
+        .await
+        .expect("editor buffer should open");
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                editor_buffer.clone(),
+                [Default::default()..editor_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor =
+            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
+        project_panel.update(cx, |panel, cx| {
+            panel.select_path_for_test(project_panel_path.clone(), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.focus_handle(cx).focus(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(git::FileHistory), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(&*cx, |workspace, cx| {
+        let graphs = workspace
+            .items_of_type::<git_ui::git_graph::GitGraph>(cx)
+            .collect::<Vec<_>>();
+        assert_eq!(graphs.len(), 1);
+        assert_eq!(
+            graphs[0].read(cx).log_source_for_test(),
+            &LogSource::Path(project_panel_repo_path)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_file_history_action_does_not_fall_back_to_editor_when_focused_project_panel_selection_has_no_git_repo(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test_with_git_ui(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        Path::new("/git-project"),
+        json!({
+            ".git": {},
+            "tracked.txt": "tracked",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        Path::new("/plain-project"),
+        json!({
+            "plain.txt": "plain",
+        }),
+    )
+    .await;
+
+    fs.set_graph_commits(
+        Path::new("/git-project/.git"),
+        vec![Arc::new(InitialGraphCommitData {
+            sha: Oid::from_bytes(&[1; 20]).unwrap(),
+            parents: smallvec![],
+            ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+        })],
+    );
+
+    let project = Project::test(
+        fs.clone(),
+        [Path::new("/git-project"), Path::new("/plain-project")],
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have active repository")
+    });
+    let editor_repo_path = RepoPath::new(&"tracked.txt").unwrap();
+    let editor_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&editor_repo_path, cx)
+        })
+        .expect("editor path should resolve");
+    let plain_worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktree_for_root_name("plain-project", cx)
+            .expect("plain worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let plain_project_path = ProjectPath {
+        worktree_id: plain_worktree_id,
+        path: rel_path("plain.txt").into(),
+    };
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+        multi_workspace.workspace().clone()
+    });
+    let project_panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    let editor_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(editor_path.clone(), cx)
+        })
+        .await
+        .expect("editor buffer should open");
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                editor_buffer.clone(),
+                [Default::default()..editor_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor =
+            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
+        project_panel.update(cx, |panel, cx| {
+            panel.select_path_for_test(plain_project_path.clone(), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.focus_handle(cx).focus(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(git::FileHistory), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(&*cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<git_ui::git_graph::GitGraph>(cx)
+                .count(),
+            0
+        );
+    });
 }
 
 #[gpui::test]
@@ -911,6 +1165,71 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_rename_folder_with_dot_selects_whole_name(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "my.folder": {},
+            "archive.tar.gz": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Renaming a folder whose name contains a dot should pre-select the whole
+    // name. The dot belongs to the directory name; it is not a file extension.
+    select_path(&panel, "root1/my.folder", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            assert_eq!(selections.len(), 1);
+            assert_eq!(selections[0].start, MultiBufferOffset(0));
+            assert_eq!(
+                selections[0].end,
+                MultiBufferOffset("my.folder".len()),
+                "Renaming a folder should select the whole name, including dots"
+            );
+        });
+        panel.cancel(&Cancel, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Files keep the existing behavior: the last extension stays unselected.
+    select_path(&panel, "root1/archive.tar.gz", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    panel.update_in(cx, |panel, _, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            assert_eq!(
+                selections[0].end,
+                MultiBufferOffset("archive.tar".len()),
+                "Renaming a file should keep the last extension unselected"
+            );
+        });
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -1254,8 +1573,8 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
             let file_name_selection = &file_name_selections[0];
             assert_eq!(
                 file_name_selection.start,
-                MultiBufferOffset("one".len()),
-                "Should select the file name disambiguation after the original file name"
+                MultiBufferOffset(0),
+                "Should select from the beginning of the filename"
             );
             assert_eq!(
                 file_name_selection.end,
@@ -1991,555 +2310,6 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
             "      d.txt",
         ],
         "Should copy dir1 and c.txt into dir2. a.txt is already present in copied dir1."
-    );
-}
-
-#[gpui::test]
-async fn test_undo_rename(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "a.txt": "",
-            "b.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    select_path(&panel, "root/a.txt", cx);
-    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-    cx.run_until_parked();
-
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel
-            .filename_editor
-            .update(cx, |editor, cx| editor.set_text("renamed.txt", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/renamed.txt", cx).is_some(),
-        "File should be renamed to renamed.txt"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/a.txt", cx),
-        None,
-        "Original file should no longer exist"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/a.txt", cx).is_some(),
-        "File should be restored to original name after undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/renamed.txt", cx),
-        None,
-        "Renamed file should no longer exist after undo"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_create_file(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "existing.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    select_path(&panel, "root", cx);
-    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-    cx.run_until_parked();
-
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel
-            .filename_editor
-            .update(cx, |editor, cx| editor.set_text("new.txt", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/new.txt", cx).is_some(),
-        "New file should exist"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        find_project_entry(&panel, "root/new.txt", cx),
-        None,
-        "New file should be removed after undo"
-    );
-    assert!(
-        find_project_entry(&panel, "root/existing.txt", cx).is_some(),
-        "Existing file should still be present"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_create_directory(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "existing.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    select_path(&panel, "root", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_directory(&NewDirectory, window, cx)
-    });
-    cx.run_until_parked();
-
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel
-            .filename_editor
-            .update(cx, |editor, cx| editor.set_text("new_dir", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/new_dir", cx).is_some(),
-        "New directory should exist"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        find_project_entry(&panel, "root/new_dir", cx),
-        None,
-        "New directory should be removed after undo"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_cut_paste(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "src": {
-                "file.txt": "content",
-            },
-            "dst": {},
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    toggle_expand_dir(&panel, "root/src", cx);
-
-    select_path_with_mark(&panel, "root/src/file.txt", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cut(&Default::default(), window, cx);
-    });
-
-    select_path(&panel, "root/dst", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.paste(&Default::default(), window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/dst/file.txt", cx).is_some(),
-        "File should be moved to dst"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/src/file.txt", cx),
-        None,
-        "File should no longer be in src"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/src/file.txt", cx).is_some(),
-        "File should be back in src after undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/dst/file.txt", cx),
-        None,
-        "File should no longer be in dst after undo"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_drag_single_entry(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "src": {
-                "main.rs": "",
-            },
-            "dst": {},
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    toggle_expand_dir(&panel, "root/src", cx);
-
-    panel.update(cx, |panel, _| panel.marked_entries.clear());
-    select_path_with_mark(&panel, "root/src/main.rs", cx);
-    drag_selection_to(&panel, "root/dst", false, cx);
-
-    assert!(
-        find_project_entry(&panel, "root/dst/main.rs", cx).is_some(),
-        "File should be in dst after drag"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/src/main.rs", cx),
-        None,
-        "File should no longer be in src after drag"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/src/main.rs", cx).is_some(),
-        "File should be back in src after undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/dst/main.rs", cx),
-        None,
-        "File should no longer be in dst after undo"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_drag_multiple_entries(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "src": {
-                "alpha.txt": "",
-                "beta.txt": "",
-            },
-            "dst": {},
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    toggle_expand_dir(&panel, "root/src", cx);
-
-    panel.update(cx, |panel, _| panel.marked_entries.clear());
-    select_path_with_mark(&panel, "root/src/alpha.txt", cx);
-    select_path_with_mark(&panel, "root/src/beta.txt", cx);
-    drag_selection_to(&panel, "root/dst", false, cx);
-
-    assert!(
-        find_project_entry(&panel, "root/dst/alpha.txt", cx).is_some(),
-        "alpha.txt should be in dst after drag"
-    );
-    assert!(
-        find_project_entry(&panel, "root/dst/beta.txt", cx).is_some(),
-        "beta.txt should be in dst after drag"
-    );
-
-    // A single undo should revert the entire batch
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/src/alpha.txt", cx).is_some(),
-        "alpha.txt should be back in src after undo"
-    );
-    assert!(
-        find_project_entry(&panel, "root/src/beta.txt", cx).is_some(),
-        "beta.txt should be back in src after undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/dst/alpha.txt", cx),
-        None,
-        "alpha.txt should no longer be in dst after undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/dst/beta.txt", cx),
-        None,
-        "beta.txt should no longer be in dst after undo"
-    );
-}
-
-#[gpui::test]
-async fn test_multiple_sequential_undos(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "a.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    select_path(&panel, "root/a.txt", cx);
-    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-    cx.run_until_parked();
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel
-            .filename_editor
-            .update(cx, |editor, cx| editor.set_text("b.txt", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert!(find_project_entry(&panel, "root/b.txt", cx).is_some());
-
-    select_path(&panel, "root", cx);
-    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-    cx.run_until_parked();
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel
-            .filename_editor
-            .update(cx, |editor, cx| editor.set_text("c.txt", window, cx));
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert!(find_project_entry(&panel, "root/b.txt", cx).is_some());
-    assert!(find_project_entry(&panel, "root/c.txt", cx).is_some());
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        find_project_entry(&panel, "root/c.txt", cx),
-        None,
-        "c.txt should be removed after first undo"
-    );
-    assert!(
-        find_project_entry(&panel, "root/b.txt", cx).is_some(),
-        "b.txt should still exist after first undo"
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/a.txt", cx).is_some(),
-        "a.txt should be restored after second undo"
-    );
-    assert_eq!(
-        find_project_entry(&panel, "root/b.txt", cx),
-        None,
-        "b.txt should no longer exist after second undo"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_with_empty_stack(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "a.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    cx.run_until_parked();
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert!(
-        find_project_entry(&panel, "root/a.txt", cx).is_some(),
-        "File tree should be unchanged after undo on empty stack"
-    );
-}
-
-#[gpui::test]
-async fn test_undo_batch(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "src": {
-                "main.rs": "// Code!"
-            }
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
-    let worktree_id = project.update(cx, |project, cx| {
-        project.visible_worktrees(cx).next().unwrap().read(cx).id()
-    });
-    cx.run_until_parked();
-
-    // Since there currently isn't a way to both create a folder and the file
-    // within it as two separate operations batched under the same
-    // `ProjectPanelOperation::Batch` operation, we'll simply record those
-    // ourselves, knowing that the filesystem already has the folder and file
-    // being provided in the operations.
-    panel.update(cx, |panel, _cx| {
-        panel.undo_manager.record_batch(vec![
-            ProjectPanelOperation::Create {
-                project_path: ProjectPath {
-                    worktree_id,
-                    path: Arc::from(rel_path("src/main.rs")),
-                },
-            },
-            ProjectPanelOperation::Create {
-                project_path: ProjectPath {
-                    worktree_id,
-                    path: Arc::from(rel_path("src/")),
-                },
-            },
-        ]);
-    });
-
-    // Ensure that `src/main.rs` is present in the filesystem before proceeding,
-    // otherwise this test is irrelevant.
-    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/src/main.rs"))]);
-    assert_eq!(
-        fs.directories(false),
-        vec![
-            PathBuf::from(path!("/")),
-            PathBuf::from(path!("/root/")),
-            PathBuf::from(path!("/root/src/"))
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.undo(&Undo, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(fs.files().len(), 0);
-    assert_eq!(
-        fs.directories(false),
-        vec![PathBuf::from(path!("/")), PathBuf::from(path!("/root/"))]
     );
 }
 
@@ -4658,6 +4428,141 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     }
 }
 
+async fn setup_three_worktree_panel(
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<ProjectPanel>, VisualTestContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, ProjectPanel::new);
+    cx.run_until_parked();
+    (panel, cx)
+}
+
+#[gpui::test]
+async fn test_drag_worktree_root_reorders_worktrees(cx: &mut gpui::TestAppContext) {
+    let (panel, mut cx) = setup_three_worktree_panel(cx).await;
+    let cx = &mut cx;
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "worktrees should start in insertion order"
+    );
+
+    // [r1, r2, r3] -> [r2, r1, r3].
+    drag_entries_onto(&panel, &["root1"], "root2", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "dragging root1 onto root2 should swap their positions"
+    );
+
+    // [r2, r1, r3] -> [r3, r2, r1].
+    drag_entries_onto(&panel, &["root3"], "root2", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root3",
+            "      c.txt",
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dragging the last root onto the first should move it to the front"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppContext) {
+    let (panel, mut cx) = setup_three_worktree_panel(cx).await;
+    let cx = &mut cx;
+
+    // Drag {root1, root2/b.txt} onto root3's root entry: only the worktree
+    // reorder should happen and b.txt must stay in root2.
+    drag_entries_onto(&panel, &["root1", "root2/b.txt"], "root3", false, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dropping a mixed selection on a root should only reorder worktrees"
+    );
+
+    // Drag {root2, root3/c.txt} onto root1/a.txt (a non-root entry): the root
+    // still reorders to root1's position and c.txt must stay in root3.
+    drag_entries_onto(&panel, &["root2", "root3/c.txt"], "root1/a.txt", true, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root3",
+            "      c.txt",
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+        ],
+        "dropping a mixed selection on a non-root entry should only reorder worktrees"
+    );
+
+    // With the copy modifier held, a selection containing a root should still
+    // only reorder worktrees and copy nothing.
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        alt: true,
+        control: true,
+        ..Default::default()
+    });
+    drag_entries_onto(&panel, &["root3", "root1/a.txt"], "root2", false, cx);
+    cx.simulate_modifiers_change(Default::default());
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "copy-dragging a mixed selection should only reorder worktrees and copy nothing"
+    );
+}
+
 #[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
@@ -6015,6 +5920,397 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     );
 }
 
+/// Mirrors real multi-buffer views (`ProjectDiagnosticsEditor`, `ProjectDiff`,
+/// etc.): the workspace `Item` is a thin wrapper that holds an inner `Editor`
+/// and re-emits its events.
+mod multibuffer_wrapper {
+    use editor::{Editor, EditorEvent};
+    use gpui::{
+        App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, IntoElement,
+        ParentElement, Render, SharedString, Subscription, Window, div,
+    };
+    use workspace::item::{Item, ItemEvent, TabContentParams};
+
+    pub struct TestMultibufferWrapper {
+        pub editor: Entity<Editor>,
+        _subscription: Subscription,
+    }
+
+    impl TestMultibufferWrapper {
+        pub fn new(editor: Entity<Editor>, cx: &mut Context<Self>) -> Self {
+            let _subscription = cx.subscribe(&editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(event.clone());
+            });
+            Self {
+                editor,
+                _subscription,
+            }
+        }
+    }
+
+    impl EventEmitter<EditorEvent> for TestMultibufferWrapper {}
+
+    impl Focusable for TestMultibufferWrapper {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.editor.read(cx).focus_handle(cx)
+        }
+    }
+
+    impl Render for TestMultibufferWrapper {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.editor.clone())
+        }
+    }
+
+    impl Item for TestMultibufferWrapper {
+        type Event = EditorEvent;
+
+        fn tab_content_text(&self, _: usize, _: &App) -> SharedString {
+            "wrapper".into()
+        }
+
+        fn for_each_project_item(
+            &self,
+            cx: &App,
+            f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
+        ) {
+            self.editor.read(cx).for_each_project_item(cx, f)
+        }
+
+        fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+            self.editor.read(cx).active_project_path(cx)
+        }
+
+        fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
+            Editor::to_item_events(event, f)
+        }
+
+        fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> gpui::AnyElement {
+            ui::Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
+                .into_any_element()
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_autoreveal_follows_multibuffer_selection(cx: &mut gpui::TestAppContext) {
+    use editor::{
+        Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, ToOffset,
+    };
+    use language::Point;
+    use multibuffer_wrapper::TestMultibufferWrapper;
+
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/project_root"),
+        json!({
+            "dir_1": { "file_1.py": "alpha 1\nalpha 2\nalpha 3\n" },
+            "dir_2": { "file_2.py": "beta 1\nbeta 2\nbeta 3\n" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            let project_path = project
+                .find_project_path("project_root/dir_1/file_1.py", cx)
+                .unwrap();
+            project.open_buffer(project_path, cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            let project_path = project
+                .find_project_path("project_root/dir_2/file_2.py", cx)
+                .unwrap();
+            project.open_buffer(project_path, cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.update(|_, cx| {
+        cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer_1.clone(),
+                [Point::new(0, 0)..Point::new(2, 0)],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer_2.clone(),
+                [Point::new(0, 0)..Point::new(2, 0)],
+                0,
+                cx,
+            );
+            multi_buffer
+        })
+    });
+
+    let inner_editor = cx.update(|window, cx| {
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multi_buffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    // Wrap the multibuffer editor in an `Item`, mirroring real multibuffer
+    // views (`ProjectDiagnosticsEditor`, `ProjectDiff`, etc.). Auto-reveal
+    // should follow the inner editor's active buffer.
+    workspace.update_in(cx, |workspace, window, cx| {
+        let wrapper = cx.new(|cx| TestMultibufferWrapper::new(inner_editor.clone(), cx));
+        workspace.add_item_to_active_pane(Box::new(wrapper), None, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    v dir_1",
+            "          file_1.py  <== selected  <== marked",
+            "    > dir_2",
+        ],
+        "When a multibuffer becomes active, its first excerpt's file should be revealed"
+    );
+
+    let buffer_2_offset = multi_buffer.read_with(cx, |multi_buffer, cx| {
+        let snapshot = multi_buffer.snapshot(cx);
+        let buffer_2_id = buffer_2.read(cx).remote_id();
+        let excerpt = snapshot
+            .excerpts_for_buffer(buffer_2_id)
+            .next()
+            .expect("buffer_2 excerpt must exist");
+        snapshot
+            .anchor_in_excerpt(excerpt.context.start)
+            .expect("excerpt anchor must resolve")
+            .to_offset(&snapshot)
+    });
+
+    inner_editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([buffer_2_offset..buffer_2_offset]);
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_2.py  <== selected  <== marked",
+        ],
+        "Moving the cursor into a different excerpt buffer should reveal that buffer's entry"
+    );
+
+    // Wrappers re-emit inner-editor events through `to_item_events`, so a
+    // benign `TitleChanged` (e.g. diagnostic summary updates) ultimately
+    // reaches `Workspace::active_item_path_changed`. The active path should be
+    // recomputed from the wrapper instead of falling back to a stale selection.
+    inner_editor.update(cx, |_, cx| cx.emit(EditorEvent::TitleChanged));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_2.py  <== selected  <== marked",
+        ],
+        "Wrapper-level title updates must not clobber the inner editor's reveal"
+    );
+}
+
+#[gpui::test]
+async fn test_reveal_in_project_panel_fallback(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/workspace",
+        json!({
+            "README.md": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/workspace".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Project panel should still be activated and focused, when using `pane:
+    // reveal in project panel` without an active item.
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_none(),
+                    "Workspace should not have an active item."
+                );
+            })
+            .unwrap();
+
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused, even when there's no active item."
+        );
+    });
+
+    // When working with a file that doesn't belong to an open project, we
+    // should still activate the project panel on `pane: reveal in project
+    // panel`.
+    fs.insert_tree(
+        "/external",
+        json!({
+            "file.txt": "External File",
+        }),
+    )
+    .await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external/file.txt", false, cx)
+        })
+        .await
+        .unwrap();
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let worktree_id = worktree.read(cx).id();
+            let path = rel_path("").into();
+            let project_path = ProjectPath { worktree_id, path };
+
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after opening an external file."
+        );
+    });
+
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_some(),
+                    "Workspace should have an active item."
+                );
+            })
+            .unwrap();
+
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused even for invisible worktree entry."
+        );
+    });
+
+    // Focus again on the center pane so we're sure that the focus doesn't
+    // remain on the project panel, otherwise later assertions wouldn't matter.
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace.focus_center_pane(window, cx);
+            })
+            .log_err();
+
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after focusing on center pane."
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after focusing the center pane."
+        );
+    });
+
+    // Create an unsaved buffer and verify that pane: reveal in project panel`
+    // still activates and focuses the panel.
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        let item = cx.new(|cx| TestItem::new(cx).with_label("Unsaved buffer"));
+        pane.add_item(Box::new(item), false, false, None, window, cx);
+    });
+
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_some(),
+                    "Workspace should have an active item."
+                );
+            })
+            .unwrap();
+
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused even for an unsaved buffer."
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -7204,7 +7500,11 @@ async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestApp
     );
 }
 
-fn toggle_expand_dir(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+pub(crate) fn toggle_expand_dir(
+    panel: &Entity<ProjectPanel>,
+    path: &str,
+    cx: &mut VisualTestContext,
+) {
     let path = rel_path(path);
     panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
@@ -7998,115 +8298,99 @@ async fn test_collapse_non_root_multi_worktree(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_single_worktree(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        path!("/root"),
+        "/project_root",
         json!({
-            "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
+            "dir_1": {
+                "nested_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
                 },
-                "file2.txt": ""
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
             },
-            "dir2": {
-                "file3.txt": ""
+            "dir_2": {
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
             }
         }),
     )
     .await;
 
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root/dir2", cx);
-
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "          file2.txt",
-            "    v dir2  <== selected",
-            "          file3.txt",
-        ],
-        "Initial state with directories expanded"
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project_root", "    > dir_1", "    > dir_2",]
     );
-
-    select_path(&panel, "root", cx);
-    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
     });
-    cx.run_until_parked();
+    cx.executor().run_until_parked();
 
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &["v root  <== selected", "    > dir1", "    > dir2"],
-        "Root should remain expanded but all children should be collapsed"
+    let entries = visible_entries_as_strings(&panel, 0..20, cx);
+    assert_eq!(entries.len(), 13, "should show all 13 entries");
+    assert!(entries[0].starts_with("v project_root"), "root expanded");
+    assert!(entries[1].contains("v dir_1"), "dir_1 expanded");
+    assert!(entries[2].contains("v nested_dir"), "nested_dir expanded");
+    assert!(
+        entries.iter().any(|e| e.contains("file_a.py")),
+        "file_a visible"
     );
-
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1  <== selected",
-            "        > subdir1",
-            "          file2.txt",
-            "    > dir2",
-        ],
-        "After re-expanding dir1, subdir1 should still be collapsed"
+    assert!(
+        entries.iter().any(|e| e.contains("file_c.py")),
+        "file_c visible"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("v dir_2")),
+        "dir_2 expanded"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("> ")),
+        "no collapsed dirs"
     );
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_multi_worktree(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries_multiple_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/root1"),
-        json!({
-            "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
-                },
-                "file2.txt": ""
-            }
-        }),
-    )
-    .await;
-    fs.insert_tree(
-        path!("/root2"),
-        json!({
-            "dir2": {
-                "file3.txt": ""
-            },
-            "file4.txt": ""
-        }),
-    )
-    .await;
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
 
     let project = Project::test(
         fs.clone(),
-        [path!("/root1").as_ref(), path!("/root2").as_ref()],
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
         cx,
     )
     .await;
@@ -8115,66 +8399,197 @@ async fn test_collapse_all_for_root_multi_worktree(cx: &mut gpui::TestAppContext
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root1/dir1", cx);
-    toggle_expand_dir(&panel, "root1/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root2/dir2", cx);
-
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root1",
-            "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "          file2.txt",
-            "v root2",
-            "    v dir2  <== selected",
-            "          file3.txt",
-            "      file4.txt",
-        ],
-        "Initial state with directories expanded across worktrees"
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
     );
 
-    select_path(&panel, "root1", cx);
-    cx.run_until_parked();
-
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
     });
-    cx.run_until_parked();
-
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "> root1  <== selected",
-            "v root2",
-            "    v dir2",
-            "          file3.txt",
-            "      file4.txt",
-        ],
-        "With multiple worktrees, root1 should collapse completely (including itself)"
+            "v project_root_1",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
     );
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_noop_on_non_root(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries_via_window_dispatch(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_reveal_entries: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle(cx).focus(window, cx);
+    });
+    cx.dispatch_action(ExpandAllEntries);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root_1",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_expand_all_for_entry_single_worktree(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+
+    let root2_entry = find_project_entry(&panel, "project_root_2", cx).unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktree_id_for_entry(root2_entry, cx)
+            .unwrap();
+        panel.expand_all_for_entry(worktree_id, root2_entry, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> project_root_1",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_expand_all_entries_with_auto_fold(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
             "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
+                "empty1": {
+                    "empty2": {
+                        "empty3": {
+                            "file.txt": ""
+                        }
+                    }
                 },
-            },
-            "dir2": {
-                "file2.txt": ""
             }
         }),
     )
@@ -8187,45 +8602,41 @@ async fn test_collapse_all_for_root_noop_on_non_root(cx: &mut gpui::TestAppConte
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root/dir2", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
             "v root",
             "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "    v dir2  <== selected",
-            "          file2.txt",
+            "        v empty1",
+            "            v empty2",
+            "                v empty3",
+            "                      file.txt",
         ],
-        "Initial state with directories expanded"
-    );
-
-    select_path(&panel, "root/dir1", cx);
-    cx.run_until_parked();
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1  <== selected",
-            "        v subdir1",
-            "              file1.txt",
-            "    v dir2",
-            "          file2.txt",
-        ],
-        "collapse_all_for_root should be a no-op when called on a non-root directory"
+        "expand all should unfold auto-folded directories"
     );
 }
 
@@ -8450,6 +8861,104 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     assert!(
         fs.is_dir(Path::new("/root/new_dir_at_root")).await,
         "Directory should be created in the actual root directory"
+    );
+}
+
+#[gpui::test]
+async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    assert!(
+        visible_entries_as_strings(&panel, 0..20, cx).is_empty(),
+        "Empty worktree with hide_root=true should render no entries"
+    );
+
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.selection.is_none(),
+            "Project panel should start without a selection"
+        );
+        assert!(
+            panel.state.last_worktree_root_id.is_some(),
+            "Project panel should still track the hidden root entry"
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        let root_entry_id = panel
+            .state
+            .last_worktree_root_id
+            .expect("hidden root should be available for background context menu actions");
+        panel.deploy_context_menu(
+            gpui::point(gpui::px(1.), gpui::px(1.)),
+            root_entry_id,
+            window,
+            cx,
+        );
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.filename_editor.read(cx).is_focused(window),
+            "New File from the background context menu should open the filename editor"
+        );
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["  [EDITOR: '']  <== selected"],
+        "New file editor should appear at the hidden root level"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_file_from_context_menu.txt", window, cx)
+        });
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["  new_file_from_context_menu.txt  <== selected  <== marked"],
+        "Confirmed file should appear at the hidden root level"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/new_file_from_context_menu.txt"))
+            .await,
+        "File should be created in the empty root directory"
     );
 }
 
@@ -9556,7 +10065,7 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     );
 }
 
-fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
     let path = rel_path(path);
     panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
@@ -9578,7 +10087,11 @@ fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestCont
     cx.run_until_parked();
 }
 
-fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+pub(crate) fn select_path_with_mark(
+    panel: &Entity<ProjectPanel>,
+    path: &str,
+    cx: &mut VisualTestContext,
+) {
     let path = rel_path(path);
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
@@ -9666,7 +10179,7 @@ fn set_folded_active_ancestor(
     });
 }
 
-fn drag_selection_to(
+pub(crate) fn drag_selection_to(
     panel: &Entity<ProjectPanel>,
     target_path: &str,
     is_file: bool,
@@ -9691,7 +10204,49 @@ fn drag_selection_to(
     cx.executor().run_until_parked();
 }
 
-fn find_project_entry(
+/// Drags the entries at `source_paths` onto `target_path`. Paths are worktree
+/// root names optionally followed by a path inside the worktree, e.g. "root1"
+/// or "root1/dir/file.txt". The first source path is the active selection.
+pub(crate) fn drag_entries_onto(
+    panel: &Entity<ProjectPanel>,
+    source_paths: &[&str],
+    target_path: &str,
+    target_is_file: bool,
+    cx: &mut VisualTestContext,
+) {
+    let target_entry_id = find_project_entry(panel, target_path, cx)
+        .unwrap_or_else(|| panic!("no entry for target path {target_path:?}"));
+    let selections: Vec<SelectedEntry> = source_paths
+        .iter()
+        .map(|path| {
+            let entry_id = find_project_entry(panel, path, cx)
+                .unwrap_or_else(|| panic!("no entry for source path {path:?}"));
+            let worktree_id = panel
+                .update(cx, |panel, cx| {
+                    panel.project.read(cx).worktree_id_for_entry(entry_id, cx)
+                })
+                .unwrap_or_else(|| panic!("no worktree for source path {path:?}"));
+            SelectedEntry {
+                worktree_id,
+                entry_id,
+            }
+        })
+        .collect();
+    let active_selection = *selections
+        .first()
+        .expect("at least one source path is required");
+
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection,
+            marked_selections: Arc::from(selections),
+        };
+        panel.drag_onto(&drag, target_entry_id, target_is_file, window, cx);
+    });
+    cx.executor().run_until_parked();
+}
+
+pub(crate) fn find_project_entry(
     panel: &Entity<ProjectPanel>,
     path: &str,
     cx: &mut VisualTestContext,
@@ -10424,11 +10979,76 @@ async fn run_create_file_in_folded_path_case(
     }
 }
 
+#[gpui::test]
+async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.focus_follows_mouse = Some(settings::FocusFollowsMouse {
+                    enabled: Some(true),
+                    debounce_ms: Some(100),
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let worktree_id = workspace.worktrees(cx).next().unwrap().read(cx).id();
+            let project_path = ProjectPath {
+                worktree_id,
+                path: rel_path("a.txt").into(),
+            };
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Editor should be focused after opening a file"
+        );
+    });
+
+    // Hover over the blank space below the last entry in the project panel,
+    // which lives in the right dock by default.
+    cx.simulate_mouse_move(point(px(1800.), px(600.)), None, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused after hovering the blank area below the entries"
+        );
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         crate::init(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -10446,8 +11066,29 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let app_state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
+        crate::init(cx);
+        workspace::init(app_state, cx);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+            });
+        });
+    });
+}
+
+fn init_test_with_git_ui(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let app_state = AppState::test(cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+        git_ui::init(cx);
         crate::init(cx);
         workspace::init(app_state, cx);
 
@@ -10624,4 +11265,78 @@ impl Render for TestProjectItemView {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+#[gpui::test]
+async fn test_delete_prompt_escapes_markdown_in_file_name(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "__somefile__": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/__somefile__", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.delete(&Delete { skip_prompt: false }, window, cx)
+    });
+    let (message, _detail) = cx
+        .pending_prompt()
+        .expect("delete should show a confirmation prompt");
+
+    assert_eq!(
+        message,
+        "Are you sure you want to permanently delete `__somefile__`?"
+    );
+}
+
+#[gpui::test]
+async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "__init__.py": "modified contents",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("__init__.py", "original contents".into())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/__init__.py", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    let (message, _detail) = cx
+        .pending_prompt()
+        .expect("restore should show a confirmation prompt");
+
+    assert_eq!(message, "Discard changes to `__init__.py`?");
 }

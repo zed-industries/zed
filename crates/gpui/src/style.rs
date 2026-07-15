@@ -9,7 +9,7 @@ use crate::{
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, quad, rems, size,
+    point, px, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -351,6 +351,41 @@ pub struct BoxShadow {
     pub blur_radius: Pixels,
     /// How much should the shadow spread?
     pub spread_radius: Pixels,
+    /// Whether this is an inset shadow (drawn inside the element's bounds).
+    pub inset: bool,
+}
+
+impl BoxShadow {
+    /// Creates a new [`BoxShadow`] with the given offset and color, matching the order
+    /// of the CSS `box-shadow` property. Use the builder methods to set blur radius,
+    /// spread radius, and inset.
+    pub fn new(offset_x: Pixels, offset_y: Pixels, color: Hsla) -> Self {
+        Self {
+            color,
+            offset: point(offset_x, offset_y),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: false,
+        }
+    }
+
+    /// Sets the shadow blur radius.
+    pub fn blur_radius(mut self, blur_radius: Pixels) -> Self {
+        self.blur_radius = blur_radius;
+        self
+    }
+
+    /// Sets the shadow spread radius.
+    pub fn spread_radius(mut self, spread_radius: Pixels) -> Self {
+        self.spread_radius = spread_radius;
+        self
+    }
+
+    /// Marks the shadow as inset (drawn inside the element's bounds).
+    pub fn inset(mut self) -> Self {
+        self.inset = true;
+        self
+    }
 }
 
 /// How to handle whitespace in text
@@ -373,6 +408,10 @@ pub enum TextOverflow {
     /// displaying the provided string at the beginning (e.g., "…ong text here").
     /// Typically more adequate for file paths where the end is more important than the beginning.
     TruncateStart(SharedString),
+    /// Truncate the text in the middle when it doesn't fit, preserving both the start and end
+    /// of the string (e.g., "long fi…name.rs"). Useful for filenames where both the prefix
+    /// and the extension are important context.
+    TruncateMiddle(SharedString),
 }
 
 /// How to align text within the element
@@ -665,7 +704,7 @@ impl Style {
             .to_pixels(rem_size)
             .clamp_radii_for_quad_size(bounds.size);
 
-        window.paint_shadows(bounds, corner_radii, &self.box_shadow);
+        window.paint_drop_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some_and(|color| !color.is_transparent()) {
@@ -694,76 +733,22 @@ impl Style {
             ));
         }
 
+        window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
+
         continuation(window, cx);
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);
-            let max_border_width = border_widths.max();
-            let max_corner_radius = corner_radii.max();
-            let zero_size = Size {
-                width: Pixels::ZERO,
-                height: Pixels::ZERO,
-            };
-
-            let mut top_bounds = Bounds::from_corners(
-                bounds.origin,
-                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-            );
-            top_bounds.size = top_bounds.size.max(&zero_size);
-            let mut bottom_bounds = Bounds::from_corners(
-                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.bottom_right(),
-            );
-            bottom_bounds.size = bottom_bounds.size.max(&zero_size);
-            let mut left_bounds = Bounds::from_corners(
-                top_bounds.bottom_left(),
-                bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
-            );
-            left_bounds.size = left_bounds.size.max(&zero_size);
-            let mut right_bounds = Bounds::from_corners(
-                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.top_right(),
-            );
-            right_bounds.size = right_bounds.size.max(&zero_size);
-
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
-            let quad = quad(
+            window.paint_quad(quad(
                 bounds,
                 corner_radii,
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
-            );
-
-            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
-                window.paint_quad(quad.clone());
-            });
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: right_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: bottom_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: left_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad);
-                },
-            );
+            ));
         }
 
         #[cfg(debug_assertions)]

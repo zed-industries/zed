@@ -1,7 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Context, Corner, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
+    Anchor, App, Context, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
     prelude::*, px,
 };
 use gpui_platform::application;
@@ -59,7 +59,7 @@ impl HelloWorld {
                     // Now GPUI supports nested deferred!
                     deferred(
                         anchored()
-                            .anchor(Corner::TopLeft)
+                            .anchor(Anchor::TopLeft)
                             .snap_to_window_with_margin(px(8.))
                             .child(
                                 popover()
@@ -98,7 +98,7 @@ impl Render for HelloWorld {
                         button("popover0").child("Opened Popover").child(
                             deferred(
                                 anchored()
-                                    .anchor(Corner::TopLeft)
+                                    .anchor(Anchor::TopLeft)
                                     .snap_to_window_with_margin(px(8.))
                                     .child(popover().w_96().gap_3().child(
                                         "This is a default opened Popover, \
@@ -120,7 +120,7 @@ impl Render for HelloWorld {
                                 this.child(
                                     deferred(
                                         anchored()
-                                            .anchor(Corner::TopLeft)
+                                            .anchor(Anchor::TopLeft)
                                             .snap_to_window_with_margin(px(8.))
                                             .child(
                                                 popover()
