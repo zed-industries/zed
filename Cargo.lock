@@ -10584,6 +10584,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp_locations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "lsp",
+ "picker",
+ "picker_preview",
+ "project",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "lyon"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -23126,6 +23152,7 @@ dependencies = [
  "languages",
  "line_ending_selector",
  "log",
+ "lsp_locations",
  "markdown",
  "markdown_preview",
  "menu",
