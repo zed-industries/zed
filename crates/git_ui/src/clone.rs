@@ -14,6 +14,8 @@ pub fn clone_and_open(
         dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + Sync + 'static,
     >,
 ) {
+    let repo_url = SharedString::from(git::normalize_remote_url(&repo_url));
+
     let destination_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
         files: false,
         directories: true,

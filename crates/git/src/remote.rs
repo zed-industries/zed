@@ -30,6 +30,41 @@ impl FromStr for RemoteUrl {
     }
 }
 
+/// Normalize a user-entered Git remote URL. Recognizable bare `host/path` URLs
+/// are prefixed with `https://`, while URLs with a scheme, SCP-like remotes, and
+/// local paths are returned unchanged.
+pub fn normalize_remote_url(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.parse::<RemoteUrl>().is_ok() {
+        return trimmed.to_string();
+    }
+
+    if let Some((host, path)) = trimmed.split_once(':')
+        && !host.is_empty()
+        && !path.is_empty()
+        && !host.contains('/')
+        && !host.contains('\\')
+    {
+        return trimmed.to_string();
+    }
+
+    let Some((host, path)) = trimmed.split_once('/') else {
+        return trimmed.to_string();
+    };
+    let is_host = host.eq_ignore_ascii_case("localhost")
+        || host.contains('.') && host.split('.').all(|label| !label.is_empty());
+    if path.is_empty() || !is_host {
+        return trimmed.to_string();
+    }
+
+    let normalized = format!("https://{trimmed}");
+    if normalized.parse::<RemoteUrl>().is_ok() {
+        normalized
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -109,6 +144,55 @@ mod tests {
                 url.parse::<RemoteUrl>().is_err(),
                 "expected \"{url}\" to not parse as a Git remote URL",
             );
+        }
+    }
+
+    #[test]
+    fn test_normalize_remote_url() {
+        // Bare `host/path` URLs get `https://` prepended.
+        assert_eq!(
+            normalize_remote_url("github.com/octocat/zed"),
+            "https://github.com/octocat/zed",
+        );
+        assert_eq!(
+            normalize_remote_url("github.com/octocat/zed.git"),
+            "https://github.com/octocat/zed.git",
+        );
+
+        // Surrounding whitespace is trimmed before prefixing.
+        assert_eq!(
+            normalize_remote_url("  github.com/octocat/zed  "),
+            "https://github.com/octocat/zed",
+        );
+
+        // URLs that already have a scheme are left unchanged (modulo trim).
+        for url in [
+            "https://github.com/octocat/zed.git",
+            "http://github.com/octocat/zed.git",
+            "ssh://git@github.com/octocat/zed.git",
+            "file:///path/to/local/zed",
+        ] {
+            assert_eq!(normalize_remote_url(url), url);
+        }
+
+        // SCP-like remotes are left unchanged, with or without a username.
+        for url in [
+            "git@github.com:octocat/zed.git",
+            "github.com:octocat/zed.git",
+        ] {
+            assert_eq!(normalize_remote_url(url), url);
+        }
+
+        // Local clone sources are left unchanged.
+        for path in [
+            "/path/to/local/zed",
+            "./path/to/local/zed",
+            "../path/to/local/zed",
+            "path/to/local/zed",
+            r"C:\path\to\local\zed",
+            r"\\server\share\zed",
+        ] {
+            assert_eq!(normalize_remote_url(path), path);
         }
     }
 }
