@@ -36,8 +36,10 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::{Anchor, LayerShellNotSupportedError},
-    popup::PopupOptions, px, size,
+    WindowDecorations, WindowKind, WindowParams,
+    layer_shell::{Anchor, LayerShellNotSupportedError},
+    popup::PopupOptions,
+    px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -1802,6 +1804,8 @@ impl PlatformWindow for WaylandWindow {
             // on the next frame.
             state.surface.commit();
         }
+    }
+
     fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
         let state = self.borrow();
         match region {
