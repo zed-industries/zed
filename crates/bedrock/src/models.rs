@@ -1036,6 +1036,36 @@ mod tests {
     }
 
     #[test]
+    fn test_builtin_mantle_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            MantleModel::iter().filter(|model| !matches!(model, MantleModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate MantleModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate MantleModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
+    }
+
+    #[test]
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
             ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-east-1", false)?,
