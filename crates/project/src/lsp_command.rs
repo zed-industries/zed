@@ -19,7 +19,7 @@ use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings},
-    point_from_lsp, point_to_lsp,
+    lsp_to_symbol_kind, point_from_lsp, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
         serialize_anchor_range, serialize_version,
@@ -35,9 +35,7 @@ use lsp::{
 use serde_json::Value;
 
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
-use std::{
-    cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
-};
+use std::{cmp::Reverse, collections::hash_map, ops::Range, path::Path, str::FromStr, sync::Arc};
 use text::{BufferId, LineEnding};
 use util::rel_path::RelPath;
 use util::{ResultExt as _, debug_panic};
@@ -2035,7 +2033,7 @@ impl LspCommand for GetDocumentSymbols {
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {
                     name: lsp_symbol.name,
-                    kind: lsp_symbol.kind,
+                    kind: lsp_to_symbol_kind(lsp_symbol.kind),
                     range: range_from_lsp(lsp_symbol.location.range),
                     selection_range: range_from_lsp(lsp_symbol.location.range),
                     children: Vec::new(),
@@ -2045,7 +2043,7 @@ impl LspCommand for GetDocumentSymbols {
                 fn convert_symbol(lsp_symbol: lsp::DocumentSymbol) -> DocumentSymbol {
                     DocumentSymbol {
                         name: lsp_symbol.name,
-                        kind: lsp_symbol.kind,
+                        kind: lsp_to_symbol_kind(lsp_symbol.kind),
                         range: range_from_lsp(lsp_symbol.range),
                         selection_range: range_from_lsp(lsp_symbol.selection_range),
                         children: lsp_symbol
@@ -2097,7 +2095,7 @@ impl LspCommand for GetDocumentSymbols {
                 fn convert_symbol_to_proto(symbol: DocumentSymbol) -> proto::DocumentSymbol {
                     proto::DocumentSymbol {
                         name: symbol.name.clone(),
-                        kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
+                        kind: symbol.kind as i32,
                         start: Some(proto::PointUtf16 {
                             row: symbol.range.start.0.row,
                             column: symbol.range.start.0.column,
@@ -2140,8 +2138,7 @@ impl LspCommand for GetDocumentSymbols {
             fn deserialize_symbol_with_children(
                 serialized_symbol: proto::DocumentSymbol,
             ) -> Result<DocumentSymbol> {
-                let kind =
-                    unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
+                let kind = language::SymbolKind::from_proto(serialized_symbol.kind);
 
                 let start = serialized_symbol.start.context("invalid start")?;
                 let end = serialized_symbol.end.context("invalid end")?;

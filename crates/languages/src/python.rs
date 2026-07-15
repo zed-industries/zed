@@ -220,19 +220,19 @@ fn label_for_python_symbol(
 ) -> Option<language::CodeLabel> {
     let name = &symbol.name;
     let (text, filter_range, display_range) = match symbol.kind {
-        lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+        language::SymbolKind::Method | language::SymbolKind::Function => {
             let text = format!("def {}():\n", name);
             let filter_range = 4..4 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CLASS => {
+        language::SymbolKind::Class => {
             let text = format!("class {}:", name);
             let filter_range = 6..6 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CONSTANT => {
+        language::SymbolKind::Constant => {
             let text = format!("{} = 0", name);
             let filter_range = 0..name.len();
             let display_range = 0..filter_range.end;
