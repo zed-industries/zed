@@ -11,7 +11,7 @@ use std::sync::Arc;
 use ::lsp::LanguageServerName;
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
-use gpui::{App, Task};
+use gpui::{App, EntityId, Task};
 use language::LanguageName;
 use semver::Version;
 use task::{SpawnInTerminal, ZedDebugConfig};
@@ -33,6 +33,9 @@ pub fn init(cx: &mut App) {
 pub trait WorktreeDelegate: Send + Sync + 'static {
     fn id(&self) -> u64;
     fn root_path(&self) -> String;
+    fn language_server_status_source(&self) -> Option<EntityId> {
+        None
+    }
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn which(&self, binary_name: String) -> Option<String>;
     async fn shell_env(&self) -> Vec<(String, String)>;

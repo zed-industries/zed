@@ -495,9 +495,11 @@ impl ExtensionImports for WasmState {
             LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
-        self.host
-            .proxy
-            .update_language_server_status(::lsp::LanguageServerName(server_name.into()), status);
+        self.host.proxy.update_language_server_status(
+            self.language_server_status_source,
+            ::lsp::LanguageServerName(server_name.into()),
+            status,
+        );
 
         Ok(())
     }
