@@ -5,7 +5,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, relative,
 };
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
@@ -25,8 +25,9 @@ pub fn init(cx: &mut App) {
                     let project = workspace.project().clone();
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
-                        let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx)
+                        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+                        let preview = picker_preview::editor_preview(project, window, cx);
+                        Picker::uniform_list_with_preview(delegate, preview, window, cx)
                     })
                 },
             );
@@ -185,6 +186,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_match_index = ix;
+    }
+
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+        let candidate_id = self.matches.get(self.selected_match_index)?.candidate_id;
+        let symbol = self.symbols.get(candidate_id)?.clone();
+        Some(PreviewUpdate::from_symbol(symbol))
     }
 
     fn update_matches(

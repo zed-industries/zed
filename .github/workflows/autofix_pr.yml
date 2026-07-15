@@ -13,9 +13,14 @@ on:
         description: run_clippy
         type: boolean
         default: 'true'
+permissions:
+  contents: read
 jobs:
   run_autofix:
     runs-on: namespace-profile-16x32-ubuntu-2204
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       CC: clang
       CXX: clang++

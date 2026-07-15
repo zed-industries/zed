@@ -3,15 +3,15 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -19,9 +19,7 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
-use ui_input::InputField;
-use util::ResultExt;
+use ui::IconName;
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
@@ -222,43 +220,19 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.read(cx);
+        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+            state.api_key_state.has_key(),
+            state.api_key_state.is_from_env_var(),
+            state.api_key_state.env_var_name().clone(),
+            "https://console.mistral.ai/api-keys".into(),
+        )))
     }
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "https://console.mistral.ai/api-keys",
-                    "Paste your Mistral API key",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-        )
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 }
 
@@ -369,7 +343,10 @@ impl LanguageModel for MistralLanguageModel {
         >,
     > {
         let (request, affinity) =
-            into_mistral(request, self.model.clone(), self.max_output_tokens());
+            match into_mistral(request, self.model.clone(), self.max_output_tokens()) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
         let stream = self.stream_completion(request, affinity, cx);
 
         async move {
@@ -385,7 +362,11 @@ pub fn into_mistral(
     request: LanguageModelRequest,
     model: mistral::Model,
     max_output_tokens: Option<u64>,
-) -> (mistral::Request, Option<String>) {
+) -> Result<(mistral::Request, Option<String>)> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("Mistral does not support custom tools");
+    }
+
     let stream = true;
 
     let mut messages = Vec::new();
@@ -478,13 +459,15 @@ pub fn into_mistral(
                         MessageContent::Image(_) => {}
                         MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(tool_use) => {
+                            let input = tool_use.input.as_json().ok_or_else(|| {
+                                anyhow!("Mistral does not support custom tool calls")
+                            })?;
                             let tool_call = mistral::ToolCall {
                                 id: tool_use.id.to_string(),
                                 content: mistral::ToolCallContent::Function {
                                     function: mistral::FunctionContent {
                                         name: tool_use.name.to_string(),
-                                        arguments: serde_json::to_string(&tool_use.input)
-                                            .unwrap_or_default(),
+                                        arguments: serde_json::to_string(input).unwrap_or_default(),
                                     },
                                 },
                             };
@@ -542,7 +525,7 @@ pub fn into_mistral(
         }
     }
 
-    (
+    Ok((
         mistral::Request {
             model: model.id().to_string(),
             messages,
@@ -576,17 +559,28 @@ pub fn into_mistral(
             tools: request
                 .tools
                 .into_iter()
-                .map(|tool| mistral::ToolDefinition::Function {
-                    function: mistral::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
+                .map(|tool| {
+                    let input_schema = match tool.input {
+                        language_model::LanguageModelRequestToolInput::Function {
+                            input_schema,
+                            ..
+                        } => input_schema,
+                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                            return Err(anyhow::anyhow!("Mistral does not support custom tools"));
+                        }
+                    };
+                    Ok(mistral::ToolDefinition::Function {
+                        function: mistral::FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
         },
         request.thread_id,
-    )
+    ))
 }
 
 pub struct MistralEventMapper {
@@ -690,7 +684,7 @@ impl MistralEventMapper {
                                 id: entry.id.clone().into(),
                                 name: entry.name.as_str().into(),
                                 is_input_complete: false,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -747,7 +741,7 @@ impl MistralEventMapper {
                         id: tool_call.id.into(),
                         name: tool_call.name.into(),
                         is_input_complete: true,
-                        input,
+                        input: language_model::LanguageModelToolUseInput::Json(input),
                         raw_input: tool_call.arguments,
                         thought_signature: None,
                     },
@@ -772,145 +766,6 @@ struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
-}
-
-struct ConfigurationView {
-    api_key_editor: Entity<InputField>,
-    state: Entity<State>,
-    load_credentials_task: Option<Task<()>>,
-}
-
-impl ConfigurationView {
-    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor =
-            cx.new(|cx| InputField::new(window, cx, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
-
-        cx.observe(&state, |_, _, cx| {
-            cx.notify();
-        })
-        .detach();
-
-        let load_credentials_task = Some(cx.spawn_in(window, {
-            let state = state.clone();
-            async move |this, cx| {
-                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
-                    // We don't log an error, because "not signed in" is also an error.
-                    let _ = task.await;
-                }
-
-                this.update(cx, |this, cx| {
-                    this.load_credentials_task = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
-
-        Self {
-            api_key_editor,
-            state,
-            load_credentials_task,
-        }
-    }
-
-    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
-        if api_key.is_empty() {
-            return;
-        }
-
-        // url changes can cause the editor to be displayed again
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(None, cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn should_render_api_key_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
-    }
-}
-
-impl Render for ConfigurationView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
-        let configured_card_label = if env_var_set {
-            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-        } else {
-            let api_url = MistralLanguageModelProvider::api_url(cx);
-            if api_url == MISTRAL_API_URL {
-                "API key configured".to_string()
-            } else {
-                format!("API key configured for {}", api_url)
-            }
-        };
-
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_api_key_editor(cx) {
-            v_flex()
-                .size_full()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's agent with Mistral, you need to add an API key. Follow these steps:"))
-                .child(
-                    List::new()
-                        .child(
-                            ListBulletItem::new("")
-                                .child(Label::new("Create one by visiting"))
-                                .child(ButtonLink::new("Mistral's console", "https://console.mistral.ai/api-keys"))
-                        )
-                        .child(
-                            ListBulletItem::new("Ensure your Mistral account has credits")
-                        )
-                        .child(
-                            ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
-                        ),
-                )
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(
-                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small).color(Color::Muted),
-                )
-                .into_any()
-        } else {
-            v_flex()
-                .size_full()
-                .gap_1()
-                .child(
-                    ConfiguredApiCard::new(configured_card_label)
-                        .disabled(env_var_set)
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                        .when(env_var_set, |this| {
-                            this.tooltip_label(format!(
-                                "To reset your API key, \
-                                unset the {API_KEY_ENV_VAR_NAME} environment variable."
-                            ))
-                        }),
-                )
-                .into_any()
-        }
-    }
 }
 
 #[cfg(test)]
@@ -978,7 +833,10 @@ mod tests {
 
         assert_eq!(tool_use.id.to_string(), "real_id_123");
         assert_eq!(tool_use.name.as_ref(), "read_file");
-        assert_eq!(tool_use.input, serde_json::json!({"path": "a.txt"}));
+        assert_eq!(
+            tool_use.input,
+            language_model::LanguageModelToolUseInput::Json(serde_json::json!({"path": "a.txt"}))
+        );
     }
 
     #[test]
@@ -1019,7 +877,7 @@ mod tests {
         };
 
         let (mistral_request, affinity) =
-            into_mistral(request, mistral::Model::MistralSmallLatest, None);
+            into_mistral(request, mistral::Model::MistralSmallLatest, None).unwrap();
 
         assert_eq!(mistral_request.model, "mistral-small-latest");
         assert_eq!(mistral_request.temperature, Some(0.5));
@@ -1055,7 +913,8 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
+        let (mistral_request, _) =
+            into_mistral(request, mistral::Model::MistralSmallLatest, None).unwrap();
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(

@@ -111,6 +111,33 @@ pub enum HideMouseMode {
     OnTypingAndAction,
 }
 
+/// Determines whether to reduce non-essential motion in the UI, such as
+/// loading spinners and pulsating labels, by rendering them in a static state.
+///
+/// Default: off
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduceMotionMode {
+    /// Always reduce motion
+    On,
+    /// Never reduce motion
+    #[default]
+    Off,
+}
+
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
@@ -211,13 +238,16 @@ pub struct SettingsContent {
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
-    /// Configuration for the Message Editor
-    pub message_editor: Option<MessageEditorSettings>,
-
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+
+    /// Whether to reduce non-essential motion in the UI, such as loading
+    /// spinners and pulsating labels, by rendering them in a static state.
+    ///
+    /// Default: off
+    pub reduce_motion: Option<ReduceMotionMode>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
@@ -790,6 +820,7 @@ pub enum GitPanelGroupBy {
     None,
     #[default]
     Status,
+    Staging,
 }
 
 #[derive(
@@ -837,16 +868,6 @@ pub struct PanelSettingsContent {
     /// Default: 240
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct MessageEditorSettings {
-    /// Whether to automatically replace emoji shortcodes with emoji characters.
-    /// For example: typing `:wave:` gets replaced with `👋`.
-    ///
-    /// Default: false
-    pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
 #[with_fallible_options]

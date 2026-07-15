@@ -35,6 +35,8 @@ on:
         description: Git ref to checkout and deploy. Defaults to event SHA when omitted.
         type: string
         default: ''
+permissions:
+  contents: read
 jobs:
   deploy_docs:
     if: github.repository_owner == 'zed-industries'

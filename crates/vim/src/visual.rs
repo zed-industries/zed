@@ -695,8 +695,9 @@ impl Vim {
                 }
                 editor.delete_selections_with_linked_edits(window, cx);
 
-                // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, cx);
+                // Fixup cursor position after the deletion. Helix keeps the
+                // cursor on the trailing newline, so only clip in Vim modes.
+                editor.set_clip_at_line_ends(!vim.mode.is_helix(), cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head().to_point(map);
