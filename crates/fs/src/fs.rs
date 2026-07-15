@@ -2,7 +2,9 @@ pub mod fs_watcher;
 
 pub use fs_watcher::requires_poll_watcher;
 
+use futures::channel::oneshot::Canceled;
 use parking_lot::Mutex;
+use std::any::Any;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -230,6 +232,8 @@ pub enum TrashRestoreError {
     Collision { path: PathBuf },
     #[error("Unknown error ({description})")]
     Unknown { description: String },
+    #[error("Critical error while trashing.")]
+    Panicked(#[from] Panicked),
 }
 
 impl From<trash::Error> for TrashRestoreError {
@@ -1286,18 +1290,79 @@ impl Fs for RealFs {
         trashed_entry: TrashedEntry,
     ) -> std::result::Result<PathBuf, TrashRestoreError> {
         let restored_item_path = trashed_entry.original_parent.join(&trashed_entry.name);
-
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("restore trashed item".to_string())
-            .spawn(move || {
-                let res = trash::restore_all([trashed_entry.into_trash_item()]);
-                tx.send(res)
-            })
-            .expect("The OS can spawn a threads");
-        rx.await.expect("Restore all never panics")?;
+        spawn_blocking(|| trash::restore_all([trashed_entry.into_trash_item()])).await??;
         Ok(restored_item_path)
     }
+}
+
+#[pin_project::pin_project]
+struct JoinHandle<T> {
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+    #[pin]
+    rx: futures::channel::oneshot::Receiver<T>,
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("The blocking work panicked: {}", self.panick_payload_as_string())]
+pub struct Panicked(Mutex<Box<dyn Any + Send>>);
+
+impl Panicked {
+    fn panick_payload_as_string(&self) -> String {
+        // this is the only place we lock and the conversion to string is fast
+        let this = self.0.lock();
+        this.downcast_ref::<&str>()
+            .copied()
+            .or_else(|| this.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or_else(|| "Panick could not be printed as it was pre Rust2021")
+            .to_string()
+    }
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = Result<T, Panicked>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        use std::task::Poll;
+
+        let this = self.project();
+        match std::future::Future::poll(this.rx, cx) {
+            Poll::Ready(Err(Canceled)) => {}
+            Poll::Ready(Ok(res)) => return Poll::Ready(Ok(res)),
+            Poll::Pending => return Poll::Pending,
+        }
+
+        let thread_handle = this
+            .thread_handle
+            .take()
+            .expect("will never be called again once poll Ready");
+
+        // Join is not blocking, we know the thread has ended since sending
+        // is the last thing it does
+        debug_assert!(thread_handle.is_finished());
+        let panic = thread_handle
+            .join()
+            .expect_err("if recieving failed the thread must have panicked as sending is the last thing that happens and cannot panick");
+
+        Poll::Ready(Err(Panicked(Mutex::new(panic))))
+    }
+}
+
+#[track_caller]
+fn spawn_blocking<T: Send + 'static>(op: impl FnOnce() -> T + Send + 'static) -> JoinHandle<T> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let thread_handle = std::thread::Builder::new()
+        .name(format!("spawn_blocking_{}", std::panic::Location::caller()))
+        .spawn(move || {
+            let res = op();
+            let _ = tx.send(res); // JoinHandle dropped
+        })
+        .expect("The OS can spawn a threads")
+        .into();
+
+    JoinHandle { thread_handle, rx }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
