@@ -4501,7 +4501,9 @@ async fn test_diagnostic_summaries_cleared_on_buffer_close_without_workspace_dia
 
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.pull_diagnostics_for_buffer(buffer.clone(), cx).detach();
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
     });
     cx.executor().run_until_parked();
 
@@ -4609,7 +4611,9 @@ async fn test_diagnostic_summaries_retained_on_buffer_close_with_workspace_diagn
 
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.pull_diagnostics_for_buffer(buffer.clone(), cx).detach();
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
     });
     cx.executor().run_until_parked();
 
