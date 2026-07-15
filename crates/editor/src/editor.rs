@@ -98,8 +98,9 @@ pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -9770,7 +9771,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;

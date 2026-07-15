@@ -228,7 +228,7 @@ impl LocalSettingsPath {
 
     pub fn to_proto(&self) -> String {
         match self {
-            Self::InWorktree(path) => path.to_proto(),
+            Self::InWorktree(path) => path.as_unix_str().to_owned(),
             Self::OutsideWorktree(path) => path.to_string_lossy().to_string(),
         }
     }
@@ -237,7 +237,7 @@ impl LocalSettingsPath {
         if is_outside_worktree {
             Ok(Self::OutsideWorktree(PathBuf::from(path).into()))
         } else {
-            Ok(Self::InWorktree(RelPath::from_proto(path)?))
+            Ok(Self::InWorktree(RelPath::from_unix_str(path)?.into()))
         }
     }
 }
@@ -1048,7 +1048,7 @@ impl SettingsStore {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
-                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -1058,7 +1058,7 @@ impl SettingsStore {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
                     path: directory_path
-                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .join(RelPath::from_unix_str(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -1085,7 +1085,9 @@ impl SettingsStore {
                     ParseStatus::Success => Ok(()),
                     ParseStatus::Unchanged => Ok(()),
                     ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
-                        path: directory_path.join(local_settings_file_relative_path()),
+                        path: directory_path
+                            .join(local_settings_file_relative_path())
+                            .into(),
                         message: error,
                     }),
                 }?;
@@ -2772,23 +2774,17 @@ mod tests {
 
         let local_1_child = (
             WorktreeId::from_usize(0),
-            RelPath::new(
-                std::path::Path::new("child1"),
-                util::paths::PathStyle::Posix,
-            )
-            .unwrap()
-            .into_arc(),
+            RelPath::new(std::path::Path::new("child1"), util::paths::PathStyle::Unix)
+                .unwrap()
+                .into_arc(),
         );
 
         let local_2 = (WorktreeId::from_usize(1), RelPath::empty_arc());
         let local_2_child = (
             WorktreeId::from_usize(1),
-            RelPath::new(
-                std::path::Path::new("child2"),
-                util::paths::PathStyle::Posix,
-            )
-            .unwrap()
-            .into_arc(),
+            RelPath::new(std::path::Path::new("child2"), util::paths::PathStyle::Unix)
+                .unwrap()
+                .into_arc(),
         );
 
         fn get(content: &SettingsContent) -> Option<&u32> {

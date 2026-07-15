@@ -625,7 +625,9 @@ impl TypeScriptLspAdapter {
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(
+                RelPath::from_unix_str(".yarn/sdks/typescript/lib/typescript.js").unwrap(),
+            )
             .await
             .is_ok();
 
