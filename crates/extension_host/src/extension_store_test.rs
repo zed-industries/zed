@@ -768,6 +768,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let lsp_store_id = project.read_with(cx, |project, _| project.lsp_store().entity_id());
     language_extension::init(
         LspAccess::ViaLspStore(
             project
@@ -779,7 +780,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
     let node_runtime = NodeRuntime::unavailable();
 
-    let mut status_updates = language_registry.language_server_binary_statuses();
+    let (mut status_updates, _status_updates_subscription) =
+        language_registry.language_server_binary_statuses();
 
     struct FakeLanguageServerVersion {
         version: String,
@@ -1035,18 +1037,25 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ],
         [
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::Starting
             ),
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::CheckingForUpdate
             ),
             (
+                Some(lsp_store_id),
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::Downloading
             ),
-            (LanguageServerName::new_static("gleam"), BinaryStatus::None)
+            (
+                Some(lsp_store_id),
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::None
+            )
         ]
     );
 
