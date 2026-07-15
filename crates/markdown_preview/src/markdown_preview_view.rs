@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
+use editor::{
+    Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
+};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
@@ -25,7 +27,7 @@ use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
+use ui::{ContextMenu, ScrollAxes, Scrollbars, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
 use workspace::notifications::NotifyResultExt;
@@ -1364,7 +1366,13 @@ impl Render for MarkdownPreviewView {
                         }),
                 ),
             )
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+            .custom_scrollbars(
+                Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                    .show_along(ScrollAxes::Vertical)
+                    .tracked_scroll_handle(&self.scroll_handle),
+                window,
+                cx,
+            )
     }
 }
 
