@@ -2795,6 +2795,17 @@ impl Window {
         self.capslock
     }
 
+    pub(crate) fn schedule_pending_platform_frame(&self) {
+        // A clean window may still have a scene to present or callbacks that
+        // were queued while its previous frame was running.
+        if self.invalidator.is_dirty()
+            || self.needs_present.get()
+            || !self.next_frame_callbacks.borrow().is_empty()
+        {
+            self.platform_window.schedule_frame();
+        }
+    }
+
     fn complete_frame(&self, request_next_frame: bool) {
         self.platform_window.completed_frame(request_next_frame);
     }
@@ -6618,7 +6629,7 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        AppContext as _, Bounds, Context, Empty, FocusHandle, InteractiveElement as _, IntoElement,
         ParentElement, Pixels, Render, Styled, TestAppContext, Window, WindowOptions, canvas, div,
         px, size,
     };
@@ -6702,6 +6713,50 @@ mod tests {
                 root
             }
         }
+    }
+
+    #[gpui::test]
+    fn parked_window_wakes_for_pending_work(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        cx.update_window(window.into(), |_, _, _| {}).unwrap();
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx)
+        })
+            .unwrap();
+        assert!(test_window.frame_scheduled());
+        assert!(test_window.simulate_scheduled_frame());
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        assert!(test_window.frame_scheduled());
+    }
+
+    #[gpui::test]
+    fn callback_queued_during_a_frame_requests_a_follow_up(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+        assert!(test_window.simulate_scheduled_frame());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update_window(window.into(), |_, window, _| {
+            window.active.set(true);
+            let callback_ran = callback_ran.clone();
+            window.on_next_frame(move |window, _| {
+                window.on_next_frame(move |_, _| callback_ran.set(true));
+            });
+        })
+        .unwrap();
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!callback_ran.get());
+        assert!(test_window.frame_scheduled());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(callback_ran.get());
     }
 
     #[test]
