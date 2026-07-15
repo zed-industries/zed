@@ -497,6 +497,27 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
     }
 }
 
+fn active_pane_modifiers_overlay(pane_focused: bool, cx: &App) -> Option<Div> {
+    let modifiers = WorkspaceSettings::get_global(cx).active_pane_modifiers;
+
+    if pane_focused {
+        let border = modifiers
+            .border_size
+            .and_then(|border_size| (border_size > 0.).then_some(border_size))?;
+        return Some(
+            div()
+                .absolute()
+                .size_full()
+                .left_0()
+                .top_0()
+                .border(px(border))
+                .border_color(cx.theme().colors().border_selected),
+        );
+    }
+
+    None
+}
+
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
@@ -565,6 +586,8 @@ impl Member {
 
                 let decoration = render_cx.decorate(pane, cx);
                 let is_active = pane.focus_handle(cx).contains_focused(window, cx);
+                let pane_modifiers_overlay =
+                    (basis == 0).then(|| active_pane_modifiers_overlay(is_active, cx));
 
                 let pane = div()
                     .relative()
@@ -591,7 +614,8 @@ impl Member {
                                 .border_color(color),
                         )
                     })
-                    .children(decoration.status_box);
+                    .children(decoration.status_box)
+                    .children(pane_modifiers_overlay.flatten());
 
                 PaneRenderResult {
                     element: div()
