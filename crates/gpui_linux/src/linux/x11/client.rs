@@ -36,7 +36,7 @@ use x11rb::{
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
-use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
+use xim::{AttributeName, Client, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
 
@@ -688,10 +688,24 @@ impl X11Client {
                     continue;
                 };
                 let xim_connected = xim_handler.connected;
+                log::trace!(
+                    "XIM event: connected={xim_connected}, im_id={}, ic_id={}, window={}",
+                    xim_handler.im_id,
+                    xim_handler.ic_id,
+                    xim_handler.window
+                );
                 drop(state);
 
                 let xim_filtered = ximc.filter_event(&event, &mut xim_handler);
                 let xim_callback_event = xim_handler.last_callback_event.take();
+                let xim_connected_after = xim_handler.connected;
+                if xim_connected_after != xim_connected {
+                    log::info!(
+                        "XIM event: connected changed {xim_connected} -> {xim_connected_after}, im_id={}, ic_id={}",
+                        xim_handler.im_id,
+                        xim_handler.ic_id
+                    );
+                }
 
                 let mut state = self.0.borrow_mut();
                 state.restore_xim(ximc, xim_handler);
@@ -709,15 +723,21 @@ impl X11Client {
                         if xim_connected {
                             self.xim_handle_event(event);
                         } else {
+                            log::trace!(
+                                "XIM not connected, routing event directly (bypassing IME)"
+                            );
                             self.handle_event(event);
                         }
                     }
                     Err(err) => {
                         // The XIM server (e.g. Fcitx) can return a bad reply after a crash or restart.
+                        // Reconnect opens a fresh XIM client; the async handshake
+                        // (handle_connect → handle_open → handle_create_ic) runs
+                        // on subsequent filter_event() calls and automatically
+                        // creates the input context, so we must NOT call enable_ime()
+                        // here — the handler's im_id is not yet set.
                         log::warn!("XIMClientError: {err}");
-                        if self.reconnect_xim_after_protocol_error() {
-                            self.enable_ime();
-                        } else {
+                        if !self.reconnect_xim_after_protocol_error() {
                             log::warn!(
                                 "IME input unavailable after XIM protocol error; refocus the window or restart Zed to retry"
                             );
@@ -793,9 +813,25 @@ impl X11Client {
         let Some((mut ximc, xim_handler)) = state.take_xim() else {
             return;
         };
+        log::trace!(
+            "enable_ime: im_id={}, ic_id={}, connected={}, handler_window={}",
+            xim_handler.im_id,
+            xim_handler.ic_id,
+            xim_handler.connected,
+            xim_handler.window
+        );
+
+        if !xim_handler.connected {
+            // The async XIM handshake (handle_connect → handle_open → handle_create_ic)
+            // hasn't completed yet. The handler will automatically create the IC with the
+            // correct im_id once the handshake finishes. Creating an IC now would use an
+            // uninitialized im_id and leave orphan ICs on the XIM server.
+            state.restore_xim(ximc, xim_handler);
+            return;
+        }
+
         let mut ic_attributes = ximc
             .build_ic_attributes()
-            .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
@@ -822,8 +858,18 @@ impl X11Client {
                     });
             }
         }
-        ximc.create_ic(xim_handler.im_id, ic_attributes.build())
-            .ok();
+        match ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes.build()) {
+            Ok(_) => log::trace!(
+                "enable_ime: set_ic_values succeeded for im_id={}, ic_id={}",
+                xim_handler.im_id,
+                xim_handler.ic_id
+            ),
+            Err(err) => log::warn!(
+                "enable_ime: set_ic_values failed for im_id={}, ic_id={}: {err}",
+                xim_handler.im_id,
+                xim_handler.ic_id
+            ),
+        }
         let mut state = self.0.borrow_mut();
         state.restore_xim(ximc, xim_handler);
     }
@@ -1032,6 +1078,10 @@ impl X11Client {
                 if let Some(handler) = state.xim_handler.as_mut() {
                     handler.window = event.event;
                 }
+                let xim_state = state.xim_handler.as_ref().map(|h| {
+                    format!("im_id={}, ic_id={}, connected={}", h.im_id, h.ic_id, h.connected)
+                }).unwrap_or_else(|| "no handler".to_string());
+                log::info!("FocusIn: window={}, XIM state: [{xim_state}]", event.event);
                 drop(state);
                 self.enable_ime();
             }
@@ -1043,6 +1093,7 @@ impl X11Client {
                 reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.keyboard_focused_window = None;
                 state.reset_xim_reconnect_state();
+                log::info!("FocusOut: window={}, XIM reconnect state reset", event.event);
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
@@ -1952,6 +2003,7 @@ impl X11ClientState {
         let Some(ximc) =
             X11rbClient::init(Rc::clone(&self.xcb_connection), self.x_root_index, None).ok()
         else {
+            log::warn!("open_xim_connection: X11rbClient::init failed");
             return false;
         };
 
@@ -1959,6 +2011,10 @@ impl X11ClientState {
         if let Some(window) = self.keyboard_focused_window {
             xim_handler.window = window;
         }
+        log::info!(
+            "open_xim_connection: X11rbClient created, handler window={}, connected=false (async handshake pending)",
+            xim_handler.window
+        );
 
         self.ximc = Some(ximc);
         self.xim_handler = Some(xim_handler);
