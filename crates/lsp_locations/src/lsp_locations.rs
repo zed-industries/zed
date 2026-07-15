@@ -310,7 +310,7 @@ impl LspLocationsPicker {
         cx: &mut Context<Self>,
     ) -> Self {
         let preview = picker_preview::editor_preview(project.clone(), window, cx);
-        let delegate = LspLocationsDelegate::new(kind, matches, project.clone(), editor);
+        let delegate = LspLocationsDelegate::new(kind, matches, project, editor);
         let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
