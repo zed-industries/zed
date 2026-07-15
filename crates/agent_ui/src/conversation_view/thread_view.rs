@@ -6906,6 +6906,10 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.message_editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+
         self.list_state.scroll_by(-window.line_height() * 3.);
         cx.notify();
     }
@@ -6916,6 +6920,10 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.message_editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+
         self.list_state.scroll_by(window.line_height() * 3.);
         cx.notify();
     }
@@ -12341,9 +12349,131 @@ mod tests {
     use super::*;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::path::Path;
+    use std::{path::Path, rc::Rc};
     use util::path;
     use workspace::MultiWorkspace;
+
+    async fn setup_thread_view(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<ThreadView>, &mut gpui::VisualTestContext) {
+        crate::test_support::init_test(cx);
+        cx.update(|cx| {
+            ThreadMetadataStore::init_global(cx);
+            prompt_store::init(cx);
+        });
+
+        let file_system = FakeFs::new(cx.executor());
+        let project = Project::test(file_system, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(crate::test_support::StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let thread_view = conversation_view.read_with(cx, |view, _| {
+            view.active_thread()
+                .expect("thread should be connected")
+                .clone()
+        });
+        (thread_view, cx)
+    }
+
+    fn test_list_state(scroll_top: ListOffset) -> ListState {
+        let list_state =
+            ListState::new(20, gpui::ListAlignment::Top, px(0.)).with_uniform_item_height(px(20.));
+        list_state.scroll_to(scroll_top);
+        list_state
+    }
+
+    fn assert_scroll_top_eq(actual: ListOffset, expected: ListOffset) {
+        assert_eq!(actual.item_ix, expected.item_ix);
+        assert_eq!(actual.offset_in_item, expected.offset_in_item);
+    }
+
+    #[gpui::test]
+    async fn test_scroll_output_lines_ignore_focused_message_editor(cx: &mut gpui::TestAppContext) {
+        let (thread_view, cx) = setup_thread_view(cx).await;
+        let message_editor = thread_view.read_with(cx, |view, _| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first\nsecond\nthird", window, cx);
+            editor.set_cursor_offset(0, window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.update(|window, cx| {
+            assert!(message_editor.focus_handle(cx).is_focused(window));
+        });
+
+        let initial_scroll_top = ListOffset {
+            item_ix: 5,
+            offset_in_item: px(7.),
+        };
+        thread_view.update_in(cx, |view, window, cx| {
+            view.list_state = test_list_state(initial_scroll_top);
+            view.scroll_output_line_up(&ScrollOutputLineUp, window, cx);
+            assert_scroll_top_eq(view.list_state.logical_scroll_top(), initial_scroll_top);
+        });
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            let cursor_offset = editor.text(cx).len();
+            editor.set_cursor_offset(cursor_offset, window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            view.list_state = test_list_state(initial_scroll_top);
+            view.scroll_output_line_down(&ScrollOutputLineDown, window, cx);
+            assert_scroll_top_eq(view.list_state.logical_scroll_top(), initial_scroll_top);
+        });
+
+        let thread_focus = thread_view.read_with(cx, |view, _| view.focus_handle.clone());
+        cx.update(|window, cx| thread_focus.focus(window, cx));
+        cx.update(|window, cx| {
+            assert!(!message_editor.focus_handle(cx).is_focused(window));
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            let expected = test_list_state(initial_scroll_top);
+            expected.scroll_by(-window.line_height() * 3.);
+            view.list_state = test_list_state(initial_scroll_top);
+            view.scroll_output_line_up(&ScrollOutputLineUp, window, cx);
+            assert_scroll_top_eq(
+                view.list_state.logical_scroll_top(),
+                expected.logical_scroll_top(),
+            );
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            let expected = test_list_state(initial_scroll_top);
+            expected.scroll_by(window.line_height() * 3.);
+            view.list_state = test_list_state(initial_scroll_top);
+            view.scroll_output_line_down(&ScrollOutputLineDown, window, cx);
+            assert_scroll_top_eq(
+                view.list_state.logical_scroll_top(),
+                expected.logical_scroll_top(),
+            );
+        });
+    }
 
     fn native_command(name: &str) -> acp::AvailableCommand {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
