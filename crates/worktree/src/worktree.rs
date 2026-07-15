@@ -498,7 +498,9 @@ impl Worktree {
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
-                        .map_or(RelPath::empty_arc(), |f| RelPath::unix(f).unwrap().into()),
+                        .map_or(RelPath::empty_arc(), |f| {
+                            RelPath::from_unix_str(f).unwrap().into()
+                        }),
                     abs_path.clone(),
                     PathStyle::local(),
                 ),
@@ -541,7 +543,7 @@ impl Worktree {
                 } else {
                     if let Some(file_name) = abs_path.file_name()
                         && let Some(file_name) = file_name.to_str()
-                        && let Ok(path) = RelPath::unix(file_name)
+                        && let Ok(path) = RelPath::from_unix_str(file_name)
                     {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                         entry.is_hidden = settings.is_path_hidden(path);
@@ -586,7 +588,8 @@ impl Worktree {
         cx.new(|cx: &mut Context<Self>| {
             let mut snapshot = Snapshot::new(
                 WorktreeId::from_proto(worktree.id),
-                RelPath::from_proto(&worktree.root_name).unwrap_or_else(|_| RelPath::empty_arc()),
+                RelPath::from_unix_str(&worktree.root_name)
+                    .map_or_else(|_| RelPath::empty_arc(), Into::into),
                 Path::new(&worktree.abs_path).into(),
                 path_style,
             );
@@ -681,9 +684,11 @@ impl Worktree {
                                 for entry in &update.updated_entries {
                                     // Remote updates don't distinguish creation from
                                     // modification, so report `AddedOrUpdated`.
-                                    if let Some(path) = RelPath::from_proto(&entry.path).log_err() {
+                                    if let Some(path) =
+                                        RelPath::from_unix_str(&entry.path).log_err()
+                                    {
                                         changed_entries.push((
-                                            path,
+                                            path.into(),
                                             ProjectEntryId::from_proto(entry.id),
                                             PathChange::AddedOrUpdated,
                                         ));
@@ -792,7 +797,7 @@ impl Worktree {
     pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
         proto::WorktreeMetadata {
             id: self.id().to_proto(),
-            root_name: self.root_name().to_proto(),
+            root_name: self.root_name().as_unix_str().to_owned(),
             visible: self.is_visible(),
             abs_path: self.abs_path().to_string_lossy().into_owned(),
             root_repo_common_dir: self
@@ -931,7 +936,7 @@ impl Worktree {
                 let request = this.client.request(proto::CreateProjectEntry {
                     worktree_id: worktree_id.to_proto(),
                     project_id,
-                    path: path.as_ref().to_proto(),
+                    path: path.as_ref().as_unix_str().to_owned(),
                     content,
                     is_directory,
                 });
@@ -1094,9 +1099,11 @@ impl Worktree {
             anyhow::Ok((
                 this.scan_id(),
                 this.create_entry(
-                    RelPath::from_proto(&request.path).with_context(|| {
-                        format!("received invalid relative path {:?}", request.path)
-                    })?,
+                    RelPath::from_unix_str(&request.path)
+                        .with_context(|| {
+                            format!("received invalid relative path {:?}", request.path)
+                        })?
+                        .into(),
                     request.is_directory,
                     request.content,
                     cx,
@@ -1696,7 +1703,7 @@ impl LocalWorktree {
                     let refresh_full_path = lowest_ancestor.join(refresh_path);
 
                     refreshes.push(this.as_local_mut().unwrap().refresh_entry(
-                        refresh_full_path,
+                        refresh_full_path.into(),
                         None,
                         cx,
                     ));
@@ -2159,7 +2166,9 @@ impl LocalWorktree {
             .as_path()
             .file_name()
             .and_then(|f| f.to_str())
-            .map_or(RelPath::empty_arc(), |f| RelPath::unix(f).unwrap().into());
+            .map_or(RelPath::empty_arc(), |f| {
+                RelPath::from_unix_str(f).unwrap().into()
+            });
         self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
     }
@@ -2372,7 +2381,7 @@ impl RemoteWorktree {
                 let Some(filename) = root_path_to_copy
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .and_then(|filename| RelPath::unix(filename).ok())
+                    .and_then(|filename| RelPath::from_unix_str(filename).ok())
                 else {
                     continue;
                 };
@@ -2401,7 +2410,7 @@ impl RemoteWorktree {
                     requests.push(proto::CreateProjectEntry {
                         project_id,
                         worktree_id,
-                        path: target_path.to_proto(),
+                        path: target_path.as_unix_str().to_owned(),
                         is_directory,
                         content,
                     });
@@ -2490,7 +2499,7 @@ impl Snapshot {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_string_lossy().into_owned(),
-            root_name: self.root_name().to_proto(),
+            root_name: self.root_name().as_unix_str().to_owned(),
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -2596,10 +2605,10 @@ impl Snapshot {
             update.updated_entries.len(),
             update.removed_entries.len()
         );
-        if let Some(root_name) = RelPath::from_proto(&update.root_name).log_err() {
+        if let Some(root_name) = RelPath::from_unix_str(&update.root_name).log_err() {
             self.update_abs_path(
                 SanitizedPath::new_arc(&Path::new(&update.abs_path)),
-                root_name,
+                root_name.into(),
             );
         }
 
@@ -2808,6 +2817,17 @@ impl Snapshot {
         })
     }
 
+    /// Whether `path` is gitignored, or lies inside a gitignored directory.
+    ///
+    /// The contents of ignored directories aren't scanned until explicitly
+    /// expanded, so when `path` has no entry this falls back to the ignore
+    /// status of its nearest scanned ancestor.
+    pub fn is_path_ignored(&self, path: &RelPath) -> bool {
+        path.ancestors()
+            .find_map(|ancestor| self.entry_for_path(ancestor))
+            .is_some_and(|entry| entry.is_ignored)
+    }
+
     /// Resolves a path to an executable using the following heuristics:
     ///
     /// 1. If the path starts with `~`, it is expanded to the user's home directory.
@@ -2883,7 +2903,7 @@ impl LocalSnapshot {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_string_lossy().into_owned(),
-            root_name: self.root_name().to_proto(),
+            root_name: self.root_name().as_unix_str().to_owned(),
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -3090,7 +3110,7 @@ impl LocalSnapshot {
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
                 assert!(
                     self.entry_for_path(
-                        &ignore_parent_path.join(RelPath::unix(GITIGNORE).unwrap())
+                        &ignore_parent_path.join(RelPath::from_unix_str(GITIGNORE).unwrap())
                     )
                     .is_some()
                 );
@@ -3682,7 +3702,7 @@ impl language::File for File {
         rpc::proto::File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
-            path: self.path.as_ref().to_proto(),
+            path: self.path.as_ref().as_unix_str().to_owned(),
             mtime: self.disk_state.mtime().map(|time| time.into()),
             is_deleted: self.disk_state.is_deleted(),
             is_historic: matches!(self.disk_state, DiskState::Historic { .. }),
@@ -3767,7 +3787,9 @@ impl File {
 
         Ok(Self {
             worktree,
-            path: RelPath::from_proto(&proto.path).context("invalid path in file protobuf")?,
+            path: RelPath::from_unix_str(&proto.path)
+                .context("invalid path in file protobuf")?
+                .into(),
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
@@ -5141,10 +5163,11 @@ impl BackgroundScanner {
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
-                .and_then(|name| Some(job.path.join(RelPath::unix(name).ok()?)))
+                .and_then(|name| Some(job.path.join(RelPath::from_unix_str(name).ok()?)))
             else {
                 continue;
             };
+            let child_path: Arc<RelPath> = child_path.into();
 
             if self.track_git_repositories {
                 if child_name == DOT_GIT {
@@ -5284,7 +5307,7 @@ impl BackgroundScanner {
             {
                 let relative_path = job
                     .path
-                    .join(RelPath::unix(child_name.to_str().unwrap()).unwrap());
+                    .join(RelPath::from_unix_str(child_name.to_str().unwrap()).unwrap());
                 if self.is_path_private(&relative_path) {
                     log::debug!("detected private file: {relative_path:?}");
                     child_entry.is_private = true;
@@ -5666,7 +5689,8 @@ impl BackgroundScanner {
                             }
                         }
 
-                        let ignore_path = parent_path.join(RelPath::unix(GITIGNORE).unwrap());
+                        let ignore_path =
+                            parent_path.join(RelPath::from_unix_str(GITIGNORE).unwrap());
                         if snapshot.snapshot.entry_for_path(&ignore_path).is_none() {
                             return false;
                         }
@@ -5893,7 +5917,9 @@ impl BackgroundScanner {
                     .entry_for_id(work_directory_id)
                     .is_some_and(|entry| {
                         snapshot
-                            .entry_for_path(&entry.path.join(RelPath::unix(DOT_GIT).unwrap()))
+                            .entry_for_path(
+                                &entry.path.join(RelPath::from_unix_str(DOT_GIT).unwrap()),
+                            )
                             .is_some()
                     });
 
@@ -6273,7 +6299,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
             // Check if condition is already met before waiting for events
             let file_exists = || {
                 tree.read_with(cx, |tree, _| {
-                    tree.entry_for_path(RelPath::unix(file_name).unwrap())
+                    tree.entry_for_path(RelPath::from_unix_str(file_name).unwrap())
                         .is_some()
                 })
             };
@@ -6293,7 +6319,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
             // Check if condition is already met before waiting for events
             let file_gone = || {
                 tree.read_with(cx, |tree, _| {
-                    tree.entry_for_path(RelPath::unix(file_name).unwrap())
+                    tree.entry_for_path(RelPath::from_unix_str(file_name).unwrap())
                         .is_none()
                 })
             };
@@ -6660,7 +6686,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.as_ref().to_proto(),
+            path: entry.path.as_ref().as_unix_str().to_owned(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
@@ -6688,14 +6714,14 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
             EntryKind::File
         };
 
-        let path =
-            RelPath::from_proto(&entry.path).context("invalid relative path in proto message")?;
+        let path = RelPath::from_unix_str(&entry.path)
+            .context("invalid relative path in proto message")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         let is_always_included = always_included.is_match(&path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
-            path,
+            path: path.into(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
