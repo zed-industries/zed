@@ -240,6 +240,7 @@ pub fn serialize_diagnostics<'a>(
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
             data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
+            rendered: entry.diagnostic.rendered.clone(),
             registration_id: entry
                 .diagnostic
                 .registration_id
@@ -473,6 +474,7 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::SourceKind::Other => DiagnosticSourceKind::Other,
                     },
                     data,
+                    rendered: diagnostic.rendered,
                 },
             })
         })

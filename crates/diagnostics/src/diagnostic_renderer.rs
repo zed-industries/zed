@@ -56,7 +56,12 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: primary.diagnostic.message.clone().into(),
+                    copy_message: primary
+                        .diagnostic
+                        .rendered
+                        .clone()
+                        .unwrap_or_else(|| primary.diagnostic.message.clone())
+                        .into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -73,7 +78,12 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: entry.diagnostic.message.clone().into(),
+                    copy_message: entry
+                        .diagnostic
+                        .rendered
+                        .clone()
+                        .unwrap_or_else(|| entry.diagnostic.message.clone())
+                        .into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -92,6 +102,20 @@ impl DiagnosticRenderer {
         } else {
             markdown.push_str(&Markdown::escape(&diagnostic.message));
         };
+
+        // When the language server provides a verbose pre-rendered diagnostic
+        // (e.g. rust-analyzer's `rendered` field with full ascii-art spans and
+        // trait-bound details), append it inline as a fenced code block so users
+        // see the full error in the project diagnostics view without having to
+        // open a separate buffer.
+        if let Some(rendered) = diagnostic.rendered.as_ref().filter(|s| !s.is_empty()) {
+            markdown.push_str("\n\n```\n");
+            markdown.push_str(rendered);
+            if !rendered.ends_with('\n') {
+                markdown.push('\n');
+            }
+            markdown.push_str("```");
+        }
         markdown
     }
 }
