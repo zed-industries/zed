@@ -9755,7 +9755,6 @@ dependencies = [
  "gpui_shared_string",
  "gpui_util",
  "log",
- "lsp-types",
  "parking_lot",
  "path",
  "regex",
