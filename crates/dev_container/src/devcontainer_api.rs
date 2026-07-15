@@ -278,16 +278,32 @@ pub async fn start_dev_container_with_config(
             ..
         }) => {
             let project_name =
-                match read_devcontainer_configuration(actual_config, &context, environment).await {
+                match read_devcontainer_configuration(actual_config.clone(), &context, environment)
+                    .await
+                {
                     Ok(DevContainer {
                         name: Some(name), ..
                     }) => name,
                     _ => get_backup_project_name(&remote_workspace_folder, &container_id),
                 };
 
+            // Derive the same `devcontainer.local_folder`/`devcontainer.config_file`
+            // values Zed stamps as container labels (see
+            // `DevContainerManifest::identifying_labels`). These are stable per
+            // dev container and let us key the connection's identity on the
+            // project rather than the ephemeral `container_id`.
+            let local_folder = context.project_directory.display().to_string();
+            let config_file = context
+                .project_directory
+                .join(&actual_config.config_path)
+                .display()
+                .to_string();
+
             let connection = DevContainerConnection {
                 name: project_name,
                 container_id,
+                local_folder,
+                config_file,
                 use_podman: context.use_podman,
                 remote_user,
                 extension_ids,

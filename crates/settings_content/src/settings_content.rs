@@ -1272,6 +1272,14 @@ pub struct DevContainerConnection {
     pub name: String,
     pub remote_user: String,
     pub container_id: String,
+    /// The host project folder (`devcontainer.local_folder` label) and config
+    /// file (`devcontainer.config_file` label) that uniquely and stably
+    /// identify this dev container across rebuilds (unlike `container_id`,
+    /// which is regenerated every time the container is (re)created).
+    #[serde(default)]
+    pub local_folder: String,
+    #[serde(default)]
+    pub config_file: String,
     pub use_podman: bool,
     pub extension_ids: Vec<String>,
     pub remote_env: BTreeMap<String, String>,

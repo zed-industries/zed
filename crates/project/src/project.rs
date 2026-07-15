@@ -109,7 +109,10 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions, same_remote_connection_identity};
+use remote::{
+    RemoteClient, RemoteConnectionOptions, remote_connection_identity,
+    same_remote_connection_identity,
+};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -3035,6 +3038,17 @@ impl Project {
             }
             ProjectClientState::Collab { .. } => false,
         }
+    }
+
+    /// Whether this project is backed by a dev container. Every Docker remote
+    /// Zed manages is a dev container, so this is equivalent to the connection
+    /// being a Docker remote.
+    #[inline]
+    pub fn is_dev_container(&self, cx: &App) -> bool {
+        matches!(
+            self.remote_connection_options(cx),
+            Some(RemoteConnectionOptions::Docker(_))
+        )
     }
 
     /// Whether this project is from collab (not counting remote servers).
@@ -6358,11 +6372,36 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
+///
+/// Equality and hashing are based on the host's normalized
+/// [`RemoteConnectionIdentity`] rather than the full [`RemoteConnectionOptions`],
+/// so that runtime-only differences (e.g. a dev container's ephemeral
+/// `container_id`, which changes on every rebuild) do not fork a project into a
+/// new group. This keeps the same group across open/stop/rebuild cycles and
+/// matches the semantics of [`ProjectGroupKey::matches`].
+#[derive(Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,
     host: Option<RemoteConnectionOptions>,
+}
+
+impl PartialEq for ProjectGroupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.matches(other)
+    }
+}
+
+impl Eq for ProjectGroupKey {}
+
+impl std::hash::Hash for ProjectGroupKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.paths.hash(state);
+        self.host
+            .as_ref()
+            .map(remote_connection_identity)
+            .hash(state);
+    }
 }
 
 impl ProjectGroupKey {
