@@ -1,5 +1,5 @@
 use gpui_shared_string::SharedString;
-use lsp::{DiagnosticSeverity, NumberOrString};
+use lsp_types::{DiagnosticSeverity, NumberOrString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,7 +12,7 @@ pub struct Diagnostic {
     pub registration_id: Option<SharedString>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Uri>,
+    pub code_description: Option<lsp_types::Uri>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.

@@ -9649,7 +9649,11 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    Some(Blame { entries, messages })
+    Some(Blame {
+        entries,
+        messages,
+        tag_names: Default::default(),
+    })
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
@@ -9904,6 +9908,11 @@ async fn append_pattern_to_ignore_file(
 
 #[cfg(any(test, feature = "test-support"))]
 impl Repository {
+    pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
+        self.snapshot.branch_list = branches.into();
+        cx.emit(RepositoryEvent::BranchListChanged);
+    }
+
     pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
         self.commit_data
             .iter()
