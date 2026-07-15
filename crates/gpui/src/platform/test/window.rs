@@ -35,6 +35,8 @@ pub(crate) struct TestWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    frame_scheduled: bool,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
@@ -91,6 +93,8 @@ impl TestWindow {
             resize_callback: None,
             moved_callback: None,
             appearance_change_callback: None,
+            request_frame_callback: None,
+            frame_scheduled: false,
             input_handler: None,
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
@@ -150,6 +154,28 @@ impl TestWindow {
 
     pub fn set_start_external_drag_result(&self, result: bool) {
         self.0.lock().start_external_drag_result = result;
+    }
+
+    pub fn simulate_scheduled_frame(&self) -> bool {
+        let callback = {
+            let mut state = self.0.lock();
+            if !std::mem::take(&mut state.frame_scheduled) {
+                return false;
+            }
+            state.request_frame_callback.take()
+        };
+        let Some(mut callback) = callback else {
+            self.0.lock().frame_scheduled = true;
+            return false;
+        };
+
+        callback(RequestFrameOptions::default());
+        self.0.lock().request_frame_callback = Some(callback);
+        true
+    }
+
+    pub fn frame_scheduled(&self) -> bool {
+        self.0.lock().frame_scheduled
     }
 }
 
@@ -286,7 +312,9 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.0.lock().request_frame_callback = Some(callback);
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
@@ -306,6 +334,14 @@ impl PlatformWindow for TestWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().moved_callback = Some(callback)
+    }
+
+    fn completed_frame(&self, request_next_frame: bool) {
+        self.0.lock().frame_scheduled = request_next_frame;
+    }
+
+    fn schedule_frame(&self) {
+        self.0.lock().frame_scheduled = true;
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
