@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Cursor},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -16,7 +16,9 @@ use fs::Fs;
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
-use language::{Buffer, BufferSnapshot, Point};
+use language::{
+    Buffer, BufferSnapshot, ByteContent, FILE_ANALYSIS_BYTES, Point, analyze_byte_content,
+};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
@@ -789,23 +791,35 @@ impl RequestHandler<'_> {
             if let Err(Some(starting_position)) =
                 std::str::from_utf8(file_start).map_err(|e| e.error_len())
             {
-                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
-                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
+                if analyze_byte_content(&file_start[..file_start.len().min(FILE_ANALYSIS_BYTES)])
+                    == ByteContent::Binary
+                {
+                    return Ok(());
+                }
                 log::debug!(
                     "Invalid UTF-8 sequence in file {abs_path:?} \
                     at byte position {starting_position}"
                 );
-                return Ok(());
+                let (text, _, _) = worktree::decode_file_text(
+                    self.fs.context(
+                        "Trying to decode a file without access to the local filesystem",
+                    )?,
+                    &abs_path,
+                )
+                .await?;
+                // ponytail: non-UTF-8 matches read the file again when opening the buffer;
+                // pass decoded contents through the search pipeline if this becomes a bottleneck.
+                file = BufReader::new(Box::new(Cursor::new(text)));
             }
 
-            if let Some(line_hint) = self.query.detect(file).await.ok().flatten() {
+            if let Some(line_hint) = self.query.detect(file).await? {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send((entry.path, line_hint)).await?;
             }
             Ok(())
         }
         .await
-        .ok();
+        .log_err();
     }
 
     async fn handle_scan_path(&self, req: InputPath) {

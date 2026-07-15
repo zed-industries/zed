@@ -8068,6 +8068,48 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_unopened_gbk_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+
+    let text = "这是一个使用 GBK 编码的测试文件。\n需要搜索的中文关键词：编码搜索命中。\n再添加一些中文内容帮助检测编码。";
+    let query = "编码搜索命中";
+    let (bytes, _, had_errors) = encoding_rs::GBK.encode(text);
+    assert!(!had_errors);
+    fs.insert_file(path!("/dir/gbk.txt"), bytes.into_owned())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let match_start = text.find(query).expect("query should be present");
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                query,
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(
+            path!("dir/gbk.txt").to_string(),
+            vec![match_start..match_start + query.len()],
+        )])
+    );
+}
+
+#[gpui::test]
 async fn test_search_multiline_crlf(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
