@@ -151,6 +151,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
+    "crates/path",
     "crates/paths",
     "crates/picker",
     "crates/picker_preview",
@@ -414,6 +415,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
+path = { path = "crates/path" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
@@ -504,7 +506,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-accesskit = "0.24.0"
+accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
@@ -530,7 +532,9 @@ async-io = "2.6.0"
 async-lock = "3.4.2"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-async-tar = "0.5.1"
+# `unstable` is required to compile async-tar's Windows symlink support.
+async-std = { version = "1.12", features = ["unstable"] }
+async-tar = "0.6"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
@@ -597,6 +601,7 @@ encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.18.0"
 fork = "0.4.0"
+flume = "0.12"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
@@ -617,7 +622,25 @@ http-body = "1.0"
 httparse = "1.10"
 idna = "1.0"
 ignore = "0.4.22"
-image = "0.25.1"
+# image's default features minus "avif", which only adds an encoder (rav1e);
+# decoding AVIF would additionally need the non-default "avif-native" feature.
+image = { version = "0.25.1", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+] }
 imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
@@ -795,7 +818,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.26.9", features = ["wasm"] }
+tree-sitter = "0.26.9"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }

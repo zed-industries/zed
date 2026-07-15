@@ -1,6 +1,6 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, events::platform_input_from_native,
+    BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
@@ -10,10 +10,11 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
-        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSRequestUserAttentionType, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -291,6 +292,12 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+                opaque_rect_for_window_move_when_in_titlebar
+                    as extern "C" fn(&Object, Sel) -> NSRect,
+            );
+
+            decl.add_method(
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
@@ -547,7 +554,7 @@ struct MacWindowState {
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
-    display_link: Option<DisplayLink>,
+    frame_source: Option<WindowFrameSource>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
@@ -569,6 +576,11 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    // When true, the whole content view is reported as app-owned titlebar content via
+    // `_opaqueRectForWindowMoveWhenInTitlebar`, so AppKit does not drag the window from
+    // the titlebar or delay titlebar clicks (a delay first observed on macOS 27). Such
+    // windows draw their own titlebar and move the window via `start_window_move`.
+    app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
@@ -717,16 +729,17 @@ impl MacWindowState {
             // AppKit can temporarily report no screen while displays are being reconfigured.
             return;
         };
-        if let Some(mut display_link) =
-            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
-        {
-            display_link.start().log_err();
-            self.display_link = Some(display_link);
-        }
+        let data = self.native_view.as_ptr() as *mut c_void;
+        self.frame_source
+            .get_or_insert_with(|| WindowFrameSource::new(data, step))
+            .start(display_id)
+            .log_err();
     }
 
     fn stop_display_link(&mut self) {
-        self.display_link = None;
+        if let Some(frame_source) = self.frame_source.as_mut() {
+            frame_source.stop();
+        }
     }
 
     fn is_maximized(&self) -> bool {
@@ -835,6 +848,7 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
+            app_owns_titlebar_drag,
             is_resizable,
             is_minimizable,
             focus,
@@ -967,7 +981,7 @@ impl MacWindow {
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
                 cursor_visible,
-                display_link: None,
+                frame_source: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
                     native_window as *mut _,
@@ -998,6 +1012,7 @@ impl MacWindow {
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
+                app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
                 simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
@@ -1247,7 +1262,7 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
-        this.display_link.take();
+        this.frame_source.take();
         unsafe {
             this.native_window.setDelegate_(nil);
         }
@@ -1543,6 +1558,22 @@ impl PlatformWindow for MacWindow {
                     unsafe {
                         let _: () = msg_send![window, makeKeyAndOrderFront: nil];
                     }
+                }
+            })
+            .detach();
+    }
+
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        let executor = self.0.lock().foreground_executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    app.requestUserAttention_(NSRequestUserAttentionType::NSInformationalRequest);
                 }
             })
             .detach();
@@ -2977,6 +3008,25 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+// Reports which region of the view AppKit should treat as app-owned titlebar content
+// (rather than a system-owned window-move region). When `app_owns_titlebar_drag` is
+// true, we claim the entire view so AppKit neither drags the window from the titlebar
+// nor waits to disambiguate double-clicks before delivering titlebar clicks (the macOS
+// 27 delay); such windows implement dragging themselves via [`Window::start_window_move`].
+// Otherwise we return an empty rect so AppKit's native titlebar dragging keeps working.
+// This is independent of `NSWindow.isMovable`, so the Window-menu tiling items stay
+// enabled regardless.
+extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
+    let zero_rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+    let window_state = unsafe { get_window_state(this) };
+    let app_owns_titlebar_drag = window_state.as_ref().lock().app_owns_titlebar_drag;
+    if app_owns_titlebar_drag {
+        unsafe { msg_send![this, bounds] }
+    } else {
+        zero_rect
+    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {

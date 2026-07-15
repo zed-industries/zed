@@ -1245,11 +1245,11 @@ fn resolve_path(
             let file_name = path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| RelPath::unix(file_name).ok())
+                .and_then(|file_name| RelPath::from_unix_str(file_name).ok())
                 .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: parent.path.join(file_name),
+                path: parent.path.join(file_name).into(),
                 ..parent
             });
 
