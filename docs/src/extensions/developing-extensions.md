@@ -18,11 +18,10 @@ Extensions can provide:
 - [Snippets](./snippets.md)
 - [MCP Servers](./mcp-extensions.md)
 
-## Marketplace Categories
+## Extension Categories
 
-Zed will automatically assign marketplace categories to your extension based on
-what it provides upon publishing. An extension can appear in more than one
-category.
+Zed will automatically assign categories to your extension based on what it
+provides upon publishing. An extension can appear in more than one category.
 
 ## Developing an Extension Locally
 
