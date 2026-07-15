@@ -11,6 +11,15 @@ workspace = true
 [lib]
 path = "src/http_proxy.rs"
 
+[features]
+# Compiles in the `ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS` escape hatch that lets the
+# proxy reach loopback/private/link-local addresses. This disables the proxy's
+# DNS-rebinding/SSRF protection, so it must NEVER be enabled in a real Zed
+# build (debug or release) — it exists solely for the NixOS sandbox integration
+# tests, whose echo servers live on the VM's private network. Enabled only via
+# `sandbox/nixos-test` when building `bwrap_test_helper`.
+nixos-integration-tests = []
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

@@ -1,5 +1,7 @@
 #[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
+#[cfg(feature = "predict-edits")]
+pub mod predict_edits_v4;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -194,6 +196,10 @@ pub enum EditPredictionRejectReason {
     Empty,
     /// Edits returned, but none remained after interpolation
     InterpolatedEmpty,
+    /// Edits returned, but could not be interpolated after buffer changes
+    InterpolateFailed,
+    /// A patch was returned, but could not be applied to the buffer
+    PatchApplyFailed,
     /// The new prediction was preferred over the current one
     Replaced,
     /// The current prediction was preferred over the new one
@@ -314,6 +320,10 @@ pub struct LanguageModel {
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+    #[serde(default)]
+    pub is_disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

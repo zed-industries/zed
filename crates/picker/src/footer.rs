@@ -98,6 +98,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let actions = self.delegate.actions_menu(window, cx);
+
         if self.preview.is_none() && actions.is_empty() {
             return None;
         }
@@ -111,9 +112,9 @@ impl<D: PickerDelegate> Picker<D> {
                 .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(div().when(self.preview.is_some(), |this| {
+                .when(self.preview.is_some(), |this| {
                     this.child(self.render_preview_controls(window, cx))
-                }))
+                })
                 .when(!actions.is_empty(), |this| {
                     this.child(self.render_actions_button(actions.into(), focus_handle, window, cx))
                 })
@@ -123,18 +124,22 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_preview_controls(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-        let toggle_focus_handle = focus_handle.clone();
         let right_focus_handle = focus_handle.clone();
         let below_focus_handle = focus_handle.clone();
         let current = self.preview_layout().unwrap_or(preview::Layout::Hidden);
         let preview_visible = current != preview::Layout::Hidden;
 
+        let diff_split = if self.is_auto_vertical(window) {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
+
         h_flex()
-            .gap_1()
             .child(
                 Button::new("picker-preview-toggle", "Preview")
                     .when(preview_visible, |this| this.color(Color::Accent))
@@ -142,38 +147,12 @@ impl<D: PickerDelegate> Picker<D> {
                         KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
                             .size(rems_from_px(12.)),
                     )
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Preview",
-                            &TogglePreview,
-                            &toggle_focus_handle,
-                            cx,
-                        )
-                    })
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
                     ),
             )
-            // The layout buttons (preview to the right / below) are only relevant
-            // once the preview is showing, so hide them while it's hidden.
             .when(preview_visible, |this| {
-                this.child(div().child(Divider::vertical().color(ui::DividerColor::Border)))
-                    .child(
-                        IconButton::new("picker-preview-right", IconName::DiffSplit)
-                            .icon_size(IconSize::Small)
-                            .toggle_state(current == preview::Layout::Right)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::for_action_in(
-                                    "Preview to the Right",
-                                    &SetPreviewRight,
-                                    &right_focus_handle,
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_preview_layout(preview::Layout::Right, window, cx)
-                            })),
-                    )
+                this.child(Divider::vertical().mx_1())
                     .child(
                         IconButton::new("picker-preview-below", IconName::DiffUnified)
                             .icon_size(IconSize::Small)
@@ -190,6 +169,22 @@ impl<D: PickerDelegate> Picker<D> {
                                 this.set_preview_layout(preview::Layout::Below, window, cx)
                             })),
                     )
+                    .child(
+                        IconButton::new("picker-preview-right", diff_split)
+                            .icon_size(IconSize::Small)
+                            .toggle_state(current == preview::Layout::Right)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Preview to the Right",
+                                    &SetPreviewRight,
+                                    &right_focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_preview_layout(preview::Layout::Right, window, cx)
+                            })),
+                    )
             })
     }
 
@@ -200,11 +195,8 @@ impl<D: PickerDelegate> Picker<D> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let _ = cx;
         PopoverMenu::new("picker-actions-menu")
             .with_handle(self.actions_menu_handle.clone())
-            .attach(gpui::Anchor::TopRight)
-            .anchor(gpui::Anchor::BottomRight)
             .trigger(
                 Button::new("picker-actions-trigger", "Actions…")
                     .key_binding(
@@ -223,6 +215,12 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                     menu
                 }))
+            })
+            .attach(gpui::Anchor::TopRight)
+            .anchor(gpui::Anchor::BottomRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
             })
     }
 }

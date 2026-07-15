@@ -56,13 +56,22 @@ impl FsWatcher {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
-        if let Some(registration) = register_existing_path(
-            path,
+        match register_existing_path(
+            path.clone(),
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
         )? {
-            self.registrations.lock().insert(key, registration);
+            Some(registration) => {
+                self.registrations.lock().insert(key, registration);
+            }
+            None => {
+                // Registration was skipped (e.g. the native watch-limit cooldown
+                // is active). Retry in the background rather than silently leaving
+                // the path unwatched forever.
+                log::warn!("watch registration for {path:?} was skipped; retrying in background");
+                self.add_pending_path(path);
+            }
         }
         Ok(())
     }
@@ -931,6 +940,34 @@ impl GlobalWatcher {
         }
     }
 
+    fn dispatch_batch(
+        &self,
+        first: DispatchEvent,
+        event_rx: &async_channel::Receiver<DispatchEvent>,
+    ) {
+        // A single backend overflow can enqueue many rescan markers. One rescan
+        // per mode covers the entire drained batch; ordinary events still run.
+        let mut native_rescan_dispatched = false;
+        let mut poll_rescan_dispatched = false;
+
+        for (mode, event) in
+            std::iter::once(first).chain(std::iter::from_fn(|| event_rx.try_recv().ok()))
+        {
+            let rescan_dispatched = match mode {
+                WatcherMode::Native => &mut native_rescan_dispatched,
+                WatcherMode::Poll => &mut poll_rescan_dispatched,
+            };
+            if event.as_ref().is_ok_and(notify::Event::need_rescan) {
+                if *rescan_dispatched {
+                    continue;
+                }
+                *rescan_dispatched = true;
+            }
+
+            self.dispatch(mode, event);
+        }
+    }
+
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
         let mut state = self.state.lock();
         let now = Instant::now();
@@ -1078,8 +1115,8 @@ fn global_watcher() -> &'static GlobalWatcher {
         std::thread::Builder::new()
             .name("fs-watcher-dispatch".to_owned())
             .spawn(move || {
-                while let Ok((mode, event)) = event_rx.recv_blocking() {
-                    global_watcher().dispatch(mode, event);
+                while let Ok(first) = event_rx.recv_blocking() {
+                    global_watcher().dispatch_batch(first, &event_rx);
                 }
             })
             .expect("failed to spawn fs watcher dispatch thread");
@@ -1215,6 +1252,56 @@ mod tests {
         let backend = backend.lock();
         assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
+    }
+
+    #[gpui::test]
+    async fn pending_path_is_registered_once_created(cx: &mut gpui::TestAppContext) {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("file.txt");
+
+        let (tx, rx) = async_channel::unbounded();
+        let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let watcher = FsWatcher::new(cx.executor(), tx, pending_path_events.clone());
+
+        watcher
+            .add(&path)
+            .expect("add path that does not exist yet");
+        assert!(
+            watcher
+                .pending_registrations
+                .lock()
+                .contains_key(path.as_path())
+        );
+        assert!(watcher.registrations.lock().is_empty());
+
+        std::fs::write(&path, b"contents").expect("create path");
+
+        // poll_path_until_created stats the path on smol's blocking pool, which
+        // the deterministic executor cannot drive; park until the poll task
+        // signals the event channel.
+        cx.executor().allow_parking();
+        cx.executor().advance_clock(poll_interval());
+        rx.recv().await.expect("receive watcher event");
+
+        assert!(
+            !watcher
+                .pending_registrations
+                .lock()
+                .contains_key(path.as_path())
+        );
+        let case_insensitive = case_insensitive_path(&path);
+        let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
+        assert!(watcher.registrations.lock().contains_key(&key));
+
+        // poll_path_until_created also enqueues a Rescan for the same path, but
+        // enqueue_path_events -> util::extend_sorted dedups by path, so only Created survives.
+        assert_eq!(
+            pending_path_events.lock().clone(),
+            vec![PathEvent {
+                path: path.clone(),
+                kind: Some(PathEventKind::Created),
+            }]
+        );
     }
 
     #[test]
@@ -1459,6 +1546,33 @@ mod tests {
         assert_eq!(
             got,
             vec![
+                "/repo/a".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn queued_rescans_are_coalesced_without_dropping_normal_events() {
+        let (watcher, fired) = recording_watcher();
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+
+        event_tx
+            .try_send((WatcherMode::Native, Ok(rescan())))
+            .unwrap();
+        event_tx
+            .try_send((WatcherMode::Native, Ok(modify_event("/repo/a/file.txt"))))
+            .unwrap();
+        watcher.dispatch_batch((WatcherMode::Native, Ok(rescan())), &event_rx);
+
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "/repo/a".to_owned(),
                 "/repo/a".to_owned(),
                 "/repo/a/nested".to_owned(),
                 "/repo/b".to_owned(),

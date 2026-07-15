@@ -203,7 +203,7 @@ impl WslOpenModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let delegate = WslPickerDelegate::new();
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         let selected = cx.subscribe_in(
             &picker,

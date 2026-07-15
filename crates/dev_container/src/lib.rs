@@ -1184,8 +1184,7 @@ impl StatefulModal for DevContainerModal {
                         }),
                     );
 
-                    let picker =
-                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
                     self.picker = Some(picker);
                     Some(DevContainerState::TemplateQueryReturned(Ok(items)))
                 } else {
@@ -1316,8 +1315,7 @@ impl StatefulModal for DevContainerModal {
                         }),
                     );
 
-                    let picker =
-                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
                     self.features_picker = Some(picker);
                     Some(DevContainerState::FeaturesQueryReturned(template_entry))
                 } else {

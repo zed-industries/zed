@@ -6,7 +6,7 @@ use ui::Window;
 use crate::preview;
 use crate::shape::{self, Centered, RelativeHeight, RelativeWidth, Shape, ViewportFraction};
 
-const PICKERS_NAMESPACE: &str = "pickers";
+const PICKERS_NAMESPACE: &str = "pickers_v2";
 
 pub(crate) fn store_shape_for_this_layout(
     picker_delegate: &'static str,
@@ -27,6 +27,26 @@ pub(crate) fn store_shape_for_this_layout(
             .await?;
         // Must be written after the shape or loading can break
         // if this future is ever cancelled.
+        kvp.scoped(PICKERS_NAMESPACE)
+            .write(
+                last_layout_key(picker_delegate),
+                layout_as_str(preview_layout).to_string(),
+            )
+            .await
+    });
+}
+
+/// Persist the last-used preview layout without touching the stored shape.
+///
+/// Changing the preview position (e.g. right/below/hidden) without resizing
+/// must still be remembered, so this is called whenever the layout changes.
+pub(crate) fn store_last_layout(
+    picker_delegate: &'static str,
+    preview_layout: Option<preview::Layout>,
+    cx: &App,
+) {
+    let kvp = KeyValueStore::global(cx);
+    db::write_and_log(cx, async move || {
         kvp.scoped(PICKERS_NAMESPACE)
             .write(
                 last_layout_key(picker_delegate),

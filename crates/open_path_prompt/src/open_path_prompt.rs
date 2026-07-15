@@ -233,8 +233,7 @@ impl OpenPathPrompt {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
-            let picker =
-                Picker::uniform_list(delegate, window, cx).minimum_results_width(rems(34.));
+            let picker = Picker::uniform_list(delegate, window, cx);
             let mut query = lister.default_query(cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);

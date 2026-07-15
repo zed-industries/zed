@@ -5,7 +5,6 @@ use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use serde_json::json;
-use ui::rems;
 use util::path;
 use workspace::{AppState, MultiWorkspace};
 
@@ -509,9 +508,7 @@ fn build_open_path_prompt(
                 delegate
             };
             cx.new(|cx| {
-                let picker = Picker::uniform_list(delegate, window, cx)
-                    .minimum_results_width(rems(34.))
-                    .modal(false);
+                let picker = Picker::uniform_list(delegate, window, cx).embedded();
                 let query = lister.default_query(cx);
                 picker.set_query(&query, window, cx);
                 picker
