@@ -2566,9 +2566,7 @@ impl Workspace {
             (DockPosition::Bottom, &self.bottom_dock),
         ]
         .into_iter()
-        .find(|(_, dock)| {
-            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
-        })
+        .find(|(_, dock)| dock_has_focus(dock, window, cx))
         .map(|(position, _)| position)
     }
 
@@ -3615,7 +3613,7 @@ impl Workspace {
         let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+            .find(|dock| dock_has_focus(dock, window, cx));
 
         if let Some(dock) = active_dock {
             dock.update(cx, |dock, cx| {
@@ -4589,9 +4587,9 @@ impl Workspace {
     }
 
     fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
-        self.all_docks().into_iter().find(|&dock| {
-            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
-        })
+        self.all_docks()
+            .into_iter()
+            .find(|&dock| dock_has_focus(dock, window, cx))
     }
 
     fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -5704,7 +5702,7 @@ impl Workspace {
             ]
             .into_iter()
             .find_map(|(dock, origin)| {
-                if dock.focus_handle(cx).contains_focused(window, cx) && dock.read(cx).is_open() {
+                if dock_has_focus(dock, window, cx) {
                     Some(origin)
                 } else {
                     None
@@ -5863,8 +5861,8 @@ impl Workspace {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
                 window.defer(cx, move |window, cx| {
                     let dock = dock.read(cx);
-                    if let Some(panel) = dock.active_panel() {
-                        panel.activation_focus_handle(cx).focus(window, cx);
+                    if dock.active_panel().is_some() {
+                        dock.focus_handle(cx).focus(window, cx);
                     } else {
                         log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
                     }
@@ -5965,7 +5963,7 @@ impl Workspace {
         let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+            .find(|dock| dock_has_focus(dock, window, cx));
 
         if let Some(dock_entity) = active_dock {
             let dock = dock_entity.read(cx);
@@ -6349,7 +6347,7 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
+            if dock_has_focus(&dock, window, cx)
                 && let Some(pane) = dock
                     .read(cx)
                     .active_panel()
@@ -7291,7 +7289,7 @@ impl Workspace {
         let mut active_item = None;
         let mut panel_id = None;
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
+            if dock_has_focus(&dock, window, cx)
                 && let Some(panel) = dock.read(cx).active_panel()
                 && let Some(pane) = panel.pane(cx)
                 && let Some(item) = pane.read(cx).active_item()
@@ -9604,7 +9602,7 @@ fn adjust_active_dock_size_by_px(
     let Some(active_dock) = workspace
         .all_docks()
         .into_iter()
-        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+        .find(|dock| dock_has_focus(dock, window, cx))
     else {
         return;
     };
@@ -15850,6 +15848,101 @@ mod tests {
             left.right() <= content.left() && content.right() <= right.left(),
             "the zoomed pane should sit between the paddings: left {left:?}, content {content:?}, right {right:?}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_focused_surface(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Ensure center pane has focus before checking (toggle_dock focuses the panel)
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
+
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::PaneGroup),
+                "Center pane group should have focus after refocusing"
+            );
+
+            window.focus(&panel.read(cx).focus_handle(cx), cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::Dock(DockPosition::Right)),
+                "Right dock should have focus after focusing its panel"
+            );
+
+            window.focus(&workspace.right_dock.focus_handle(cx), cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::Dock(DockPosition::Right)),
+                "Right dock should have focus when the dock wrapper is focused"
+            );
+
+            let pane = workspace.active_pane().clone();
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::PaneGroup),
+                "Center pane group should regain focus after refocusing the active pane"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_activate_pane_in_direction_keeps_focus_in_empty_dock_panel(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel =
+                cx.new(|cx| TestPanel::new_without_tracked_focus(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
+            workspace.activate_pane_in_direction(SplitDirection::Right, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock.focus_handle(cx).is_focused(window));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert_eq!(
+                workspace.focused_surface(window, cx),
+                Some(FocusedSurface::Dock(DockPosition::Right)),
+            );
+        });
     }
 
     #[gpui::test]
