@@ -4409,11 +4409,10 @@ fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
                 "if (true) {\n    x()\n}"
             );
 
-            // The rule spans only the consequence, so a following `else` keeps its
-            // own indentation rather than being pulled under the `if` body.
+            // A braceless `else` body is indented under the `else`.
             assert_eq!(
                 indent("if (true)\n    x()\nelse", 22, "\ny()"),
-                "if (true)\n    x()\nelse\ny()"
+                "if (true)\n    x()\nelse\n    y()"
             );
         }
         Buffer::local("", cx)
