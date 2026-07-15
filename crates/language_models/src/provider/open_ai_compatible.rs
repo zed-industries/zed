@@ -1,14 +1,14 @@
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, RateLimiter,
+    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, SubPageProviderSettings,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -144,27 +144,27 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| {
-            ApiCompatibleProviderConfigurationView::new(
-                self.state.clone(),
-                "OpenAI",
-                API_KEY_PLACEHOLDER,
-                window,
-                cx,
-            )
-        })
-        .into()
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(SubPageProviderSettings::new(
+            move |window, cx| {
+                cx.new(|cx| {
+                    ApiCompatibleProviderConfigurationView::new(
+                        state.clone(),
+                        "OpenAI",
+                        API_KEY_PLACEHOLDER,
+                        window,
+                        cx,
+                    )
+                })
+                .into()
+            },
+        )))
     }
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 }
 
@@ -424,7 +424,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
         if self.model.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &self.model);
-            let request = into_open_ai(
+            let request = match into_open_ai(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -433,7 +433,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 chat_completion_max_tokens_parameter(&self.model),
                 reasoning_effort,
                 self.model.capabilities.interleaved_reasoning,
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
@@ -516,7 +519,7 @@ mod tests {
             .map(|level| level.value.as_ref())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, ["minimal", "low", "medium", "high", "xhigh"]);
+        assert_eq!(values, ["minimal", "low", "medium", "high", "xhigh", "max"]);
         assert_eq!(
             effort_levels
                 .iter()
@@ -688,7 +691,8 @@ mod tests {
             chat_completion_max_tokens_parameter(&model),
             reasoning_effort,
             model.capabilities.interleaved_reasoning,
-        );
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized["reasoning_effort"], json!("high"));

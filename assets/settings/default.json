@@ -73,6 +73,12 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The default font size for the markdown preview. Falls back to the UI font size if unset.
+  "markdown_preview_font_size": null,
+  // The font family for the markdown preview. Falls back to the UI font family if unset.
+  "markdown_preview_font_family": null,
+  // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
+  "markdown_preview_code_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -156,8 +162,7 @@
   // May take 2 values:
   //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open directories in a new window (reuse existing windows for files
-  //     that are already part of an open project)
+  //  2. Open paths in a new window, unless they are subpaths of an existing project
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // The default behavior when opening projects from the UI.
@@ -228,6 +233,9 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -260,6 +268,15 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to reduce non-essential motion in the UI, such as loading
+  // spinners and pulsating labels, by rendering them in a static state.
+  //
+  // May take 2 values:
+  // 1. Always reduce motion:
+  //    "on"
+  // 2. Never reduce motion:
+  //    "off"
+  "reduce_motion": "off",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
@@ -1020,14 +1037,12 @@
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
   },
-  "message_editor": {
-    // Whether to automatically replace emoji shortcodes with emoji characters.
-    // For example: typing `:wave:` gets replaced with `👋`.
-    "auto_replace_emoji_shortcode": true,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
+    // Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    // in the prompt when generating git commit messages.
+    "commit_message_include_project_rules": true,
     // Whether the agent is enabled.
     "enabled": true,
     // Whether to show the agent panel button in the status bar.
@@ -1455,9 +1470,15 @@
   // The EditorConfig `end_of_line` property overrides this setting and behaves
   // like `enforce_lf` or `enforce_crlf`.
   "line_ending": "detect",
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving:
+  //   "on" — format the whole buffer
+  //   "off" — do not format
+  //   "modifications" — format only lines with unstaged changes; skips formatting
+  //     when no git diff is available or the language server lacks range formatting
+  //   "modifications_if_available" — same, but falls back to formatting the whole
+  //     buffer when range formatting cannot be used
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
-  "format_on_save": "on",
+  "format_on_save": "off",
   // How to perform a buffer format. This setting can take multiple values:
   //
   // 1. Default. Format files using Zed's Prettier integration (if applicable),
@@ -1637,13 +1658,15 @@
     ///
     /// Default: 0
     "gutter_debounce": 0,
-    // Control whether the git blame information is shown inline,
-    // in the currently focused line.
+    // Control whether the git blame information is shown for the currently
+    // focused line, and where it is rendered.
     "inline_blame": {
       "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // Where to render the blame information when it is enabled.
+      "location": "inline",
       // The amount of padding between the end of the source line and the start
       // of the inline blame in units of em widths.
       "padding": 7,
@@ -1892,6 +1915,12 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    // when the terminal application has enabled mouse reporting (e.g. vim with
+    // mouse=a, htop). When false, these clicks are forwarded to the application
+    // instead, and hyperlinks can still be opened with shift-cmd-click
+    // (shift-ctrl-click).
+    "open_links_in_mouse_mode": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -2162,6 +2191,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "format_on_save": "on",
       "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
@@ -2174,14 +2204,12 @@
       },
     },
     "C": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
       },
     },
     "C++": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
@@ -2196,6 +2224,7 @@
       },
     },
     "Dart": {
+      "format_on_save": "on",
       "tab_size": 2,
     },
     "Diff": {
@@ -2204,12 +2233,15 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
+      "format_on_save": "on",
       "tab_size": 4,
     },
     "Erlang": {
@@ -2221,6 +2253,7 @@
       "preferred_line_length": 72,
     },
     "Go": {
+      "format_on_save": "on",
       "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true,
@@ -2228,11 +2261,13 @@
       "debuggers": ["Delve"],
     },
     "GraphQL": {
+      "format_on_save": "on",
       "prettier": {
         "allowed": true,
       },
     },
     "HEEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
@@ -2269,6 +2304,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Kotlin": {
+      "format_on_save": "on",
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."],
     },
     "LaTeX": {
@@ -2280,7 +2316,6 @@
       },
     },
     "Markdown": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
@@ -2335,6 +2370,7 @@
       ],
     },
     "Rust": {
+      "format_on_save": "on",
       "debuggers": ["CodeLLDB"],
     },
     "SCSS": {
@@ -2343,6 +2379,7 @@
       },
     },
     "Starlark": {
+      "format_on_save": "on",
       "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
@@ -2370,7 +2407,6 @@
       },
     },
     "SystemVerilog": {
-      "format_on_save": "off",
       "language_servers": ["!slang", "..."],
       "use_on_type_format": false,
     },
@@ -2395,6 +2431,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Zig": {
+      "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
   },
@@ -2410,6 +2447,9 @@
     },
     "ollama": {
       "api_url": "http://localhost:11434",
+    },
+    "llama.cpp": {
+      "api_url": "http://localhost:8080",
     },
     "openai": {
       "api_url": "https://api.openai.com/v1",

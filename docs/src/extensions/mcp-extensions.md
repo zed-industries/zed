@@ -5,6 +5,8 @@ description: "MCP Server Extensions for Zed extensions."
 
 # MCP Server Extensions
 
+> We plan to deprecate MCP server extensions in favor of the [official MCP registry](https://registry.modelcontextprotocol.io/). To keep your MCP server available in Zed, publish it to the official registry as well. Follow our deprecation progress in the [tracking issue](https://github.com/zed-industries/zed/issues/59351).
+
 [Model Context Protocol servers](../ai/mcp.md) can be exposed as extensions for use in the Agent Panel.
 
 ## Defining MCP Extensions

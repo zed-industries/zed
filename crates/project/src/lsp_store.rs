@@ -1134,23 +1134,12 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::CodeLensRefresh, _, _>({
-                let this = lsp_store.clone();
+                let lsp_store = lsp_store.clone();
                 move |(), cx| {
-                    let this = this.clone();
-                    let mut cx = cx.clone();
-                    async move {
-                        this.update(&mut cx, |this, cx| {
-                            this.invalidate_code_lens();
-                            cx.emit(LspStoreEvent::RefreshCodeLens);
-                            this.downstream_client.as_ref().map(|(client, project_id)| {
-                                client.send(proto::RefreshCodeLens {
-                                    project_id: *project_id,
-                                })
-                            })
-                        })?
-                        .transpose()?;
-                        Ok(())
-                    }
+                    let result = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.refresh_code_lens(cx);
+                    });
+                    async move { result }
                 }
             })
             .detach();
@@ -1164,26 +1153,11 @@ impl LocalLspStore {
                     let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
-                        lsp_store
-                            .update(&mut cx, |lsp_store, cx| {
-                                let request_id =
-                                    Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
-                                cx.emit(LspStoreEvent::RefreshSemanticTokens {
-                                    server_id,
-                                    request_id,
-                                });
-                                lsp_store
-                                    .downstream_client
-                                    .as_ref()
-                                    .map(|(client, project_id)| {
-                                        client.send(proto::RefreshSemanticTokens {
-                                            project_id: *project_id,
-                                            server_id: server_id.to_proto(),
-                                            request_id: request_id.map(|id| id as u64),
-                                        })
-                                    })
-                            })?
-                            .transpose()?;
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
+                            let request_id =
+                                Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
+                            lsp_store.refresh_semantic_tokens(server_id, request_id, cx);
+                        })?;
                         Ok(())
                     }
                 }
@@ -1574,6 +1548,7 @@ impl LocalLspStore {
         });
 
         let mut project_transaction = ProjectTransaction::default();
+        let mut format_error = None;
 
         for buffer in &buffers {
             zlog::debug!(
@@ -1627,10 +1602,16 @@ impl LocalLspStore {
                     .insert(cx.entity(), formatting_transaction);
             });
 
-            result?;
+            // Keep formatting the remaining buffers on failure, surfacing the first error.
+            if let Err(error) = result {
+                format_error.get_or_insert(error);
+            }
         }
 
-        Ok(project_transaction)
+        match format_error {
+            Some(error) => Err(error),
+            None => Ok(project_transaction),
+        }
     }
 
     async fn format_buffer_locally(
@@ -1661,12 +1642,36 @@ impl LocalLspStore {
             .handle
             .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
+        // When formatting a selection, only the rows it spans may be touched.
+        let selection_row_ranges = buffer.ranges.as_ref().map(|ranges| {
+            buffer.handle.read_with(cx, |buffer, _cx| {
+                let snapshot = buffer.snapshot();
+                ranges
+                    .iter()
+                    .map(|range| {
+                        let start = range.start.to_point(&snapshot);
+                        let end = range.end.to_point(&snapshot);
+                        // A selection ending at column 0 of a row only includes that row's
+                        // preceding line break, not its content, so it shouldn't be trimmed.
+                        let end_row = if end.column == 0 && end.row > start.row {
+                            end.row
+                        } else {
+                            end.row + 1
+                        };
+                        start.row..end_row
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
             let diff = buffer
                 .handle
-                .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
+                .read_with(cx, |buffer, cx| {
+                    buffer.remove_trailing_whitespace(selection_row_ranges.as_deref(), cx)
+                })
                 .await;
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
@@ -1675,8 +1680,11 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
+            let diff = buffer.handle.read_with(cx, |buffer, _cx| {
+                buffer.ensure_final_newline(selection_row_ranges.as_deref())
+            });
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
-                buffer.ensure_final_newline(cx);
+                buffer.apply_diff(diff, cx);
             })?;
         }
 
@@ -1732,9 +1740,13 @@ impl LocalLspStore {
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                settings.formatter.as_ref()
-            }
+            (FormatTrigger::Manual, _)
+            | (
+                FormatTrigger::Save,
+                FormatOnSave::On
+                | FormatOnSave::Modifications
+                | FormatOnSave::ModificationsIfAvailable,
+            ) => settings.formatter.as_ref(),
         };
 
         let formatters = code_actions_on_format_formatters
@@ -1742,8 +1754,13 @@ impl LocalLspStore {
             .flatten()
             .chain(formatters);
 
+        // Only explicitly configured formatters surface their failures;
+        // auto-resolved ones stay silent so a missing optional tool
+        // (e.g. prettier) does not warn on every save.
+        let mut format_error = None;
         for formatter in formatters {
-            let formatter = if formatter == &Formatter::Auto {
+            let is_auto = formatter == &Formatter::Auto;
+            let formatter = if is_auto {
                 if settings.prettier.allowed {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
                     &Formatter::Prettier
@@ -1762,16 +1779,23 @@ impl LocalLspStore {
                 &adapters_and_servers,
                 &settings,
                 request_timeout,
+                trigger,
                 logger,
                 cx,
             )
             .await
             {
                 zlog::error!(logger => "Formatter failed, skipping: {err:#}");
+                if !is_auto {
+                    format_error.get_or_insert(err);
+                }
             }
         }
 
-        Ok(())
+        match format_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     async fn apply_formatter(
@@ -1782,6 +1806,7 @@ impl LocalLspStore {
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         settings: &LanguageSettings,
         request_timeout: Duration,
+        trigger: FormatTrigger,
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
@@ -1924,23 +1949,22 @@ impl LocalLspStore {
                 };
 
                 let Some(language_server) = language_server else {
-                    log::debug!(
-                        "No language server found to format buffer '{:?}'. Skipping",
-                        buffer_path_abs.as_path().to_string_lossy()
+                    zlog::debug!(
+                        logger =>
+                        "No language server found to format buffer {buffer_path_abs:?}. Skipping",
                     );
                     return Ok(());
                 };
 
                 zlog::trace!(
                     logger =>
-                    "Formatting buffer '{:?}' using language server '{:?}'",
-                    buffer_path_abs.as_path().to_string_lossy(),
+                    "Formatting buffer {buffer_path_abs:?} using language server {:?}",
                     language_server.name()
                 );
 
                 let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                     zlog::trace!(logger => "formatting ranges");
-                    Self::format_ranges_via_lsp(
+                    let range_edits = Self::format_ranges_via_lsp(
                         &lsp_store,
                         &buffer.handle,
                         ranges,
@@ -1950,7 +1974,38 @@ impl LocalLspStore {
                         cx,
                     )
                     .await
-                    .context("Failed to format ranges via language server")?
+                    .context("Failed to format ranges via language server")?;
+
+                    match range_edits {
+                        Some(edits) => edits,
+                        None => {
+                            if trigger == FormatTrigger::Save
+                                && settings.format_on_save == FormatOnSave::ModificationsIfAvailable
+                            {
+                                zlog::debug!(
+                                    logger =>
+                                    "Falling back to full format - LSP does not support range formatting"
+                                );
+                                Self::format_via_lsp(
+                                    &lsp_store,
+                                    &buffer.handle,
+                                    buffer_path_abs,
+                                    &language_server,
+                                    &settings,
+                                    cx,
+                                )
+                                .await
+                                .context("failed to format via language server")?
+                            } else {
+                                zlog::debug!(
+                                    logger =>
+                                    "Skipping range format - language server {:?} does not support range formatting",
+                                    language_server.name()
+                                );
+                                Vec::new()
+                            }
+                        }
+                    }
                 } else {
                     zlog::trace!(logger => "formatting full");
                     Self::format_via_lsp(
@@ -2201,12 +2256,8 @@ impl LocalLspStore {
                             formatting_transaction_id,
                             cx,
                             |buffer, cx| {
-                                zlog::info!(
-                                    "Applying edits {edits:?}. Content: {:?}",
-                                    buffer.text()
-                                );
+                                zlog::trace!("Applying {} edits", edits.len());
                                 buffer.edit(edits, None, cx);
-                                zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                             },
                         )?;
                     }
@@ -2348,14 +2399,18 @@ impl LocalLspStore {
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
-    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
+    ) -> Result<Option<Vec<(Range<Anchor>, Arc<str>)>>> {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if range_formatting_provider == Some(&OneOf::Left(false)) {
-            anyhow::bail!(
-                "{} language server does not support range formatting",
+        if !matches!(
+            range_formatting_provider,
+            Some(OneOf::Left(true) | OneOf::Right(_))
+        ) {
+            log::debug!(
+                "Skipping range formatting: language server {} does not support range formatting",
                 language_server.name()
             );
+            return Ok(None);
         }
 
         let uri = file_path_to_lsp_url(abs_path)?;
@@ -2414,8 +2469,9 @@ impl LocalLspStore {
                 )
             })?
             .await
+            .map(Some)
         } else {
-            Ok(Vec::with_capacity(0))
+            Ok(Some(Vec::with_capacity(0)))
         }
     }
 
@@ -3437,6 +3493,25 @@ impl LocalLspStore {
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
 
+                    // An LSP "rename symbol" can also rename the file, with the text edit
+                    // applied only to the in-memory buffer. Persist it before renaming, or
+                    // fs.rename moves the stale on-disk content and the files' contents swap.
+                    let dirty_buffer = this.update(cx, |this, cx| {
+                        let project_path = this
+                            .worktree_store()
+                            .read(cx)
+                            .project_path_for_absolute_path(&source_abs_path, cx)?;
+                        let buffer = this.buffer_store().read(cx).get_by_path(&project_path)?;
+                        buffer.read(cx).is_dirty().then_some(buffer)
+                    });
+                    if let Some(buffer) = dirty_buffer {
+                        this.update(cx, |this, cx| {
+                            this.buffer_store()
+                                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                        })
+                        .await?;
+                    }
+
                     let options = fs::RenameOptions {
                         overwrite: op
                             .options
@@ -4222,9 +4297,10 @@ impl SymbolLocation {
 }
 
 fn should_log_lsp_request_failure(message: &str) -> bool {
-    // content modified is a weird failure mode of rust-analyzer
-    // where requests are denied before its loaded a project
-    message.ends_with("content modified") || message.ends_with("server cancelled the request")
+    // "content modified" and "server cancelled the request" are noisy failure
+    // modes of rust-analyzer where requests are denied before it has loaded a
+    // project.
+    !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
 impl LspStore {
@@ -4244,6 +4320,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_code_action);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
+        client.add_entity_request_handler(Self::handle_resolve_code_action);
         client.add_entity_request_handler(Self::handle_resolve_document_link);
         client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
@@ -5749,6 +5826,73 @@ impl LspStore {
         }
     }
 
+    pub fn resolve_code_action(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut action: CodeAction,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CodeAction>> {
+        if action.resolved {
+            return Task::ready(Ok(action));
+        }
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = proto::ResolveCodeAction {
+                project_id,
+                buffer_id: buffer.read(cx).remote_id().into(),
+                action: Some(Self::serialize_code_action(&action)),
+            };
+            cx.background_spawn(async move {
+                let response = upstream_client
+                    .request(request)
+                    .await
+                    .context("resolve code action proto request")?;
+                let action = response.action.context("missing resolved action")?;
+                Self::deserialize_code_action(action)
+            })
+        } else if self.mode.is_local() {
+            let server_id = action.server_id;
+            let Some(lang_server) = buffer.update(cx, |buffer, cx| {
+                self.language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(_, server)| server.clone())
+            }) else {
+                return Task::ready(Ok(action));
+            };
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+            cx.background_spawn(async move {
+                LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
+                    .await
+                    .context("resolving a code action")?;
+                Ok(action)
+            })
+        } else {
+            Task::ready(Err(anyhow!("no upstream client and not local")))
+        }
+    }
+
+    pub(super) async fn handle_resolve_code_action(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::ResolveCodeAction>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ResolveCodeActionResponse> {
+        let action =
+            Self::deserialize_code_action(envelope.payload.action.context("invalid action")?)?;
+        let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
+            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+            lsp_store.buffer_store.read(cx).get_existing(buffer_id)
+        })?;
+        let resolved = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.resolve_code_action(&buffer, action, cx)
+            })
+            .await
+            .context("resolving code action")?;
+        Ok(proto::ResolveCodeActionResponse {
+            action: Some(Self::serialize_code_action(&resolved)),
+        })
+    }
+
     pub fn apply_code_action_kind(
         &mut self,
         buffers: HashSet<Entity<Buffer>>,
@@ -6041,30 +6185,8 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.definitions_with_filter(buffer, position, false, cx)
-    }
-
-    pub fn workspace_definitions(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.definitions_with_filter(buffer, position, true, cx)
-    }
-
-    fn definitions_with_filter(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        workspace_only: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitions {
-                position,
-                workspace_only,
-            };
+            let request = GetDefinitions { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6089,11 +6211,7 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitions {
-                        position,
-                        workspace_only,
-                    }
-                    .response_from_proto(
+                    GetDefinitions { position }.response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6116,10 +6234,7 @@ impl LspStore {
             let definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetDefinitions {
-                    position,
-                    workspace_only,
-                },
+                GetDefinitions { position },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6133,6 +6248,107 @@ impl LspStore {
                 ))
             })
         }
+    }
+
+    fn edit_prediction_definitions_for_command<C>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        request: C,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<EditPredictionDefinition>>>
+    where
+        C: LspCommand<Response = Vec<EditPredictionDefinition>> + Clone,
+        C::ProtoRequest: proto::LspRequestMessage,
+        <C::ProtoRequest as proto::LspRequestMessage>::Response:
+            Into<<C::ProtoRequest as proto::RequestMessage>::Response>,
+        <C::LspRequest as lsp::request::Request>::Result: Send,
+        <C::LspRequest as lsp::request::Request>::Params: Send,
+    {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
+            let request_task = upstream_client.request_lsp(
+                project_id,
+                None,
+                request_timeout,
+                cx.background_executor().clone(),
+                request.to_proto(project_id, buffer.read(cx)),
+            );
+            let buffer = buffer.clone();
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let Some(responses) = request_task.await? else {
+                    return Ok(Vec::new());
+                };
+                let actions = join_all(responses.payload.into_iter().map(|response| {
+                    request.clone().response_from_proto(
+                        response.response.into(),
+                        lsp_store.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let definitions_task =
+                self.request_multiple_lsp_locally(buffer, Some(position), request, cx);
+            cx.background_spawn(async move {
+                Ok(definitions_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, definitions)| definitions)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn edit_prediction_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        include_type_definitions: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<EditPredictionDefinition>>> {
+        let definitions = self.edit_prediction_definitions_for_command(
+            buffer,
+            GetEditPredictionDefinitions { position },
+            position,
+            cx,
+        );
+        let type_definitions = include_type_definitions.then(|| {
+            self.edit_prediction_definitions_for_command(
+                buffer,
+                GetEditPredictionTypeDefinitions { position },
+                position,
+                cx,
+            )
+        });
+        cx.background_spawn(async move {
+            let mut merged = definitions.await?;
+            if let Some(type_definitions) = type_definitions {
+                merged.extend(type_definitions.await?);
+            }
+            let mut seen = HashSet::default();
+            merged.retain(|definition| seen.insert(definition.clone()));
+            Ok(merged)
+        })
     }
 
     pub fn declarations(
@@ -6210,30 +6426,8 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.type_definitions_with_filter(buffer, position, false, cx)
-    }
-
-    pub fn workspace_type_definitions(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        self.type_definitions_with_filter(buffer, position, true, cx)
-    }
-
-    fn type_definitions_with_filter(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        workspace_only: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitions {
-                position,
-                workspace_only,
-            };
+            let request = GetTypeDefinitions { position };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6256,11 +6450,7 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitions {
-                        position,
-                        workspace_only,
-                    }
-                    .response_from_proto(
+                    GetTypeDefinitions { position }.response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6283,10 +6473,7 @@ impl LspStore {
             let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetTypeDefinitions {
-                    position,
-                    workspace_only,
-                },
+                GetTypeDefinitions { position },
                 cx,
             );
             cx.background_spawn(async move {
@@ -7180,27 +7367,19 @@ impl LspStore {
                         buffer.start_transaction();
 
                         for (range, text) in edits {
-                            let primary = &completion.replace_range;
-
-                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
-                            // and the primary completion is just an insertion (empty range), then this is likely
-                            // an auto-import scenario and should not be considered overlapping
-                            // https://github.com/zed-industries/zed/issues/26136
-                            let is_file_start_auto_import = {
-                                let snapshot = buffer.snapshot();
-                                let primary_start_point = primary.start.to_point(&snapshot);
-                                let range_start_point = range.start.to_point(&snapshot);
-
-                                let result = primary_start_point.row == 0
-                                    && primary_start_point.column == 0
-                                    && range_start_point.row == 0
-                                    && range_start_point.column == 0;
-
-                                result
-                            };
-
-                            let has_overlap = if is_file_start_auto_import {
-                                false
+                            // Zero-width additional edits (e.g. auto-imports at file start, or
+                            // rust-analyzer's ref-match `&` insertions) only overlap the primary
+                            // edit when they fall strictly inside it. Touching its boundary is fine.
+                            //
+                            // Ref: https://github.com/zed-industries/zed/issues/26136
+                            // Ref: https://github.com/zed-industries/zed/issues/56973
+                            let is_insertion = range.start.cmp(&range.end, buffer).is_eq();
+                            let has_overlap = if is_insertion {
+                                let insert_offset = range.start.to_offset(buffer);
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    commit_range.start.to_offset(buffer) < insert_offset
+                                        && insert_offset < commit_range.end.to_offset(buffer)
+                                })
                             } else {
                                 all_commit_ranges.iter().any(|commit_range| {
                                     let start_within =
@@ -7213,8 +7392,8 @@ impl LspStore {
                                 })
                             };
 
-                            //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
+                            // Skip additional edits which overlap with the primary completion edit
+                            // https://github.com/zed-industries/zed/pull/1871
                             if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
@@ -9492,6 +9671,22 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetEditPredictionDefinition(get_edit_prediction_definition) => {
+                let position = get_edit_prediction_definition
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp_locally::<GetEditPredictionDefinitions>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_edit_prediction_definition,
+                    position,
+                    &mut cx,
+                )
+                .await?;
+            }
             Request::GetDeclaration(get_declaration) => {
                 let position = get_declaration
                     .position
@@ -9519,6 +9714,22 @@ impl LspStore {
                     sender_id,
                     lsp_request_id,
                     get_type_definition,
+                    position,
+                    &mut cx,
+                )
+                .await?;
+            }
+            Request::GetEditPredictionTypeDefinition(get_edit_prediction_type_definition) => {
+                let position = get_edit_prediction_type_definition
+                    .position
+                    .clone()
+                    .and_then(deserialize_anchor);
+                Self::query_lsp_locally::<GetEditPredictionTypeDefinitions>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_edit_prediction_type_definition,
                     position,
                     &mut cx,
                 )
@@ -13141,6 +13352,7 @@ impl LspStore {
                             capabilities.code_lens_provider = Some(caps);
                         });
                         notify_server_capabilities_updated(&server, cx);
+                        self.refresh_code_lens(cx);
                     }
                 }
                 "textDocument/diagnostic" => {
@@ -13234,6 +13446,23 @@ impl LspStore {
                             capabilities.document_link_provider = Some(caps);
                         });
                         notify_server_capabilities_updated(&server, cx);
+                    }
+                }
+                "textDocument/semanticTokens" => {
+                    if let Some(caps) = reg
+                        .register_options
+                        .map(serde_json::from_value::<lsp::SemanticTokensRegistrationOptions>)
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.semantic_tokens_provider = Some(
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(caps),
+                            );
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                        // Re-query already-open buffers, which would otherwise keep
+                        // tree-sitter-only highlighting until edited.
+                        self.refresh_semantic_tokens(server_id, None, cx);
                     }
                 }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
@@ -13354,6 +13583,12 @@ impl LspStore {
                 "textDocument/signatureHelp" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.signature_help_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/semanticTokens" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.semantic_tokens_provider = None;
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
@@ -14335,7 +14570,12 @@ impl LanguageServerWatchedPaths {
         cx.spawn({
             async move |_, cx| {
                 maybe!(async move {
-                    let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                    let mut push_updates = cx
+                        .background_spawn({
+                            let abs_path = abs_path.clone();
+                            async move { fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await }
+                        })
+                        .await;
                     while let Some(update) = push_updates.0.next().await {
                         let action = lsp_store
                             .update(cx, |this, _| {
@@ -15232,4 +15472,29 @@ fn extend_formatting_transaction(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_log_lsp_request_failure_suppresses_known_noise() {
+        // Suppressed: rust-analyzer's superseded/denied request signals.
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: content modified"
+        ));
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server cancelled the request"
+        ));
+
+        // Logged: anything else is a real failure.
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server shut down"
+        ));
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: Server reset the connection"
+        ));
+        assert!(should_log_lsp_request_failure("something else entirely"));
+    }
 }

@@ -317,7 +317,7 @@ impl Element for Img {
 
                             if let Some(state) = &mut state {
                                 state.frame_index = state.frame_index.min(max_frame_index);
-                                if frame_count > 1 {
+                                if frame_count > 1 && !cx.reduce_motion() {
                                     if window.is_window_active() {
                                         let current_time = Instant::now();
                                         if let Some(last_frame_time) = state.last_frame_time {
@@ -378,6 +378,7 @@ impl Element for Img {
                             if global_id.is_some()
                                 && data.frame_count() > 1
                                 && window.is_window_active()
+                                && !cx.reduce_motion()
                             {
                                 window.request_animation_frame();
                             }

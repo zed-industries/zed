@@ -18,7 +18,7 @@ Remote development requires two computers, your local machine that runs the Zed 
 
 On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and stores unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server. [AI features](./ai/overview.md) work in remote sessions, including the Agent Panel and Inline Assistant.
 
-> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use that mode.
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no longer use that mode.
 
 ## Setup
 
@@ -244,7 +244,7 @@ If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_
 
 ## Maintaining the SSH connection
 
-Once the server is initialized. Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
+Once the server is initialized, Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
 
 Each connection tries to run the development server in proxy mode. This mode will start the daemon if it is not running, and reconnect to it if it is. This way when your connection drops and is restarted, you can continue to work without interruption.
 
