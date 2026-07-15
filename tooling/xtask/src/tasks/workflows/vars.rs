@@ -23,7 +23,6 @@ secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
 secret!(AZURE_SIGNING_CLIENT_ID);
-secret!(AZURE_SIGNING_CLIENT_SECRET);
 secret!(AZURE_SIGNING_TENANT_ID);
 secret!(CACHIX_AUTH_TOKEN);
 secret!(CLUSTER_NAME);
@@ -73,7 +72,6 @@ pub fn bundle_envs(platform: Platform) -> Env {
         Platform::Windows => env
             .add("AZURE_TENANT_ID", AZURE_SIGNING_TENANT_ID)
             .add("AZURE_CLIENT_ID", AZURE_SIGNING_CLIENT_ID)
-            .add("AZURE_CLIENT_SECRET", AZURE_SIGNING_CLIENT_SECRET)
             .add("ACCOUNT_NAME", AZURE_SIGNING_ACCOUNT_NAME)
             .add("CERT_PROFILE_NAME", AZURE_SIGNING_CERT_PROFILE_NAME)
             .add("ENDPOINT", AZURE_SIGNING_ENDPOINT)

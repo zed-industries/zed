@@ -207,6 +207,13 @@ pub(crate) fn bundle_windows(
         name: format!("bundle_windows_{arch}"),
         job: bundle_job(deps)
             .runs_on(runners::WINDOWS_DEFAULT)
+            // Trusted Signing authenticates via GitHub OIDC federation instead of a
+            // long-lived secret; `id-token: write` lets the job mint the OIDC token.
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .id_token(Level::Write),
+            )
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
             .when_some(release_channel, |job, release_channel| {

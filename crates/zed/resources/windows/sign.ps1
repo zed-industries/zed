@@ -43,6 +43,19 @@ $params["TimestampRfc3161"] = $timeStampServer
 
 $params["Files"] = $filePath
 
+# Trusted Signing authenticates via DefaultAzureCredential.
+# We avoid a long-lived client secret by federating with GitHub's OIDC provider.
+if (-Not [string]::IsNullOrWhiteSpace($ENV:ACTIONS_ID_TOKEN_REQUEST_URL)) {
+    $audience = "api://AzureADTokenExchange"
+    $requestUri = "$($ENV:ACTIONS_ID_TOKEN_REQUEST_URL)&audience=$([uri]::EscapeDataString($audience))"
+    $oidcResponse = Invoke-RestMethod -Uri $requestUri -Method Get -Headers @{
+        Authorization = "Bearer $($ENV:ACTIONS_ID_TOKEN_REQUEST_TOKEN)"
+    }
+    $tokenFile = Join-Path $ENV:RUNNER_TEMP "azure-identity-token"
+    [System.IO.File]::WriteAllText($tokenFile, $oidcResponse.value)
+    $ENV:AZURE_FEDERATED_TOKEN_FILE = $tokenFile
+}
+
 $trace = $ENV:TRACE
 if (-Not [string]::IsNullOrWhiteSpace($trace)) {
     if ([System.Convert]::ToBoolean($trace)) {
