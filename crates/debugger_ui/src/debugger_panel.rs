@@ -1004,14 +1004,17 @@ impl DebugPanel {
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(session) = self.active_session() {
-            session.update(cx, |session, cx| {
-                session.running_state().update(cx, |running, cx| {
-                    running.activate_pane_in_direction(direction, window, cx);
-                })
-            });
-        }
+    ) -> bool {
+        let Some(session) = self.active_session() else {
+            return false;
+        };
+
+        session.update(cx, |session, cx| {
+            session.running_state().update(cx, |running, cx| {
+                running.activate_pane_in_direction(direction, window, cx);
+            })
+        });
+        true
     }
 
     pub(crate) fn activate_item(
@@ -1580,37 +1583,57 @@ impl Render for DebugPanel {
             .on_action({
                 let this = this.clone();
                 move |_: &workspace::ActivatePaneLeft, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.activate_pane_in_direction(SplitDirection::Left, window, cx);
-                    })
-                    .ok();
+                    let handled = this
+                        .update(cx, |this, cx| {
+                            this.activate_pane_in_direction(SplitDirection::Left, window, cx)
+                        })
+                        .log_err()
+                        .unwrap_or(false);
+                    if !handled {
+                        cx.propagate();
+                    }
                 }
             })
             .on_action({
                 let this = this.clone();
                 move |_: &workspace::ActivatePaneRight, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.activate_pane_in_direction(SplitDirection::Right, window, cx);
-                    })
-                    .ok();
+                    let handled = this
+                        .update(cx, |this, cx| {
+                            this.activate_pane_in_direction(SplitDirection::Right, window, cx)
+                        })
+                        .log_err()
+                        .unwrap_or(false);
+                    if !handled {
+                        cx.propagate();
+                    }
                 }
             })
             .on_action({
                 let this = this.clone();
                 move |_: &workspace::ActivatePaneUp, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.activate_pane_in_direction(SplitDirection::Up, window, cx);
-                    })
-                    .ok();
+                    let handled = this
+                        .update(cx, |this, cx| {
+                            this.activate_pane_in_direction(SplitDirection::Up, window, cx)
+                        })
+                        .log_err()
+                        .unwrap_or(false);
+                    if !handled {
+                        cx.propagate();
+                    }
                 }
             })
             .on_action({
                 let this = this.clone();
                 move |_: &workspace::ActivatePaneDown, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.activate_pane_in_direction(SplitDirection::Down, window, cx);
-                    })
-                    .ok();
+                    let handled = this
+                        .update(cx, |this, cx| {
+                            this.activate_pane_in_direction(SplitDirection::Down, window, cx)
+                        })
+                        .log_err()
+                        .unwrap_or(false);
+                    if !handled {
+                        cx.propagate();
+                    }
                 }
             })
             .on_action({
