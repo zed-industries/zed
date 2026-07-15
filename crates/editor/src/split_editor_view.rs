@@ -2,10 +2,10 @@ use std::cmp;
 
 use collections::{HashMap, HashSet};
 use gpui::{
-    AbsoluteLength, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, Context,
-    DragMoveEvent, Element, Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement,
-    LayoutId, Length, ParentElement, Pixels, StatefulInteractiveElement, Styled,
-    TextStyleRefinement, Window, div, linear_color_stop, linear_gradient, point, px, size,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DragMoveEvent,
+    Element, Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
+    linear_color_stop, linear_gradient, point, px, size,
 };
 use multi_buffer::{Anchor, ExcerptBoundaryInfo};
 use smallvec::smallvec;
@@ -355,18 +355,6 @@ impl Element for SplitBufferHeadersElement {
                 });
             });
         });
-
-        for editor in [&self.lhs_editor, &self.rhs_editor] {
-            let visible = editor.read(cx).last_horizontal_scrollbar_visible();
-            let layout = editor.read(cx).last_horizontal_scrollbar_layout();
-            let any_scrollbar_dragged = editor.read(cx).scroll_manager.any_scrollbar_dragged();
-
-            if let Some(layout) = layout
-                && visible
-            {
-                layout.paint_track_and_thumb(Axis::Horizontal, any_scrollbar_dragged, window, cx);
-            }
-        }
     }
 }
 

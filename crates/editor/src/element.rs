@@ -47,8 +47,8 @@ use gpui::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    TextStyleRefinement, WeakEntity, Window, canvas, div, fill, outline, pattern_slash, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -5688,6 +5688,47 @@ impl EditorElement {
         }
     }
 
+    /// In split mode, the buffer headers are painted by a separate
+    /// `SplitBufferHeadersElement` drawn after the editor, which would cover
+    /// the horizontal scrollbar.
+    /// To keep the scrollbar on top, and its track see-through, matching the
+    /// vertical scrollbar, `paint_scrollbars` will skip the horizontal
+    /// scrollbar and this will schedule a deferred draw for it instead,
+    /// ensuring that it gets painted after all non-deferred content.
+    /// Can't be called directly from `paint_scrollbars` because
+    /// `Window::defer_draw` is a prepaint-only API.
+    fn defer_horizontal_scrollbar_paint(
+        &self,
+        scrollbars_layout: Option<&EditorScrollbars>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.split_side.is_some()
+            && let Some(scrollbars) = scrollbars_layout
+            && scrollbars.visible
+            && let Some(scrollbar_layout) = scrollbars.horizontal.clone()
+        {
+            let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
+            let bounds = scrollbar_layout.hitbox.bounds;
+
+            let mut element = canvas(
+                |_, _, _| (),
+                move |_, _, window, cx| {
+                    scrollbar_layout.paint_track_and_thumb(
+                        ScrollbarAxis::Horizontal,
+                        any_scrollbar_dragged,
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .into_any_element();
+
+            element.layout_as_root(bounds.size.into(), window, cx);
+            window.defer_draw(element, bounds.origin, 0, None);
+        }
+    }
+
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
@@ -5695,8 +5736,11 @@ impl EditorElement {
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
-            let hitbox = &scrollbar_layout.hitbox;
+            // In split mode, the horizontal scrollbar is painted by
+            // `Self::defer_horizontal_scrollbar_paint` instead, to ensure it
+            // lands above buffer headers.
             let suppressed = axis == ScrollbarAxis::Horizontal && self.split_side.is_some();
+            let hitbox = &scrollbar_layout.hitbox;
 
             if scrollbars_layout.visible && !suppressed {
                 window.paint_layer(hitbox.bounds, |window| {
@@ -9235,15 +9279,11 @@ impl Element for EditorElement {
                             scrollbars_layout.visible && scrollbars_layout.horizontal.is_some()
                         });
 
-                    let horizontal_scrollbar_layout = scrollbars_layout
-                        .as_ref()
-                        .and_then(|scrollbars_layout| scrollbars_layout.horizontal.clone());
-
+                    self.defer_horizontal_scrollbar_paint(scrollbars_layout.as_ref(), window, cx);
                     self.editor.update(cx, |editor, _| {
                         editor.last_position_map = Some(position_map.clone());
                         editor.last_right_margin = right_margin;
                         editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
-                        editor.last_horizontal_scrollbar_layout = horizontal_scrollbar_layout;
                     });
 
                     EditorLayout {
@@ -9654,7 +9694,7 @@ impl EditorScrollbars {
 }
 
 #[derive(Clone)]
-pub(crate) struct ScrollbarLayout {
+pub struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_range: Range<ScrollOffset>,
     text_unit_size: Pixels,
@@ -9914,7 +9954,7 @@ impl ScrollbarLayout {
         }
     }
 
-    pub(crate) fn paint_track(&self, axis: ScrollbarAxis, window: &mut Window, cx: &App) {
+    fn paint_track(&self, axis: ScrollbarAxis, window: &mut Window, cx: &App) {
         let colors = cx.theme().colors();
 
         window.paint_quad(quad(
@@ -9927,7 +9967,7 @@ impl ScrollbarLayout {
         ));
     }
 
-    pub(crate) fn paint_thumb(
+    fn paint_thumb(
         &self,
         axis: ScrollbarAxis,
         any_scrollbar_dragged: bool,
@@ -9960,7 +10000,7 @@ impl ScrollbarLayout {
         }
     }
 
-    pub(crate) fn paint_track_and_thumb(
+    fn paint_track_and_thumb(
         &self,
         axis: ScrollbarAxis,
         any_scrollbar_dragged: bool,

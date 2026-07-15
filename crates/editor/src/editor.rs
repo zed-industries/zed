@@ -150,7 +150,7 @@ use edit_prediction_types::{
     EditPredictionGranularity, SuggestionDisplayType,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
-use element::{LineWithInvisibles, PositionMap, ScrollbarLayout, layout_line};
+use element::{LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt,
     future::{self, Shared},
@@ -1102,16 +1102,9 @@ pub struct Editor {
     /// width available to buffer headers.
     last_right_margin: Pixels,
     /// Whether the horizontal scrollbar was laid out as visible during the last
-    /// prepaint. Unlike `last_horizontal_scrollbar_layout` (set whenever there
-    /// is horizontal overflow), this accounts for auto-hide. Used by
-    /// `SplitBufferHeadersElement` to gate repainting the hoisted horizontal
-    /// scrollbar over the buffer headers.
+    /// prepaint, accounting for auto-hide. Used by `SplitBufferHeadersElement`
+    /// to position sticky buffer headers above the scrollbar.
     last_horizontal_scrollbar_visible: bool,
-    /// The horizontal scrollbar's layout from the last prepaint, if one was
-    /// laid out.
-    /// Snapshotted so `SplitBufferHeadersElement` can paint the split pane's
-    /// horizontal scrollbars itself, above the buffer headers.
-    last_horizontal_scrollbar_layout: Option<ScrollbarLayout>,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -2284,7 +2277,6 @@ impl Editor {
             last_position_map: None,
             last_right_margin: Pixels::ZERO,
             last_horizontal_scrollbar_visible: false,
-            last_horizontal_scrollbar_layout: None,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2701,10 +2693,6 @@ impl Editor {
 
     pub(crate) fn last_horizontal_scrollbar_visible(&self) -> bool {
         self.last_horizontal_scrollbar_visible
-    }
-
-    pub(crate) fn last_horizontal_scrollbar_layout(&self) -> Option<&ScrollbarLayout> {
-        self.last_horizontal_scrollbar_layout.as_ref()
     }
 
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
