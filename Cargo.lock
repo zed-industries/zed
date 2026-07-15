@@ -6319,6 +6319,7 @@ dependencies = [
  "log",
  "lsp",
  "parking_lot",
+ "path",
  "pretty_assertions",
  "proto",
  "semver",
@@ -6908,6 +6909,7 @@ dependencies = [
  "log",
  "notify 9.0.0-rc.4",
  "parking_lot",
+ "path",
  "paths",
  "proto",
  "rope",
@@ -9754,13 +9756,13 @@ dependencies = [
  "log",
  "lsp-types",
  "parking_lot",
+ "path",
  "regex",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "toml 0.8.23",
  "tree-sitter",
- "util",
 ]
 
 [[package]]
@@ -12706,6 +12708,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
+name = "path"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14040,6 +14052,7 @@ dependencies = [
  "markdown",
  "node_runtime",
  "parking_lot",
+ "path",
  "paths",
  "percent-encoding",
  "postage",
@@ -19952,6 +19965,7 @@ dependencies = [
  "log",
  "mach2 0.5.0",
  "nix 0.29.0",
+ "path",
  "percent-encoding",
  "pretty_assertions",
  "rand 0.9.4",

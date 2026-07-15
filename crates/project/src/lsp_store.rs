@@ -8755,7 +8755,7 @@ impl LspStore {
                                 project_id: *project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path: path.as_ref().to_proto(),
+                                    path: path.as_ref().as_unix_str().to_owned(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
@@ -9046,7 +9046,7 @@ impl LspStore {
                                 diagnostics_summary
                                     .more_summaries
                                     .push(proto::DiagnosticSummary {
-                                        path: project_path.path.as_ref().to_proto(),
+                                        path: project_path.path.as_ref().as_unix_str().to_owned(),
                                         language_server_id: server_id.0 as u64,
                                         error_count: new_summary.error_count,
                                         warning_count: new_summary.warning_count,
@@ -9057,7 +9057,7 @@ impl LspStore {
                                     project_id,
                                     worktree_id: worktree_id.to_proto(),
                                     summary: Some(proto::DiagnosticSummary {
-                                        path: project_path.path.as_ref().to_proto(),
+                                        path: project_path.path.as_ref().as_unix_str().to_owned(),
                                         language_server_id: server_id.0 as u64,
                                         error_count: new_summary.error_count,
                                         warning_count: new_summary.warning_count,
@@ -9141,7 +9141,7 @@ impl LspStore {
                 Ok(ControlFlow::Continue(Some((
                     *project_id,
                     proto::DiagnosticSummary {
-                        path: path_in_worktree.to_proto(),
+                        path: path_in_worktree.as_unix_str().to_owned(),
                         language_server_id: server_id.0 as u64,
                         error_count: new_summary.error_count as u32,
                         warning_count: new_summary.warning_count as u32,
@@ -9946,7 +9946,7 @@ impl LspStore {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
         let new_path =
-            RelPath::from_proto(&envelope.payload.new_path).context("invalid relative path")?;
+            RelPath::from_unix_str(&envelope.payload.new_path).context("invalid relative path")?;
 
         let (worktree_store, old_worktree, new_worktree, old_entry) = this
             .update(&mut cx, |this, cx| {
@@ -10015,7 +10015,9 @@ impl LspStore {
             {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: RelPath::from_proto(&message_summary.path).context("invalid path")?,
+                    path: RelPath::from_unix_str(&message_summary.path)
+                        .context("invalid path")?
+                        .into(),
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message_summary.language_server_id as usize);
@@ -10050,7 +10052,7 @@ impl LspStore {
                             diagnostics_summary
                                 .more_summaries
                                 .push(proto::DiagnosticSummary {
-                                    path: project_path.path.as_ref().to_proto(),
+                                    path: project_path.path.as_ref().as_unix_str().to_owned(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: summary.error_count as u32,
                                     warning_count: summary.warning_count as u32,
@@ -10061,7 +10063,7 @@ impl LspStore {
                                 project_id: *project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path: project_path.path.as_ref().to_proto(),
+                                    path: project_path.path.as_ref().as_unix_str().to_owned(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: summary.error_count as u32,
                                     warning_count: summary.warning_count as u32,
@@ -11539,7 +11541,7 @@ impl LspStore {
                                 project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path: path.as_ref().to_proto(),
+                                    path: path.as_ref().as_unix_str().to_owned(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
@@ -12571,7 +12573,7 @@ impl LspStore {
         match &symbol.path {
             SymbolLocation::InProject(path) => {
                 result.worktree_id = path.worktree_id.to_proto();
-                result.path = path.path.to_proto();
+                result.path = path.path.as_unix_str().to_owned();
             }
             SymbolLocation::OutsideProject {
                 abs_path,
@@ -12592,8 +12594,9 @@ impl LspStore {
         let path = if serialized_symbol.signature.is_empty() {
             SymbolLocation::InProject(ProjectPath {
                 worktree_id,
-                path: RelPath::from_proto(&serialized_symbol.path)
-                    .context("invalid symbol path")?,
+                path: RelPath::from_unix_str(&serialized_symbol.path)
+                    .context("invalid symbol path")?
+                    .into(),
             })
         } else {
             SymbolLocation::OutsideProject {
@@ -14840,7 +14843,7 @@ impl DiagnosticSummary {
         path: &RelPath,
     ) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
-            path: path.to_proto(),
+            path: path.as_unix_str().to_owned(),
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,

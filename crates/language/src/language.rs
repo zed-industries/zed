@@ -50,8 +50,8 @@ pub use language_core::{
     LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
     OverrideEntry, PromptResponseContext, RedactionConfig, RunnableCapture, RunnableConfig,
     SoftWrap, Symbol, TaskListConfig, TextObject, TextObjectConfig, ToLspPosition,
-    WrapCharactersConfig, auto_indent_using_last_non_empty_line_default, deserialize_regex,
-    deserialize_regex_vec, regex_json_schema, regex_vec_json_schema, serialize_regex,
+    WrapCharactersConfig, default_true, deserialize_regex, deserialize_regex_vec,
+    regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
