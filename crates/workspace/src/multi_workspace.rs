@@ -28,9 +28,9 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::open_remote_project_with_existing_connection;
 use crate::{
-    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, FocusedSurface, Item,
+    ModalView, OpenMode, Panel, Workspace, WorkspaceId, client_side_decorations,
+    panel_highlight_overlay, persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -2113,6 +2113,11 @@ impl Render for MultiWorkspace {
                 let weak = cx.weak_entity();
 
                 let sidebar_width = sidebar_handle.width(cx);
+                let sidebar_highlight = panel_highlight_overlay(
+                    self.workspace().read(cx).focused_surface(window, cx),
+                    FocusedSurface::Sidebar,
+                    cx,
+                );
                 let resize_handle = deferred(
                     div()
                         .id("sidebar-resize-handle")
@@ -2161,6 +2166,7 @@ impl Render for MultiWorkspace {
                     .w(sidebar_width)
                     .flex_shrink_0()
                     .child(sidebar_handle.to_any())
+                    .children(sidebar_highlight)
                     .child(resize_handle)
                     .into_any_element()
             })

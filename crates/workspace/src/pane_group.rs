@@ -501,6 +501,50 @@ pub(crate) fn pane_has_focus(pane: &Entity<Pane>, window: &Window, cx: &App) -> 
     pane.focus_handle(cx).contains_focused(window, cx)
 }
 
+fn active_pane_modifiers_overlay(
+    pane_focused: bool,
+    any_pane_focused: bool,
+    cx: &App,
+) -> Option<Div> {
+    let modifiers = WorkspaceSettings::get(None, cx).active_pane_modifiers;
+    let border = modifiers
+        .border_size
+        .and_then(|border_size| (border_size > 0.).then_some(border_size));
+
+    if pane_focused {
+        let border = border?;
+        return Some(
+            div()
+                .absolute()
+                .size_full()
+                .left_0()
+                .top_0()
+                .border(px(border))
+                .border_color(cx.theme().colors().border_selected),
+        );
+    }
+
+    if !any_pane_focused {
+        return None;
+    }
+
+    let opacity = modifiers
+        .inactive_opacity
+        .map(|opacity| opacity.0.clamp(0.0, 1.0))
+        .and_then(|opacity| (opacity < 1.).then_some(opacity))?;
+    let mut overlay_background = cx.theme().colors().editor_background;
+    overlay_background.fade_out(opacity);
+
+    Some(
+        div()
+            .absolute()
+            .size_full()
+            .left_0()
+            .top_0()
+            .bg(overlay_background),
+    )
+}
+
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
@@ -569,6 +613,9 @@ impl Member {
 
                 let decoration = render_cx.decorate(pane, cx);
                 let is_active = pane_has_focus(pane, window, cx);
+                let pane_modifiers_overlay = (basis == 0)
+                    .then(|| active_pane_modifiers_overlay(is_active, is_active, cx))
+                    .flatten();
 
                 let pane = div()
                     .relative()
@@ -595,7 +642,8 @@ impl Member {
                                 .border_color(color),
                         )
                     })
-                    .children(decoration.status_box);
+                    .children(decoration.status_box)
+                    .children(pane_modifiers_overlay);
 
                 PaneRenderResult {
                     element: div()
