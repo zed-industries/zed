@@ -2697,6 +2697,14 @@ impl Terminal {
     fn scrollback_position(line: i32, history_size: usize) -> i32 {
         // `history_size` is capped when old scrollback is trimmed, so this is a
         // coordinate in the retained terminal buffer rather than a global line number.
+        //
+        // Known limitation: once the scrollback cap is reached, positions recorded in
+        // `cwd_history` drift relative to the lines they were tagged with, because
+        // `line.0` keeps decreasing as retained lines move upward while `history_size`
+        // stays capped. In very long sessions this means `cwd_at_line` can return a
+        // stale cwd for older lines that are still in scrollback. Correcting this would
+        // require tracking a monotonic lines-ever-written counter (or pruning/shifting
+        // `cwd_history` on trim); we intentionally keep the simpler scoped version.
         let history_size = i32::try_from(history_size).unwrap_or(i32::MAX);
         history_size.saturating_add(line)
     }
