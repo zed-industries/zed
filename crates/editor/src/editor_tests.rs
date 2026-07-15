@@ -11559,7 +11559,12 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
 
     let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider.clone()),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     });
 
     cx.set_state(indoc! {"

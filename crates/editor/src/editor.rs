@@ -9770,7 +9770,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
