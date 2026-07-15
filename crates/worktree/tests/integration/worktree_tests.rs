@@ -4288,7 +4288,9 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     // reflogs of HEAD/branches/remote-tracking branches carry no git state
     // changes that Zed cares about beyond what the accompanying ref or index
     // events already convey, so they must not trigger a git metadata rescan.
-    // The stash reflog and ref updates themselves must still trigger one.
+    // The stash reflog, ref updates themselves, and ORIG_HEAD must still trigger one.
+    // ORIG_HEAD is written by reset operations, and on some platforms it can be
+    // the only reliable event for `git reset --soft`, which does not update the index.
     //
     init_test(cx);
 
@@ -4371,7 +4373,6 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         path!("/main_repo/.git/index.new"),
         path!("/main_repo/.git/index-abc123.tmp"),
         path!("/main_repo/.git/FETCH_HEAD"),
-        path!("/main_repo/.git/ORIG_HEAD"),
         path!("/main_repo/.git/BISECT_LOG"),
         path!("/main_repo/.git/info/refs"),
         path!("/main_repo/.git/info/refs_lzOf51"),
@@ -4393,6 +4394,7 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         // Standard common git dir rescan paths
         path!("/main_repo/.git/logs/refs/stash"),
         path!("/main_repo/.git/refs/heads/main"),
+        path!("/main_repo/.git/ORIG_HEAD"),
         path!("/main_repo/.git/info/exclude"),
         path!("/main_repo/.git/refs/heads/branch.new"),
         path!("/main_repo/.git/refs/heads/branch.tmp"),
