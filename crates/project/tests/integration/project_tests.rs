@@ -15719,7 +15719,7 @@ mod disable_ai_settings_tests {
 
         let worktree_id = WorktreeId::from_usize(1);
         let rel_path = |path: &str| -> std::sync::Arc<util::rel_path::RelPath> {
-            std::sync::Arc::from(util::rel_path::RelPath::unix(path).unwrap())
+            std::sync::Arc::from(util::rel_path::RelPath::from_unix_str(path).unwrap())
         };
         let project_path = rel_path("project");
         let settings_location = SettingsLocation {

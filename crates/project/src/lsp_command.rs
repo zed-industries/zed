@@ -1614,7 +1614,7 @@ fn edit_prediction_definitions_to_proto(
         .into_iter()
         .map(|definition| proto::EditPredictionDefinition {
             worktree_id: definition.path.worktree_id.to_proto(),
-            path: definition.path.path.as_ref().to_proto(),
+            path: definition.path.path.as_ref().as_unix_str().to_owned(),
             start: Some(proto::PointUtf16 {
                 row: definition.range.start.0.row,
                 column: definition.range.start.0.column,
@@ -1638,7 +1638,9 @@ fn edit_prediction_definitions_from_proto(
             Ok(EditPredictionDefinition {
                 path: ProjectPath {
                     worktree_id: worktree::WorktreeId::from_proto(definition.worktree_id),
-                    path: RelPath::from_proto(&definition.path).context("invalid path")?,
+                    path: RelPath::from_unix_str(&definition.path)
+                        .context("invalid path")?
+                        .into(),
                 },
                 range: Unclipped(PointUtf16::new(start.row, start.column))
                     ..Unclipped(PointUtf16::new(end.row, end.column)),

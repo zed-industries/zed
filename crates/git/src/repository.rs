@@ -1517,7 +1517,7 @@ impl GitRepository for RealGitRepository {
                 let change = change?;
                 let path = change.path;
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
                     continue;
                 };
 
@@ -3803,7 +3803,7 @@ impl std::fmt::Debug for RepoPath {
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::unix(s.as_ref())?;
+        let rel_path = RelPath::from_unix_str(s.as_ref())?;
         Ok(Self::from_rel_path(rel_path))
     }
 
@@ -3813,7 +3813,7 @@ impl RepoPath {
     }
 
     pub fn from_proto(proto: &str) -> Result<Self> {
-        let rel_path = RelPath::from_proto(proto)?;
+        let rel_path = RelPath::from_unix_str(proto)?.into();
         Ok(Self(rel_path))
     }
 
@@ -3832,7 +3832,7 @@ impl RepoPath {
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
+    RepoPath(RelPath::from_unix_str(s.as_ref()).unwrap().into())
 }
 
 impl AsRef<Arc<RelPath>> for RepoPath {

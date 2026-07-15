@@ -2221,14 +2221,14 @@ fn restore_serialized_buffer_contents(
 fn serialize_path_key(path_key: &PathKey) -> proto::PathKey {
     proto::PathKey {
         sort_prefix: path_key.sort_prefix,
-        path: path_key.path.to_proto(),
+        path: path_key.path.as_unix_str().to_owned(),
     }
 }
 
 fn deserialize_path_key(path_key: proto::PathKey) -> Option<PathKey> {
     Some(PathKey {
         sort_prefix: path_key.sort_prefix,
-        path: RelPath::from_proto(&path_key.path).ok()?,
+        path: RelPath::from_unix_str(&path_key.path).ok()?.into(),
     })
 }
 

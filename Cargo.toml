@@ -151,6 +151,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
+    "crates/path",
     "crates/paths",
     "crates/picker",
     "crates/picker_preview",
@@ -414,6 +415,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
+path = { path = "crates/path" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }

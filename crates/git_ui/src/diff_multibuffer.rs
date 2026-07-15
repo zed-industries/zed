@@ -1007,7 +1007,7 @@ fn name_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         return repo_path.into_arc();
     };
     let synthetic = format!("{}/{}", file_name, repo_path.as_unix_str());
-    RelPath::unix(&synthetic)
+    RelPath::from_unix_str(&synthetic)
         .map(|path| path.into_arc())
         .unwrap_or_else(|_| repo_path.into_arc())
 }
@@ -1032,7 +1032,7 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         }
         synthetic.push_str(component);
     }
-    RelPath::unix(&synthetic)
+    RelPath::from_unix_str(&synthetic)
         .map(|path| path.into_arc())
         .unwrap_or_else(|_| repo_path.into_arc())
 }
