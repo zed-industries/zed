@@ -12,7 +12,7 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
-use semver::Version;
+use semver::{Version, VersionReq};
 use serde_json::{Value, json};
 use smol::lock::RwLock;
 use std::{
@@ -601,6 +601,9 @@ fn replace_test_name_parameters(test_name: &str) -> String {
     PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
+static TYPESCRIPT_VERSION_REQ: LazyLock<VersionReq> =
+    LazyLock::new(|| VersionReq::parse("^6").expect("Failed to parse TypeScript version req"));
+
 pub struct TypeScriptLspAdapter {
     fs: Arc<dyn Fs>,
     node: NodeRuntime,
@@ -622,7 +625,9 @@ impl TypeScriptLspAdapter {
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(
+                RelPath::from_unix_str(".yarn/sdks/typescript/lib/typescript.js").unwrap(),
+            )
             .await
             .is_ok();
 
@@ -634,7 +639,12 @@ impl TypeScriptLspAdapter {
 
         if self
             .fs
-            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .is_file(
+                &adapter
+                    .worktree_root_path()
+                    .join(tsdk_path)
+                    .join("tsserver.js"),
+            )
             .await
         {
             Some(tsdk_path)
@@ -661,7 +671,10 @@ impl LspInstaller for TypeScriptLspAdapter {
         Ok(TypeScriptVersions {
             typescript_version: self
                 .node
-                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .npm_package_latest_version_with_requirement(
+                    Self::PACKAGE_NAME,
+                    Some(&TYPESCRIPT_VERSION_REQ),
+                )
                 .await?,
             server_version: self
                 .node
@@ -684,12 +697,13 @@ impl LspInstaller for TypeScriptLspAdapter {
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
+            // Pin rather than Latest so an unusable TypeScript 7.x install gets downgraded.
             if node
                 .should_install_npm_package(
                     Self::PACKAGE_NAME,
                     &server_path,
                     &container_dir,
-                    VersionStrategy::Latest(&typescript_version),
+                    VersionStrategy::Pin(&typescript_version),
                 )
                 .await
             {
@@ -718,7 +732,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        _latest_version: Self::BinaryVersion,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -726,10 +740,14 @@ impl LspInstaller for TypeScriptLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+            let typescript_version = latest_version.typescript_version.to_string();
 
-            node.npm_install_latest_packages(
+            node.npm_install_packages(
                 &container_dir,
-                &[Self::PACKAGE_NAME, Self::SERVER_PACKAGE_NAME],
+                &[
+                    (Self::PACKAGE_NAME, typescript_version.as_str()),
+                    (Self::SERVER_PACKAGE_NAME, "latest"),
+                ],
             )
             .await?;
 

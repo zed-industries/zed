@@ -292,7 +292,7 @@ impl ManifestProvider for CargoManifestProvider {
     ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
+            let p = path.join(RelPath::from_unix_str("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -622,15 +622,15 @@ impl LspAdapter for RustLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (prefix, suffix) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
-            lsp::SymbolKind::STRUCT => ("struct ", ";"),
-            lsp::SymbolKind::ENUM => ("enum ", "{}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
-            lsp::SymbolKind::MODULE => ("mod ", ";"),
-            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
-            lsp::SymbolKind::ENUM_MEMBER => {
+            language::SymbolKind::Method | language::SymbolKind::Function => ("fn ", "();"),
+            language::SymbolKind::Struct => ("struct ", ";"),
+            language::SymbolKind::Enum => ("enum ", "{}"),
+            language::SymbolKind::Interface => ("trait ", "{}"),
+            language::SymbolKind::Constant => ("const ", ":()=();"),
+            language::SymbolKind::Module => ("mod ", ";"),
+            language::SymbolKind::Package => ("extern crate ", ";"),
+            language::SymbolKind::TypeParameter => ("type ", "=();"),
+            language::SymbolKind::EnumMember => {
                 let prefix = "enum E {";
                 return Some(CodeLabel::new(
                     name.to_string(),
@@ -1972,7 +1972,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "hello".to_string(),
-                        kind: lsp::SymbolKind::FUNCTION,
+                        kind: language::SymbolKind::Function,
                         container_name: None,
                     },
                     &language
@@ -1990,7 +1990,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "World".to_string(),
-                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        kind: language::SymbolKind::TypeParameter,
                         container_name: None,
                     },
                     &language
@@ -2008,7 +2008,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "zed".to_string(),
-                        kind: lsp::SymbolKind::PACKAGE,
+                        kind: language::SymbolKind::Package,
                         container_name: None,
                     },
                     &language
@@ -2026,7 +2026,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "Variant".to_string(),
-                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        kind: language::SymbolKind::EnumMember,
                         container_name: None,
                     },
                     &language
