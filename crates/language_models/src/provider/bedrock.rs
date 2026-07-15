@@ -2606,9 +2606,24 @@ mod tests {
 
     #[test]
     fn test_builtin_mantle_models_support_thinking() {
+        assert!(MantleModel::Gpt5_6Sol.supports_thinking());
+        assert!(MantleModel::Gpt5_6Terra.supports_thinking());
+        assert!(MantleModel::Gpt5_6Luna.supports_thinking());
         assert!(MantleModel::Gpt5_5.supports_thinking());
         assert!(MantleModel::Gpt5_4.supports_thinking());
         assert!(MantleModel::Grok4_3.supports_thinking());
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Sol),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Terra),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Luna),
+            Some(ReasoningEffort::Medium)
+        );
         assert_eq!(
             mantle_default_reasoning_effort(&MantleModel::Gpt5_5),
             Some(ReasoningEffort::Medium)

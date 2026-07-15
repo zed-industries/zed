@@ -410,6 +410,14 @@
   // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
   //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
+  // Where to show LSP results that can contain multiple locations
+  // (Go to Definition, Go to Implementation, Find All References). A single
+  // result always opens directly. Individual actions can override this with
+  // their `open_results_in` argument.
+  //
+  // 1. Open the results in a multibuffer: `multi_buffer` (default)
+  // 2. Open the results in a filterable picker: `picker`
+  "lsp_results_location": "multi_buffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt

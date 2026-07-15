@@ -335,7 +335,7 @@ impl Editor {
                 }
                 (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
+                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))

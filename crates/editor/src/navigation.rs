@@ -1298,6 +1298,62 @@ impl Editor {
         }))
     }
 
+    /// Runs the LSP go-to query for `kind` (definition / declaration / type /
+    /// implementation) against the symbol under the cursor and returns the raw
+    /// target [`Location`]s. The go-to counterpart to
+    /// [`Self::find_all_references_locations`]; used by the LSP location pickers.
+    pub fn definition_locations_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let provider = self.semantics_provider.clone()?;
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let definitions = provider.definitions(&buffer, head, kind, cx)?;
+        Some(cx.spawn(async move |editor, cx| {
+            let definitions = definitions.await?.unwrap_or_default();
+            // Drop a result that points back at the cursor, matching
+            // `go_to_definition_of_kind` (otherwise the picker lists the symbol
+            // you invoked it on).
+            editor.update(cx, |_, cx| {
+                definitions
+                    .into_iter()
+                    .filter(|link| hover_links::exclude_link_to_position(&buffer, &head, link, cx))
+                    .map(|link| link.target)
+                    .collect()
+            })
+        }))
+    }
+
+    /// Runs an LSP "find all references" query for the symbol under the cursor
+    /// and returns the raw [`Location`]s. Unlike [`Self::find_all_references`],
+    /// this does not group the results or open any UI
+    pub fn find_all_references_locations(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        // Keep every reference, including the one under the cursor, to match the
+        // default `find_all_references` multibuffer (`always_open_multibuffer`).
+        Some(cx.spawn(async move |_, _| Ok(references.await?.unwrap_or_default())))
+    }
+
     pub fn find_all_references(
         &mut self,
         action: &FindAllReferences,
@@ -2099,6 +2155,25 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.go_to_symbol_by_offset(window, cx, -1).detach();
+    }
+
+    /// Opens `location` and jumps to it through the same path as
+    /// go-to-definition, so selection, autoscroll, and jumplist tagging all
+    /// match. `split` opens it in the adjacent pane. Called on the editor the
+    /// jump originates from.
+    pub fn open_location(
+        &mut self,
+        location: Location,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let origin = self.navigation_entry(self.selections.newest_anchor().head(), cx);
+        let link = HoverLink::Text(LocationLink {
+            origin: None,
+            target: location,
+        });
+        self.navigate_to_hover_links(None, vec![link], origin, split, window, cx)
     }
 
     /// Opens a multibuffer with the given project locations in it.
