@@ -5,21 +5,19 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
-    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
+    AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
-    env_var,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    ProviderSettingsView, RateLimiter, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
-use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
-use ui_input::InputField;
-use util::ResultExt;
+use ui::IconName;
 
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
@@ -275,19 +273,19 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        target_agent: ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
-            .into()
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.read(cx);
+        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+            state.api_key_state.has_key(),
+            state.api_key_state.is_from_env_var(),
+            state.api_key_state.env_var_name().clone(),
+            "https://console.anthropic.com/settings/keys".into(),
+        )))
     }
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
@@ -329,12 +327,24 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         settings::ModelMode::Thinking { budget_tokens } => {
             AnthropicModelMode::Thinking { budget_tokens }
         }
+        settings::ModelMode::Adaptive => AnthropicModelMode::AdaptiveThinking,
     };
     let supports_thinking = matches!(
         mode,
         AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
     );
     let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking);
+    let supports_speed = available
+        .supports_fast_mode
+        .unwrap_or_else(|| anthropic::supports_fast_mode(&available.name));
+    let mut extra_beta_headers = available.extra_beta_headers.clone();
+    if supports_speed
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::FAST_MODE_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -349,7 +359,8 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
-        supports_speed: false,
+        supports_speed,
+        supports_compaction: false,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
                 anthropic::Effort::Low,
@@ -362,7 +373,76 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
             vec![]
         },
         tool_override: available.tool_override.clone(),
-        extra_beta_headers: available.extra_beta_headers.clone(),
+        extra_beta_headers,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_available_model(json: &str) -> AvailableModel {
+        serde_json::from_str(json).expect("test fixture should parse")
+    }
+
+    #[test]
+    fn adaptive_mode_maps_to_adaptive_thinking_with_all_effort_levels() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-opus-4-7",
+                "max_tokens": 1000000,
+                "max_output_tokens": 128000,
+                "mode": { "type": "adaptive" }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::AdaptiveThinking);
+        assert!(model.supports_thinking);
+        assert!(model.supports_adaptive_thinking);
+        assert_eq!(
+            model.supported_effort_levels,
+            vec![
+                anthropic::Effort::Low,
+                anthropic::Effort::Medium,
+                anthropic::Effort::High,
+                anthropic::Effort::XHigh,
+                anthropic::Effort::Max,
+            ]
+        );
+    }
+
+    #[test]
+    fn thinking_mode_does_not_enable_adaptive() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-sonnet-4-5",
+                "max_tokens": 200000,
+                "mode": { "type": "thinking", "budget_tokens": 4096 }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        assert!(model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
+    }
+
+    #[test]
+    fn default_mode_disables_thinking() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-3-5-haiku",
+                "max_tokens": 200000
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::Default);
+        assert!(!model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
     }
 }
 
@@ -463,6 +543,18 @@ impl LanguageModel for AnthropicModel {
         self.model.supports_speed
     }
 
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self.model.id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_compaction
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels
@@ -517,163 +609,25 @@ impl LanguageModel for AnthropicModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
-        let mut request = into_anthropic(
+        let mut request = match into_anthropic(
             request,
             request_id,
             self.model.default_temperature,
             self.model.max_output_tokens,
             self.model.mode.clone(),
             AnthropicPromptCacheMode::Automatic,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         if !self.model.supports_speed {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new().map_stream(response))
+            Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-}
-
-struct ConfigurationView {
-    api_key_editor: Entity<InputField>,
-    state: Entity<State>,
-    load_credentials_task: Option<Task<()>>,
-    target_agent: ConfigurationViewTargetAgent,
-}
-
-impl ConfigurationView {
-    const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-
-    fn new(
-        state: Entity<State>,
-        target_agent: ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&state, |_, _, cx| {
-            cx.notify();
-        })
-        .detach();
-
-        let load_credentials_task = Some(cx.spawn({
-            let state = state.clone();
-            async move |this, cx| {
-                let task = state.update(cx, |state, cx| state.authenticate(cx));
-                // We don't log an error, because "not signed in" is also an error.
-                let _ = task.await;
-                this.update(cx, |this, cx| {
-                    this.load_credentials_task = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
-
-        Self {
-            api_key_editor: cx.new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_TEXT)),
-            state,
-            load_credentials_task,
-            target_agent,
-        }
-    }
-
-    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx);
-        if api_key.is_empty() {
-            return;
-        }
-
-        // url changes can cause the editor to be displayed again
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(None, cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
-    }
-}
-
-impl Render for ConfigurationView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
-        let configured_card_label = if env_var_set {
-            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-        } else {
-            let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            if api_url == ANTHROPIC_API_URL {
-                "API key configured".to_string()
-            } else {
-                format!("API key configured for {}", api_url)
-            }
-        };
-
-        if self.load_credentials_task.is_some() {
-            div()
-                .child(Label::new("Loading credentials..."))
-                .into_any_element()
-        } else if self.should_render_editor(cx) {
-            v_flex()
-                .size_full()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
-                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
-                })))
-                .child(
-                    List::new()
-                        .child(
-                            ListBulletItem::new("")
-                                .child(Label::new("Create one by visiting"))
-                                .child(ButtonLink::new("Anthropic's settings", "https://console.anthropic.com/settings/keys"))
-                        )
-                        .child(
-                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
-                        )
-                )
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(
-                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_0p5(),
-                )
-                .into_any_element()
-        } else {
-            ConfiguredApiCard::new(configured_card_label)
-                .disabled(env_var_set)
-                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                .when(env_var_set, |this| {
-                    this.tooltip_label(format!(
-                    "To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."
-                ))
-                })
-                .into_any_element()
-        }
     }
 }

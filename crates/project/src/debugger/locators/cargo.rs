@@ -208,14 +208,7 @@ impl DapLocator for CargoLocator {
             anyhow::bail!("Couldn't get executable in cargo locator");
         };
 
-        let mut args: Vec<_> = test_name.into_iter().collect();
-        if is_test {
-            args.push("--nocapture".to_owned());
-            if is_ignored {
-                args.push("--include-ignored".to_owned());
-                args.push("--exact".to_owned());
-            }
-        }
+        let args = build_test_binary_args(test_name.as_deref(), is_test, is_ignored);
 
         Ok(DebugRequest::Launch(task::LaunchRequest {
             program: executable,
@@ -223,5 +216,74 @@ impl DapLocator for CargoLocator {
             args,
             env: build_config.env.into_iter().collect(),
         }))
+    }
+}
+
+fn build_test_binary_args(test_name: Option<&str>, is_test: bool, is_ignored: bool) -> Vec<String> {
+    let mut args: Vec<String> = test_name.map(str::to_owned).into_iter().collect();
+    if is_test {
+        args.push("--nocapture".to_owned());
+        if is_ignored {
+            args.push("--include-ignored".to_owned());
+            // Append `--exact` only if we can be sure the name is fully
+            // qualified. Runnables produced from tree-sitter are not qualified
+            // (see #51810).
+            if test_name.is_some_and(|name| name.contains("::")) {
+                args.push("--exact".to_owned());
+            }
+        }
+    }
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_test_binary_args;
+
+    #[test]
+    fn non_test_invocation_has_no_test_args() {
+        assert_eq!(
+            build_test_binary_args(None, false, false),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn bare_test_name_does_not_get_exact() {
+        // Zed's tree-sitter runnable template for Rust tests captures only the function
+        // identifier and always passes `--include-ignored`, so `is_ignored` is true here
+        // for a regular (non-ignored) test.
+        assert_eq!(
+            build_test_binary_args(Some("get_complex_variant"), true, true),
+            vec![
+                "get_complex_variant".to_owned(),
+                "--nocapture".to_owned(),
+                "--include-ignored".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn qualified_test_name_gets_exact() {
+        assert_eq!(
+            build_test_binary_args(Some("variant_get::test::get_complex_variant"), true, true,),
+            vec![
+                "variant_get::test::get_complex_variant".to_owned(),
+                "--nocapture".to_owned(),
+                "--include-ignored".to_owned(),
+                "--exact".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_without_include_ignored_never_gets_exact() {
+        assert_eq!(
+            build_test_binary_args(Some("variant_get::test::get_complex_variant"), true, false,),
+            vec![
+                "variant_get::test::get_complex_variant".to_owned(),
+                "--nocapture".to_owned(),
+            ],
+        );
     }
 }

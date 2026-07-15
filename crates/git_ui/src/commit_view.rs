@@ -2,8 +2,8 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
-    hover_markdown_style, multibuffer_context_lines,
+    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
+    SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
@@ -275,7 +275,7 @@ impl CommitView {
                 window,
                 cx,
             );
-            editor.disable_diff_hunk_controls(cx);
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -368,7 +368,14 @@ impl CommitView {
                 let buffer_diff = if is_binary {
                     cx.update(|_, cx| {
                         let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| BufferDiff::new_unchanged(&snapshot, cx))
+                        cx.new(|cx| {
+                            BufferDiff::new_unchanged(
+                                &snapshot,
+                                snapshot.language().cloned(),
+                                Some(language_registry.clone()),
+                                cx,
+                            )
+                        })
                     })?
                 } else {
                     build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
@@ -996,23 +1003,15 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            buffer.text.clone(),
+            cx,
+        )
     })
     .await;
 
@@ -1194,7 +1193,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
-                    editor.disable_diff_hunk_controls(cx);
+                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);

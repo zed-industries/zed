@@ -578,8 +578,9 @@ impl Editor {
                                 },
                                 prevent_auto_indent: false,
                             };
+                            let mut delimiter = None;
 
-                            let comment_delimiter = maybe!({
+                            if let Some(comment_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -593,9 +594,16 @@ impl Editor {
                                     &buffer,
                                     language,
                                 );
-                            });
-
-                            let doc_delimiter = maybe!({
+                            }) {
+                                delimiter = Some(comment_delimiter);
+                                if let NewlineConfig::Newline {
+                                    extra_line_additional_indent,
+                                    ..
+                                } = &mut newline_config
+                                {
+                                    *extra_line_additional_indent = None;
+                                }
+                            } else if let Some(doc_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -610,9 +618,9 @@ impl Editor {
                                     language,
                                     &mut newline_config,
                                 );
-                            });
-
-                            let list_delimiter = maybe!({
+                            }) {
+                                delimiter = Some(doc_delimiter);
+                            } else if let Some(list_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -627,12 +635,11 @@ impl Editor {
                                     language,
                                     &mut newline_config,
                                 );
-                            });
+                            }) {
+                                delimiter = Some(list_delimiter);
+                            }
 
-                            (
-                                comment_delimiter.or(doc_delimiter).or(list_delimiter),
-                                newline_config,
-                            )
+                            (delimiter, newline_config)
                         } else {
                             (
                                 None,
@@ -1134,6 +1141,12 @@ impl Editor {
             return;
         }
         self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |_, selection| {
+                    selection.reversed = false;
+                });
+            });
+
             this.select_to_end_of_line(
                 &SelectToEndOfLine {
                     stop_at_soft_wraps: false,
@@ -1155,6 +1168,12 @@ impl Editor {
             return;
         }
         self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |_, selection| {
+                    selection.reversed = false;
+                });
+            });
+
             this.select_to_end_of_line(
                 &SelectToEndOfLine {
                     stop_at_soft_wraps: false,
@@ -1647,10 +1666,8 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
 
             let selections = this.selections.all::<Point>(&this.display_snapshot(cx));
-            let selections_on_single_row = selections.windows(2).all(|selections| {
-                selections[0].start.row == selections[1].start.row
-                    && selections[0].end.row == selections[1].end.row
-                    && selections[0].start.row == selections[0].end.row
+            let selections_on_single_row = selections.array_windows::<2>().all(|[a, b]| {
+                a.start.row == b.start.row && a.end.row == b.end.row && a.start.row == a.end.row
             });
             let selections_selecting = selections
                 .iter()
@@ -2376,7 +2393,7 @@ impl NewlineConfig {
             .range_to_buffer_ranges(range.start..range.end)
             .as_slice()
         {
-            [(buffer_snapshot, range, _)] => (buffer_snapshot.clone(), range.clone()),
+            [(buffer_snapshot, range, _)] => (*buffer_snapshot, range.clone()),
             _ => return false,
         };
         let pair = {

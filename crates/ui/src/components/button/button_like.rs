@@ -1,7 +1,7 @@
 use documented::Documented;
 use gpui::{
     AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
+    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement, Toggled, relative,
     transparent_black,
 };
 use smallvec::SmallVec;
@@ -492,11 +492,22 @@ pub struct ButtonLike {
     tab_index: Option<isize>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
+    pub(super) aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
+    pub(super) aria_value: Option<SharedString>,
+    pub(super) aria_keyshortcuts: Option<SharedString>,
+    pub(super) aria_role: Option<Role>,
+    aria_expanded: Option<bool>,
+    toggled: Option<bool>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     hoverable_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    a11y_actions: Vec<(
+        gpui::accesskit::Action,
+        Box<dyn FnMut(Option<&gpui::accesskit::ActionData>, &mut Window, &mut App) + 'static>,
+    )>,
     children: SmallVec<[AnyElement; 2]>,
     focus_handle: Option<FocusHandle>,
 }
@@ -514,12 +525,20 @@ impl ButtonLike {
             height: None,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::ALL),
+            aria_label: None,
+            aria_description: None,
+            aria_value: None,
+            aria_keyshortcuts: None,
+            aria_role: None,
+            aria_expanded: None,
+            toggled: None,
             tooltip: None,
             hoverable_tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
             on_right_click: None,
+            a11y_actions: Vec::new(),
             layer: None,
             tab_index: None,
             focus_handle: None,
@@ -568,6 +587,64 @@ impl ButtonLike {
         self.hoverable_tooltip = Some(Box::new(tooltip));
         self
     }
+
+    /// Sets the label announced by assistive technology for this button.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// button. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"` - see
+    /// [`KeyBinding::keyboard_shortcut_text`](crate::KeyBinding::keyboard_shortcut_text).
+    /// [`Button`](crate::Button) sets this automatically from its displayed
+    /// keybinding.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.aria_value = Some(value.into());
+        self
+    }
+
+    /// Overrides the role reported to assistive technology.
+    /// Defaults to [`Role::Button`].
+    pub fn aria_role(mut self, role: Role) -> Self {
+        self.aria_role = Some(role);
+        self
+    }
+
+    /// Sets the expanded state reported to assistive technology, for buttons
+    /// that control a popup (e.g. dropdown or disclosure triggers).
+    pub fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.aria_expanded = Some(expanded);
+        self
+    }
+
+    /// Registers a handler for an accessibility action (e.g.
+    /// [`accesskit::Action::Expand`]) dispatched by assistive technology to
+    /// this button. Also advertises the action to assistive technology.
+    pub fn on_a11y_action(
+        mut self,
+        action: gpui::accesskit::Action,
+        listener: impl FnMut(Option<&gpui::accesskit::ActionData>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.a11y_actions.push((action, Box::new(listener)));
+        self
+    }
 }
 
 impl Disableable for ButtonLike {
@@ -580,6 +657,7 @@ impl Disableable for ButtonLike {
 impl Toggleable for ButtonLike {
     fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self.toggled = Some(selected);
         self
     }
 }
@@ -679,6 +757,25 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .role(self.aria_role.unwrap_or(Role::Button))
+            .when_some(self.aria_label, |this, label| this.aria_label(label))
+            .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
+            .when_some(self.aria_description, |this, description| {
+                this.aria_description(description)
+            })
+            .when_some(self.aria_value, |this, value| this.aria_value(value))
+            .when_some(self.aria_expanded, |this, expanded| {
+                this.aria_expanded(expanded)
+            })
+            .when_some(self.toggled, |this, toggled| {
+                this.aria_toggled(if toggled {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+            })
             .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
             .when_some(self.focus_handle, |this, focus_handle| {
                 this.track_focus(&focus_handle)
@@ -778,6 +875,12 @@ impl RenderOnce for ButtonLike {
             })
             .when_some(self.hoverable_tooltip, |this, tooltip| {
                 this.hoverable_tooltip(move |window, cx| tooltip(window, cx))
+            })
+            .map(|mut this| {
+                for (action, listener) in self.a11y_actions {
+                    this = this.on_a11y_action(action, listener);
+                }
+                this
             })
             .children(self.children)
     }

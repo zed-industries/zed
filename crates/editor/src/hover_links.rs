@@ -1373,7 +1373,7 @@ mod tests {
         cx.run_until_parked();
 
         // Jiggle within the same character should not produce a new request,
-        // even though the previous reponse was empty and produced no link to
+        // even though the previous response was empty and produced no link to
         // highlight.
         cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
         cx.run_until_parked();

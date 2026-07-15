@@ -1198,6 +1198,98 @@ async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_internal_symlink_updates_preserve_entry_ids(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "project": {
+                "real-dir": {
+                    "existing.rs": "old",
+                },
+                "links": {}
+            }
+        }),
+    )
+    .await;
+
+    fs.create_symlink(
+        "/root/project/links/internal".as_ref(),
+        "../real-dir".into(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let (real_entry_id, symlink_entry_id, old_mtime) = tree.read_with(cx, |tree, _| {
+        let real_entry = tree
+            .entry_for_path(rel_path("real-dir/existing.rs"))
+            .unwrap();
+        let symlink_entry = tree
+            .entry_for_path(rel_path("links/internal/existing.rs"))
+            .unwrap();
+        assert_eq!(real_entry.inode, symlink_entry.inode);
+        assert_eq!(real_entry.mtime, symlink_entry.mtime);
+        assert_ne!(real_entry.id, symlink_entry.id);
+        (real_entry.id, symlink_entry.id, real_entry.mtime)
+    });
+
+    fs.write(Path::new("/root/project/real-dir/existing.rs"), b"new")
+        .await
+        .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            let real_entry = tree
+                .entry_for_path(rel_path("real-dir/existing.rs"))
+                .unwrap();
+            let symlink_entry = tree
+                .entry_for_path(rel_path("links/internal/existing.rs"))
+                .unwrap();
+            real_entry.mtime != old_mtime && symlink_entry.mtime != old_mtime
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        let real_entry = tree
+            .entry_for_path(rel_path("real-dir/existing.rs"))
+            .unwrap();
+        let symlink_entry = tree
+            .entry_for_path(rel_path("links/internal/existing.rs"))
+            .unwrap();
+
+        assert_eq!(real_entry.inode, symlink_entry.inode);
+        assert_eq!(real_entry.id, real_entry_id);
+        assert_eq!(
+            tree.entry_for_id(real_entry_id).unwrap().path.as_ref(),
+            rel_path("real-dir/existing.rs")
+        );
+        assert_eq!(symlink_entry.id, symlink_entry_id);
+        assert_eq!(
+            tree.entry_for_id(symlink_entry_id).unwrap().path.as_ref(),
+            rel_path("links/internal/existing.rs")
+        );
+    });
+}
+
 #[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_renaming_case_only(cx: &mut TestAppContext) {
@@ -4108,14 +4200,96 @@ async fn test_linked_worktree_gitfile_event_preserves_repo(
 }
 
 #[gpui::test]
-async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
+async fn test_shared_common_dir_event_updates_all_repositories(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    // Regression test: in a linked worktree, git operations like `git status`
-    // can touch the worktree-specific `index.lock` under the main repo's
-    // `.git/worktrees/<name>/`. We intend to ignore those events so they do not
-    // spuriously emit `UpdatedGitRepositories`.
+    // A main checkout and one of its linked worktrees can both live inside the
+    // same project worktree, sharing a common git directory. An event in that
+    // common directory (e.g. a ref update) must refresh every repository that
+    // reads from it, not just the first match.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main_repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/project/linked")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let mut events = cx.events(&tree);
+    fs.emit_fs_event(
+        path!("/project/main_repo/.git/refs/heads/main"),
+        Some(PathEventKind::Changed),
+    );
+    executor.run_until_parked();
+
+    let mut updated_work_dirs = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::UpdatedGitRepositories(updates) = event {
+            updated_work_dirs.extend(
+                updates
+                    .iter()
+                    .filter_map(|update| update.new_work_directory_abs_path.clone()),
+            );
+        }
+    }
+    updated_work_dirs.sort();
+    assert_eq!(
+        updated_work_dirs,
+        [
+            Arc::from(Path::new(path!("/project/linked"))),
+            Arc::from(Path::new(path!("/project/main_repo"))),
+        ],
+        "a ref update in the shared common dir should refresh both repositories"
+    );
+}
+
+#[gpui::test]
+async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Events for object database writes, hook files, lock files, and the
+    // reflogs of HEAD/branches/remote-tracking branches carry no git state
+    // changes that Zed cares about beyond what the accompanying ref or index
+    // events already convey, so they must not trigger a git metadata rescan.
+    // The stash reflog and ref updates themselves must still trigger one.
+    //
     init_test(cx);
 
     use git::repository::Worktree as GitWorktree;
@@ -4177,17 +4351,64 @@ async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
         }
     });
 
-    fs.emit_fs_event(
+    let skipped_paths = [
+        // Standard common git dir skipped paths
+        path!("/main_repo/.git/objects/aa/bbccddee"),
+        path!("/main_repo/.git/objects/pack/pack-1234.pack"),
+        path!("/main_repo/.git/hooks/pre-commit"),
+        path!("/main_repo/.git/logs/HEAD"),
+        path!("/main_repo/.git/logs/refs/heads/main"),
+        path!("/main_repo/.git/logs/refs/remotes/origin/main"),
+        path!("/main_repo/.git/logs/refs/tags/v1.0"),
+        path!("/main_repo/.git/rebase-merge/done"),
+        path!("/main_repo/.git/rebase-apply/onto"),
+        path!("/main_repo/.git/sequencer/todo"),
+        path!("/main_repo/.git/index.lock"),
+        path!("/main_repo/.git/refs/heads/main.lock"),
+        path!("/main_repo/.git/COMMIT_EDITMSG"),
+        path!("/main_repo/.git/packed-refs.new"),
+        path!("/main_repo/.git/config.new"),
+        path!("/main_repo/.git/index.new"),
+        path!("/main_repo/.git/index-abc123.tmp"),
+        path!("/main_repo/.git/FETCH_HEAD"),
+        path!("/main_repo/.git/ORIG_HEAD"),
+        path!("/main_repo/.git/BISECT_LOG"),
+        path!("/main_repo/.git/info/refs"),
+        path!("/main_repo/.git/info/refs_lzOf51"),
+        path!("/main_repo/.git/gc.pid"),
+        // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
-        Some(PathEventKind::Changed),
-    );
-    cx.run_until_parked();
+    ];
+    for path in skipped_paths {
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_update_count.get(),
+            0,
+            "event for {path} should not emit UpdatedGitRepositories"
+        );
+    }
 
-    assert_eq!(
-        repo_update_count.get(),
-        0,
-        "linked-worktree index.lock events should not emit UpdatedGitRepositories"
-    );
+    let rescan_paths = [
+        // Standard common git dir rescan paths
+        path!("/main_repo/.git/logs/refs/stash"),
+        path!("/main_repo/.git/refs/heads/main"),
+        path!("/main_repo/.git/info/exclude"),
+        path!("/main_repo/.git/refs/heads/branch.new"),
+        path!("/main_repo/.git/refs/heads/branch.tmp"),
+        // Linked-worktree worktree-specific rescan paths
+        path!("/main_repo/.git/worktrees/feature/index"),
+        path!("/main_repo/.git/worktrees/feature/HEAD"),
+    ];
+    for path in rescan_paths {
+        let count_before = repo_update_count.get();
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert!(
+            repo_update_count.get() > count_before,
+            "event for {path} should emit UpdatedGitRepositories"
+        );
+    }
 }
 
 #[gpui::test]
@@ -4397,6 +4618,89 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
             got_git_update,
             "should emit UpdatedGitRepositories for a .git rescan event"
         );
+    }
+}
+
+#[gpui::test]
+async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAppContext) {
+    // On Linux and FreeBSD the native file watcher is non-recursive: watching `.git`
+    // does not deliver events for files nested below it, like the loose refs that git
+    // updates on commit, fetch, and branch operations. The worktree must watch the
+    // `refs` tree explicitly, including directories created after the initial scan.
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        ".git": {},
+        "a.txt": "a-contents",
+    }));
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "0000000000000000000000000000000000000000\n",
+    )
+    .unwrap();
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    let mut events = cx.events(&tree);
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "1111111111111111111111111111111111111111\n",
+    )
+    .unwrap();
+    expect_git_repo_update(&mut events, cx, "updating a loose ref").await;
+
+    std::fs::create_dir_all(dir.path().join(".git/refs/remotes/origin")).unwrap();
+    expect_git_repo_update(&mut events, cx, "creating a directory under refs").await;
+    tree.flush_fs_events(cx).await;
+    drain_git_repo_updates(&mut events);
+
+    std::fs::write(
+        dir.path().join(".git/refs/remotes/origin/main"),
+        "2222222222222222222222222222222222222222\n",
+    )
+    .unwrap();
+    expect_git_repo_update(
+        &mut events,
+        cx,
+        "updating a ref in a directory created after the initial scan",
+    )
+    .await;
+}
+
+async fn expect_git_repo_update(
+    events: &mut futures::channel::mpsc::UnboundedReceiver<Event>,
+    cx: &mut TestAppContext,
+    description: &str,
+) {
+    let mut elapsed = std::time::Duration::ZERO;
+    let timeout = std::time::Duration::from_secs(10);
+    let poll_interval = std::time::Duration::from_millis(50);
+    loop {
+        match events.try_recv() {
+            Ok(Event::UpdatedGitRepositories(_)) => return,
+            Ok(_) => continue,
+            Err(_) => {}
+        }
+        assert!(
+            elapsed < timeout,
+            "timed out waiting for UpdatedGitRepositories after {description}"
+        );
+        cx.background_executor.timer(poll_interval).await;
+        elapsed += poll_interval;
     }
 }
 
@@ -4883,6 +5187,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -4940,6 +5245,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -4978,6 +5284,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -5032,6 +5339,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5049,6 +5357,253 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
             .count(),
         1,
         "should fire exactly once, not duplicate"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+
+    // Metadata eagerly seeds the root repo info, as `AddWorktreeResponse` /
+    // `WorktreeMetadata` do before the host's scan completes.
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "feature-a".to_string(),
+                visible: true,
+                abs_path: "/home/user/monty/feature-a".to_string(),
+                root_repo_common_dir: Some("/home/user/monty/.bare".to_string()),
+                root_repo_is_linked_worktree: true,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let root_repo_metadata = |cx: &mut TestAppContext| {
+        worktree.read_with(cx, |worktree, _| {
+            let snapshot = worktree.snapshot();
+            (
+                snapshot.root_repo_common_dir().cloned(),
+                snapshot.root_repo_is_linked_worktree(),
+            )
+        })
+    };
+
+    let update = |scan_id: u64, is_last_update: bool| proto::UpdateWorktree {
+        project_id: 1,
+        worktree_id: 1,
+        abs_path: "/home/user/monty/feature-a".to_string(),
+        root_name: "feature-a".to_string(),
+        updated_entries: vec![],
+        removed_entries: vec![],
+        scan_id,
+        is_last_update,
+        updated_repositories: vec![],
+        removed_repositories: vec![],
+        root_repo_common_dir: None,
+        root_repo_is_linked_worktree: false,
+    };
+
+    // A mid-scan update without repo info must not clobber the seeded
+    // metadata: the sender's scanner may not have registered the repo yet.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(2, false));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        root_repo_metadata(cx),
+        (Some(Arc::from(Path::new("/home/user/monty/.bare"))), true,),
+        "mid-scan update without repo info should not clear seeded metadata"
+    );
+
+    // A completed scan without repo info is authoritative: the repo is gone.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(3, true));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        root_repo_metadata(cx),
+        (None, false),
+        "completed scan without repo info should clear root repo metadata"
+    );
+}
+
+// Regression test: a remote worktree used to emit `UpdatedEntries` with an
+// empty changeset (`Arc::default()`), discarding the changed paths. Consumers
+// that key off those paths - notably the agent's `.agents/skills` refresh -
+// therefore never fired on remote projects, so skills pasted into an already
+// open project were never picked up. The changeset must carry the real paths.
+//
+// This drives the real host -> remote pipeline: a `FakeFs`-backed local
+// worktree scans the filesystem and produces `UpdateWorktree` messages via
+// `observe_updates`, which we relay into a remote worktree exactly as the
+// collab server does.
+#[gpui::test]
+async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".agents": {
+                "skills": {}
+            }
+        }),
+    )
+    .await;
+
+    // The host worktree scans the fake filesystem and broadcasts updates.
+    let host = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(1),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| host.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // The remote worktree receives those updates over a simulated connection.
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "root".to_string(),
+                visible: true,
+                abs_path: path!("/root").to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::local(),
+            cx,
+        )
+    });
+
+    // Relay every `UpdateWorktree` the host emits into the remote worktree,
+    // mirroring how the collab server forwards them. The callback only buffers
+    // the messages; we apply them on the foreground via `relay`.
+    let pending: Arc<Mutex<Vec<proto::UpdateWorktree>>> = Arc::new(Mutex::new(Vec::new()));
+    host.update(cx, |host, cx| {
+        let pending = pending.clone();
+        host.as_local_mut()
+            .unwrap()
+            .observe_updates(1, cx, move |update| {
+                pending.lock().push(update);
+                async { true }
+            });
+    });
+    let relay = {
+        let remote = remote.clone();
+        move |cx: &mut TestAppContext| {
+            let updates = std::mem::take(&mut *pending.lock());
+            remote.update(cx, |remote, _| {
+                let remote = remote.as_remote().unwrap();
+                for update in updates {
+                    remote.update_from_remote(update);
+                }
+            });
+        }
+    };
+
+    // Record the (path, change) pairs from every `UpdatedEntries` event the
+    // remote worktree emits.
+    let changes: Arc<Mutex<Vec<(String, PathChange)>>> = Arc::new(Mutex::new(Vec::new()));
+    cx.update(|cx| {
+        let changes = changes.clone();
+        cx.subscribe(&remote, move |_, event, _cx| {
+            if let Event::UpdatedEntries(updated) = event {
+                changes.lock().extend(
+                    updated
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
+    // Flush the initial sync (root + existing dirs) and ignore those paths.
+    cx.run_until_parked();
+    relay(cx);
+    cx.run_until_parked();
+    changes.lock().clear();
+
+    // Paste a skill folder into `.agents/skills` on the host.
+    fs.insert_tree(
+        path!("/root/.agents/skills/skill-1"),
+        json!({ "SKILL.md": "skill" }),
+    )
+    .await;
+    cx.run_until_parked();
+    relay(cx);
+    cx.run_until_parked();
+
+    {
+        let changes = changes.lock();
+        assert!(
+            changes
+                .iter()
+                .any(|(path, change)| path == ".agents/skills/skill-1/SKILL.md"
+                    && *change == PathChange::AddedOrUpdated),
+            "remote UpdatedEntries should carry the added skill path, got {:?}",
+            changes
+        );
+    }
+    changes.lock().clear();
+
+    // Remove the skill folder. The wire format only carries entry ids for
+    // removals, so the remote worktree must resolve their paths against the
+    // previous snapshot before it is replaced.
+    fs.remove_dir(
+        path!("/root/.agents/skills/skill-1").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    relay(cx);
+    cx.run_until_parked();
+
+    let changes = changes.lock();
+    assert!(
+        changes
+            .iter()
+            .any(|(path, change)| path == ".agents/skills/skill-1/SKILL.md"
+                && *change == PathChange::Removed),
+        "remote UpdatedEntries should carry removed paths resolved from the \
+         previous snapshot, got {:?}",
+        changes
     );
 }
 

@@ -13,6 +13,9 @@ workspace = true
 path = "src/livekit_api.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

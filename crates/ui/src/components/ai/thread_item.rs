@@ -1,7 +1,8 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
+    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString,
+    WindowBackgroundAppearance, pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -250,6 +251,11 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
+        // The fade gradient paints a solid color over the title to blend it into
+        // the row background, but a transparent window has no opaque surface to
+        // fade into, so it renders as a visible patch; truncate the title instead.
+        let opaque_window =
+            cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
         let sidebar_base_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -365,10 +371,12 @@ impl RenderOnce for ThreadItem {
         } else if highlight_positions.is_empty() {
             Label::new(title)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(!opaque_window, |label| label.truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(!opaque_window, |label| label.truncate())
                 .into_any_element()
         };
 
@@ -449,20 +457,24 @@ impl RenderOnce for ThreadItem {
                             .child(icon)
                             .child(title_label),
                     )
-                    .when(self.is_truncated, |this| this.child(gradient_overlay))
+                    .when(self.is_truncated && opaque_window, |this| {
+                        this.child(gradient_overlay)
+                    })
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
-                                .width(px(120.0))
-                                .right(px(8.))
-                                .gradient_stop(0.90)
-                                .group_name("thread-item");
-
                             this.child(
                                 h_flex()
                                     .relative()
                                     .pr_1p5()
-                                    .child(overlay)
+                                    .when(opaque_window, |this| {
+                                        this.child(
+                                            GradientFade::new(base_bg, hover_bg, hover_bg)
+                                                .width(px(120.0))
+                                                .right(px(8.))
+                                                .gradient_stop(0.90)
+                                                .group_name("thread-item"),
+                                        )
+                                    })
                                     .child(slot)
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()

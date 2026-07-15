@@ -59,6 +59,10 @@ message Envelope {
 
     GetDefinition get_definition = 32;
     GetDefinitionResponse get_definition_response = 33;
+    GetEditPredictionDefinition get_edit_prediction_definition = 462;
+    GetEditPredictionDefinitionResponse get_edit_prediction_definition_response = 463;
+    GetEditPredictionTypeDefinition get_edit_prediction_type_definition = 464;
+    GetEditPredictionTypeDefinitionResponse get_edit_prediction_type_definition_response = 465; // current max
     GetDeclaration get_declaration = 237;
     GetDeclarationResponse get_declaration_response = 238;
     GetTypeDefinition get_type_definition = 34;
@@ -435,10 +439,6 @@ message Envelope {
     TrustWorktrees trust_worktrees = 404;
     RestrictWorktrees restrict_worktrees = 405;
 
-    ShareAgentThread share_agent_thread = 406;
-    GetSharedAgentThread get_shared_agent_thread = 407;
-    GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
-
     FindSearchCandidatesChunk find_search_candidates_chunk = 409;
     FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
     GetContextServerCommand get_context_server_command = 411;
@@ -488,7 +488,12 @@ message Envelope {
     GetDocumentLinks get_document_links = 453;
     GetDocumentLinksResponse get_document_links_response = 454;
     ResolveDocumentLink resolve_document_link = 455;
-    ResolveDocumentLinkResponse resolve_document_link_response = 456; // current max
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
+    GitWorktreeCreatedAt git_worktree_created_at = 457;
+    GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
+    TelemetryEvent telemetry_event = 459;
+    ResolveCodeAction resolve_code_action = 460;
+    ResolveCodeActionResponse resolve_code_action_response = 461;
   }
 
   reserved 87 to 88;
@@ -516,6 +521,7 @@ message Envelope {
   reserved 429 to 430;
   reserved 211 to 216, 232 to 233;
   reserved 397 to 398;
+  reserved 406 to 408;
 }
 
 message Hello {
