@@ -18,22 +18,11 @@ Extensions can provide:
 - [Snippets](./snippets.md)
 - [MCP Servers](./mcp-extensions.md)
 
-## Marketplace Categories {#marketplace-categories}
+## Marketplace Categories
 
-Zed assigns each extension to marketplace categories based on the features
-declared in its `extension.toml`. You do not configure categories or tags
-separately. An extension can appear in more than one category.
-
-| Manifest entry     | Marketplace category                                |
-| ------------------ | --------------------------------------------------- |
-| `themes`           | [Themes](./themes.md)                               |
-| `icon_themes`      | [Icon Themes](./icon-themes.md)                     |
-| `languages`        | [Languages](./languages.md)                         |
-| `grammars`         | [Grammars](./languages.md#grammar)                  |
-| `language_servers` | [Language Servers](./languages.md#language-servers) |
-| `context_servers`  | [MCP Servers](./mcp-extensions.md)                  |
-| `snippets`         | [Snippets](./snippets.md)                           |
-| `debug_adapters`   | [Debug Adapters](./debugger-extensions.md)          |
+Zed will automatically assign marketplace categories to your extension based on
+what it provides upon publishing. An extension can appear in more than one
+category.
 
 ## Developing an Extension Locally
 
