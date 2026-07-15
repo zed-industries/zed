@@ -69,7 +69,7 @@ text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 tree-sitter-json.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }

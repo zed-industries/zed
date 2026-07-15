@@ -28,6 +28,8 @@ on:
       app-secret:
         description: The app secret for the corresponding app ID
         required: true
+permissions:
+  contents: read
 jobs:
   check_version_changed:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
