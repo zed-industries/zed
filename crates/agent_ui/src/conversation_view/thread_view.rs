@@ -20,12 +20,15 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
 use crate::message_editor::SharedSessionCapabilities;
-use crate::ui::{SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip};
+use crate::ui::{
+    SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
+    TerminalToolHeader,
+};
+use crate::unicode_confusables;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
@@ -39,8 +42,8 @@ use language_model::{
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
-    ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
-    Tab,
+    ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
+    SplitButtonStyle, Tab, ToggleState,
 };
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
@@ -589,6 +592,10 @@ pub struct ThreadView {
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     collapsed_sandbox_network_details: HashSet<acp::ToolCallId>,
+    /// Sandbox escalation prompts whose "surprising Unicode" warning the user
+    /// has explicitly acknowledged. Until a prompt's tool call is in this set,
+    /// its allow buttons stay disabled. See [`Self::sandbox_confusable_findings`].
+    acknowledged_confusable_warnings: HashSet<acp::ToolCallId>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -996,6 +1003,7 @@ impl ThreadView {
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
+            acknowledged_confusable_warnings: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -1036,7 +1044,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
-        this.sync_editor_mode_for_empty_state(cx);
+        this.sync_editor_mode(cx);
         this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
@@ -2373,27 +2381,7 @@ impl ThreadView {
 
     pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
         self.editor_expanded = is_expanded;
-        self.message_editor.update(cx, |editor, cx| {
-            if is_expanded {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                    },
-                    cx,
-                )
-            } else {
-                let agent_settings = AgentSettings::get_global(cx);
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: agent_settings.message_editor_min_lines,
-                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
-                    },
-                    cx,
-                )
-            }
-        });
+        self.sync_editor_mode(cx);
         cx.notify();
     }
 
@@ -2506,11 +2494,38 @@ impl ThreadView {
     }
 
     pub fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_allow_blocked_by_confusables(cx) {
+            return;
+        }
         self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx);
     }
 
     pub fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_allow_blocked_by_confusables(cx) {
+            return;
+        }
         self.authorize_pending_with_granularity(true, window, cx);
+    }
+
+    /// Whether the currently pending permission prompt is blocked by an
+    /// unacknowledged surprising-Unicode warning, so the keyboard allow
+    /// shortcuts must be ignored (mirroring the disabled allow buttons).
+    fn pending_allow_blocked_by_confusables(&self, cx: &Context<Self>) -> bool {
+        let session_id = self.thread.read(cx).session_id().clone();
+        let Some((_, tool_call_id, _)) = self
+            .conversation
+            .read(cx)
+            .pending_tool_call(&session_id, cx)
+        else {
+            return false;
+        };
+        self.thread.read(cx).entries().iter().any(|entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ToolCall(call)
+                    if call.id == tool_call_id && self.sandbox_confusables_block_allow(call, cx)
+            )
+        })
     }
 
     pub fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
@@ -2538,26 +2553,18 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
-        match entry {
-            AgentThreadEntry::ToolCall(tool_call) => {
-                matches!(
-                    tool_call.status,
-                    ToolCallStatus::WaitingForConfirmation { .. }
-                )
-            }
-            AgentThreadEntry::Elicitation(elicitation_id) => {
-                cx.has_flag::<AcpBetaFeatureFlag>()
-                    && self
-                        .thread
-                        .read(cx)
-                        .elicitation(elicitation_id)
-                        .is_some_and(|(_, elicitation)| {
+    fn has_pending_request_elicitation(&self, cx: &App) -> bool {
+        self.server_view
+            .read_with(cx, |server_view, cx| {
+                server_view
+                    .request_elicitation_store()
+                    .is_some_and(|store| {
+                        store.read(cx).elicitations().iter().any(|elicitation| {
                             matches!(elicitation.status, ElicitationStatus::Pending { .. })
                         })
-            }
-            _ => false,
-        }
+                    })
+            })
+            .unwrap_or(false)
     }
 
     pub fn sync_elicitation_state_for_entry(
@@ -2574,11 +2581,6 @@ impl ThreadView {
             };
             elicitation_id.clone()
         };
-
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.elicitation_form_states.remove(&elicitation_id);
-            return;
-        }
 
         let thread = self.thread.read(cx);
         let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
@@ -2625,10 +2627,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         let mode = self
             .thread
             .read(cx)
@@ -2674,10 +2672,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
@@ -2691,10 +2685,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return;
-        }
-
         self.respond_to_elicitation(
             elicitation_id,
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
@@ -6030,9 +6020,8 @@ impl ThreadView {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
-                    let confirmation = entries
-                        .last()
-                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
+                    let confirmation = this.thread.read(cx).is_waiting_for_confirmation()
+                        || this.has_pending_request_elicitation(cx);
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6353,8 +6342,7 @@ impl ThreadView {
             }
             AgentThreadEntry::Elicitation(elicitation_id) => {
                 let thread = self.thread.read(cx);
-                if cx.has_flag::<AcpBetaFeatureFlag>()
-                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                if let Some((_, elicitation)) = thread.elicitation(elicitation_id)
                     && should_render_elicitation(elicitation)
                 {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
@@ -6446,7 +6434,8 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
+        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
+            || self.has_pending_request_elicitation(cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
@@ -7104,11 +7093,21 @@ impl ThreadView {
         open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
-    pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = !has_messages;
 
-        let mode = if v2_empty_state {
+        if !has_messages {
+            self.editor_expanded = false;
+        }
+
+        let mode = if self.editor_expanded {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            }
+        } else if v2_empty_state {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
@@ -7412,7 +7411,7 @@ impl ThreadView {
                                         block.markdown()
                                     }
                                 };
-                                md.map_or(false, |m| m.read(cx).selected_text().is_some())
+                                md.map_or(false, |m| m.read(cx).has_selection())
                             })
                         })
                         .unwrap_or(false);
@@ -7696,17 +7695,10 @@ impl ThreadView {
             started_at.elapsed()
         };
 
-        let header_id =
-            SharedString::from(format!("terminal-tool-header-{}", terminal.entity_id()));
         let header_group = SharedString::from(format!(
             "terminal-tool-header-group-{}",
             terminal.entity_id()
         ));
-        let header_bg = cx
-            .theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
         let border_color = cx.theme().colors().border.opacity(0.6);
 
         let working_dir = working_dir
@@ -7727,148 +7719,70 @@ impl ThreadView {
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
-        let header = h_flex()
-            .id(header_id)
-            .pt_1()
-            .pl_1p5()
-            .pr_1()
-            .flex_none()
-            .gap_1()
-            .justify_between()
-            .rounded_t_md()
-            .child(
-                div()
-                    .id(("command-target-path", terminal.entity_id()))
-                    .w_full()
-                    .max_w_full()
-                    .overflow_x_scroll()
-                    .child(
-                        Label::new(working_dir)
-                            .buffer_font(cx)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, window, cx| {
-                        this.entry_view_state.update(cx, |state, _cx| {
-                            state.toggle_tool_call_expansion(&id);
-                        });
-                        this.refresh_thread_search(window, cx);
-                        cx.notify();
-                    }
-                })),
-            )
-            .when(time_elapsed > Duration::from_secs(10), |header| {
-                header.child(
-                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
-                        .buffer_font(cx)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-            })
-            .when(!command_finished && !needs_confirmation, |header| {
-                header
-                    .gap_1p5()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted)
-                            .with_rotate_animation(2)
+        let truncated_tooltip = truncated_output.then(|| {
+            if let Some(output) = output {
+                if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
+                    format!(
+                        "Output exceeded terminal max lines and was \
+                         truncated, the model received the first {}.",
+                        format_file_size(output.content.len() as u64, true)
                     )
-                    .child(div().h(relative(0.6)).ml_1p5().child(Divider::vertical().color(DividerColor::Border)))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("stop-terminal-{}", terminal.entity_id())),
-                            IconName::Stop
-                        )
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::with_meta(
-                                "Stop This Command",
-                                None,
-                                "Also possible by placing your cursor inside the terminal and using regular terminal bindings.",
-                                cx,
-                            )
-                        })
-                        .on_click({
-                            let terminal = terminal.clone();
-                            cx.listener(move |this, _event, _window, cx| {
-                                terminal.update(cx, |terminal, cx| {
-                                    terminal.stop_by_user(cx);
-                                });
-                                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
-                                    this.cancel_generation(cx);
-                                }
-                            })
-                        }),
-                    )
-            })
-            .when(truncated_output, |header| {
-                let tooltip = if let Some(output) = output {
-                    if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                       format!("Output exceeded terminal max lines and was \
-                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
-                    } else {
-                        format!(
-                            "Output is {} long, and to avoid unexpected token usage, \
-                                only {} was sent back to the agent.",
-                            format_file_size(output.original_content_len as u64, true),
-                             format_file_size(output.content.len() as u64, true)
-                        )
-                    }
                 } else {
-                    "Output was truncated".to_string()
-                };
+                    format!(
+                        "Output is {} long, and to avoid unexpected token usage, \
+                         only {} was sent back to the agent.",
+                        format_file_size(output.original_content_len as u64, true),
+                        format_file_size(output.content.len() as u64, true)
+                    )
+                }
+            } else {
+                "Output was truncated".to_string()
+            }
+        });
 
-                header.child(
-                    h_flex()
-                        .id(("terminal-tool-truncated-label", terminal.entity_id()))
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Info)
-                                .size(IconSize::XSmall)
-                                .color(Color::Ignored),
-                        )
-                        .child(
-                            Label::new("Truncated")
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall),
-                        )
-                        .tooltip(Tooltip::text(tooltip)),
-                )
+        let header = TerminalToolHeader::new(
+            terminal.entity_id().to_string(),
+            header_group,
+            working_dir,
+            is_expanded,
+        )
+        .elapsed(time_elapsed)
+        .running(!command_finished && !needs_confirmation)
+        .on_toggle_expand(cx.listener({
+            let id = tool_call.id.clone();
+            move |this, _event, window, cx| {
+                this.entry_view_state.update(cx, |state, _cx| {
+                    state.toggle_tool_call_expansion(&id);
+                });
+                this.refresh_thread_search(window, cx);
+                cx.notify();
+            }
+        }))
+        .on_stop({
+            let terminal = terminal.clone();
+            cx.listener(move |this, _event, _window, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.stop_by_user(cx);
+                });
+                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                    this.cancel_generation(cx);
+                }
             })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", terminal.entity_id()))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when_some(output.and_then(|o| o.exit_status), |this, status| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                status.code().unwrap_or(-1),
-                            )))
-                        }),
-                )
-            })
-;
+        })
+        .when_some(truncated_tooltip, |header, tooltip| {
+            header.truncated(tooltip)
+        })
+        .when(tool_failed || command_failed, |header| {
+            header.failed(
+                output
+                    .and_then(|o| o.exit_status)
+                    .map(|status| status.code().unwrap_or(-1)),
+            )
+        })
+        .when_some(tool_call.sandbox_not_applied.as_ref(), |header, reason| {
+            header.sandbox_warning(self.sandbox_not_applied_warning(reason, cx))
+        })
+        .command_slot(command_element);
 
         let terminal_view = self
             .entry_view_state
@@ -7886,17 +7800,7 @@ impl ThreadView {
                     .rounded_md()
             })
             .overflow_hidden()
-            .child(
-                v_flex()
-                    .group(&header_group)
-                    .bg(header_bg)
-                    .text_xs()
-                    .child(header)
-                    .child(command_element),
-            )
-            .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
-                this.child(self.render_sandbox_not_applied_warning(reason, cx))
-            })
+            .child(header)
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
@@ -7931,6 +7835,7 @@ impl ThreadView {
             })
             .when_some(confirmation_options, |this, options| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
+                let allow_disabled = self.sandbox_confusables_block_allow(tool_call, cx);
                 this.child(self.render_permission_buttons(
                     self.thread.read(cx).session_id().clone(),
                     is_first,
@@ -7938,48 +7843,51 @@ impl ThreadView {
                     entry_ix,
                     tool_call.id.clone(),
                     focus_handle,
+                    allow_disabled,
                     cx,
                 ))
             })
             .into_any()
     }
 
-    /// Render the "ran without sandbox" warning shown on a terminal tool card,
-    /// tailored to *why* the sandbox wasn't applied.
-    fn render_sandbox_not_applied_warning(
+    fn sandbox_not_applied_warning(
         &self,
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
-    ) -> AnyElement {
-        let (title, detail): (SharedString, SharedString) = match reason {
-            SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
-                "Couldn't create a sandbox".into(),
-                error.user_facing_message().into(),
-            ),
-            SandboxNotAppliedReason::DisabledForThisThread => {
-                // The grant only exists because an earlier command failed to
-                // create a sandbox; surface that same explanation here.
-                let detail = self
-                    .find_thread_sandbox_error(cx)
-                    .map(|error| {
-                        SharedString::from(format!(
-                            "Allowed for this thread after the sandbox failed: {}",
-                            error.user_facing_message()
-                        ))
-                    })
-                    .unwrap_or_else(|| {
-                        "Unsandboxed execution is allowed for the rest of this thread.".into()
-                    });
-                ("Ran without sandbox".into(), detail)
-            }
-        };
+    ) -> TerminalSandboxWarning {
+        // (title, detail line, docs section slug)
+        let (title, detail, docs_section): (SharedString, SharedString, Option<&'static str>) =
+            match reason {
+                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                    "Couldn't create a sandbox".into(),
+                    error.user_facing_message().into(),
+                    Some(error.docs_section()),
+                ),
+                SandboxNotAppliedReason::DisabledForThisThread => {
+                    // The grant only exists because an earlier command failed to
+                    // create a sandbox; surface that same explanation here.
+                    let thread_error = self.find_thread_sandbox_error(cx);
+                    let detail = thread_error
+                        .as_ref()
+                        .map(|error| {
+                            SharedString::from(format!(
+                                "Allowed for this thread after the sandbox failed: {}",
+                                error.user_facing_message()
+                            ))
+                        })
+                        .unwrap_or_else(|| {
+                            "Unsandboxed execution is allowed for the rest of this thread.".into()
+                        });
+                    let docs_section = thread_error.as_ref().map(|error| error.docs_section());
+                    ("Ran without sandbox".into(), detail, docs_section)
+                }
+            };
 
-        Callout::new()
-            .severity(Severity::Warning)
-            .icon(IconName::Warning)
-            .title(title)
-            .description(detail)
-            .into_any_element()
+        TerminalSandboxWarning {
+            title,
+            detail,
+            docs_url: zed_urls::sandboxing_docs(docs_section, cx).into(),
+        }
     }
 
     /// Find the first terminal tool call in the thread whose sandbox couldn't be
@@ -8126,15 +8034,19 @@ impl ThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+
+        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
+
+        let has_content = !tool_call.content.is_empty()
+            || (should_show_raw_input && tool_call.raw_input.is_some());
+
+        let is_collapsible = has_content && !needs_confirmation;
         let mut is_open = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
-
-        let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -8173,6 +8085,7 @@ impl ThreadView {
                                     entry_ix,
                                     &tool_call.id,
                                     details,
+                                    window,
                                     cx,
                                 ))
                             },
@@ -8281,6 +8194,7 @@ impl ThreadView {
                             entry_ix,
                             tool_call.id.clone(),
                             focus_handle,
+                            self.sandbox_confusables_block_allow(tool_call, cx),
                             cx,
                         ))
                         .into_any()
@@ -8587,11 +8501,42 @@ impl ThreadView {
             .children(tool_output_display)
     }
 
+    /// A small "Learn more" link to the sandboxing docs, deep-linked to
+    /// `section` when provided. Shared by the sandbox warning and the two
+    /// sandbox approval prompts so the user can always reach an explanation of
+    /// what they're being asked about.
+    fn render_sandbox_docs_link(
+        &self,
+        id: &'static str,
+        section: Option<&str>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let url = zed_urls::sandboxing_docs(section, cx);
+        let tooltip = format!("Opens {url}");
+        // Wrap in a row so the button shrinks to its content width instead of
+        // stretching to fill the enclosing column.
+        h_flex()
+            .child(
+                Button::new(id, "Learn more")
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    )
+                    .tooltip(Tooltip::text(tooltip))
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+            )
+            .into_any_element()
+    }
+
     fn render_sandbox_authorization_details(
         &self,
         entry_ix: usize,
         tool_call_id: &acp::ToolCallId,
         details: &SandboxAuthorizationDetails,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
@@ -8599,6 +8544,12 @@ impl ThreadView {
         if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
+
+        let confusable_findings = if Self::confusable_warning_enabled(cx) {
+            Self::sandbox_confusable_findings(details)
+        } else {
+            Vec::new()
+        };
 
         let network_section = has_network.then(|| {
             let summary = if details.network_all_hosts {
@@ -8827,10 +8778,186 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .when(!confusable_findings.is_empty(), |this| {
+                this.child(self.render_sandbox_confusable_warning(
+                    tool_call_id,
+                    &confusable_findings,
+                    window,
+                    cx,
+                ))
+            })
             .children(network_section)
             .children(write_section)
             .children(unsandboxed_section)
             .children(reason_section)
+            .child(
+                h_flex()
+                    .px_1()
+                    .py_0p5()
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-authorization-docs-link",
+                        None,
+                        cx,
+                    )),
+            )
+            .into_any_element()
+    }
+
+    /// Scan the hosts and paths in a sandbox escalation request for surprising
+    /// Unicode characters (homoglyphs, invisible characters, bidi overrides).
+    /// Returns, for each offending value, the display string shown to the user
+    /// and the distinct suspicious characters it contains. Hosts are decoded from
+    /// Punycode first, so the display string is the Unicode form the user should
+    /// scrutinize. Empty when nothing is surprising.
+    fn sandbox_confusable_findings(
+        details: &SandboxAuthorizationDetails,
+    ) -> Vec<(String, Vec<unicode_confusables::SuspiciousChar>)> {
+        let mut findings = Vec::new();
+        for host in &details.network_hosts {
+            let (decoded, suspicious) = unicode_confusables::scan_host(host);
+            if !suspicious.is_empty() {
+                findings.push((decoded, suspicious));
+            }
+        }
+        for path in &details.write_paths {
+            let display = path.display().to_string();
+            let suspicious = unicode_confusables::scan(&display);
+            if !suspicious.is_empty() {
+                findings.push((display, suspicious));
+            }
+        }
+        findings
+    }
+
+    /// Whether the surprising-Unicode warning is enabled in settings (on by
+    /// default). When off, prompts neither show the banner nor gate their allow
+    /// buttons on it.
+    fn confusable_warning_enabled(cx: &App) -> bool {
+        AgentSettings::get_global(cx)
+            .sandbox_permissions
+            .warn_confusable_unicode
+    }
+
+    /// Whether this tool call's sandbox escalation shows surprising Unicode that
+    /// the user hasn't acknowledged yet. While true, the prompt's allow buttons
+    /// stay disabled so the user can't grant access to a lookalike target
+    /// without first ticking the acknowledgement checkbox.
+    fn sandbox_confusables_block_allow(&self, tool_call: &ToolCall, cx: &App) -> bool {
+        if !Self::confusable_warning_enabled(cx) {
+            return false;
+        }
+        let Some(details) = tool_call.sandbox_authorization_details.as_ref() else {
+            return false;
+        };
+        if self
+            .acknowledged_confusable_warnings
+            .contains(&tool_call.id)
+        {
+            return false;
+        }
+        !Self::sandbox_confusable_findings(details).is_empty()
+    }
+
+    /// Red banner warning that a requested domain or path contains surprising
+    /// Unicode characters, with a checkbox the user must tick to unlock the
+    /// allow buttons. See [`Self::sandbox_confusables_block_allow`].
+    fn render_sandbox_confusable_warning(
+        &self,
+        tool_call_id: &acp::ToolCallId,
+        findings: &[(String, Vec<unicode_confusables::SuspiciousChar>)],
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let acknowledged = self.acknowledged_confusable_warnings.contains(tool_call_id);
+        let line_height = window.line_height();
+
+        v_flex()
+            .w_full()
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(cx.theme().status().error_border)
+            .bg(cx.theme().status().error_background.opacity(0.15))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .items_start()
+                    .child(
+                        h_flex()
+                            .h(line_height)
+                            .flex_none()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            ),
+                    )
+                    .child(
+                        v_flex().min_w_0().flex_1().gap_1().children(findings.iter().map(
+                            |(value, suspicious)| {
+                                v_flex()
+                                    .min_w_0()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new(format!(
+                                            "“{value}” contains potentially surprising Unicode characters"
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                    )
+                                    .child(v_flex().min_w_0().pl_2().children(
+                                        suspicious.iter().map(|character| {
+                                            Label::new(format!("• {}", character.description()))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx)
+                                        }),
+                                    ))
+                            },
+                        )),
+                    )
+                    .child(
+                        IconButton::new("configure-confusable-warning", IconName::Settings)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Configure unicode confusables warning"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(zed_actions::OpenSettingsAt {
+                                        path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                                        target: None,
+                                    }),
+                                    cx,
+                                );
+                            }),
+                    ),
+            )
+            .child(
+                Checkbox::new(
+                    SharedString::from(format!("confusable-ack-{}", tool_call_id.0)),
+                    if acknowledged {
+                        ToggleState::Selected
+                    } else {
+                        ToggleState::Unselected
+                    },
+                )
+                .label("I understand and wish to proceed")
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener({
+                    let tool_call_id = tool_call_id.clone();
+                    move |this, state: &ToggleState, _window, cx| {
+                        if *state == ToggleState::Selected {
+                            this.acknowledged_confusable_warnings
+                                .insert(tool_call_id.clone());
+                        } else {
+                            this.acknowledged_confusable_warnings.remove(&tool_call_id);
+                        }
+                        cx.notify();
+                    }
+                })),
+            )
             .into_any_element()
     }
 
@@ -8866,7 +8993,12 @@ impl ThreadView {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
+                    .child(Label::new(details.reason.clone()).size(LabelSize::Small))
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-fallback-docs-link",
+                        details.docs_section.as_deref(),
+                        cx,
+                    )),
             )
             .into_any_element()
     }
@@ -8934,6 +9066,9 @@ impl ThreadView {
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
+        // When true, the "allow" choices are disabled (e.g. an unacknowledged
+        // surprising-Unicode warning is showing). "Deny"/"Retry" stay enabled.
+        allow_disabled: bool,
         cx: &Context<Self>,
     ) -> Div {
         match options {
@@ -8944,6 +9079,7 @@ impl ThreadView {
                 entry_ix,
                 tool_call_id,
                 focus_handle,
+                allow_disabled,
                 cx,
             ),
             PermissionOptions::Dropdown(choices) => self.render_permission_buttons_with_dropdown(
@@ -8954,6 +9090,7 @@ impl ThreadView {
                 session_id,
                 tool_call_id,
                 focus_handle,
+                allow_disabled,
                 cx,
             ),
             PermissionOptions::DropdownWithPatterns {
@@ -8968,6 +9105,7 @@ impl ThreadView {
                 session_id,
                 tool_call_id,
                 focus_handle,
+                allow_disabled,
                 cx,
             ),
         }
@@ -8982,6 +9120,7 @@ impl ThreadView {
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
+        allow_disabled: bool,
         cx: &Context<Self>,
     ) -> Div {
         let selection = self.permission_selections.get(&tool_call_id);
@@ -9036,13 +9175,14 @@ impl ThreadView {
                     .gap_0p5()
                     .child(
                         Button::new(("allow-btn", entry_ix), "Allow")
+                            .disabled(allow_disabled)
                             .start_icon(
                                 Icon::new(IconName::Check)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
                             )
                             .label_size(LabelSize::Small)
-                            .when(is_first, |this| {
+                            .when(is_first && !allow_disabled, |this| {
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &AllowOnce as &dyn Action,
@@ -9368,6 +9508,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
+        allow_disabled: bool,
         cx: &Context<Self>,
     ) -> Div {
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3, u8> = ArrayVec::new();
@@ -9431,13 +9572,22 @@ impl ThreadView {
                             }
                         };
 
-                        let this = this.start_icon(icon);
+                        // An "allow" choice is disabled while a surprising-Unicode
+                        // warning is unacknowledged; "deny"/"retry" stay enabled.
+                        let is_allow = matches!(
+                            option.kind,
+                            acp::PermissionOptionKind::AllowOnce
+                                | acp::PermissionOptionKind::AllowAlways
+                        ) && !is_retry;
+                        let disabled = allow_disabled && is_allow;
+
+                        let this = this.start_icon(icon).disabled(disabled);
 
                         let Some(action) = action else {
                             return this;
                         };
 
-                        if !is_first || seen_kinds.contains(&option.kind) {
+                        if !is_first || disabled || seen_kinds.contains(&option.kind) {
                             return this;
                         }
 

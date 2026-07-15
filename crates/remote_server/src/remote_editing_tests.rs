@@ -2800,6 +2800,20 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+
+    let default_branch = cx
+        .update(|cx| repository.update(cx, |repository, _cx| repository.default_branch(false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch.as_deref(), Some("main"));
+
+    let default_branch_with_remote = cx
+        .update(|cx| repository.update(cx, |repository, _cx| repository.default_branch(true)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_with_remote.as_deref(), Some("origin/main"));
 }
 
 #[gpui::test]

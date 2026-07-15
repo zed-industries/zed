@@ -67,6 +67,12 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
             language_settings.merge_from(&other.defaults);
             if let Some(mut language_server_overrides) = language_server_overrides {
                 if let Some(disabled) = &globally_disabled_servers {
+                    for disabled_server in disabled {
+                        if let Some(enabled_server) = disabled_server.strip_prefix('!') {
+                            language_server_overrides.retain(|entry| entry != enabled_server);
+                        }
+                    }
+
                     let insert_before = language_server_overrides
                         .iter()
                         .position(|entry| entry == REST_OF_LANGUAGE_SERVERS)
@@ -923,12 +929,22 @@ pub struct PrettierSettingsContent {
     strum::VariantArray,
     strum::VariantNames,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
+    /// Only lines with unstaged changes are formatted on save.
+    /// Requires source control and LSP range formatting support.
+    /// If no git diff is available or if the LSP doesn't support
+    /// range formatting, formatting is skipped.
+    Modifications,
+    /// Only lines with unstaged changes are formatted on save.
+    /// If no git diff is available (e.g., when source control is
+    /// unavailable) or if the LSP doesn't support range formatting,
+    /// falls back to formatting the whole file.
+    ModificationsIfAvailable,
 }
 
 /// Controls how line endings are normalized when a buffer is saved.
@@ -1314,6 +1330,55 @@ mod test {
                 "!eslint".to_string(),
                 REST_OF_LANGUAGE_SERVERS.to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn test_global_language_server_disable_overrides_per_language_enable() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!vtsls".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let expected = vec![
+            "!typescript-language-server".to_string(),
+            "!vtsls".to_string(),
+            REST_OF_LANGUAGE_SERVERS.to_string(),
+        ];
+        assert_eq!(
+            base.languages
+                .0
+                .get("TypeScript")
+                .and_then(|settings| settings.language_servers.as_deref()),
+            Some(expected.as_slice()),
         );
     }
 

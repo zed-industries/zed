@@ -713,7 +713,6 @@ mod tests {
     use agent_client_protocol::schema::v1 as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
-    use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
     use parking_lot::RwLock;
@@ -851,11 +850,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_hidden_elicitation_preserves_entry_index(cx: &mut TestAppContext) {
+    async fn test_elicitation_preserves_entry_index(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({})).await;
@@ -900,7 +896,6 @@ mod tests {
                 )),
                 cx,
             );
-            cx.update_flags(false, vec![]);
         });
 
         let view_state = cx.new(|_cx| {

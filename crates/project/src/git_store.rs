@@ -254,7 +254,7 @@ impl language::File for IndexTextFile {
         rpc::proto::File {
             worktree_id: self.worktree_id.to_proto(),
             entry_id: None,
-            path: self.path.as_ref().to_proto(),
+            path: self.path.as_ref().as_unix_str().to_owned(),
             mtime: None,
             is_deleted: false,
             is_historic: true,
@@ -336,7 +336,7 @@ impl StatusEntry {
         };
 
         proto::StatusEntry {
-            repo_path: self.repo_path.to_proto(),
+            repo_path: self.repo_path.as_unix_str().to_owned(),
             simple_status,
             status: Some(status_to_proto(self.status)),
             diff_stat_added: self.diff_stat.map(|ds| ds.added),
@@ -3540,7 +3540,7 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch(false)
+                repository_handle.default_branch(envelope.payload.include_remote_name)
             })
             .await??
             .map(Into::into);
@@ -3825,7 +3825,7 @@ impl GitStore {
                 .files
                 .into_iter()
                 .map(|file| proto::CommitFile {
-                    path: file.path.to_proto(),
+                    path: file.path.as_unix_str().to_owned(),
                     old_text: file.old_text,
                     new_text: file.new_text,
                     is_binary: file.is_binary,
@@ -4023,7 +4023,7 @@ impl GitStore {
                 .entries
                 .into_iter()
                 .map(|(path, status)| proto::TreeDiffStatus {
-                    path: path.as_ref().to_proto(),
+                    path: path.as_ref().as_unix_str().to_owned(),
                     status: match status {
                         TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
                         TreeDiffStatus::Modified { .. } => {
@@ -5109,7 +5109,7 @@ impl RepositorySnapshot {
                 .merge
                 .merge_heads_by_conflicted_path
                 .iter()
-                .map(|(repo_path, _)| repo_path.to_proto())
+                .map(|(repo_path, _)| repo_path.as_unix_str().to_owned())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
@@ -5165,13 +5165,13 @@ impl RepositorySnapshot {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Greater => {
-                            removed_statuses.push(old_entry.repo_path.to_proto());
+                            removed_statuses.push(old_entry.repo_path.as_unix_str().to_owned());
                             current_old_entry = old_statuses.next();
                         }
                     }
                 }
                 (None, Some(old_entry)) => {
-                    removed_statuses.push(old_entry.repo_path.to_proto());
+                    removed_statuses.push(old_entry.repo_path.as_unix_str().to_owned());
                     current_old_entry = old_statuses.next();
                 }
                 (Some(new_entry), None) => {
@@ -5196,7 +5196,7 @@ impl RepositorySnapshot {
                 .merge
                 .merge_heads_by_conflicted_path
                 .iter()
-                .map(|(path, _)| path.to_proto())
+                .map(|(path, _)| path.as_unix_str().to_owned())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
@@ -5670,26 +5670,36 @@ impl Repository {
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
-                        let mut changes = Vec::new();
-                        for (
-                            buffer,
-                            repo_path,
-                            is_symlink,
-                            current_index_text,
-                            current_head_text,
-                        ) in &repo_diff_state_updates
+                        let mut revisions = Vec::new();
+                        for (_, repo_path, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
                         {
-                            let index_text = if current_index_text.is_some() && !*is_symlink {
-                                backend.load_index_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let head_text = if current_head_text.is_some() && !*is_symlink {
-                                backend.load_committed_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let (index_text, head_text) = future::join(index_text, head_text).await;
+                            if current_index_text.is_some() && !*is_symlink {
+                                revisions.push(format!(":{}", repo_path.as_unix_str()));
+                            }
+                            if current_head_text.is_some() && !*is_symlink {
+                                revisions.push(format!("HEAD:{}", repo_path.as_unix_str()));
+                            }
+                        }
+
+                        let mut loaded_revisions = backend
+                            .load_revisions(revisions)
+                            .await
+                            .log_err()
+                            .into_iter()
+                            .flatten();
+
+                        let mut changes = Vec::new();
+                        for (buffer, _, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
+                        {
+                            let index_text = (current_index_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
+
+                            let head_text = (current_head_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -6041,7 +6051,7 @@ impl Repository {
                                             commit,
                                             paths: paths
                                                 .into_iter()
-                                                .map(|p| p.to_proto())
+                                                .map(|p| p.as_unix_str().to_owned())
                                                 .collect(),
                                         })
                                         .await?;
@@ -7003,7 +7013,9 @@ impl Repository {
                                                 repository_id: id.to_proto(),
                                                 paths: entries
                                                     .into_iter()
-                                                    .map(|repo_path| repo_path.to_proto())
+                                                    .map(|repo_path| {
+                                                        repo_path.as_unix_str().to_owned()
+                                                    })
                                                     .collect(),
                                             })
                                             .await
@@ -7016,7 +7028,9 @@ impl Repository {
                                                 repository_id: id.to_proto(),
                                                 paths: entries
                                                     .into_iter()
-                                                    .map(|repo_path| repo_path.to_proto())
+                                                    .map(|repo_path| {
+                                                        repo_path.as_unix_str().to_owned()
+                                                    })
                                                     .collect(),
                                             })
                                             .await
@@ -7147,7 +7161,7 @@ impl Repository {
                                     repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
-                                        .map(|repo_path| repo_path.to_proto())
+                                        .map(|repo_path| repo_path.as_unix_str().to_owned())
                                         .collect(),
                                 })
                                 .await?;
@@ -7235,7 +7249,7 @@ impl Repository {
         is_dir: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let work_dir = self.snapshot.work_directory_abs_path.clone();
-        let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let path_display = repo_path.as_ref().display(PathStyle::Unix);
         let file_path_str = if is_dir {
             format!("{}/", path_display)
         } else {
@@ -7269,7 +7283,7 @@ impl Repository {
         is_dir: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let repository_dir = self.snapshot.repository_dir_abs_path.clone();
-        let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let path_display = repo_path.as_ref().display(PathStyle::Unix);
         let file_path_str = if is_dir {
             format!("{}/", path_display)
         } else {
@@ -7712,7 +7726,7 @@ impl Repository {
                             .request(proto::SetIndexText {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
-                                path: path.to_proto(),
+                                path: path.as_unix_str().to_owned(),
                                 text: content,
                             })
                             .await?;
@@ -8339,6 +8353,7 @@ impl Repository {
                         .request(proto::GetDefaultBranch {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
+                            include_remote_name,
                         })
                         .await?;
 
@@ -8395,7 +8410,7 @@ impl Repository {
                             };
                             Some((
                                 RepoPath::from_rel_path(
-                                    &RelPath::from_proto(&entry.path).log_err()?,
+                                    RelPath::from_unix_str(&entry.path).log_err()?,
                                 ),
                                 status,
                             ))
@@ -8724,7 +8739,7 @@ impl Repository {
             .into_iter()
             .filter_map(|path| {
                 Some(sum_tree::Edit::Remove(PathKey(
-                    RelPath::from_proto(&path).log_err()?,
+                    RelPath::from_unix_str(&path).log_err()?.into(),
                 )))
             })
             .chain(
@@ -8996,8 +9011,13 @@ impl Repository {
         let rx = self.send_job("load_committed_text", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
-                    let staged_text = backend.load_index_text(repo_path).await;
+                    let revisions = vec![
+                        format!("HEAD:{}", repo_path.as_unix_str()),
+                        format!(":{}", repo_path.as_unix_str()),
+                    ];
+                    let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
+                    let committed_text = loaded_revisions.next().flatten();
+                    let staged_text = loaded_revisions.next().flatten();
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {
@@ -9310,7 +9330,7 @@ fn format_job_key(key: &GitJobKey) -> SharedString {
                 .iter()
                 .map(|p| {
                     let rel: &RelPath = p;
-                    format!("{}", AsRef::<Path>::as_ref(rel).display())
+                    rel.display(PathStyle::local())
                 })
                 .collect();
             format!("WriteIndex({})", paths_str.join(", ")).into()
@@ -9389,7 +9409,7 @@ pub fn worktrees_directory_for_repo(
     let resolved = if path_style.is_posix() {
         joined
     } else {
-        util::normalize_path(&joined)
+        path::normalize_path(&joined)
     };
     let resolved = if resolved.starts_with(repository_anchor_path) {
         resolved
@@ -9633,7 +9653,11 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    Some(Blame { entries, messages })
+    Some(Blame {
+        entries,
+        messages,
+        tag_names: Default::default(),
+    })
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
@@ -9642,7 +9666,9 @@ fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
             LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
-            LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
+            LogSource::Path(path) => {
+                proto::git_log_source::Source::Path(path.as_unix_str().to_owned())
+            }
         }),
     }
 }
@@ -9888,6 +9914,11 @@ async fn append_pattern_to_ignore_file(
 
 #[cfg(any(test, feature = "test-support"))]
 impl Repository {
+    pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
+        self.snapshot.branch_list = branches.into();
+        cx.emit(RepositoryEvent::BranchListChanged);
+    }
+
     pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
         self.commit_data
             .iter()
@@ -10041,11 +10072,9 @@ mod tests {
     fn test_new_worktree_path_uses_posix_style_for_remote_paths() {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).unwrap();
-        let directory = PathStyle::Posix
-            .join_path(&directory, "nimble-sky")
-            .unwrap();
-        let path = PathStyle::Posix.join_path(&directory, "lsp-tests").unwrap();
+            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        let directory = PathStyle::Unix.join_path(&directory, "nimble-sky").unwrap();
+        let path = PathStyle::Unix.join_path(&directory, "lsp-tests").unwrap();
 
         assert_eq!(
             path,
