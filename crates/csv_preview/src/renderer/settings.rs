@@ -1,6 +1,7 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
-    IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonSize, Checkbox, Context, ContextMenu, DropdownMenu,
+    ElementId, IntoElement as _, ParentElement as _, Styled as _, ToggleState, Tooltip, Window,
+    div, h_flex,
 };
 
 use crate::{
@@ -121,6 +122,30 @@ impl CsvPreviewView {
                     ),
             );
 
+        let multiline_enabled = self.settings.multiline_cells_enabled;
+        let panel = panel.child({
+            let view = view.clone();
+            Checkbox::new(
+                ElementId::Name("multiline-rows-checkbox".into()),
+                if multiline_enabled {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .label("Display multiline rows")
+            .tooltip(Tooltip::text(
+                "When enabled, row height grows to show all content. \
+                 When disabled, only the first line is visible — hover a cell to see the rest.",
+            ))
+            .on_click(move |_state, _window, cx| {
+                view.update(cx, |this, cx| {
+                    this.settings.multiline_cells_enabled = !this.settings.multiline_cells_enabled;
+                    cx.notify();
+                });
+            })
+        });
+
         #[cfg(feature = "dev-tools")]
         let panel = panel.child(
             h_flex()
@@ -171,7 +196,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::VariableList;
-                                        view.settings.multiline_cells_enabled = true;
                                         cx.notify();
                                     })
                                 }
@@ -188,7 +212,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::UniformList;
-                                        view.settings.multiline_cells_enabled = false;
                                         cx.notify();
                                     })
                                 }
