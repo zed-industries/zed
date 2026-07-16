@@ -44,7 +44,6 @@ impl CsvPreviewView {
             .w_full()
             .items_center()
             .font_buffer(cx)
-            // Label: flex_1 so it truly fills the full header width.
             .child(
                 div()
                     .flex_1()
@@ -53,8 +52,6 @@ impl CsvPreviewView {
                     .whitespace_nowrap()
                     .child(header_text),
             )
-            // Gradient: always present so text gracefully fades before the button area.
-            // GradientFade is absolutely positioned and grows on group hover.
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
                     .width(grad_width)
@@ -63,7 +60,6 @@ impl CsvPreviewView {
                     .gradient_stop(0.8)
                     .group_name(group_name.clone()),
             )
-            // Buttons: absolutely positioned so they never shrink the label.
             .child(
                 h_flex()
                     .absolute()
