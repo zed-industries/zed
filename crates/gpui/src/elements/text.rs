@@ -706,11 +706,10 @@ impl TextLayout {
                             &runs,
                             truncate_from,
                         )
-                    } else if wrap_width.is_none()
-                        && let Some(unclipped) = window
-                            .text_system()
-                            .shape_text(text.clone(), font_size, &runs, None, None)
-                            .log_err()
+                    } else if let Some(unclipped) = window
+                        .text_system()
+                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .log_err()
                         && unclipped
                             .iter()
                             .all(|line| line.size(line_height).width <= truncate_width)
