@@ -1,13 +1,15 @@
 ---
 title: Zed-Hosted Models - Zed
-description: AI models available via Zed Pro including Claude Fable 5, Claude Sonnet 5, GPT-5.6, and Gemini 3. Pricing, context windows, and tool call support.
+description: AI models available through Zed plans, including pricing, context windows, and tool call support.
 ---
 
 # Zed-Hosted Models
 
 Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](../ai/llm-providers.md). For general setup, see [AI Quick Start](../ai/quick-start.md).
 
-> **Note:** Claude Fable 5, Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro are only available on Zed Pro and Zed Business.
+> **Note:** Pro trials and the Student plan do not include Claude Fable 5, Claude Opus models, GPT-5.5 pro, or GPT-5.4 pro. These models are available on paid Zed Pro and Business plans.
+
+## Pricing {#pricing}
 
 | Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ----------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
