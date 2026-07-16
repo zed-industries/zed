@@ -23,7 +23,12 @@ mod settings;
 mod table_data_engine;
 mod types;
 
-actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
+actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
+
+/// Cheap stand-in for a single table row's height, used only to size the
+/// scrollbar for off-screen rows without a full `.measure_all()` pass. Not
+/// meant to exactly match the rendered row height.
+const APPROXIMATE_ROW_HEIGHT: Pixels = px(24.);
 
 pub struct TabularDataPreviewFeatureFlag;
 
@@ -186,7 +191,7 @@ impl CsvPreviewView {
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(px(24.)),
+                    .with_uniform_item_height(APPROXIMATE_ROW_HEIGHT),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -241,9 +246,8 @@ impl CsvPreviewView {
                 let visible_rows = view.engine.d2d_mapping().visible_row_count();
                 // Approximation of single csv table row height. Will be re-measured on scrolling.
                 // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
-                let approximate_height = px(24.);
                 view.list_state
-                    .reset_with_uniform_height(visible_rows, approximate_height);
+                    .reset_with_uniform_height(visible_rows, APPROXIMATE_ROW_HEIGHT);
                 cx.notify();
             })
             .ok();
@@ -266,12 +270,12 @@ impl CsvPreviewView {
             .buffer()
             .read(cx)
             .as_singleton()
-            .and_then(|buffer| {
-                buffer
-                    .read(cx)
-                    .file()
-                    .and_then(|file| file.path().extension())
-                    .map(|ext| ext.eq_ignore_ascii_case("csv"))
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| {
+                file.path().extension().map(|ext_str| {
+                    let lower = ext_str.to_lowercase();
+                    matches!(lower.as_str(), "csv" | "tsv" | "ssv" | "psv")
+                })
             })
             .unwrap_or(false)
     }
@@ -289,7 +293,7 @@ impl Item for CsvPreviewView {
     type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::FileDoc))
+        Some(Icon::new(IconName::Table))
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
