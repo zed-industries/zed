@@ -4,8 +4,10 @@ use std::{collections::HashMap, num::NonZeroU32};
 /// The settings for a particular language.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LanguageSettings {
-    /// How many columns a tab should occupy.
+    /// How many columns each indentation level should occupy.
     pub tab_size: NonZeroU32,
+    /// How many columns a literal tab character should occupy.
+    pub tab_width: NonZeroU32,
     /// Whether to indent with hard tabs (true) or spaces (false).
     pub hard_tabs: bool,
     /// The preferred line length (column at which to wrap).
