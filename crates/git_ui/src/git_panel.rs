@@ -3340,10 +3340,6 @@ impl GitPanel {
         )
     }
 
-    pub fn is_generating_commit_message(&self) -> bool {
-        self.generate_commit_message_task.is_some()
-    }
-
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
@@ -12205,6 +12201,172 @@ mod tests {
         );
 
         assert!(!prompt.contains("<current_message>"));
+    }
+
+    async fn setup_commit_message_generation_test(
+        commit_template: Option<&str>,
+        cx: &mut TestAppContext,
+    ) -> (
+        VisualTestContext,
+        Entity<GitPanel>,
+        Arc<dyn language_model::LanguageModel>,
+    ) {
+        init_test(cx);
+
+        let model = cx.update(|cx| {
+            AgentSettings::register(cx);
+            LanguageModelRegistry::test(cx);
+            LanguageModelRegistry::read_global(cx)
+                .default_model()
+                .unwrap()
+                .model
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+        if let Some(template) = commit_template {
+            fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.commit_template = Some(GitCommitTemplate {
+                    template: template.to_string(),
+                });
+            })
+            .unwrap();
+        }
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, &mut cx);
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.run_until_parked();
+
+        (cx, panel, model)
+    }
+
+    #[gpui::test]
+    async fn test_generate_commit_message_replaces_message(cx: &mut TestAppContext) {
+        const TEMPLATE: &str = "\nSigned-off-by: Test User <test@example.com>\n";
+        let (mut cx, panel, model) = setup_commit_message_generation_test(Some(TEMPLATE), cx).await;
+        let cx = &mut cx;
+
+        let (initial_text, loaded_template) = panel.update(cx, |panel, cx| {
+            (
+                panel.commit_editor.read(cx).text(cx),
+                panel.commit_template.clone(),
+            )
+        });
+        assert_eq!(
+            loaded_template.map(|template| template.template),
+            Some(TEMPLATE.to_string()),
+            "commit template should be loaded from the repository"
+        );
+        assert_eq!(initial_text, TEMPLATE);
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+
+        let fake_model = model.as_fake();
+        let pending_completions = fake_model.pending_completions();
+        assert_eq!(pending_completions.len(), 1);
+        let prompt = pending_completions[0].messages[0].string_contents();
+        assert!(prompt.contains("<commit_template>"));
+        assert!(prompt.contains("Signed-off-by: Test User <test@example.com>"));
+        assert!(prompt.contains("<current_message>"));
+
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+
+        fake_model.send_last_completion_stream_text_chunk(concat!(
+            " \"Update tracked\n",
+            "\n",
+            "Signed-off-by: Test User <test@example.com>\"",
+        ));
+        fake_model.send_last_completion_stream_text_chunk("\ndiff --git a/tracked b/tracked");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        let text = panel.update(cx, |panel, cx| panel.commit_editor.read(cx).text(cx));
+        assert_eq!(
+            text, "Update tracked\n\nSigned-off-by: Test User <test@example.com>",
+            "the leading whitespace, wrapping quotes, and echoed diff should be stripped"
+        );
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+    }
+
+    #[gpui::test]
+    async fn test_generate_commit_message_error_unlocks_editor(cx: &mut TestAppContext) {
+        let (mut cx, panel, model) = setup_commit_message_generation_test(None, cx).await;
+        let cx = &mut cx;
+
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let end = buffer.len();
+                buffer.edit([(0..end, "my rough draft")], None, cx);
+            });
+        });
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+
+        let fake_model = model.as_fake();
+        let prompt = fake_model.pending_completions()[0].messages[0].string_contents();
+        assert!(prompt.contains("<current_message>"));
+        assert!(prompt.contains("my rough draft"));
+        assert!(!prompt.contains("<commit_template>"));
+
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+
+        fake_model.send_last_completion_stream_error(
+            language_model::LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "connection reset"
+            )),
+        );
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+    }
+
+    #[gpui::test]
+    async fn test_cancel_generate_commit_message_unlocks_editor(cx: &mut TestAppContext) {
+        let (mut cx, panel, _model) = setup_commit_message_generation_test(None, cx).await;
+        let cx = &mut cx;
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+
+        panel.update(cx, |panel, cx| {
+            panel.generate_commit_message_task.take();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
     }
 
     #[gpui::test]
