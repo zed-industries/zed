@@ -85,6 +85,16 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+
+    /// Alpha: keep remote development sessions alive across disconnects.
+    /// When enabled, closing a remote window offers to keep the remote server
+    /// running, remote terminals run inside persistent tmux sessions that
+    /// reattach on reconnect, and reconnecting reuses the live server.
+    /// Turning this off leaves any detached tmux sessions on the host until a
+    /// later "Shut down" close (with the setting on) or manual cleanup.
+    ///
+    /// Default: false
+    pub remote_session_continuity: Option<bool>,
 }
 
 /// When to scan content of linked directories.

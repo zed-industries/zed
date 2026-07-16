@@ -413,6 +413,9 @@ impl Domain for TerminalDb {
         sql! (
             ALTER TABLE terminals ADD COLUMN custom_title TEXT;
         ),
+        sql!(
+            ALTER TABLE terminals ADD COLUMN tmux_session TEXT;
+        ),
     ];
 }
 
@@ -503,5 +506,51 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
+    }
+
+    query! {
+        pub async fn save_tmux_session(
+            item_id: ItemId,
+            workspace_id: WorkspaceId,
+            tmux_session: Option<String>
+        ) -> Result<()> {
+            INSERT INTO terminals(item_id, workspace_id, tmux_session)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT DO UPDATE SET
+                item_id = ?1,
+                workspace_id = ?2,
+                tmux_session = ?3
+        }
+    }
+
+    query! {
+        pub fn get_tmux_session(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT tmux_session
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ? AND tmux_session IS NOT NULL
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    async fn test_tmux_session_round_trip(cx: &mut gpui::TestAppContext) {
+        let workspace_db = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = workspace_db.next_id().await.unwrap();
+        let db = cx.update(|cx| TerminalDb::global(cx));
+
+        db.save_tmux_session(1, workspace_id, Some("zed-dev-workspace-5-abc".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_tmux_session(1, workspace_id).unwrap(),
+            Some("zed-dev-workspace-5-abc".into())
+        );
+
+        db.save_tmux_session(1, workspace_id, None).await.unwrap();
+        assert_eq!(db.get_tmux_session(1, workspace_id).unwrap(), None);
     }
 }

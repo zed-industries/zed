@@ -76,7 +76,7 @@ use debugger::{
 pub use environment::ProjectEnvironment;
 
 use futures::{
-    StreamExt,
+    FutureExt as _, StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
 };
@@ -226,6 +226,12 @@ pub struct Project {
     user_store: Entity<UserStore>,
     fs: Arc<dyn Fs>,
     remote_client: Option<Entity<RemoteClient>>,
+    /// When closing or quitting a remote-server project, controls whether the
+    /// remote server is asked to shut down (killing all terminals, tasks,
+    /// language servers, and agent sessions it owns). When `false`, the local
+    /// connection is dropped but the remote daemon keeps running, so the
+    /// session survives the disconnect. Defaults to `true` (shut down).
+    shutdown_remote_server_on_close: bool,
     // todo lw explain the client_state x remote_client matrix, its super confusing
     client_state: ProjectClientState,
     git_store: Entity<GitStore>,
@@ -1135,6 +1141,27 @@ impl DisableAiSettings {
     }
 }
 
+/// When disconnecting from a remote server, either request a full shutdown
+/// (killing the server and everything it owns) or ask it to stay alive so the
+/// session can be resumed on reconnect. In both cases the local connection is
+/// torn down. Returns the future that performs the teardown, if connected.
+fn shutdown_or_keep_alive_remote_server(
+    client: &mut RemoteClient,
+    keep_alive: bool,
+    cx: &mut Context<RemoteClient>,
+) -> Option<futures::future::BoxFuture<'static, ()>> {
+    let executor = cx.background_executor().clone();
+    if keep_alive {
+        client
+            .shutdown_processes(Some(proto::KeepRemoteServerAlive {}), executor)
+            .map(|future| future.boxed())
+    } else {
+        client
+            .shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
+            .map(|future| future.boxed())
+    }
+}
+
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
         connection_manager::init(client.clone(), cx);
@@ -1350,6 +1377,7 @@ impl Project {
                 settings_observer,
                 fs,
                 remote_client: None,
+                shutdown_remote_server_on_close: true,
                 bookmark_store,
                 breakpoint_store,
                 dap_store,
@@ -1573,12 +1601,10 @@ impl Project {
                 _subscriptions: vec![
                     cx.on_release(Self::release),
                     cx.on_app_quit(|this, cx| {
+                        let keep_alive = !this.shutdown_remote_server_on_close;
                         let shutdown = this.remote_client.take().and_then(|client| {
                             client.update(cx, |client, cx| {
-                                client.shutdown_processes(
-                                    Some(proto::ShutdownRemoteServer {}),
-                                    cx.background_executor().clone(),
-                                )
+                                shutdown_or_keep_alive_remote_server(client, keep_alive, cx)
                             })
                         });
 
@@ -1598,6 +1624,7 @@ impl Project {
                 settings_observer,
                 fs,
                 remote_client: Some(remote.clone()),
+                shutdown_remote_server_on_close: true,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1873,6 +1900,7 @@ impl Project {
                 snippets,
                 fs,
                 remote_client: None,
+                shutdown_remote_server_on_close: true,
                 settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
@@ -1977,11 +2005,9 @@ impl Project {
 
     fn release(&mut self, cx: &mut App) {
         if let Some(client) = self.remote_client.take() {
+            let keep_alive = !self.shutdown_remote_server_on_close;
             let shutdown = client.update(cx, |client, cx| {
-                client.shutdown_processes(
-                    Some(proto::ShutdownRemoteServer {}),
-                    cx.background_executor().clone(),
-                )
+                shutdown_or_keep_alive_remote_server(client, keep_alive, cx)
             });
 
             cx.background_spawn(async move {
@@ -2302,6 +2328,30 @@ impl Project {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
+    }
+
+    /// True when this project runs over a remote-server connection that a user
+    /// can reconnect to later (a workspace connection, not a transient
+    /// setup/browse connection). Only such projects should offer to keep the
+    /// remote server alive on close. A connection that is already dead is not
+    /// resumable: a keep-alive request could not reach the server anyway.
+    pub fn is_resumable_remote_workspace(&self, cx: &App) -> bool {
+        self.remote_client.as_ref().is_some_and(|client| {
+            let client = client.read(cx);
+            client.is_workspace_connection()
+                && matches!(
+                    client.connection_state(),
+                    remote::ConnectionState::Connected
+                )
+        })
+    }
+
+    /// Controls whether closing or quitting this remote-server project shuts
+    /// down the remote server. When set to `false`, disconnecting leaves the
+    /// remote daemon (and its terminals, tasks, language servers, and agent
+    /// sessions) running so the session can be resumed by reconnecting.
+    pub fn set_shutdown_remote_server_on_close(&mut self, shutdown: bool) {
+        self.shutdown_remote_server_on_close = shutdown;
     }
 
     /// Reveals the given path in the system file manager.

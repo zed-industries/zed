@@ -277,6 +277,13 @@ impl TerminalView {
             cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
 
+        // A remote terminal's tmux session name may never otherwise be
+        // captured, since a terminal that never changes cwd or custom title
+        // would never flip `needs_serialize` and would lose the ability to
+        // reattach after a restart. Mark it dirty up front so the first
+        // serialize pass persists the session.
+        let needs_serialize = terminal.read(cx).persistent_session().is_some();
+
         Self {
             terminal,
             workspace: workspace_handle,
@@ -296,7 +303,7 @@ impl TerminalView {
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
-            needs_serialize: false,
+            needs_serialize,
             custom_title: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
@@ -1874,6 +1881,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let tmux_session = terminal.persistent_session().map(|s| s.to_string());
         self.needs_serialize = false;
 
         let db = TerminalDb::global(cx);
@@ -1883,6 +1891,8 @@ impl SerializableItem for TerminalView {
                     .await?;
             }
             db.save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            db.save_tmux_session(item_id, workspace_id, tmux_session)
                 .await?;
             Ok(())
         }))
@@ -1901,7 +1911,7 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, tmux_session) = cx
                 .update(|_window, cx| {
                     let db = TerminalDb::global(cx);
                     let from_db = db
@@ -1923,13 +1933,19 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    let tmux_session = db
+                        .get_tmux_session(item_id, workspace_id)
+                        .log_err()
+                        .flatten();
+                    (cwd, custom_title, tmux_session)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell_with_session(cwd, tmux_session, cx)
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -3012,6 +3028,75 @@ mod tests {
             view.needs_serialize = false;
             view.set_custom_title(Some("new_label".to_string()), cx);
             assert!(view.needs_serialize);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_persistent_session_marks_needs_serialize(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+
+        let terminal_with_session = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .with_persistent_session_for_test(Some("zed-test-abc".to_string()))
+            .subscribe(cx)
+        });
+
+        let terminal_view_with_session = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal_with_session,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal_view_with_session.update(cx, |view, _cx| {
+            assert!(view.needs_serialize);
+        });
+
+        let terminal_without_session = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .with_persistent_session_for_test(None)
+            .subscribe(cx)
+        });
+
+        let terminal_view_without_session = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal_without_session,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal_view_without_session.update(cx, |view, _cx| {
+            assert!(!view.needs_serialize);
         });
     }
 

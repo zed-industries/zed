@@ -5312,6 +5312,7 @@ mod tests {
                         args,
                         title_override: None,
                     },
+                    None,
                     HashMap::default(),
                     ::terminal::terminal_settings::CursorShape::default(),
                     ::terminal::terminal_settings::AlternateScroll::On,

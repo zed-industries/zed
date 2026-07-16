@@ -36,6 +36,7 @@ use rpc::{
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use semver::Version;
+use settings::SettingsStore;
 use std::{
     collections::VecDeque,
     fmt,
@@ -328,6 +329,7 @@ impl From<&State> for ConnectionState {
 pub struct RemoteClient {
     client: Arc<ChannelClient>,
     unique_identifier: String,
+    is_workspace_connection: bool,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
     platform: RemotePlatform,
@@ -376,6 +378,19 @@ impl ConnectionIdentifier {
     }
 }
 
+/// Mirrors `ProjectSettings::remote_session_continuity` (`project` crate
+/// cannot be depended on here, so the setting content is read directly off
+/// the global `SettingsStore` instead).
+fn allow_attach_to_running_server(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>().is_some_and(|store| {
+        store
+            .merged_settings()
+            .project
+            .remote_session_continuity
+            .unwrap_or(false)
+    })
+}
+
 pub async fn connect(
     connection_options: RemoteConnectionOptions,
     delegate: Arc<dyn RemoteClientDelegate>,
@@ -412,7 +427,10 @@ impl RemoteClient {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Task<Result<Option<Entity<Self>>>> {
+        let is_workspace_connection =
+            matches!(unique_identifier, ConnectionIdentifier::Workspace(_));
         let unique_identifier = unique_identifier.to_string(cx);
+        let allow_attach = allow_attach_to_running_server(cx);
         cx.spawn(async move |cx| {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -437,6 +455,7 @@ impl RemoteClient {
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
+                    is_workspace_connection,
                     connection_options,
                     path_style,
                     platform,
@@ -447,6 +466,7 @@ impl RemoteClient {
                 let io_task = remote_connection.start_proxy(
                     unique_identifier,
                     false,
+                    allow_attach,
                     incoming_tx,
                     outgoing_rx,
                     connection_activity_tx,
@@ -652,6 +672,7 @@ impl RemoteClient {
 
         let unique_identifier = self.unique_identifier.clone();
         let client = self.client.clone();
+        let allow_attach = allow_attach_to_running_server(cx);
         let reconnect_task = cx.spawn(async move |this, cx| {
             macro_rules! failed {
                 ($error:expr, $attempts:expr, $remote_connection:expr, $delegate:expr) => {
@@ -690,6 +711,7 @@ impl RemoteClient {
                 let io_task = remote_connection.start_proxy(
                     unique_identifier,
                     true,
+                    allow_attach,
                     incoming_tx,
                     outgoing_rx,
                     connection_activity_tx,
@@ -998,6 +1020,14 @@ impl RemoteClient {
         self.connection_options.clone()
     }
 
+    pub fn is_workspace_connection(&self) -> bool {
+        self.is_workspace_connection
+    }
+
+    pub fn unique_identifier(&self) -> String {
+        self.unique_identifier.clone()
+    }
+
     pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         if let State::Connected {
             remote_connection, ..
@@ -1188,7 +1218,7 @@ impl RemoteClient {
         client_cx
             .update(|cx| {
                 Self::new(
-                    ConnectionIdentifier::setup(),
+                    ConnectionIdentifier::Workspace(0),
                     connection,
                     rx,
                     Arc::new(MockDelegate),
@@ -1591,6 +1621,7 @@ pub trait RemoteConnection: Send + Sync {
         &self,
         unique_identifier: String,
         reconnect: bool,
+        allow_attach: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,

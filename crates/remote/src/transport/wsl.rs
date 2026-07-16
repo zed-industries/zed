@@ -357,6 +357,7 @@ impl RemoteConnection for WslRemoteConnection {
         &self,
         unique_identifier: String,
         reconnect: bool,
+        allow_attach: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
@@ -386,6 +387,9 @@ impl RemoteConnection for WslRemoteConnection {
 
         if reconnect {
             proxy_args.push("--reconnect".to_owned());
+        }
+        if allow_attach {
+            proxy_args.push("--allow-attach".to_owned());
         }
 
         let proxy_process =

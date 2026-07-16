@@ -292,6 +292,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
+        session.add_request_handler(cx.weak_entity(), Self::handle_keep_remote_server_alive);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
@@ -1215,6 +1216,21 @@ impl HeadlessProject {
             })
         })
         .detach();
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_keep_remote_server_alive(
+        _this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::KeepRemoteServerAlive>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        cx.update(|cx| {
+            if let Some(state) = cx.try_global::<crate::RemoteServerKeepAlive>() {
+                state.0.store(true, std::sync::atomic::Ordering::SeqCst);
+                log::info!("client requested to keep remote server alive after disconnect");
+            }
+        });
 
         Ok(proto::Ack {})
     }

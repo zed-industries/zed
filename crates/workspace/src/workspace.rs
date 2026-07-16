@@ -3366,6 +3366,52 @@ impl Workspace {
                 }
             }
 
+            // For remote-development sessions, ask whether to keep the remote
+            // server running after disconnecting, or shut it down (which kills
+            // the terminals, tasks, language servers, and agent sessions it
+            // owns).
+            let remote_host = this.read_with(cx, |workspace, cx| {
+                let project = workspace.project.read(cx);
+                (project.is_via_remote_server()
+                    && project.is_resumable_remote_workspace(cx)
+                    && matches!(close_intent, CloseIntent::CloseWindow | CloseIntent::Quit)
+                    && ProjectSettings::get_global(cx).remote_session_continuity)
+                .then(|| {
+                    project
+                        .remote_connection_options(cx)
+                        .map(|options| options.display_name())
+                })
+            })?;
+            // Only record the choice here; it is applied further down, once
+            // the close is certain. The save flow below can still cancel the
+            // close (e.g. via a dirty-buffer prompt), and prematurely sweeping
+            // tmux sessions or clearing the shutdown flag would affect a
+            // window that ends up staying open.
+            let mut remote_shutdown_choice: Option<bool> = None;
+            if let Some(remote_host) = remote_host {
+                let remote_host =
+                    remote_host.unwrap_or_else(|| "the remote host".to_string());
+                this.update(cx, |_, cx| cx.emit(Event::Activate))?;
+                let answer = cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Info,
+                        &format!("Closing connection to {remote_host}"),
+                        Some(
+                            "Keep the remote session running so its terminals, tasks, \
+                             and agents continue after you disconnect?",
+                        ),
+                        &["Keep running", "Shut down", "Cancel"],
+                        cx,
+                    )
+                })?;
+                match answer.await.log_err() {
+                    Some(0) => remote_shutdown_choice = Some(false),
+                    Some(1) => remote_shutdown_choice = Some(true),
+                    Some(2) => return anyhow::Ok(false),
+                    _ => {}
+                }
+            }
+
             // Hot-exit silently writes dirty buffers to the DB; only allow it
             // if the workspace will be reachable again, either via session
             // restore or by reopening its folder paths. Otherwise prompt, so
@@ -3401,6 +3447,40 @@ impl Workspace {
             {
                 this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
                     .await;
+            }
+
+            // The close is committed now: apply the keep-alive choice recorded
+            // above. If the save flow cancelled the close, the flag keeps its
+            // default (shut down on close) and no sweep runs.
+            if let Some(shutdown_remote_server) = remote_shutdown_choice
+                && save_result.as_ref().is_ok_and(|&res| res)
+            {
+                let project = this.read_with(cx, |workspace, _| workspace.project.clone())?;
+                project.update(cx, |project, _| {
+                    project.set_shutdown_remote_server_on_close(shutdown_remote_server);
+                });
+                if shutdown_remote_server {
+                    let sweep = project.read_with(cx, |project, cx| {
+                        project.kill_all_persistent_terminal_sessions(cx)
+                    });
+                    if let Some(sweep) = sweep {
+                        // Bound the sweep so an unreachable host cannot stall
+                        // closing the window; the sessions are best-effort
+                        // cleanup of a server that is being shut down anyway.
+                        let mut timeout = cx
+                            .background_executor()
+                            .timer(Duration::from_secs(5))
+                            .fuse();
+                        futures::select_biased! {
+                            _ = sweep.fuse() => {}
+                            _ = timeout => {
+                                log::warn!(
+                                    "timed out sweeping persistent terminal sessions before shutdown"
+                                );
+                            }
+                        }
+                    }
+                }
             }
 
             save_result

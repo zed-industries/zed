@@ -3,6 +3,8 @@ package zed.messages;
 
 message ShutdownRemoteServer {}
 
+message KeepRemoteServerAlive {}
+
 message Toast {
   uint64 project_id = 1;
   string notification_id = 2;

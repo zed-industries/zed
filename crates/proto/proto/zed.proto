@@ -244,6 +244,8 @@ message Envelope {
 
     ShutdownRemoteServer shutdown_remote_server = 257;
 
+    KeepRemoteServerAlive keep_remote_server_alive = 470;
+
     RemoveWorktree remove_worktree = 258;
 
     LanguageServerLog language_server_log = 260;

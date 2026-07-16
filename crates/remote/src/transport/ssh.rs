@@ -440,6 +440,7 @@ impl RemoteConnection for SshRemoteConnection {
         &self,
         unique_identifier: String,
         reconnect: bool,
+        allow_attach: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
@@ -464,6 +465,9 @@ impl RemoteConnection for SshRemoteConnection {
             if reconnect {
                 proxy_args.push("--reconnect".to_owned());
             }
+            if allow_attach {
+                proxy_args.push("--allow-attach".to_owned());
+            }
             self.socket.ssh_command(
                 self.ssh_shell_kind,
                 &remote_binary_path.display(self.path_style()),
@@ -484,6 +488,9 @@ impl RemoteConnection for SshRemoteConnection {
 
             if reconnect {
                 proxy_args.push("--reconnect".to_owned());
+            }
+            if allow_attach {
+                proxy_args.push("--allow-attach".to_owned());
             }
             self.socket
                 .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)

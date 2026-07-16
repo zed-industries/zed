@@ -6,7 +6,7 @@ use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::{Interactive, RemoteClient};
+use remote::{CommandTemplate, Interactive, RemoteClient};
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
@@ -19,10 +19,11 @@ use terminal::{
     terminal_settings::TerminalSettings,
 };
 use util::{
-    command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
+    ResultExt as _, command::new_std_command, get_default_system_shell, get_system_shell, maybe,
+    rel_path::RelPath,
 };
 
-use crate::{Project, ProjectPath};
+use crate::{Project, ProjectPath, project_settings::ProjectSettings};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -194,6 +195,7 @@ impl Project {
                                         env,
                                         path,
                                         remote_client,
+                                        None,
                                         cx,
                                     )?
                                 }
@@ -205,6 +207,7 @@ impl Project {
                                     env,
                                     path,
                                     remote_client,
+                                    None,
                                     cx,
                                 )?,
                             },
@@ -246,6 +249,7 @@ impl Project {
                         local_path.map(|path| path.to_path_buf()),
                         task_state,
                         shell,
+                        None,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
@@ -292,7 +296,16 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, None, false, cx)
+    }
+
+    pub fn create_terminal_shell_with_session(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent_session: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, persistent_session, false, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -309,7 +322,7 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, None, true, cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -318,6 +331,7 @@ impl Project {
     fn create_terminal_shell_internal(
         &mut self,
         cwd: Option<PathBuf>,
+        persistent_session: Option<String>,
         force_local: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
@@ -359,6 +373,13 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
+        let continuity_enabled = ProjectSettings::get_global(cx).remote_session_continuity;
+        let connection = remote_client.as_ref().map(|remote_client| {
+            let client = remote_client.read(cx);
+            (client.is_workspace_connection(), client.unique_identifier())
+        });
+        let persistent_session =
+            resolve_persistent_session(continuity_enabled, persistent_session, connection);
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -406,9 +427,14 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
                         match remote_client {
-                            Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
-                            }
+                            Some(remote_client) => create_remote_shell(
+                                None,
+                                env,
+                                path,
+                                remote_client,
+                                persistent_session.as_deref(),
+                                cx,
+                            )?,
                             None => (settings.shell, env),
                         }
                     };
@@ -416,6 +442,7 @@ impl Project {
                         local_path.map(|path| path.to_path_buf()),
                         None,
                         shell,
+                        persistent_session,
                         env,
                         settings.cursor_shape,
                         settings.alternate_scroll,
@@ -439,7 +466,7 @@ impl Project {
                     .push(terminal_handle.downgrade());
 
                 let id = terminal_handle.entity_id();
-                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                cx.observe_release(&terminal_handle, move |project, terminal, cx| {
                     let handles = &mut project.terminals.local_handles;
 
                     if let Some(index) = handles
@@ -448,6 +475,17 @@ impl Project {
                     {
                         handles.remove(index);
                         cx.notify();
+                    }
+
+                    // Best-effort only: on a Shut-down close, the awaited
+                    // sweep in Workspace::prepare_to_close is the correctness
+                    // guarantee, not this detached kill.
+                    if project.shutdown_remote_server_on_close
+                        && let Some(session) = terminal.persistent_session()
+                        && let Some(task) =
+                            project.kill_persistent_terminal_session(session.to_string(), cx)
+                    {
+                        task.detach();
                     }
                 })
                 .detach();
@@ -465,7 +503,10 @@ impl Project {
     ) -> Task<Result<Entity<Terminal>>> {
         // We cannot clone the task's terminal, as it will effectively re-spawn the task, which might not be desirable.
         // For now, create a new shell instead.
-        if terminal.read(cx).task().is_some() {
+        // Terminals wrapped in a persistent tmux session cannot be cloned either: the
+        // cloned PTY would re-run `tmux new-session -A` with the same session name and
+        // attach to the same session, mirroring the original terminal.
+        if terminal.read(cx).task().is_some() || terminal.read(cx).persistent_session().is_some() {
             return self.create_terminal_shell(cwd, cx);
         }
         let local_path = if self.is_via_remote_server() {
@@ -587,6 +628,45 @@ impl Project {
         &self.terminals.local_handles
     }
 
+    /// Kills a single persistent tmux session on the remote host by running
+    /// `tmux kill-session` through the same ssh invocation used to attach to it.
+    pub fn kill_persistent_terminal_session(&self, session: String, cx: &App) -> Option<Task<()>> {
+        let command_template = self
+            .remote_client
+            .as_ref()?
+            .read(cx)
+            .build_command(
+                Some("tmux".to_string()),
+                &tmux_kill_session_args(&session),
+                &HashMap::default(),
+                None,
+                None,
+                Interactive::No,
+            )
+            .log_err()?;
+        Some(cx.background_spawn(run_remote_command(command_template)))
+    }
+
+    /// Kills every persistent tmux session on the remote host belonging to this
+    /// workspace connection, identified by the `zed-{unique_identifier}-` prefix.
+    /// Used when the user chooses "Shut down" on disconnect, so no sessions are
+    /// left running once the connection is torn down.
+    pub fn kill_all_persistent_terminal_sessions(&self, cx: &App) -> Option<Task<()>> {
+        let client = self.remote_client.as_ref()?.read(cx);
+        let prefix = format!("zed-{}-", client.unique_identifier());
+        let command_template = client
+            .build_command(
+                Some("sh".to_string()),
+                &["-c".to_string(), tmux_sweep_script(&prefix)],
+                &HashMap::default(),
+                None,
+                None,
+                Interactive::No,
+            )
+            .log_err()?;
+        Some(cx.background_spawn(run_remote_command(command_template)))
+    }
+
     fn resolve_directory_environment(
         &self,
         shell: &str,
@@ -612,18 +692,92 @@ impl Project {
     }
 }
 
+fn persistent_session_name(identifier: &str) -> String {
+    format!("zed-{}-{}", identifier, uuid::Uuid::new_v4().simple())
+}
+
+/// Decides which persistent tmux session (if any) a terminal should attach
+/// to. `connection` is `Some((is_workspace_connection, unique_identifier))`
+/// for a remote terminal, `None` for a local one. A `requested` session name
+/// restored from the database only makes sense for a remote terminal, so it
+/// is ignored without a connection; this also guards against a stale row
+/// attaching a local terminal to a (local) tmux session.
+fn resolve_persistent_session(
+    continuity_enabled: bool,
+    requested: Option<String>,
+    connection: Option<(bool, String)>,
+) -> Option<String> {
+    if !continuity_enabled {
+        return None;
+    }
+    let connection = connection?;
+    requested.or_else(|| {
+        let (is_workspace_connection, identifier) = connection;
+        is_workspace_connection.then(|| persistent_session_name(&identifier))
+    })
+}
+
+fn tmux_kill_session_args(session: &str) -> Vec<String> {
+    vec![
+        "-L".to_string(),
+        "zed".to_string(),
+        "kill-session".to_string(),
+        "-t".to_string(),
+        session.to_string(),
+    ]
+}
+
+fn tmux_sweep_script(prefix: &str) -> String {
+    // awk's `index() == 1` is an exact literal prefix match, unlike grep,
+    // whose patterns would treat regex metacharacters in the prefix specially.
+    format!(
+        "tmux -L zed list-sessions -F '#S' 2>/dev/null | awk -v p='{prefix}' 'index($0, p) == 1' | xargs -r -n1 tmux -L zed kill-session -t"
+    )
+}
+
+async fn run_remote_command(command: CommandTemplate) {
+    let mut process = new_std_command(command.program);
+    process.args(command.args);
+    process.envs(command.env);
+    smol::process::Command::from(process)
+        .output()
+        .await
+        .log_err();
+}
+
+fn tmux_wrapped_shell_args(session: &str) -> (String, Vec<String>) {
+    (
+        "sh".to_string(),
+        vec![
+            "-c".to_string(),
+            format!(
+                "command -v tmux >/dev/null 2>&1 && \
+                 exec tmux -L zed new-session -A -s {session} \\; set status off || \
+                 exec \"$SHELL\" -l"
+            ),
+        ],
+    )
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
+    persistent_session: Option<&str>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
     let (program, args) = match spawn_command {
-        Some((program, args)) => (Some(program.clone()), args),
-        None => (None, &Vec::new()),
+        Some((program, args)) => (Some(program.clone()), args.clone()),
+        None => match persistent_session {
+            Some(session) => {
+                let (program, args) = tmux_wrapped_shell_args(session);
+                (Some(program), args)
+            }
+            None => (None, Vec::new()),
+        },
     };
 
     let command = remote_client.read(cx).build_command(
@@ -781,6 +935,119 @@ mod tests {
             format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
             "&cmd.exe /S /C '\"echo It''s fine\"'"
         );
+    }
+
+    #[test]
+    fn tmux_wrapped_shell_args_produces_expected_command() {
+        let (program, args) =
+            tmux_wrapped_shell_args("zed-dev-workspace-5-9f8c1234abcd4e5f6789abcdef012345");
+
+        assert_eq!(program, "sh");
+        assert_eq!(
+            args,
+            vec![
+                "-c".to_string(),
+                r#"command -v tmux >/dev/null 2>&1 && exec tmux -L zed new-session -A -s zed-dev-workspace-5-9f8c1234abcd4e5f6789abcdef012345 \; set status off || exec "$SHELL" -l"#
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tmux_kill_session_args_produce_expected_command() {
+        assert_eq!(
+            tmux_kill_session_args("zed-dev-workspace-abc123-1a2b3c4d5e6f7890abcdef1234567890"),
+            vec![
+                "-L".to_string(),
+                "zed".to_string(),
+                "kill-session".to_string(),
+                "-t".to_string(),
+                "zed-dev-workspace-abc123-1a2b3c4d5e6f7890abcdef1234567890".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tmux_sweep_script_produces_expected_command() {
+        assert_eq!(
+            tmux_sweep_script("zed-dev-workspace-abc123-"),
+            "tmux -L zed list-sessions -F '#S' 2>/dev/null | \
+             awk -v p='zed-dev-workspace-abc123-' 'index($0, p) == 1' | \
+             xargs -r -n1 tmux -L zed kill-session -t"
+        );
+    }
+
+    #[test]
+    fn persistent_session_name_has_expected_format() {
+        let name = persistent_session_name("dev-workspace-5");
+
+        let uuid_part = name
+            .strip_prefix("zed-dev-workspace-5-")
+            .expect("session name should start with zed-{identifier}-");
+        assert_eq!(uuid_part.len(), 32);
+        assert!(
+            uuid_part
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert!(!name.contains('.') && !name.contains(':'));
+    }
+
+    #[test]
+    fn resolve_persistent_session_ignores_requested_session_when_continuity_disabled() {
+        assert_eq!(
+            resolve_persistent_session(
+                false,
+                Some("x".to_string()),
+                Some((true, "id".to_string())),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_persistent_session_does_not_generate_when_continuity_disabled() {
+        assert_eq!(
+            resolve_persistent_session(false, None, Some((true, "id".to_string()))),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_persistent_session_honors_requested_session_when_connected() {
+        assert_eq!(
+            resolve_persistent_session(true, Some("x".to_string()), Some((true, "id".to_string())),),
+            Some("x".to_string())
+        );
+        assert_eq!(
+            resolve_persistent_session(
+                true,
+                Some("x".to_string()),
+                Some((false, "id".to_string())),
+            ),
+            Some("x".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_persistent_session_generates_name_for_workspace_connection() {
+        let session = resolve_persistent_session(true, None, Some((true, "id".to_string())))
+            .expect("a session name should be generated for a workspace connection");
+
+        assert!(session.starts_with("zed-id-"));
+    }
+
+    #[test]
+    fn resolve_persistent_session_does_not_generate_for_non_workspace_connection() {
+        assert_eq!(
+            resolve_persistent_session(true, None, Some((false, "id".to_string()))),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_persistent_session_does_not_generate_without_a_connection() {
+        assert_eq!(resolve_persistent_session(true, None, None), None);
     }
 
     #[test]

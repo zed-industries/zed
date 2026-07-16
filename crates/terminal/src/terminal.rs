@@ -981,6 +981,7 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
+            persistent_session: None,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -1016,10 +1017,20 @@ impl TerminalBuilder {
         }
     }
 
+    /// Overrides the persistent (tmux) session name on the built terminal.
+    /// `new_display_only` never sets one because it isn't backed by a real
+    /// shell, so tests that need a remote-like terminal use this instead.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_persistent_session_for_test(mut self, persistent_session: Option<String>) -> Self {
+        self.terminal.persistent_session = persistent_session;
+        self
+    }
+
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
+        persistent_session: Option<String>,
         mut env: HashMap<String, String>,
         cursor_shape: SettingsCursorShape,
         alternate_scroll: AlternateScroll,
@@ -1254,6 +1265,7 @@ impl TerminalBuilder {
                 ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
+                persistent_session,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
@@ -1432,6 +1444,7 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_remote_terminal: bool,
+    persistent_session: Option<String>,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
     mouse_down_hyperlink: Option<HyperlinkMatch>,
@@ -2910,12 +2923,17 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
+    pub fn persistent_session(&self) -> Option<&str> {
+        self.persistent_session.as_deref()
+    }
+
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
             None,
             self.template.shell.clone(),
+            None,
             self.template.env.clone(),
             self.template.cursor_shape,
             self.template.alternate_scroll,
@@ -3467,6 +3485,7 @@ mod tests {
                         args,
                         title_override: None,
                     },
+                    None,
                     HashMap::default(),
                     SettingsCursorShape::default(),
                     AlternateScroll::On,
@@ -3518,6 +3537,7 @@ mod tests {
                         args,
                         title_override: None,
                     },
+                    None,
                     HashMap::default(),
                     SettingsCursorShape::default(),
                     AlternateScroll::On,
@@ -3815,6 +3835,7 @@ mod tests {
                     None,
                     None,
                     task::Shell::System,
+                    None,
                     HashMap::default(),
                     SettingsCursorShape::default(),
                     AlternateScroll::On,
@@ -3883,6 +3904,7 @@ mod tests {
                     None,
                     None,
                     task::Shell::System,
+                    None,
                     HashMap::default(),
                     SettingsCursorShape::default(),
                     AlternateScroll::On,
@@ -3949,6 +3971,7 @@ mod tests {
                         args,
                         title_override: None,
                     },
+                    None,
                     HashMap::default(),
                     SettingsCursorShape::default(),
                     AlternateScroll::On,
@@ -4820,6 +4843,7 @@ mod tests {
                         None,
                         None,
                         task::Shell::System,
+                        None,
                         HashMap::default(),
                         SettingsCursorShape::default(),
                         AlternateScroll::On,

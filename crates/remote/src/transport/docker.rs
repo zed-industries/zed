@@ -650,6 +650,7 @@ impl RemoteConnection for DockerExecConnection {
         &self,
         unique_identifier: String,
         reconnect: bool,
+        allow_attach: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
@@ -700,6 +701,9 @@ impl RemoteConnection for DockerExecConnection {
         docker_args.push(unique_identifier);
         if reconnect {
             docker_args.push("--reconnect".to_string());
+        }
+        if allow_attach {
+            docker_args.push("--allow-attach".to_string());
         }
         let mut command = util::command::new_command(self.docker_cli());
         command

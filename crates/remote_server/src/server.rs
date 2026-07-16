@@ -20,7 +20,7 @@ use futures::{
     select, select_biased,
 };
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, Global, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
@@ -37,7 +37,7 @@ use remote::{
     proxy::ProxyLaunchError,
 };
 use reqwest_client::ReqwestClient;
-use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
+use rpc::proto::{self, Envelope, EnvelopedMessage as _, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::{
@@ -79,6 +79,10 @@ pub enum Commands {
         reconnect: bool,
         #[arg(long)]
         identifier: String,
+        /// Allow this proxy to attach to an already running server with a
+        /// matching identity instead of killing and respawning it.
+        #[arg(long)]
+        allow_attach: bool,
     },
     Version,
 }
@@ -104,7 +108,9 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
         Commands::Proxy {
             identifier,
             reconnect,
-        } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+            allow_attach,
+        } => execute_proxy(identifier, reconnect, allow_attach)
+            .context("running proxy on the remote server"),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
@@ -401,6 +407,15 @@ impl ServerListeners {
     }
 }
 
+/// Shared flag toggled by `KeepRemoteServerAlive` requests. When set, the
+/// server's accept loop waits indefinitely for a client to reconnect instead
+/// of shutting down after `IDLE_TIMEOUT`. It is reset to `false` whenever a new
+/// connection is accepted, so a session that later disconnects uncleanly still
+/// times out normally.
+pub struct RemoteServerKeepAlive(pub Arc<std::sync::atomic::AtomicBool>);
+
+impl Global for RemoteServerKeepAlive {}
+
 fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
@@ -413,6 +428,9 @@ fn start_server(
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
+
+    let keep_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    cx.set_global(RemoteServerKeepAlive(keep_alive.clone()));
 
     cx.on_app_quit(move |_| {
         let mut app_quit_tx = app_quit_tx.clone();
@@ -432,6 +450,11 @@ fn start_server(
             );
 
             log::info!("accepting new connections");
+            // When a client has asked to keep the session alive across a
+            // disconnect, wait indefinitely for it to reconnect rather than
+            // timing out.
+            let idle_timeout_executor = cx.background_executor().clone();
+            let should_stay_alive = keep_alive.load(std::sync::atomic::Ordering::SeqCst);
             let result = select! {
                 streams = streams.fuse() => {
                     let (Ok((stdin_stream, _)), Ok((stdout_stream, _)), Ok((stderr_stream, _))) = streams else {
@@ -441,7 +464,22 @@ fn start_server(
                     log::info!("accepted new connections");
                     anyhow::Ok((stdin_stream, stdout_stream, stderr_stream))
                 }
-                _ = futures::FutureExt::fuse(cx.background_executor().timer(IDLE_TIMEOUT)) => {
+                _ = futures::FutureExt::fuse(async move {
+                    if should_stay_alive {
+                        futures::future::pending::<()>().await
+                    } else {
+                        idle_timeout_executor.timer(IDLE_TIMEOUT).await
+                    }
+                }) => {
+                    // `should_stay_alive` was sampled before this timer was
+                    // armed. A `KeepRemoteServerAlive` request can be
+                    // processed after that (e.g. it arrived in the same read
+                    // batch as the connection's EOF), so re-check the flag
+                    // before shutting down.
+                    if keep_alive.load(std::sync::atomic::Ordering::SeqCst) {
+                        log::info!("idle timeout fired, but keep-alive was requested. waiting for reconnection.");
+                        continue;
+                    }
                     log::warn!("timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
                     cx.update(|cx| {
                         // TODO: This is a hack, because in a headless project, shutdown isn't executed
@@ -461,8 +499,29 @@ fn start_server(
                 break;
             };
 
+            // A client connected; resume normal idle-timeout behavior for this
+            // session until it asks to be kept alive again.
+            keep_alive.store(false, std::sync::atomic::Ordering::SeqCst);
+
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
+
+            // A fresh client attaching to an already-running server waits for
+            // RemoteStarted before it considers the connection ready, and the
+            // server's ChannelClient only sends it once at startup, so
+            // announce it on every accepted connection. The client handles a
+            // duplicate on the first connection idempotently.
+            let announce = proto::RemoteStarted {}.into_envelope(0, None, None);
+            if let Err(error) =
+                write_message(&mut stdout_stream, &mut output_buffer, announce).await
+            {
+                log::warn!("failed to announce RemoteStarted on new connection: {error:?}");
+                continue;
+            }
+            if let Err(error) = stdout_stream.flush().await {
+                log::warn!("failed to flush RemoteStarted announce: {error:?}");
+                continue;
+            }
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
@@ -613,6 +672,12 @@ pub fn execute_run(
 
     write_pid_file(&pid_file, pid)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
+
+    if let Some(identity) = current_server_identity() {
+        let version_file = pid_file.with_file_name("server.version");
+        std::fs::write(&version_file, identity)
+            .with_context(|| format!("failed to write version file: {:?}", version_file))?;
+    }
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
@@ -766,6 +831,7 @@ pub enum ServerPathError {
 struct ServerPaths {
     log_file: PathBuf,
     pid_file: PathBuf,
+    version_file: PathBuf,
     stdin_socket: PathBuf,
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
@@ -787,6 +853,7 @@ impl ServerPaths {
         })?;
 
         let pid_file = server_dir.join("server.pid");
+        let version_file = server_dir.join("server.version");
         let stdin_socket = server_dir.join("stdin.sock");
         let stdout_socket = server_dir.join("stdout.sock");
         let stderr_socket = server_dir.join("stderr.sock");
@@ -794,6 +861,7 @@ impl ServerPaths {
 
         Ok(Self {
             pid_file,
+            version_file,
             stdin_socket,
             stdout_socket,
             stderr_socket,
@@ -845,6 +913,7 @@ impl ExecuteProxyError {
 pub(crate) fn execute_proxy(
     identifier: String,
     is_reconnecting: bool,
+    allow_attach: bool,
 ) -> Result<(), ExecuteProxyError> {
     init_logging_proxy();
 
@@ -893,26 +962,23 @@ pub(crate) fn execute_proxy(
                 }
                 Some(server_pid) => server_pid,
             }
-        } else {
-            if let Some(pid) = server_pid {
+        } else if let Some(pid) = server_pid {
+            if allow_attach && can_attach_to_running_server(&server_paths) {
+                log::info!(
+                    "proxy found server already running with PID {} and matching identity. Attaching...",
+                    pid
+                );
+                pid
+            } else {
                 log::info!(
                     "proxy found server already running with PID {}. Killing process and cleaning up files...",
                     pid
                 );
                 kill_running_server(pid, &server_paths)?;
+                spawn_and_read_pid(&server_paths)?
             }
-            gpui::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
-            std::fs::read_to_string(&server_paths.pid_file)
-                .and_then(|contents| {
-                    contents.parse::<u32>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Invalid PID file contents",
-                        )
-                    })
-                })
-                .map_err(SpawnServerError::ProcessStatus)
-                .map_err(ExecuteProxyError::SpawnServer)?
+        } else {
+            spawn_and_read_pid(&server_paths)?
         }
     };
 
@@ -1007,6 +1073,7 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxy
 
     for file in [
         &paths.pid_file,
+        &paths.version_file,
         &paths.stdin_socket,
         &paths.stdout_socket,
         &paths.stderr_socket,
@@ -1016,6 +1083,58 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxy
     }
 
     Ok(())
+}
+
+fn can_attach_to_running_server(paths: &ServerPaths) -> bool {
+    let Some(current_identity) = current_server_identity() else {
+        return false;
+    };
+    let Ok(recorded_identity) = std::fs::read_to_string(&paths.version_file) else {
+        return false;
+    };
+    if recorded_identity.trim() != current_identity {
+        log::info!(
+            "running server identity {:?} does not match proxy identity {:?}",
+            recorded_identity.trim(),
+            current_identity
+        );
+        return false;
+    }
+    if ![
+        &paths.stdin_socket,
+        &paths.stdout_socket,
+        &paths.stderr_socket,
+    ]
+    .iter()
+    .all(|socket| socket.exists())
+    {
+        return false;
+    }
+
+    // The socket files can outlive the server (crash, reboot with PID reuse),
+    // so verify a listener is actually behind them; connecting to a unix
+    // socket with no listener fails fast with ECONNREFUSED. Probe all three
+    // sockets, not just one: the server accepts stdin/stdout/stderr as a
+    // joined triplet, and probing a subset would desynchronize the triplet
+    // pairing for the real connections that follow. Probing all three
+    // completes one full accept cycle that immediately EOFs, which the server
+    // handles by dropping the connection and accepting again; the real proxy
+    // connections queue in the listener backlog for the next accept.
+    let probes = [
+        net::UnixStream::connect(&paths.stdin_socket),
+        net::UnixStream::connect(&paths.stdout_socket),
+        net::UnixStream::connect(&paths.stderr_socket),
+    ];
+    for probe in &probes {
+        if let Err(error) = probe {
+            log::info!(
+                "running server's sockets are not connectable ({error}); \
+                 respawning instead of attaching"
+            );
+            return false;
+        }
+    }
+    true
 }
 
 #[derive(Debug, Error)]
@@ -1037,6 +1156,18 @@ pub enum SpawnServerError {
 
     #[error("failed to wait for server to be ready to accept connections")]
     Timeout,
+}
+
+fn spawn_and_read_pid(server_paths: &ServerPaths) -> Result<u32, ExecuteProxyError> {
+    gpui::block_on(spawn_server(server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+    std::fs::read_to_string(&server_paths.pid_file)
+        .and_then(|contents| {
+            contents.parse::<u32>().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid PID file contents")
+            })
+        })
+        .map_err(SpawnServerError::ProcessStatus)
+        .map_err(ExecuteProxyError::SpawnServer)
 }
 
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
@@ -1183,6 +1314,22 @@ fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
     }
     log::debug!("writing PID {} to file {:?}", pid, path);
     std::fs::write(path, pid.to_string()).context("Failed to write PID file")
+}
+
+/// Identity of the currently running binary. Used to decide whether a live
+/// server was started from the same binary the proxy is running from; the
+/// exe mtime distinguishes dev rebuilds that share a version string.
+fn current_server_identity() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let mtime = std::fs::metadata(&exe)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let sha = option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha");
+    Some(format!("{}|{}|{}", &*VERSION, sha, mtime))
 }
 
 async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>
@@ -1378,6 +1525,63 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn server_announces_remote_started_on_each_accepted_connection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // The sockets and their wakeups are real IO driven by the reactor
+        // thread, not by the test dispatcher.
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let stdin_path = temp_dir.path().join("stdin.sock");
+        let stdout_path = temp_dir.path().join("stdout.sock");
+        let stderr_path = temp_dir.path().join("stderr.sock");
+        let listeners =
+            ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                .expect("bind server listeners");
+        let (_log_tx, log_rx) = smol::channel::unbounded();
+        let _client = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+
+        // A client that reconnects to a kept-alive server opens a fresh
+        // connection and waits for RemoteStarted before it considers itself
+        // ready, so every accepted connection must receive one, not just the
+        // first.
+        for connection in 0..2 {
+            let stdin_stream = UnixStream::connect(&stdin_path)
+                .await
+                .expect("connect stdin");
+            let mut stdout_stream = UnixStream::connect(&stdout_path)
+                .await
+                .expect("connect stdout");
+            let stderr_stream = UnixStream::connect(&stderr_path)
+                .await
+                .expect("connect stderr");
+
+            let mut buffer = Vec::new();
+            let envelope = select! {
+                message = read_message(&mut stdout_stream, &mut buffer).fuse() => {
+                    message.expect("read message from server")
+                }
+                _ = FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_secs(5))) => {
+                    panic!("connection {connection}: server did not send a message within 5s");
+                }
+            };
+            assert!(
+                matches!(
+                    envelope.payload,
+                    Some(proto::envelope::Payload::RemoteStarted(_))
+                ),
+                "connection {connection}: expected RemoteStarted, got {:?}",
+                envelope.payload
+            );
+
+            drop(stdin_stream);
+            drop(stdout_stream);
+            drop(stderr_stream);
+        }
+    }
 
     #[test]
     fn rotated_remote_log_path_uses_numbered_log_suffix() {

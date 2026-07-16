@@ -79,6 +79,9 @@ pub struct ProjectSettings {
 
     /// Configuration for session-related features
     pub session: SessionSettings,
+
+    /// Alpha: keep remote development sessions alive across disconnects.
+    pub remote_session_continuity: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -784,6 +787,7 @@ impl Settings for ProjectSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
+            remote_session_continuity: project.remote_session_continuity.unwrap(),
         }
     }
 }

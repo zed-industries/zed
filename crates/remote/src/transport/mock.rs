@@ -252,6 +252,7 @@ impl RemoteConnection for MockRemoteConnection {
         &self,
         _unique_identifier: String,
         _reconnect: bool,
+        _allow_attach: bool,
         mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
         mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
         mut connection_activity_tx: Sender<()>,
