@@ -3,7 +3,8 @@ use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
 use crate::tasks::workflows::steps::{
-    self, CommonJobConditions, FluentBuilder as _, NamedJob, dependant_job, named, use_clang,
+    self, CommonJobConditions, CommonPermissionSets, FluentBuilder as _, NamedJob, dependant_job,
+    named, use_clang,
 };
 use crate::tasks::workflows::vars;
 
@@ -14,6 +15,7 @@ pub(crate) fn deploy_collab() -> Workflow {
     let deploy = deploy(&[&publish]);
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().push(Push::default().add_tag("collab-production")))
         .add_env(("DOCKER_BUILDKIT", "1"))
         .add_job(style.name, style.job)
@@ -48,7 +50,7 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
             .runs_on(runners::LINUX_XL)
             .add_service(
                 "postgres",
-                Container::new("postgres:15")
+                Container::new("postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e")
                     .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
                     .ports(vec![Port::Name("5432:5432".into())])
                     .options(
@@ -70,8 +72,12 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
 
 fn publish(deps: &[&NamedJob]) -> NamedJob {
     fn install_doctl() -> Step<Use> {
-        named::uses("digitalocean", "action-doctl", "v2")
-            .add_with(("token", vars::DIGITALOCEAN_ACCESS_TOKEN))
+        named::uses(
+            "digitalocean",
+            "action-doctl",
+            "3cb3953159719656269e044e0e24ca16dd2a690f", // v2.5.2
+        )
+        .add_with(("token", vars::DIGITALOCEAN_ACCESS_TOKEN))
     }
 
     fn sign_into_registry() -> Step<Run> {
@@ -110,8 +116,12 @@ fn publish(deps: &[&NamedJob]) -> NamedJob {
 
 fn deploy(deps: &[&NamedJob]) -> NamedJob {
     fn install_doctl() -> Step<Use> {
-        named::uses("digitalocean", "action-doctl", "v2")
-            .add_with(("token", vars::DIGITALOCEAN_ACCESS_TOKEN))
+        named::uses(
+            "digitalocean",
+            "action-doctl",
+            "3cb3953159719656269e044e0e24ca16dd2a690f", // v2.5.2
+        )
+        .add_with(("token", vars::DIGITALOCEAN_ACCESS_TOKEN))
     }
 
     fn sign_into_kubernetes() -> Step<Run> {

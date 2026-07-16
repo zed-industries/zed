@@ -8,7 +8,8 @@ use client::Client;
 use collections::{HashMap, HashSet, hash_map};
 use futures::{Future, FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt,
+    WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
@@ -311,7 +312,7 @@ impl RemoteBufferStore {
                 .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id,
-                    path: path.to_proto(),
+                    path: path.as_unix_str().to_owned(),
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
@@ -646,6 +647,12 @@ impl LocalBufferStore {
             let path = path.clone();
             let buffer = match load_file.await {
                 Ok(loaded) => {
+                    let is_writable = loaded.is_writable;
+                    let capability = if is_writable {
+                        Capability::ReadWrite
+                    } else {
+                        Capability::Read
+                    };
                     let reservation = cx.reserve_entity::<Buffer>();
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                     let text_buffer = cx
@@ -654,8 +661,7 @@ impl LocalBufferStore {
                         })
                         .await;
                     cx.insert_entity(reservation, |_| {
-                        let mut buffer =
-                            Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite);
+                        let mut buffer = Buffer::build(text_buffer, Some(loaded.file), capability);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer

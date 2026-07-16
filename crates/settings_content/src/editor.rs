@@ -188,6 +188,14 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// Where to show LSP results that can contain multiple locations
+    /// (Go to Definition, Go to Implementation, Find All References). A single
+    /// result always opens directly. Individual actions can override this with
+    /// their `open_results_in` argument.
+    ///
+    /// Default: multi_buffer
+    pub lsp_results_location: Option<OpenResultsIn>,
+
     /// How to scroll the target into view when navigating to a definition or reference
     /// (e.g. Go to Definition, Go to Type Definition, Find All References).
     ///
@@ -226,6 +234,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// Whether to query and display LSP `textDocument/documentLink` links in the editor.
+    ///
+    /// Default: true
+    pub lsp_document_links: Option<bool>,
     /// When to show the scrollbar in the completion menu.
     /// This setting can take four values:
     ///
@@ -244,6 +256,16 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// How to display the LSP item kind (function, method, variable, etc.)
+    /// of each entry in the completions menu.
+    ///
+    /// - "off": do not display item kinds (default).
+    /// - "symbol": display a single-letter badge, colorized based on the
+    ///   active syntax theme.
+    ///
+    /// Default: off
+    pub completion_menu_item_kind: Option<CompletionMenuItemKind>,
 
     /// How to display diffs in the editor.
     ///
@@ -298,6 +320,27 @@ pub enum CompletionDetailAlignment {
     #[default]
     Left,
     Right,
+}
+
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMenuItemKind {
+    #[default]
+    Off,
+    Symbol,
 }
 
 impl RelativeLineNumbers {
@@ -799,6 +842,30 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// Where to show LSP results that can contain multiple locations.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenResultsIn {
+    /// Open the results in a multibuffer.
+    #[default]
+    MultiBuffer,
+    /// Open the results in a filterable picker.
+    Picker,
 }
 
 /// How to scroll the target into view when navigating to a definition or reference.

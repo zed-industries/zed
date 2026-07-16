@@ -12,9 +12,10 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -26,7 +27,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::SystemTime};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -72,6 +73,8 @@ pub struct FakeGitRepositoryState {
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
     pub simulated_graph_error: Option<String>,
+    pub branches_requiring_force_delete: HashSet<String>,
+    pub worktrees_requiring_force_delete: HashSet<PathBuf>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
@@ -91,6 +94,8 @@ impl FakeGitRepositoryState {
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
             simulated_graph_error: None,
+            branches_requiring_force_delete: Default::default(),
+            worktrees_requiring_force_delete: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
@@ -157,30 +162,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn reload_index(&self) {}
-
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .index_contents
-                .get(&path)
-                .context("not present in index")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .head_contents
-                .get(&path)
-                .context("not present in HEAD")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
         async { Ok(None) }.boxed()
     }
@@ -219,16 +200,9 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
-        let name = name.to_string();
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .remotes
-                .get(&name)
-                .context("remote not found")
-                .cloned()
-        });
-        async move { fut.await.ok() }.boxed()
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>> {
+        let fut = self.with_state_async(false, |state| Ok(state.remotes.clone()));
+        async move { fut.await.unwrap_or_default() }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -268,15 +242,44 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+        let fut = self.with_state_async(false, move |state| {
+            Ok(revisions
+                .into_iter()
+                .map(|rev| {
+                    let (prefix, path) = rev.split_once(':')?;
+                    let repo_path = RepoPath::new(path).ok()?;
+                    match prefix {
+                        "" => state.index_contents.get(&repo_path).cloned(),
+                        "HEAD" => state.head_contents.get(&repo_path).cloned(),
+                        _ => None,
+                    }
+                })
+                .collect())
+        });
+        self.executor.spawn(fut).boxed()
+    }
+
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
-        async {
+        self.with_state_async(false, move |state| {
+            let sha = match state.refs.get(&commit) {
+                Some(sha) => sha.clone(),
+                // Real git fails to show an unresolvable revision (e.g. HEAD on an
+                // unborn branch), so only fall back to treating the input as a sha.
+                None => {
+                    anyhow::ensure!(
+                        commit.parse::<Oid>().is_ok(),
+                        "unable to resolve revision: {commit}"
+                    );
+                    commit
+                }
+            };
             Ok(CommitDetails {
-                sha: commit.into(),
+                sha: sha.into(),
                 message: "initial commit".into(),
                 ..Default::default()
             })
-        }
-        .boxed()
+        })
     }
 
     fn reset(
@@ -485,11 +488,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
     }
 
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<git::repository::BranchesScanResult>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
             let mut branches = state
@@ -514,7 +517,7 @@ impl GitRepository for FakeGitRepository {
             // compute snapshot expects these to be sorted by ref_name
             // because that's what git itself does
             branches.sort_by(|a, b| a.ref_name.cmp(&b.ref_name));
-            Ok(branches)
+            Ok(branches.into())
         })
     }
 
@@ -591,6 +594,37 @@ impl GitRepository for FakeGitRepository {
             }
 
             Ok(all)
+        }
+        .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        let fs = self.fs.clone();
+        async move {
+            if fs.metadata(&worktree_path).await?.is_none() {
+                return Ok(None);
+            }
+            let dot_git_path = worktree_path.join(".git");
+            let git_file = fs
+                .load(&dot_git_path)
+                .await
+                .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+            let git_dir = git_file
+                .strip_prefix("gitdir:")
+                .context("worktree .git file missing gitdir pointer")?
+                .trim();
+            let git_dir = worktree_path.join(git_dir);
+            let metadata = fs
+                .metadata(&git_dir)
+                .await?
+                .with_context(|| format!("missing worktree git dir {}", git_dir.display()))?;
+            // FakeFs assigns directories a monotonically increasing mtime at
+            // creation and never updates it afterwards, so a directory's
+            // mtime doubles as its creation time.
+            Ok(Some(metadata.mtime.0))
         }
         .boxed()
     }
@@ -733,12 +767,24 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
-    fn remove_worktree(&self, path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
         let common_dir_path = self.common_dir_path.clone();
         async move {
             executor.simulate_random_delay().await;
+
+            if !force {
+                fs.with_git_state(&common_dir_path, false, |state| {
+                    if state.worktrees_requiring_force_delete.contains(&path) {
+                        bail!(
+                            "fatal: '{}' contains modified or untracked files, use --force to delete it",
+                            path.display()
+                        );
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })??;
+            }
 
             // Try to read the worktree's .git file to find its entry
             // directory. If the working tree is already gone (e.g. the
@@ -780,7 +826,10 @@ impl GitRepository for FakeGitRepository {
 
             // Emit a git event on the main .git directory so the scanner
             // notices the change.
-            fs.with_git_state(&common_dir_path, true, |_| {})?;
+            fs.with_git_state(&common_dir_path, true, |state| {
+                state.worktrees_requiring_force_delete.remove(&path);
+                Ok::<(), anyhow::Error>(())
+            })??;
 
             Ok(())
         }
@@ -888,11 +937,22 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        _is_remote: bool,
+        name: String,
+        force: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            if !force && state.branches_requiring_force_delete.contains(&name) {
+                bail!(
+                    "error: The branch '{name}' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D {name}'."
+                );
+            }
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");
             }
+            state.branches_requiring_force_delete.remove(&name);
             Ok(())
         })
     }
@@ -1097,7 +1157,7 @@ impl GitRepository for FakeGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
                 0
@@ -1439,7 +1499,9 @@ impl GitRepository for FakeGitRepository {
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         async move {
-            let query = if search_args.case_sensitive {
+            let hash_query = commit_hash_search_query(search_args.query.as_str())
+                .map(|query| query.to_ascii_lowercase());
+            let message_query = if search_args.case_sensitive {
                 search_args.query.to_string()
             } else {
                 search_args.query.to_lowercase()
@@ -1453,12 +1515,19 @@ impl GitRepository for FakeGitRepository {
                         let FakeCommitDataEntry::Success(commit_data) = entry else {
                             return None;
                         };
+                        if let Some(hash_query) = hash_query.as_ref() {
+                            return sha
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .starts_with(hash_query)
+                                .then_some(*sha);
+                        }
                         let message = if search_args.case_sensitive {
                             commit_data.message.to_string()
                         } else {
                             commit_data.message.to_lowercase()
                         };
-                        message.contains(&query).then_some(*sha)
+                        message.contains(&message_query).then_some(*sha)
                     })
                     .collect::<Vec<_>>()
             })?;
@@ -1472,6 +1541,14 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        _commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        async move { Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]) }.boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

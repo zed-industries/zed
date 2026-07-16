@@ -5,7 +5,7 @@ edition.workspace = true
 name = "collab"
 version = "0.44.0"
 publish.workspace = true
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [lints]
 workspace = true

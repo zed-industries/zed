@@ -1600,7 +1600,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     main_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1616,8 +1616,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 1);
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1675,7 +1675,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     second_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1691,8 +1691,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 2);
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1714,8 +1714,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     cx.run_until_parked();
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1723,8 +1723,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1741,8 +1741,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     shutdown_session.await.unwrap();
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1750,8 +1750,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1962,7 +1962,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_a.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "second.rs",
@@ -1976,7 +1976,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_b.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "main.rs",
@@ -2056,7 +2056,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_a_active = pane_a.read(cx).active_item().unwrap();
             let pane_a_editor = pane_a_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_a_path = pane_a_editor.read(cx).project_path(cx).unwrap();
+            let pane_a_path = pane_a_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_a_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2076,7 +2076,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2096,7 +2096,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2161,7 +2161,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_b_active = pane_b.read(cx).active_item().unwrap();
             let pane_b_editor = pane_b_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_b_path = pane_b_editor.read(cx).project_path(cx).unwrap();
+            let pane_b_path = pane_b_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_b_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2170,7 +2170,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2190,7 +2190,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2232,7 +2232,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2294,7 +2294,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "main.rs",
@@ -2304,7 +2304,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_c_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2324,7 +2324,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }

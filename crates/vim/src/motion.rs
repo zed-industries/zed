@@ -2452,7 +2452,7 @@ fn find_matching_bracket_text_based(
         .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
 
     if bracket_info.is_none() {
-        return find_matching_c_preprocessor_directive(map, line_range);
+        return find_matching_c_preprocessor_directive(map, line_range, offset);
     }
 
     let (open, close, is_opening) = bracket_info?.0;
@@ -2489,18 +2489,20 @@ fn find_matching_bracket_text_based(
 fn find_matching_c_preprocessor_directive(
     map: &DisplaySnapshot,
     line_range: Range<MultiBufferOffset>,
+    offset: MultiBufferOffset,
 ) -> Option<MultiBufferOffset> {
     let line_start = map
         .buffer_chars_at(line_range.start)
         .skip_while(|(c, _)| *c == ' ' || *c == '\t')
+        .take_while(|(c, char_offset)| *char_offset < line_range.end && !c.is_whitespace())
         .map(|(c, _)| c)
-        .take(6)
         .collect::<String>();
 
-    if line_start.starts_with("#if")
-        || line_start.starts_with("#else")
-        || line_start.starts_with("#elif")
-    {
+    if line_range.start + line_start.len() < offset {
+        return None;
+    }
+
+    if line_start.starts_with("#if") || line_start.starts_with("#el") {
         let mut depth = 0i32;
         for (ch, char_offset) in map.buffer_chars_at(line_range.end) {
             if ch != '\n' {
@@ -2607,9 +2609,6 @@ fn matching(
     display_point: DisplayPoint,
     match_quotes: bool,
 ) -> DisplayPoint {
-    if !map.is_singleton() {
-        return display_point;
-    }
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
@@ -2618,11 +2617,38 @@ fn matching(
 
     // Ensure the range is contained by the current line.
     let mut line_end = map.next_line_boundary(point).0;
-    if line_end == point {
-        line_end = map.max_point().to_point(map);
+    let max_point = map.max_point().to_point(map);
+
+    // Only widen to EOF when the cursor is actually at EOF.
+    // This avoids expanding a blank current line into start..EOF.
+    if line_end == point && point == max_point {
+        line_end = max_point;
+    }
+
+    let line_range = map.prev_line_boundary(point).0..line_end;
+    let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+        ..line_range.end.to_offset(&map.buffer_snapshot());
+
+    if let Some(preproc_range) = find_matching_c_preprocessor_directive(map, line_range, offset) {
+        return preproc_range.to_display_point(map);
+    }
+
+    if let Some((open_range, close_range)) = comment_delimiter_pair(map, offset) {
+        if open_range.contains(&offset) {
+            return close_range.start.to_display_point(map);
+        }
+
+        if close_range.contains(&offset) {
+            return open_range.start.to_display_point(map);
+        }
     }
 
     let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
+
+    // The filter receives buffer-local ranges, not multibuffer offsets.
+    let buffer_offset = snapshot
+        .point_to_buffer_offset(offset)
+        .map(|(_, buffer_offset)| buffer_offset);
 
     let make_range_filter = |require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
@@ -2640,8 +2666,9 @@ fn matching(
             if require_on_bracket {
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
-                opening_range.contains(&BufferOffset(offset.0))
-                    || closing_range.contains(&BufferOffset(offset.0))
+                buffer_offset.is_some_and(|buffer_offset| {
+                    opening_range.contains(&buffer_offset) || closing_range.contains(&buffer_offset)
+                })
             } else {
                 true
             }
@@ -2727,32 +2754,6 @@ fn matching(
             }
 
             continue;
-        }
-
-        if let Some((open_range, close_range)) = comment_delimiter_pair(map, offset) {
-            if open_range.contains(&offset) {
-                return close_range.start.to_display_point(map);
-            }
-
-            if close_range.contains(&offset) {
-                return open_range.start.to_display_point(map);
-            }
-
-            let open_candidate = (open_range.start >= offset
-                && line_range.contains(&open_range.start))
-            .then_some((open_range.start.saturating_sub(offset), close_range.start));
-
-            let close_candidate = (close_range.start >= offset
-                && line_range.contains(&close_range.start))
-            .then_some((close_range.start.saturating_sub(offset), open_range.start));
-
-            if let Some((_, destination)) = [open_candidate, close_candidate]
-                .into_iter()
-                .flatten()
-                .min_by_key(|(distance, _)| *distance)
-            {
-                return destination.to_display_point(map);
-            }
         }
 
         closest_pair_destination
@@ -3408,7 +3409,9 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Inlay;
+    use editor::{
+        Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
+    };
     use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
@@ -3556,6 +3559,85 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_in_multibuffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        "fn a() {\n    let x = 1;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
+                    (
+                        "fn b() {\n    let y = 2;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
+                ],
+                cx,
+            );
+
+            let buffer_ids = multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| excerpt.context.start.buffer_id)
+                .collect::<Vec<_>>();
+
+            for buffer_id in buffer_ids {
+                if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(Some(language::rust_lang()), cx);
+                    });
+                }
+            }
+
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+
+        let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+        cx.simulate_keystrokes("j j j j f {");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() ˇ{
+                let y = 2;
+            }
+            "
+        });
+
+        cx.simulate_keystrokes("%");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() {
+                let y = 2;
+            ˇ}
+            "
+        });
+
+        cx.simulate_keystrokes("%");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() ˇ{
+                let y = 2;
+            }
+            "
+        });
+    }
+
+    #[gpui::test]
     async fn test_matching_quotes_disabled(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -3663,6 +3745,10 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {r"/*
           this is a comment
         ˇ*/"});
+        cx.simulate_shared_keystrokes("k %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"/*
+        ˇ  this is a comment
+        */"});
 
         cx.set_shared_state("ˇ// comment").await;
         cx.simulate_shared_keystrokes("%").await;
@@ -3673,48 +3759,53 @@ mod test {
     async fn test_matching_preprocessor_directives(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state(indoc! {r"#ˇif
+        cx.set_shared_state(indoc! {r"
+          #ˇif
 
-            #else
+          #else
 
-            #endif
-            "})
+          #endif
+        "})
             .await;
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if
 
           ˇ#else
 
           #endif
-          "});
+        "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if
 
           #else
 
           ˇ#endif
-          "});
+        "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"ˇ#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          ˇ#if
 
           #else
 
           #endif
-          "});
+        "});
 
         cx.set_shared_state(indoc! {r"
-            #ˇif
-              #if
-
-              #else
-
-              #endif
+          #ˇif
+            #if
 
             #else
+
             #endif
-            "})
+
+          #else
+
+          #endif
+        "})
             .await;
 
         cx.simulate_shared_keystrokes("%").await;
@@ -3727,8 +3818,9 @@ mod test {
               #endif
 
             ˇ#else
+
             #endif
-            "});
+          "});
 
         cx.simulate_shared_keystrokes("% %").await;
         cx.shared_state().await.assert_eq(indoc! {r"
@@ -3740,8 +3832,9 @@ mod test {
               #endif
 
             #else
+
             #endif
-            "});
+          "});
         cx.simulate_shared_keystrokes("j % % %").await;
         cx.shared_state().await.assert_eq(indoc! {r"
             #if
@@ -3752,8 +3845,28 @@ mod test {
               #endif
 
             #else
+
             #endif
-            "});
+          "});
+
+        cx.set_shared_state(indoc! {r"
+          #if definedˇ(something)
+
+          #endif
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if defined(somethingˇ)
+
+          #endif
+        "});
+        cx.simulate_shared_keystrokes("0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if defined(something)
+
+          ˇ#endif
+        "});
     }
 
     #[gpui::test]

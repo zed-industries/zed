@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-use gpui::{BackgroundExecutor, Entity, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, TaskExt, TestAppContext};
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16, range_to_lsp,
 };
@@ -196,7 +196,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             if !available_contacts.is_empty() {
                                 let contact = available_contacts.choose(rng).unwrap();
                                 break ClientOperation::InviteContactToCall {
-                                    user_id: UserId(contact.user.id as i32),
+                                    user_id: UserId(contact.user.legacy_id as i32),
                                 };
                             }
                         }
@@ -235,7 +235,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                                 None
                                             } else {
                                                 Some((
-                                                    UserId::from_proto(participant.user.id),
+                                                    UserId::from_proto(participant.user.legacy_id),
                                                     project.worktree_root_names[0].clone(),
                                                 ))
                                             }
@@ -448,7 +448,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .choose(rng)
                                     .unwrap();
                                 if entry.path.as_ref().is_empty() {
-                                    worktree.root_name().into()
+                                    worktree.root_name().to_rel_path_buf()
                                 } else {
                                     worktree.root_name().join(&entry.path)
                                 }
@@ -1524,7 +1524,7 @@ fn buffer_for_full_path(
                 else {
                     return false;
                 };
-                worktree.read(cx).root_name().join(&file.path()).as_ref() == full_path
+                worktree.read(cx).root_name().join(&file.path()) == *full_path
             })
         })
         .cloned()

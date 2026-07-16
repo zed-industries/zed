@@ -12,7 +12,7 @@ use collections::HashMap;
 use fs::{Fs, copy_recursive};
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task, TaskExt,
     WeakEntity,
 };
 use itertools::Either;
@@ -433,7 +433,7 @@ impl WorktreeStore {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty().into())) })
+            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty_arc())) })
         }
     }
 
@@ -513,7 +513,7 @@ impl WorktreeStore {
                 let response = upstream_client.request(proto::CopyProjectEntry {
                     project_id: *upstream_project_id,
                     entry_id: entry_id.to_proto(),
-                    new_path: new_project_path.path.to_proto(),
+                    new_path: new_project_path.path.as_unix_str().to_owned(),
                     new_worktree_id: new_project_path.worktree_id.to_proto(),
                 });
                 cx.spawn(async move |_, cx| {
@@ -668,7 +668,7 @@ impl WorktreeStore {
                 let response = upstream_client.request(proto::RenameProjectEntry {
                     project_id: *upstream_project_id,
                     entry_id: entry_id.to_proto(),
-                    new_path: new_project_path.path.to_proto(),
+                    new_path: new_project_path.path.as_unix_str().to_owned(),
                     new_worktree_id: new_project_path.worktree_id.to_proto(),
                 });
                 cx.spawn(async move |_, cx| {
@@ -827,6 +827,7 @@ impl WorktreeStore {
                         visible,
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
+                        root_repo_is_linked_worktree: response.root_repo_is_linked_worktree,
                     },
                     client,
                     path_style,
@@ -1155,6 +1156,7 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
+                    root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
                 }
             })
             .collect()
@@ -1229,7 +1231,7 @@ impl WorktreeStore {
         let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
         let new_project_path = (
             new_worktree_id,
-            RelPath::from_proto(&envelope.payload.new_path)?,
+            RelPath::from_unix_str(&envelope.payload.new_path)?,
         );
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
             let Some((_, project_id)) = this.downstream_client else {
@@ -1287,7 +1289,7 @@ impl WorktreeStore {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(request.entry_id);
         let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
-        let rel_path = RelPath::from_proto(&request.new_path)
+        let rel_path = RelPath::from_unix_str(&request.new_path)
             .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
 
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
@@ -1369,7 +1371,13 @@ impl WorktreeStore {
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
                     .root_repo_common_dir()
-                    .map(|dir| crate::git_store::repo_identity_path(dir).to_path_buf())
+                    .map(|dir| crate::git_store::repo_identity_path(dir))
+                    .filter(|repo_path| {
+                        snapshot.root_repo_is_linked_worktree()
+                            || *repo_path == folder_path.as_path()
+                            || !folder_path.starts_with(*repo_path)
+                    })
+                    .map(Path::to_path_buf)
                     .unwrap_or_else(|| folder_path.clone());
                 (main_path, folder_path)
             })

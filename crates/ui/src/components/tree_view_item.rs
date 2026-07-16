@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Role};
 
 use crate::{Disclosure, prelude::*};
 
@@ -151,6 +151,11 @@ impl RenderOnce for TreeViewItem {
                     .bg(cx.theme().colors().border.opacity(0.5)),
             );
 
+        let aria_label = self.label.clone();
+        let root_item = self.root_item;
+        let expanded = self.expanded;
+        let selected = self.selected;
+
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
@@ -158,6 +163,15 @@ impl RenderOnce for TreeViewItem {
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
+                    // The accessible role and state live on this element
+                    // because it also carries the click handler and focus, so
+                    // assistive technology reports a single actionable tree
+                    // item rather than an inert container.
+                    .role(Role::TreeItem)
+                    .aria_label(aria_label)
+                    .aria_selected(selected)
+                    .aria_level(if root_item { 1 } else { 2 })
+                    .when(root_item, |this| this.aria_expanded(expanded))
                     .cursor_pointer()
                     .size_full()
                     .h(item_size)
@@ -193,7 +207,7 @@ impl RenderOnce for TreeViewItem {
                                 h_flex()
                                     .id("nested_inner_tree_view_item")
                                     .w_full()
-                                    .flex_grow()
+                                    .flex_grow_1()
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
@@ -223,13 +237,12 @@ impl Component for TreeViewItem {
         ComponentScope::Navigation
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A hierarchical list of items that may have a parent-child relationship where children can be toggled into view by expanding or collapsing their parent item.",
-        )
+    fn description() -> &'static str {
+        "A hierarchical list of items that may have a parent-child relationship \
+        where children can be toggled into view by expanding or collapsing their parent item."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             v_flex()
                 .p_2()
@@ -239,58 +252,56 @@ impl Component for TreeViewItem {
                 .bg(cx.theme().colors().panel_background)
         };
 
-        Some(
-            example_group(vec![
-                single_example(
-                    "Basic Tree View",
-                    container()
-                        .child(
-                            TreeViewItem::new("index-1", "Tree Item Root #1")
-                                .root_item(true)
-                                .toggle_state(true),
-                        )
-                        .child(TreeViewItem::new("index-2", "Tree Item #2"))
-                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
-                        .child(TreeViewItem::new("index-4", "Tree Item Root #2").root_item(true))
-                        .child(TreeViewItem::new("index-5", "Tree Item #5"))
-                        .child(TreeViewItem::new("index-6", "Tree Item #6"))
-                        .into_any_element(),
-                ),
-                single_example(
-                    "Active Child",
-                    container()
-                        .child(TreeViewItem::new("index-1", "Tree Item Root #1").root_item(true))
-                        .child(TreeViewItem::new("index-2", "Tree Item #2").toggle_state(true))
-                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
-                        .into_any_element(),
-                ),
-                single_example(
-                    "Focused Parent",
-                    container()
-                        .child(
-                            TreeViewItem::new("index-1", "Tree Item Root #1")
-                                .root_item(true)
-                                .focused(true)
-                                .toggle_state(true),
-                        )
-                        .child(TreeViewItem::new("index-2", "Tree Item #2"))
-                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
-                        .into_any_element(),
-                ),
-                single_example(
-                    "Focused Child",
-                    container()
-                        .child(
-                            TreeViewItem::new("index-1", "Tree Item Root #1")
-                                .root_item(true)
-                                .toggle_state(true),
-                        )
-                        .child(TreeViewItem::new("index-2", "Tree Item #2").focused(true))
-                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
-                        .into_any_element(),
-                ),
-            ])
-            .into_any_element(),
-        )
+        example_group(vec![
+            single_example(
+                "Basic Tree View",
+                container()
+                    .child(
+                        TreeViewItem::new("index-1", "Tree Item Root #1")
+                            .root_item(true)
+                            .toggle_state(true),
+                    )
+                    .child(TreeViewItem::new("index-2", "Tree Item #2"))
+                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                    .child(TreeViewItem::new("index-4", "Tree Item Root #2").root_item(true))
+                    .child(TreeViewItem::new("index-5", "Tree Item #5"))
+                    .child(TreeViewItem::new("index-6", "Tree Item #6"))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Active Child",
+                container()
+                    .child(TreeViewItem::new("index-1", "Tree Item Root #1").root_item(true))
+                    .child(TreeViewItem::new("index-2", "Tree Item #2").toggle_state(true))
+                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Focused Parent",
+                container()
+                    .child(
+                        TreeViewItem::new("index-1", "Tree Item Root #1")
+                            .root_item(true)
+                            .focused(true)
+                            .toggle_state(true),
+                    )
+                    .child(TreeViewItem::new("index-2", "Tree Item #2"))
+                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Focused Child",
+                container()
+                    .child(
+                        TreeViewItem::new("index-1", "Tree Item Root #1")
+                            .root_item(true)
+                            .toggle_state(true),
+                    )
+                    .child(TreeViewItem::new("index-2", "Tree Item #2").focused(true))
+                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                    .into_any_element(),
+            ),
+        ])
+        .into_any_element()
     }
 }

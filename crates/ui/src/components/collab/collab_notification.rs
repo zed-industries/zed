@@ -63,7 +63,12 @@ impl Component for CollabNotification {
         ComponentScope::Collaboration
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A toast-style notification surface for collaboration events, \
+        such as incoming calls or shared project invites, with an accept and dismiss action."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let avatar = "https://avatars.githubusercontent.com/u/67129314?v=4";
         let container = || div().h(px(72.)).w(px(400.)); // Size of the actual notification window
 
@@ -173,14 +178,10 @@ impl Component for CollabNotification {
             ),
         ];
 
-        Some(
-            v_flex()
-                .gap_6()
-                .child(example_group_with_title("Calls & Projects", call_examples).vertical())
-                .child(
-                    example_group_with_title("Contact & Channel Toasts", toast_examples).vertical(),
-                )
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .child(example_group_with_title("Calls & Projects", call_examples).vertical())
+            .child(example_group_with_title("Contact & Channel Toasts", toast_examples).vertical())
+            .into_any_element()
     }
 }

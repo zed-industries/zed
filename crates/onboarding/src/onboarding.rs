@@ -54,7 +54,6 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
     onboarding,
@@ -238,6 +237,7 @@ impl Onboarding {
                 Some(Plan::ZedPro) => "pro",
                 Some(Plan::ZedProTrial) => "trial",
                 Some(Plan::ZedBusiness) => "business",
+                Some(Plan::ZedVip) => "vip",
                 Some(Plan::ZedStudent) => "student",
                 Some(Plan::ZedFree) | None => "free",
             }
@@ -486,7 +486,7 @@ pub async fn handle_import_vscode_settings(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),
                     None,
-                    &["Ok"],
+                    &["OK"],
                 );
                 return;
             }
@@ -502,7 +502,7 @@ pub async fn handle_import_vscode_settings(
                 truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
             ),
             None,
-            &["Ok", "Cancel"],
+            &["Import", "Cancel"],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {

@@ -73,7 +73,7 @@ unsafe extern "C" {
 
 impl PlatformDisplay for MacDisplay {
     fn id(&self) -> DisplayId {
-        DisplayId::new(self.0)
+        DisplayId::new(self.0 as u64)
     }
 
     fn uuid(&self) -> Result<Uuid> {

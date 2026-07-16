@@ -45,7 +45,7 @@ This maps familiar shortcuts like {#kb:jetbrains project_symbols::Toggle} for Go
 
 ## Set Up Editor Preferences
 
-You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Settings WebStorm users typically configure first:
 
@@ -118,7 +118,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 ### How to Customize Keybindings
 
 - Open the Command Palette ({#kb:jetbrains command_palette::Toggle})
-- Run `zed: open keymap`
+- Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
 
@@ -182,7 +182,7 @@ What this means in practice:
 **How to adapt:**
 
 - Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via Command Palette: `zed: open tasks`):
+- Define common commands in `tasks.json` (open via Command Palette: {#action zed::OpenTasks}):
 
 ```json
 [
@@ -362,9 +362,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 

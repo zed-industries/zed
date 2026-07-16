@@ -4,6 +4,7 @@ pub use encrypted_password::{EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadThe
 
 use net::async_net::UnixListener;
 use smol::lock::Mutex;
+#[cfg(not(target_os = "windows"))]
 use util::fs::make_file_executable;
 
 use std::ffi::OsStr;
@@ -19,13 +20,20 @@ use futures::{
     select_biased,
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
+#[cfg(not(target_os = "windows"))]
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::ShellKind};
+use util::{ResultExt as _, debug_panic, maybe};
+
+#[cfg(not(target_os = "windows"))]
+use util::{paths::PathExt, shell::ShellKind};
 
 /// Path to the program used for askpass
 ///
-/// On Unix and remote servers, this defaults to the current executable
-/// On Windows, this is set to the CLI variant of zed
+/// On Unix and remote servers, this defaults to the current executable.
+/// On Windows, this must be set to the CLI variant of zed via set_askpass_program(),
+/// because SSH_ASKPASS must point to a directly executable binary. The CLI binary
+/// handles the ZED_ASKPASS_SOCKET env var to communicate with Zed over a Unix socket
+/// without needing a wrapper script.
 static ASKPASS_PROGRAM: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(PartialEq, Eq)]
@@ -80,11 +88,11 @@ pub struct AskPassSession {
     executor: BackgroundExecutor,
 }
 
-const ASKPASS_SCRIPT_NAME: &str = if cfg!(target_os = "windows") {
-    "askpass.ps1"
-} else {
-    "askpass.sh"
-};
+#[cfg(not(target_os = "windows"))]
+const ASKPASS_SCRIPT_NAME: &str = "askpass.sh";
+
+#[cfg(not(target_os = "windows"))]
+const GPG_WRAPPER_SCRIPT_NAME: &str = "gpg-wrapper.sh";
 
 impl AskPassSession {
     /// This will create a new AskPassSession.
@@ -177,17 +185,45 @@ impl AskPassSession {
         self.secret.lock().ok()?.clone()
     }
 
+    /// Returns the value to set as SSH_ASKPASS.
+    /// On Unix this is the path to the generated shell script.
+    /// On Windows this is the path to cli.exe directly — no script needed.
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         self.askpass_task.script_path()
+    }
+
+    /// Path to a script suitable for git's `gpg.program`, routing GnuPG
+    /// passphrase prompts through Zed's askpass UI. `None` if unavailable.
+    pub fn gpg_wrapper_path(&self) -> Option<&std::path::Path> {
+        #[cfg(not(target_os = "windows"))]
+        return self.askpass_task.gpg_wrapper_path();
+        #[cfg(target_os = "windows")]
+        return None;
+    }
+
+    /// Returns the socket path to set as ZED_ASKPASS_SOCKET.
+    ///
+    /// On Windows, SSH_ASKPASS points directly to cli.exe. SSH passes only
+    /// the prompt string as argv[1] with no mechanism for extra arguments,
+    /// so the socket path is communicated via this environment variable instead.
+    /// cli.exe must check ZED_ASKPASS_SOCKET before clap parses args.
+    #[cfg(target_os = "windows")]
+    pub fn socket_path(&self) -> impl AsRef<OsStr> {
+        self.askpass_task.socket_path()
     }
 }
 
 pub struct PasswordProxy {
     _task: Task<()>,
-    #[cfg(not(target_os = "windows"))]
+    /// On Unix: path to the generated .sh askpass script (set as SSH_ASKPASS).
+    /// On Windows: path to cli.exe (set as SSH_ASKPASS directly — no script needed).
     askpass_script_path: std::path::PathBuf,
+    #[cfg(not(target_os = "windows"))]
+    gpg_wrapper_script_path: Option<std::path::PathBuf>,
+    /// On Windows only: path to the Unix socket, passed as ZED_ASKPASS_SOCKET
+    /// so cli.exe can find it without --askpass argument parsing.
     #[cfg(target_os = "windows")]
-    askpass_helper: String,
+    askpass_socket_path: std::path::PathBuf,
 }
 
 impl PasswordProxy {
@@ -202,19 +238,38 @@ impl PasswordProxy {
     ) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
-        let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-        // TODO: inferred from the use of powershell.exe in askpass_helper_script
-        let shell_kind = if cfg!(windows) {
-            ShellKind::PowerShell
-        } else {
-            ShellKind::Posix
-        };
         let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
-        // Create an askpass script that communicates back to this process.
-        let askpass_script = generate_askpass_script(shell_kind, askpass_program, &askpass_socket)?;
+
+        // Unix: SSH_ASKPASS = path to generated .sh script in temp dir.
+        // Windows: SSH_ASKPASS = path to cli.exe directly. No script is written.
+        #[cfg(not(target_os = "windows"))]
+        let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
+        #[cfg(target_os = "windows")]
+        let askpass_script_path = askpass_program.to_path_buf();
+
+        let askpass_socket_path = askpass_socket.clone();
+
+        // Create a gpg wrapper script that routes GnuPG passphrase prompts through
+        // the same socket (and thus through Zed's askpass UI). This only works on
+        // Unix where we control the pinentry via loopback mode. We compute the path
+        // before the socket task takes ownership of `temp_dir`, and write the file
+        // afterwards.
+        #[cfg(not(target_os = "windows"))]
+        let (gpg_wrapper_script_path, gpg_wrapper_script) =
+            match generate_gpg_wrapper_script(askpass_program, &askpass_socket_path) {
+                Ok(script) => (
+                    Some(temp_dir.path().join(GPG_WRAPPER_SCRIPT_NAME)),
+                    Some(script),
+                ),
+                Err(err) => {
+                    log::warn!("could not create gpg askpass wrapper: {err:#}");
+                    (None, None)
+                }
+            };
+
         let _task = executor.spawn(async move {
             maybe!(async move {
                 let listener =
@@ -253,44 +308,92 @@ impl PasswordProxy {
             .log_err();
         });
 
-        fs::write(&askpass_script_path, askpass_script)
-            .await
-            .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
-        make_file_executable(&askpass_script_path)
-            .await
-            .with_context(|| {
-                format!("marking askpass script executable at {askpass_script_path:?}")
-            })?;
-        // todo(shell): There might be no powershell on the system
-        #[cfg(target_os = "windows")]
-        let askpass_helper = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File \"{}\"",
-            askpass_script_path.display()
-        );
+        // Unix only: write the shell script and mark it executable.
+        // On Windows cli.exe is invoked directly, so no script is needed.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let askpass_script = generate_askpass_script(askpass_program, &askpass_socket_path)?;
+            fs::write(&askpass_script_path, askpass_script)
+                .await
+                .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
+            make_file_executable(&askpass_script_path)
+                .await
+                .with_context(|| {
+                    format!("marking askpass script executable at {askpass_script_path:?}")
+                })?;
+        }
+
+        // Write the gpg wrapper script (computed above) and mark it executable.
+        #[cfg(not(target_os = "windows"))]
+        let gpg_wrapper_script_path =
+            if let Some((path, script)) = gpg_wrapper_script_path.zip(gpg_wrapper_script) {
+                match async {
+                    fs::write(&path, script)
+                        .await
+                        .with_context(|| format!("creating gpg wrapper script at {path:?}"))?;
+                    make_file_executable(&path).await.with_context(|| {
+                        format!("marking gpg wrapper script executable at {path:?}")
+                    })?;
+                    anyhow::Ok(())
+                }
+                .await
+                {
+                    Ok(()) => Some(path),
+                    Err(err) => {
+                        log::warn!("could not write gpg askpass wrapper: {err:#}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
         Ok(Self {
             _task,
-            #[cfg(not(target_os = "windows"))]
             askpass_script_path,
+            #[cfg(not(target_os = "windows"))]
+            gpg_wrapper_script_path,
             #[cfg(target_os = "windows")]
-            askpass_helper,
+            askpass_socket_path,
         })
     }
 
     pub fn script_path(&self) -> impl AsRef<OsStr> {
-        #[cfg(not(target_os = "windows"))]
-        {
-            &self.askpass_script_path
-        }
-        #[cfg(target_os = "windows")]
-        {
-            &self.askpass_helper
-        }
+        &self.askpass_script_path
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn socket_path(&self) -> impl AsRef<OsStr> {
+        &self.askpass_socket_path
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn gpg_wrapper_path(&self) -> Option<&std::path::Path> {
+        self.gpg_wrapper_script_path.as_deref()
     }
 }
-/// The main function for when Zed is running in netcat mode for use in askpass.
-/// Called from both the remote server binary and the zed binary in their respective main functions.
+
+/// Runs Zed in netcat mode for use in askpass.
 pub fn main(socket: &str) {
+    use std::io::{self, Read};
+    use std::process::exit;
+
+    let mut buffer = Vec::new();
+    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
+        eprintln!("Error reading from stdin: {}", err);
+        exit(1);
+    }
+
+    connect_and_write_prompt(socket, buffer)
+}
+
+/// Runs Zed in askpass mode using prompts passed as arguments.
+pub fn main_from_args(socket: &str, args: impl IntoIterator<Item = String>) {
+    let prompt = args.into_iter().collect::<Vec<_>>().join("\0");
+    connect_and_write_prompt(socket, prompt.into_bytes())
+}
+
+fn connect_and_write_prompt(socket: &str, mut buffer: Vec<u8>) {
     use net::UnixStream;
     use std::io::{self, Read, Write};
     use std::process::exit;
@@ -302,12 +405,6 @@ pub fn main(socket: &str) {
             exit(1);
         }
     };
-
-    let mut buffer = Vec::new();
-    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
-        eprintln!("Error reading from stdin: {}", err);
-        exit(1);
-    }
 
     #[cfg(target_os = "windows")]
     while buffer.last().is_some_and(|&b| b == b'\n' || b == b'\r') {
@@ -340,13 +437,14 @@ pub fn set_askpass_program(path: std::path::PathBuf) {
     }
 }
 
-#[inline]
+/// Generates the Unix shell askpass script.
+/// Not used on Windows — cli.exe is invoked directly as SSH_ASKPASS.
 #[cfg(not(target_os = "windows"))]
 fn generate_askpass_script(
-    shell_kind: ShellKind,
     askpass_program: &std::path::Path,
     askpass_socket: &std::path::Path,
 ) -> Result<String> {
+    let shell_kind = ShellKind::Posix;
     let askpass_program = shell_kind.prepend_command_prefix(
         askpass_program
             .to_str()
@@ -366,12 +464,20 @@ fn generate_askpass_script(
 }
 
 #[inline]
-#[cfg(target_os = "windows")]
-fn generate_askpass_script(
-    shell_kind: ShellKind,
+#[cfg(not(target_os = "windows"))]
+fn generate_gpg_wrapper_script(
     askpass_program: &std::path::Path,
     askpass_socket: &std::path::Path,
 ) -> Result<String> {
+    let shell_kind = ShellKind::Posix;
+    let gpg_program = find_gpg_program().context("could not find a gpg binary on PATH")?;
+    let gpg_program = gpg_program
+        .to_str()
+        .context("gpg program is on a non-utf8 path")?;
+    let gpg_program = shell_kind
+        .try_quote_prefix_aware(gpg_program)
+        .context("Failed to shell-escape gpg program path")?;
+
     let askpass_program = shell_kind.prepend_command_prefix(
         askpass_program
             .to_str()
@@ -383,10 +489,48 @@ fn generate_askpass_script(
     let askpass_socket = askpass_socket
         .try_shell_safe(shell_kind)
         .context("Failed to shell-escape Askpass socket path")?;
+
+    let prompt = shell_kind
+        .try_quote_prefix_aware("Enter passphrase for your Git signing key:")
+        .context("Failed to shell-escape gpg passphrase prompt")?;
+
+    // The wrapper inspects gpg's arguments and only prompts for a passphrase when
+    // git asks it to *sign* (e.g. `gpg -bsau <key>`). Other invocations such as
+    // signature verification (`--verify`) run gpg unchanged so we never pop a
+    // spurious modal. When signing, we feed the passphrase to gpg on fd 3 via
+    // `--passphrase-fd 3` in loopback mode, so no pinentry/terminal is required.
     Ok(format!(
-        r#"
-        $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
-        "#,
+        r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        # Long-form signing options.
+        --sign|--detach-sign|--clearsign|--clear-sign) is_signing=1 ;;
+        # Skip other long options so flags like `--status-fd` don't match below.
+        --*) ;;
+        # Short-flag clusters containing `s`, e.g. git's `-bsau`.
+        -*s*) is_signing=1 ;;
+    esac
+done
+
+# Not a signing request: run gpg as-is, leaving its prompting untouched.
+if [ -z "${{is_signing}}" ]; then
+    exec {gpg_program} "$@"
+fi
+
+# Signing: ask Zed for the passphrase, then hand it to gpg on fd 3.
+passphrase=$(printf '%s\0' {prompt} | {askpass_program} --askpass={askpass_socket} 2>/dev/null)
+exec {gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<<EOF
+${{passphrase}}
+EOF
+"#,
     ))
+}
+
+/// Finds the real `gpg` (or `gpg2`) executable on `PATH`.
+#[inline]
+#[cfg(not(target_os = "windows"))]
+fn find_gpg_program() -> Option<std::path::PathBuf> {
+    ["gpg", "gpg2"]
+        .into_iter()
+        .find_map(|candidate| which::which(candidate).ok())
 }

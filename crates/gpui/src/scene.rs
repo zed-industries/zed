@@ -22,6 +22,20 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
+/// A boolean stored as a `u32` so that GPU-facing structs contain no
+/// compiler-inserted padding bytes, which would be undefined behavior to
+/// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
+/// `0` or `1` by construction; shaders read it as a `u32`/`uint`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct PaddedBool32(u32);
+
+impl From<bool> for PaddedBool32 {
+    fn from(value: bool) -> Self {
+        PaddedBool32(value as u32)
+    }
+}
+
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
@@ -511,7 +525,7 @@ pub struct Underline {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub thickness: ScaledPixels,
-    pub wavy: u32,
+    pub wavy: PaddedBool32,
 }
 
 impl From<Underline> for Primitive {
@@ -530,6 +544,11 @@ pub struct Shadow {
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
+    pub element_bounds: Bounds<ScaledPixels>,
+    pub element_corner_radii: Corners<ScaledPixels>,
+    /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
+    pub inset: u32,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl From<Shadow> for Primitive {
@@ -696,7 +715,7 @@ impl From<SubpixelSprite> for Primitive {
 pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32,
-    pub grayscale: bool,
+    pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,

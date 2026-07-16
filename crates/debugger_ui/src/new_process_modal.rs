@@ -16,7 +16,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity, actions,
+    KeyContext, Render, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -106,7 +106,7 @@ impl NewProcessModal {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
                         Picker::list(delegate, window, cx)
-                            .modal(false)
+                            .embedded()
                             .list_measure_all()
                     });
 
@@ -1069,10 +1069,10 @@ impl DebugDelegate {
 
                     match path.components().next_back() {
                         Some(".zed") => {
-                            path.push(RelPath::unix("debug.json").unwrap());
+                            path.push(RelPath::from_unix_str("debug.json").unwrap());
                         }
                         Some(".vscode") => {
-                            path.push(RelPath::unix("launch.json").unwrap());
+                            path.push(RelPath::from_unix_str("launch.json").unwrap());
                         }
                         _ => {}
                     }
@@ -1165,7 +1165,7 @@ impl DebugDelegate {
                         id: _,
                         directory_in_worktree: dir,
                         id_base: _,
-                    } => dir.ends_with(RelPath::unix(".zed").unwrap()),
+                    } => dir.ends_with(RelPath::from_unix_str(".zed").unwrap()),
                     _ => false,
                 });
 
@@ -1186,7 +1186,8 @@ impl DebugDelegate {
                                     id_base: _,
                                 } => {
                                     !(hide_vscode
-                                        && dir.ends_with(RelPath::unix(".vscode").unwrap()))
+                                        && dir
+                                            .ends_with(RelPath::from_unix_str(".vscode").unwrap()))
                                 }
                                 _ => true,
                             })
@@ -1206,6 +1207,10 @@ impl DebugDelegate {
 
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "debug scenario picker"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1588,6 +1593,8 @@ impl PickerDelegate for DebugDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
                         .when_some(subtitle, |this, subtitle_text| {

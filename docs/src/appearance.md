@@ -17,7 +17,7 @@ Here's how to make Zed feel like home:
 
 2. **Toggle light/dark mode quickly**: Press {#kb theme::ToggleMode}. If you currently use a static `"theme": "..."` value, the first toggle converts it to dynamic mode settings with default themes.
 
-3. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
+3. **Choose an icon theme**: Run {#action icon_theme_selector::Toggle} from the command palette to browse icon themes.
 
 4. **Set your font**: Open the Settings Editor with {#kb zed::OpenSettings} and search for `buffer_font_family`. Set it to your preferred coding font.
 
@@ -47,7 +47,7 @@ You can also override specific theme attributes for fine-grained control.
 
 ## Icon Themes
 
-Customize file and folder icons in the Project Panel and tabs. Browse available icon themes with the Icon Theme Selector (`icon theme selector: toggle` in the command palette).
+Customize file and folder icons in the Project Panel and tabs. Browse available icon themes with the Icon Theme Selector ({#action icon_theme_selector::Toggle} in the command palette).
 
 Like color themes, icon themes support separate light and dark variants:
 

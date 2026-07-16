@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::symbol_locator::{LocationDisplay, SymbolLocator};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -11,11 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// Finds all references to a symbol across the project using the language server.
 ///
-/// Returns a list of locations where the symbol is referenced, including file paths,
-/// line numbers, and code snippets for each reference.
+/// Returns a list of locations where the symbol is referenced, including file paths, line numbers, and code snippets for each reference.
 ///
-/// Before using this tool, use read_file or grep to find the exact symbol
-/// name and line number.
+/// Before using this tool, use read_file or grep to find the exact symbol name and line number.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FindReferencesToolInput {
     /// The symbol to find references of.
