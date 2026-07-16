@@ -25,10 +25,6 @@ mod types;
 
 actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
 
-/// Bootstrap row height used only until the first render populates
-/// `CsvPreviewView::row_height` with the actual text line height.
-const INITIAL_ROW_HEIGHT: Pixels = px(24.);
-
 pub struct TabularDataPreviewFeatureFlag;
 
 impl FeatureFlag for TabularDataPreviewFeatureFlag {
@@ -180,6 +176,10 @@ impl CsvPreviewView {
                     };
                 },
             );
+
+            /// Bootstrap row height used only until the first render populates
+            /// `CsvPreviewView::row_height` with the actual text line height.
+            const INITIAL_ROW_HEIGHT: Pixels = px(24.);
 
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
