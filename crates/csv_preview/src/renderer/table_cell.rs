@@ -1,7 +1,7 @@
 //! Table Cell Rendering
 
-use gpui::{AnyElement, ElementId};
-use ui::{SharedString, Tooltip, div, prelude::*};
+use gpui::{AnyElement, ClipboardItem, ElementId, MouseButton};
+use ui::{Color, Divider, Label, LabelSize, SharedString, Tooltip, div, prelude::*};
 
 use crate::{CsvPreviewView, settings::VerticalAlignment, types::DisplayCellId};
 
@@ -27,29 +27,40 @@ fn create_table_cell(
     cx: &Context<'_, CsvPreviewView>,
 ) -> gpui::Stateful<Div> {
     div()
-        .id(ElementId::Name(
-            format!(
-                "csv-display-cell-{}-{}",
-                *display_cell_id.row, *display_cell_id.col
-            )
-            .into(),
+        .id(ElementId::NamedInteger(
+            format!("csv-display-cell-{}", *display_cell_id.row).into(),
+            *display_cell_id.col as u64,
         ))
-        .cursor_pointer()
         .flex()
         .h_full()
         .px_1()
-        .bg(cx.theme().colors().editor_background)
-        .border_b_1()
         .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),
         })
-        .map(|div| match vertical_alignment {
-            VerticalAlignment::Top => div.content_start(),
-            VerticalAlignment::Center => div.content_center(),
-        })
         .font_buffer(cx)
-        .tooltip(Tooltip::text(cell_content.clone()))
+        .on_mouse_down(MouseButton::Right, {
+            let text = cell_content.clone();
+            move |_event, _window, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+            }
+        })
+        .tooltip(Tooltip::element({
+            let text = cell_content.clone();
+            move |_window, cx| {
+                v_flex()
+                    .gap_1()
+                    .child(div().font_buffer(cx).child(text.clone()))
+                    .child(Divider::horizontal())
+                    .child(
+                        Label::new("Right click to copy content")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element()
+            }
+        }))
         .child(div().child(cell_content))
 }
