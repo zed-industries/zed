@@ -1090,14 +1090,14 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(RelPath::unix(".vscode").unwrap()) {
-                    dir.join(RelPath::unix("launch.json").unwrap())
+                let relative_path = if dir.ends_with(RelPath::from_unix_str(".vscode").unwrap()) {
+                    dir.join(RelPath::from_unix_str("launch.json").unwrap())
                 } else {
-                    dir.join(RelPath::unix("debug.json").unwrap())
+                    dir.join(RelPath::from_unix_str("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,
-                    path: relative_path,
+                    path: relative_path.into(),
                 }
             }
             _ => return self.save_scenario(scenario, worktree_id, window, cx),

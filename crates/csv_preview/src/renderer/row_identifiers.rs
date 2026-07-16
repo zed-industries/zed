@@ -1,12 +1,12 @@
 use ui::{
     ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
-    Clickable as _, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, StyledTypography as _, Tooltip, div,
+    Clickable as _, Context, ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _,
+    SharedString, Styled as _, StyledTypography as _, Tooltip, div,
 };
 
 use crate::{
     CsvPreviewView,
-    settings::RowIdentifiers,
+    settings::{RowIdentifiers, VerticalAlignment},
     types::{DataRow, DisplayRow, LineNumber},
 };
 
@@ -169,14 +169,16 @@ impl CsvPreviewView {
         let value = div()
             .flex()
             .px_1()
-            .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().panel_background)
             .h_full()
             .text_ui(cx)
-            // Row identifiers are always centered
-            .items_center()
-            .justify_end()
+            .text_color(cx.theme().colors().text_muted)
+            .justify_center()
+            .map(|div| match self.settings.vertical_alignment {
+                VerticalAlignment::Top => div.items_start(),
+                VerticalAlignment::Center => div.items_center(),
+            })
             .font_buffer(cx)
             .child(row_identifier)
             .into_any_element();

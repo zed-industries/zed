@@ -3206,9 +3206,7 @@ fn randomly_mutate_worktree(
     match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != RelPath::empty() => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.to_usize());
-            let task = worktree
-                .delete_entry(entry.id, false, cx)
-                .unwrap_or_else(|| Task::ready(Ok(None)));
+            let task = worktree.delete_entry(entry.clone(), cx);
 
             cx.background_spawn(async move {
                 task.await?;
@@ -3224,7 +3222,7 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                let task = worktree.create_entry(child_path, is_dir, None, cx);
+                let task = worktree.create_entry(child_path.into(), is_dir, None, cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -5190,7 +5188,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 root_repo_is_linked_worktree: false,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });
@@ -5287,7 +5285,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 root_repo_is_linked_worktree: false,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });
@@ -5386,7 +5384,7 @@ async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
                 root_repo_is_linked_worktree: true,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });

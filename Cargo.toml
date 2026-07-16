@@ -129,6 +129,7 @@ members = [
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/mermaid_render",
@@ -151,6 +152,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
+    "crates/path",
     "crates/paths",
     "crates/picker",
     "crates/picker_preview",
@@ -389,6 +391,7 @@ livekit_client = { path = "crates/livekit_client" }
 llama_cpp = { path = "crates/llama_cpp" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }
@@ -414,6 +417,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
+path = { path = "crates/path" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
@@ -568,7 +572,7 @@ cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
 convert_case = "0.11.0"
-core-foundation = "=0.10.0"
+core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
