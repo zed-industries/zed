@@ -137,13 +137,12 @@ fn schedule_task(
         .buffer()
         .read(cx)
         .buffer(action.range.start.buffer_id)
-        .map(|buffer| {
+        .and_then(|buffer| {
             let buffer_snapshot = buffer.read(cx).snapshot();
             let buffer_id = buffer_snapshot.remote_id();
             let offset = BufferOffset(action.range.start.to_offset(&buffer_snapshot));
             editor.runnable_task_key_for_offset(buffer_id, offset)
-        })
-        .flatten();
+        });
     if let Some((buffer_id, buffer_row)) = runnable_task_key {
         editor.set_runnable_task_status(buffer_id, buffer_row, RunnableTaskStatus::Running, cx);
     }

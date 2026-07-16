@@ -204,7 +204,7 @@ impl Editor {
             };
 
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?.clone();
+        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
         let runnable_task_key =
             self.runnable_task_key_for_source(&actions_menu.deployed_from, window, cx);
