@@ -2605,6 +2605,37 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        check_vscode_import(
+            &mut store,
+            "{}".to_owned(),
+            r#"{
+              "files.readonlyInclude": {
+                "**/generated/**": true,
+                "**/ignored/**": false
+              },
+              "files.readonlyExclude": {
+                "**/generated/editable/**": true,
+                "**/still-read-only/**": false
+              }
+            }"#
+            .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "read_only_files_exclusions": [
+                "**/generated/editable/**"
+              ],
+              "read_only_files": [
+                "**/generated/**"
+              ]
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]

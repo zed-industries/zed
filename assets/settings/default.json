@@ -1646,6 +1646,9 @@
   // Globs to match files that will be opened as read-only. You can still view these files,
   // but cannot edit them. This is useful for generated files or external dependencies.
   "read_only_files": [],
+  // Globs to exclude from `read_only_files`. These exclusions take precedence over matches in
+  // `read_only_files`.
+  "read_only_files_exclusions": [],
   // Git gutter behavior configuration.
   "git": {
     // Global switch to enable or disable all git integration features.

@@ -21,6 +21,7 @@ pub struct WorktreeSettings {
     pub private_files: PathMatcher,
     pub hidden_files: PathMatcher,
     pub read_only_files: PathMatcher,
+    pub read_only_files_exclusions: PathMatcher,
 }
 
 impl WorktreeSettings {
@@ -48,11 +49,12 @@ impl WorktreeSettings {
     }
 
     pub fn is_path_read_only(&self, path: &RelPath) -> bool {
-        self.read_only_files.is_match(path)
+        self.read_only_files.is_match(path) && !self.read_only_files_exclusions.is_match(path)
     }
 
     pub fn is_std_path_read_only(&self, path: &Path) -> bool {
         self.read_only_files.is_match_std_path(path)
+            && !self.read_only_files_exclusions.is_match_std_path(path)
     }
 }
 
@@ -64,6 +66,7 @@ impl Settings for WorktreeSettings {
         let private_files = worktree.private_files.unwrap().0;
         let hidden_files = worktree.hidden_files.unwrap();
         let read_only_files = worktree.read_only_files.unwrap_or_default();
+        let read_only_files_exclusions = worktree.read_only_files_exclusions.unwrap_or_default();
         let scan_symlinks = worktree.scan_symlinks.unwrap();
         let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
@@ -97,6 +100,12 @@ impl Settings for WorktreeSettings {
             read_only_files: path_matchers(read_only_files, "read_only_files")
                 .log_err()
                 .unwrap_or_default(),
+            read_only_files_exclusions: path_matchers(
+                read_only_files_exclusions,
+                "read_only_files_exclusions",
+            )
+            .log_err()
+            .unwrap_or_default(),
             scan_symlinks,
         }
     }

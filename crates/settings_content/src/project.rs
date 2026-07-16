@@ -162,6 +162,10 @@ pub struct WorktreeSettingsContent {
     /// external dependencies that should not be modified directly.
     /// Default: []
     pub read_only_files: Option<Vec<String>>,
+
+    /// Exclude files matching these globs from `read_only_files`.
+    /// Default: []
+    pub read_only_files_exclusions: Option<Vec<String>>,
 }
 
 #[with_fallible_options]

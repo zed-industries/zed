@@ -1106,7 +1106,7 @@ impl VsCodeSettings {
             private_files: None,
             hidden_files: None,
             read_only_files: self
-                .read_value("files.readonlyExclude")
+                .read_value("files.readonlyInclude")
                 .and_then(|v| v.as_object())
                 .map(|v| {
                     v.iter()
@@ -1120,6 +1120,17 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
+            read_only_files_exclusions: self
+                .read_value("files.readonlyExclude")
+                .and_then(|v| v.as_object())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|(pattern, enabled)| {
+                            enabled.as_bool().unwrap_or(false).then(|| pattern.to_owned())
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .filter(|patterns| !patterns.is_empty()),
         }
     }
 }

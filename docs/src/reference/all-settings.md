@@ -3506,6 +3506,41 @@ List of `string` glob patterns
 
 `boolean` values
 
+## Read Only File Exclusions
+
+- Description: Globs to exclude from `read_only_files`. Exclusions take precedence over read-only matches.
+- Setting: `read_only_files_exclusions`
+- Default: `[]`
+
+**Options**
+
+List of `string` glob patterns
+
+For example, this makes generated files read-only except for files in `generated/editable`:
+
+```json [settings]
+{
+  "read_only_files": ["**/generated/**"],
+  "read_only_files_exclusions": ["**/generated/editable/**"]
+}
+```
+
+## Read Only Files
+
+- Description: Globs to match files that Zed should open as read-only. Matching files display a lock icon and cannot be edited unless you unlock them with {#action workspace::ToggleReadOnlyFile}. See [Globs](../globs.md) for supported pattern syntax.
+- Setting: `read_only_files`
+- Default: `[]`
+
+**Options**
+
+List of `string` glob patterns
+
+```json [settings]
+{
+  "read_only_files": ["**/generated/**", "**/*.lock"]
+}
+```
+
 ## Read SSH Config
 
 - Description: Whether to read SSH configuration files

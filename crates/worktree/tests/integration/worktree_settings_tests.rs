@@ -5,7 +5,7 @@ use util::{
 };
 use worktree::*;
 
-fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
+fn make_settings_with_read_only(patterns: &[&str], exclusions: &[&str]) -> WorktreeSettings {
     WorktreeSettings {
         prevent_sharing_in_public_channels: false,
         file_scan_exclusions: PathMatcher::default(),
@@ -18,13 +18,18 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
             PathStyle::local(),
         )
         .unwrap(),
+        read_only_files_exclusions: PathMatcher::new(
+            exclusions.iter().map(|pattern| pattern.to_string()),
+            PathStyle::local(),
+        )
+        .unwrap(),
         scan_symlinks: Default::default(),
     }
 }
 
 #[test]
 fn test_is_path_read_only_with_glob_patterns() {
-    let settings = make_settings_with_read_only(&["**/generated/**", "**/*.gen.rs"]);
+    let settings = make_settings_with_read_only(&["**/generated/**", "**/*.gen.rs"], &[]);
 
     let generated_file =
         RelPath::new(Path::new("src/generated/schema.rs"), PathStyle::local()).unwrap();
@@ -54,7 +59,7 @@ fn test_is_path_read_only_with_glob_patterns() {
 
 #[test]
 fn test_is_path_read_only_with_specific_paths() {
-    let settings = make_settings_with_read_only(&["vendor/**", "node_modules/**"]);
+    let settings = make_settings_with_read_only(&["vendor/**", "node_modules/**"], &[]);
 
     let vendor_file = RelPath::new(Path::new("vendor/lib/package.js"), PathStyle::local()).unwrap();
     assert!(
@@ -81,7 +86,7 @@ fn test_is_path_read_only_with_specific_paths() {
 
 #[test]
 fn test_is_path_read_only_empty_patterns() {
-    let settings = make_settings_with_read_only(&[]);
+    let settings = make_settings_with_read_only(&[], &[]);
 
     let any_file = RelPath::new(Path::new("src/main.rs"), PathStyle::local()).unwrap();
     assert!(
@@ -92,7 +97,7 @@ fn test_is_path_read_only_empty_patterns() {
 
 #[test]
 fn test_is_path_read_only_with_extension_pattern() {
-    let settings = make_settings_with_read_only(&["**/*.lock", "**/*.min.js"]);
+    let settings = make_settings_with_read_only(&["**/*.lock", "**/*.min.js"], &[]);
 
     let lock_file = RelPath::new(Path::new("Cargo.lock"), PathStyle::local()).unwrap();
     assert!(
@@ -118,4 +123,26 @@ fn test_is_path_read_only_with_extension_pattern() {
         !settings.is_path_read_only(&regular_js),
         "Regular JS files should not be read-only"
     );
+}
+
+#[test]
+fn test_read_only_exclusions_take_precedence() {
+    let settings = make_settings_with_read_only(
+        &["**/generated/**"],
+        &["**/generated/editable/**"],
+    );
+
+    let generated_file =
+        RelPath::new(Path::new("generated/schema.rs"), PathStyle::local()).unwrap();
+    assert!(settings.is_path_read_only(&generated_file));
+
+    let excluded_file = RelPath::new(
+        Path::new("generated/editable/config.rs"),
+        PathStyle::local(),
+    )
+    .unwrap();
+    assert!(!settings.is_path_read_only(&excluded_file));
+
+    let settings = make_settings_with_read_only(&[], &["**/generated/**"]);
+    assert!(!settings.is_path_read_only(&generated_file));
 }

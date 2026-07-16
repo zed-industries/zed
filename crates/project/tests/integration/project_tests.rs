@@ -15625,6 +15625,8 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
                     "**/generated/**".to_string(),
                     "**/*.gen.rs".to_string(),
                 ]);
+                settings.project.worktree.read_only_files_exclusions =
+                    Some(vec!["**/generated/editable/**".to_string()]);
             });
         });
     });
@@ -15639,6 +15641,9 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
             },
             "generated": {
                 "schema.rs": "// Auto-generated schema",
+                "editable": {
+                    "config.rs": "// Hand-maintained configuration",
+                },
             }
         }),
     )
@@ -15685,6 +15690,20 @@ async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
         assert!(
             buffer.read_only(),
             "File in generated directory should be read-only"
+        );
+    });
+
+    let excluded_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/editable/config.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    excluded_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "File matching a read-only exclusion should be read-write"
         );
     });
 }
@@ -15753,6 +15772,14 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
 async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files_exclusions =
+                    Some(vec!["**/test.txt".to_string()]);
+            });
+        });
+    });
 
     let root = TempTree::new(json!({
         "project": {
@@ -15781,7 +15808,7 @@ async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext
     buffer.read_with(cx, |buffer, _| {
         assert!(
             buffer.read_only(),
-            "OS read-only files should open as read-only"
+            "Settings exclusions should not override OS read-only files"
         );
     });
 }
