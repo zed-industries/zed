@@ -43,6 +43,9 @@ pub struct SystemPromptTemplate<'a> {
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
+    /// Relevant memory facts injected into the system prompt, formatted as
+    /// a bullet list. Empty string when no relevant memories exist.
+    pub memory_data: String,
     /// Whether agent-run terminal commands are wrapped in an OS-level
     /// sandbox for this thread. When `true`, the rendered prompt
     /// describes the sandbox's read/write/network rules and the
@@ -101,6 +104,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -134,6 +138,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
+            memory_data: String::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -163,6 +168,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -196,6 +202,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -234,6 +241,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: true,
             is_linux: true,
             is_windows: false,
@@ -264,6 +272,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: true,
@@ -288,6 +297,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -308,6 +318,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -326,6 +337,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            memory_data: String::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,

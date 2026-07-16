@@ -1423,6 +1423,21 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
+            // Memory tools store/retrieve facts in ~/.zed/memory.jsonl.
+            // They don't modify the project or run commands.
+            "memory_write",
+            "memory_search",
+            // Cron tools manage background scheduled tasks.
+            // They don't modify the project or run commands.
+            "cron_add",
+            "cron_list",
+            "cron_pause",
+            "cron_remove",
+            // Webhook tools manage event-driven agent activation.
+            // They don't modify the project or run commands.
+            "webhook_subscribe",
+            "webhook_unsubscribe",
+            "webhook_list",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

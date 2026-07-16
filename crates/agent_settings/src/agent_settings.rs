@@ -201,6 +201,121 @@ fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshol
     }
 }
 
+/// Configuration for the task-type router. When enabled, the agent
+/// inspects the user's prompt and dispatches to the model profile
+/// best suited for the task (edit, research, terminal, or general).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RouterConfig {
+    /// Master switch — when false (default), all tasks use the default model.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Per-task-type model profiles.
+    #[serde(default)]
+    pub profiles: RoutingProfiles,
+}
+
+impl Default for RouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            profiles: RoutingProfiles::default(),
+        }
+    }
+}
+
+/// Model selection for a specific task type.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelProfile {
+    /// Display name (e.g. "Edit Agent").
+    pub name: Option<String>,
+    /// Provider ID (e.g. "anthropic", "openrouter", "google").
+    pub provider: Option<String>,
+    /// Model name (e.g. "claude-sonnet-4", "gemini-2.0-flash").
+    pub model: Option<String>,
+    /// Tool allowlist — empty means "all available tools".
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
+impl Default for ModelProfile {
+    fn default() -> Self {
+        Self {
+            name: None,
+            provider: None,
+            model: None,
+            tools: vec![],
+        }
+    }
+}
+
+/// All four task-type profiles.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RoutingProfiles {
+    #[serde(default)]
+    pub edit: ModelProfile,
+    #[serde(default)]
+    pub research: ModelProfile,
+    #[serde(default)]
+    pub terminal: ModelProfile,
+    #[serde(default)]
+    pub planning: ModelProfile,
+    #[serde(default)]
+    pub vision: ModelProfile,
+    #[serde(default)]
+    pub review: ModelProfile,
+    #[serde(default)]
+    pub general: ModelProfile,
+}
+
+impl Default for RoutingProfiles {
+    fn default() -> Self {
+        Self {
+            edit: ModelProfile {
+                name: Some("Edit".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4".into()),
+                tools: vec![],
+            },
+            research: ModelProfile {
+                name: Some("Research".into()),
+                provider: Some("google".into()),
+                model: Some("gemini-2.0-flash".into()),
+                tools: vec!["search_web".into(), "fetch".into(), "read_file".into(), "grep".into()],
+            },
+            terminal: ModelProfile {
+                name: Some("Terminal".into()),
+                provider: Some("openrouter".into()),
+                model: Some("deepseek/deepseek-chat".into()),
+                tools: vec!["terminal".into(), "read_file".into()],
+            },
+            planning: ModelProfile {
+                name: Some("Planning".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4".into()),
+                tools: vec![],
+            },
+            vision: ModelProfile {
+                name: Some("Vision".into()),
+                provider: Some("google".into()),
+                model: Some("gemini-2.0-flash".into()),
+                tools: vec!["read_file".into(), "fetch".into()],
+            },
+            review: ModelProfile {
+                name: Some("Review".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4".into()),
+                tools: vec!["read_file".into(), "grep".into(), "diagnostics".into()],
+            },
+            general: ModelProfile {
+                name: Some("General".into()),
+                provider: None,
+                model: None,
+                tools: vec![],
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -241,6 +356,7 @@ pub struct AgentSettings {
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
+    pub router: RouterConfig,
 }
 
 impl AgentSettings {

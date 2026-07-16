@@ -13,7 +13,8 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
+        open_audio_test_window, render_agent_setup_page, render_cron_page,
+        render_edit_prediction_setup_page, render_webhooks_page,
         render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
         render_skills_setup_page, render_tool_permissions_setup_page,
     },
@@ -8061,32 +8062,58 @@ fn ai_page(cx: &App) -> SettingsPage {
                 render: render_llm_providers_page,
             }),
             SettingsPageItem::SubPageLink(SubPageLink {
-                title: "External Agents".into(),
+                title: "Agent Setup".into(),
                 r#type: Default::default(),
-                json_path: Some("agent_servers"),
+                json_path: Some("agent_setup"),
                 description: Some(
-                    "View, add, and remove agents connected through the Agent Client Protocol."
+                    "Configure which model each agent role uses for different task types."
                         .into(),
                 ),
                 search_aliases: &[
-                    "acp",
-                    "agent client protocol",
-                    "amp",
-                    "claude agent",
-                    "claude code",
-                    "codex",
-                    "copilot cli",
-                    "cursor",
-                    "external agent",
-                    "factory droid",
-                    "github copilot",
-                    "grok build",
-                    "junie",
-                    "opencode",
+                    "agent role",
+                    "agent setup",
+                    "edit agent",
+                    "research agent",
+                    "terminal agent",
+                    "model routing",
+                    "task routing",
+                    "router",
                 ],
                 in_json: false,
                 files: USER,
-                render: render_external_agents_page,
+                render: render_agent_setup_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Cron Jobs".into(),
+                r#type: Default::default(),
+                json_path: Some("cron_jobs"),
+                description: Some(
+                    "View and manage scheduled agent tasks that run automatically."
+                        .into(),
+                ),
+                search_aliases: &[
+                    "cron", "scheduler", "scheduled task", "automation",
+                    "background task", "recurring", "cron job", "timer",
+                ],
+                in_json: false,
+                files: USER,
+                render: render_cron_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Webhooks".into(),
+                r#type: Default::default(),
+                json_path: Some("webhooks"),
+                description: Some(
+                    "Event-driven agent triggers that run automatically."
+                        .into(),
+                ),
+                search_aliases: &[
+                    "webhook", "trigger", "event", "file watch",
+                    "http listener", "git hook", "automation",
+                ],
+                in_json: false,
+                files: USER,
+                render: render_webhooks_page,
             }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "MCP Servers".into(),

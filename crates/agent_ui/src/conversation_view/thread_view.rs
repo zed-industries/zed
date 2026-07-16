@@ -6864,6 +6864,21 @@ impl ThreadView {
     ) {
         self.thread_feedback
             .submit(self.thread.clone(), feedback, window, cx);
+        // Feed feedback into skill curator for auto-refinement
+        use agent::feedback::{FeedbackOutcome, handle};
+        let outcome = match feedback {
+            ThreadFeedback::Positive => FeedbackOutcome::Positive,
+            ThreadFeedback::Negative => FeedbackOutcome::Negative,
+        };
+        // Extract message text from the current thread for context
+        let msgs: Vec<String> = self
+            .thread
+            .read(cx)
+            .messages
+            .iter()
+            .map(|m| m.to_markdown())
+            .collect();
+        handle(outcome, &msgs);
         cx.notify();
     }
 

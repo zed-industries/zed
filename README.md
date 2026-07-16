@@ -1,49 +1,77 @@
-# Zed
+# Zed (ChxisB fork)
 
-[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
+A self-learning, agentic fork of [Zed](https://zed.dev) — a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+## ✨ What's different
 
----
+This fork extends Zed's native AI agent with persistent memory, skill curation, multi-agent routing, and autonomous task scheduling — turning the editor into a continuously improving development assistant.
 
-### Installation
+| Feature | Description |
+|---------|-------------|
+| **Persistent memory** | `memory_write`/`memory_search` tools store facts across sessions in `~/.zed/memory.jsonl` |
+| **Skill curator** | Watches completed threads, extracts repeating patterns, auto-generates `SKILL.md` files |
+| **Multi-agent router** | 7 role-based profiles (Edit, Research, Terminal, Planning, Vision, Review, General) each with its own model |
+| **Cron scheduler** | Background agent tasks on a timer — `cron_add`/`cron_list`/`cron_remove` tools + settings UI |
+| **Webhook triggers** | Event-driven agent activation on file changes, HTTP requests, or git hooks |
+| **User feedback → refinement** | Thumbs up/down on edits feeds back into the curator to strengthen or remove auto-skills |
+| **Auto AGENTS.md** | AGENTS.md is auto-created when opening a new project with no existing rules file |
 
-On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).
+## Install
 
-Other platforms are not yet available:
+**macOS / Linux** (one command):
+```bash
+curl -fsSL https://raw.githubusercontent.com/ChxisB/zed/main/script/install.sh | bash
+```
 
-- Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
+**Windows** (PowerShell):
+```powershell
+irm https://raw.githubusercontent.com/ChxisB/zed/main/script/install.ps1 | iex
+```
 
-### Developing Zed
+Or download from [GitHub Releases](https://github.com/ChxisB/zed/releases).
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
+To update, re-run the same command.
 
-### Contributing
+## Building from source
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+Requires Rust 1.81+ and Node.js 20+:
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+```bash
+git clone https://github.com/ChxisB/zed.git
+cd zed
+cargo build --release
+./target/release/zed
+```
 
-### Licensing
+## Usage
 
-Zed source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked.
+```bash
+zed                    # Open the editor
+zed --help             # CLI options
+```
 
-License information for third party dependencies must be correctly provided for CI to pass.
+Once inside, open the agent panel (✨ icon in status bar) and try:
 
-We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automatically comply with open source licenses. If CI is failing, check the following:
+- *"Remember that I prefer tabs over spaces"* → saves to persistent memory
+- *"Check for npm vulnerabilities every morning at 9am"* → creates a cron job
+- *"Watch for changes to *.rs files and run cargo check"* → creates a webhook trigger
+- *"Plan the architecture for a microservice"* → routed to Planning agent (Claude)
+- *"Review this code"* → routed to Review agent
 
-- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
-- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
-- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+## Agent Setup
 
-## Sponsorship
+**AI Settings → Agent Setup** configures which model each role uses:
 
-Zed is developed by **Zed Industries, Inc.**, a for-profit company.
+| Role | Default Model | Tools |
+|------|--------------|-------|
+| Edit | anthropic/claude-sonnet-4 | All tools |
+| Research | google/gemini-2.0-flash | search_web, fetch, read, grep |
+| Terminal | openrouter/deepseek-chat | terminal, read_file |
+| Planning | anthropic/claude-sonnet-4 | All tools, spawn_agent |
+| Vision | google/gemini-2.0-flash | read_file, fetch |
+| Review | anthropic/claude-sonnet-4 | read_file, grep, diagnostics |
+| General | (inherited) | All tools |
 
-If you’d like to financially support the project, you can do so via GitHub Sponsors.
-Sponsorships go directly to Zed Industries and are used as general company revenue.
-There are no perks or entitlements associated with sponsorship.
+## Licensing
 
+Licensed under GPL-3.0-or-later, same as upstream Zed. See [LICENSE](./LICENSE) for details.

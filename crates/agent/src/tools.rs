@@ -17,14 +17,17 @@ mod go_to_definition_tool;
 mod grep_tool;
 mod list_agents_and_models_tool;
 mod list_directory_tool;
+mod memory;
 mod move_path_tool;
 mod read_file_tool;
 mod rename_tool;
+mod scheduler;
 mod skill_tool;
 mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
 mod tool_permissions;
+mod webhook;
 mod web_search_tool;
 mod write_file_tool;
 
@@ -78,12 +81,16 @@ pub use go_to_definition_tool::*;
 pub use grep_tool::*;
 pub use list_agents_and_models_tool::*;
 pub use list_directory_tool::*;
+pub use memory::tools::*;
+
 pub use move_path_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
+pub use scheduler::tools::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+pub use webhook::tools::*;
 
 pub use terminal_tool::*;
 pub use tool_permissions::*;
@@ -201,14 +208,23 @@ tools! {
     GrepTool,
     ListAgentsAndModelsTool,
     ListDirectoryTool,
+    MemorySearchTool,
+    MemoryWriteTool,
     MovePathTool,
     ReadFileTool,
     RenameTool,
+    CronAddTool,
+    CronListTool,
+    CronPauseTool,
+    CronRemoveTool,
     SkillTool,
     SpawnAgentTool,
     TerminalTool,
     WebSearchTool,
     WriteFileTool,
+    WebhookSubscribeTool,
+    WebhookUnsubscribeTool,
+    WebhookListTool,
 }
 
 /// Some built-in tools are gated behind a feature flag and only become usable

@@ -3727,7 +3727,7 @@ impl SettingsWindow {
                 current_sub_page.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH);
             let is_llm_providers_page = current_sub_page.link.json_path == Some("llm_providers")
                 && current_sub_page.link.title.as_ref() == "LLM Providers";
-            let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
+            let is_external_agents_page = false;
             let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
 
             page_header = h_flex()

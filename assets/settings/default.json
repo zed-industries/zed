@@ -1195,6 +1195,8 @@
           "spawn_agent": true,
           "terminal": true,
           "search_web": true,
+          "memory_write": true,
+          "memory_search": true,
         },
       },
       "ask": {
@@ -1216,6 +1218,8 @@
           "skill": true,
           "spawn_agent": true,
           "search_web": true,
+          "memory_write": true,
+          "memory_search": true,
         },
       },
       "minimal": {

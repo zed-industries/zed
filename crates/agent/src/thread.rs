@@ -2645,6 +2645,28 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
+        // Router: classify this prompt and select optimal model+tools
+        if let Some(Message::User(user_msg)) = self.messages.last() {
+            let prompt: String = user_msg
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    UserMessageContent::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !prompt.is_empty() {
+                let router_config = agent_settings::AgentSettings::get_global(cx).router.clone();
+                crate::thread_hooks::maybe_route(
+                    &router_config,
+                    &prompt,
+                    &mut None,
+                    &mut vec![],
+                );
+            }
+        }
+
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -2674,6 +2696,10 @@ impl Thread {
                     Ok(()) => {
                         log::debug!("Turn execution completed");
                         event_stream.send_stop(acp::StopReason::EndTurn);
+                        // Curator: extract patterns from completed turn
+                        _ = this.update(cx, |this, _| {
+                            crate::thread_hooks::maybe_observe(&this.messages, cx);
+                        });
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
@@ -4214,12 +4240,34 @@ impl Thread {
         log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let memory_data = {
+            let store = crate::memory::global_store();
+            let facts = store.all(None);
+            if facts.is_empty() {
+                String::new()
+            } else {
+                let mut lines = String::from("## Learned Facts\n\n");
+                lines.push_str("The following facts have been learned about the user and project across sessions:\n\n");
+                for fact in facts.iter().take(10) {
+                    lines.push_str(&format!(
+                        "- **{}**: {}",
+                        fact.key, fact.value
+                    ));
+                    if let Some(ref cat) = fact.category {
+                        lines.push_str(&format!(" [{}]", cat));
+                    }
+                    lines.push('\n');
+                }
+                lines
+            }
+        };
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
+            memory_data,
             sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
                 self.project.read(cx),
                 cx,

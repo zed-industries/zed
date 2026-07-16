@@ -1,13 +1,21 @@
+pub mod agents_file;
 mod db;
 mod legacy_thread;
+pub mod curator;
+pub mod feedback;
+pub mod memory;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+pub mod router;
+pub mod scheduler;
 mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
+pub mod thread_hooks;
 mod thread;
+pub mod webhook;
 mod thread_store;
 mod tool_permissions;
 mod tools;
@@ -2096,6 +2104,13 @@ impl NativeAgentConnection {
         self.0.update(cx, |agent, cx| {
             let project_id = agent.get_or_create_project_state(&project, cx);
             agent.ensure_skills_scan_started(cx);
+            // Auto-create AGENTS.md if the new project doesn't have one
+            if let Some(root_path) = project.read(cx).worktrees(cx).next()
+                .and_then(|wt| Some(wt.read(cx).abs_path().to_path_buf()))
+            {
+                let fs = agent.fs.clone();
+                let _ = crate::agents_file::ensure_project_has_agents_md(&root_path, fs.as_ref());
+            }
             if let Some(state) = agent.projects.get_mut(&project_id) {
                 state.project_context_needs_refresh.send(()).ok();
             }

@@ -1,7 +1,8 @@
+mod agent_setup_page;
 mod audio_input_output_setup;
 mod audio_test_window;
+mod cron_page;
 mod edit_prediction_provider_setup;
-mod external_agents_page;
 mod feature_flags;
 mod llm_providers_page;
 mod mcp_servers_page;
@@ -9,16 +10,17 @@ mod sandbox_settings;
 mod skill_creator;
 mod skills_setup;
 mod tool_permissions_setup;
+mod webhook_page;
 
+pub(crate) use agent_setup_page::render_agent_setup_page;
 pub(crate) use audio_input_output_setup::{
     render_input_audio_device_dropdown, render_output_audio_device_dropdown,
 };
 pub(crate) use audio_test_window::open_audio_test_window;
+pub(crate) use cron_page::render_cron_page;
 pub(crate) use edit_prediction_provider_setup::render_edit_prediction_setup_page;
-pub(crate) use external_agents_page::{
-    CustomAgentForm, render_add_agent_popover, render_external_agents_page,
-};
 pub(crate) use feature_flags::render_feature_flags_page;
+pub(crate) use webhook_page::render_webhooks_page;
 pub(crate) use llm_providers_page::{
     LlmProviderForm, render_add_llm_provider_popover, render_llm_providers_page,
 };
