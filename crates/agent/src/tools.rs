@@ -84,7 +84,7 @@ pub use rename_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
-pub(crate) use terminal_tool::sandbox_git_paths::{SandboxGitPathCandidates, sandbox_git_paths};
+
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use web_search_tool::*;
@@ -153,12 +153,12 @@ macro_rules! tools {
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
-                LanguageModelRequestTool {
-                    name: T::NAME.to_string(),
-                    description: T::description().to_string(),
-                    input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
-                    use_input_streaming: T::supports_input_streaming(),
-                }
+                LanguageModelRequestTool::function(
+                    T::NAME.to_string(),
+                    T::description().to_string(),
+                    T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    T::supports_input_streaming(),
+                )
             }
             [
                 $(

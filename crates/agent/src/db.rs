@@ -2,7 +2,7 @@ use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
@@ -107,9 +107,7 @@ pub struct DbSandboxGrants {
     /// granted.
     #[serde(default)]
     pub allow_fs_write_all: bool,
-    /// Whether access to protected Git directories (`.git`) was granted.
-    #[serde(default)]
-    pub allow_git_access: bool,
+
     /// Whether the model-requested fully-unsandboxed escape was granted.
     #[serde(default)]
     pub unsandboxed: bool,
@@ -283,7 +281,9 @@ impl DbThread {
                                 name: tool_use.name.into(),
                                 raw_input: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
-                                input: tool_use.input,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    tool_use.input,
+                                ),
                                 is_input_complete: true,
                                 thought_signature: None,
                             },
@@ -446,7 +446,7 @@ impl ThreadsDatabase {
                 data BLOB NOT NULL
             )
         "})?()
-        .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
+        .map_err(|e| e.context("Failed to create threads table"))?;
 
         if let Ok(mut s) = connection.exec(indoc! {"
             ALTER TABLE threads ADD COLUMN parent_id TEXT
@@ -950,7 +950,6 @@ mod tests {
             write_paths: vec![PathBuf::from("/tmp/build")],
             network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
             network_any_host: false,
-            allow_git_access: true,
             allow_fs_write_all: false,
             unsandboxed: true,
             sandbox_fallback: true,

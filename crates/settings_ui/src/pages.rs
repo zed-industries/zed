@@ -19,7 +19,9 @@ pub(crate) use external_agents_page::{
     CustomAgentForm, render_add_agent_popover, render_external_agents_page,
 };
 pub(crate) use feature_flags::render_feature_flags_page;
-pub(crate) use llm_providers_page::render_llm_providers_page;
+pub(crate) use llm_providers_page::{
+    LlmProviderForm, render_add_llm_provider_popover, render_llm_providers_page,
+};
 pub(crate) use mcp_servers_page::{
     McpServerForm, render_add_server_popover, render_mcp_servers_page,
 };

@@ -23,6 +23,7 @@
 #   { read = "/path"; succeeds = true; }          # read a host file
 #   { write = "/path"; succeeds = false; }        # write a host file
 #   { network = "echo1"; succeeds = true; }       # connect to an echo server
+#   { socketPath = "/run/x.sock"; succeeds = false; }   # connect a unix socket
 #   { canCreate = false; error = "bwrap_not_found"; }   # Sandbox::can_create
 #
 # plus optional policy fields applied to that check (defaults shown):
@@ -31,11 +32,8 @@
 #   writablePaths = [ ];        # writable subtrees when fs = "restricted"
 #   networkAccess = "blocked";  # or "unrestricted" / "restricted"
 #   allowedDomains = [ ];       # allowed hosts when networkAccess = "restricted"
-#   gitDisabled = [ ];          # `.git` dirs whose contents are protected
-#                               # (read-only on Linux). Mutually exclusive with
-#                               # gitAllowed.
-#   gitAllowed = [ ];           # `.git` dirs whose contents are made writable.
-#                               # Mutually exclusive with gitDisabled.
+#   protectedPaths = [ ];       # paths that remain readable but not writable,
+#                               # even if they fall under a writable subtree.
 #
 # Two echo servers (`echo1`, `echo2`) on separate nodes give the network checks
 # real peers, so a restricted-network policy that allowlists `echo1` can be
@@ -74,6 +72,14 @@ let
     };
   };
 
+  # A unix-domain socket, owned by a process *outside* the sandbox, that a
+  # sandboxed command must not be able to `connect()` to. It lives under `/run`
+  # (which the sandbox `--ro-bind`s along with the rest of `/`) and NOT under
+  # `/tmp` (which the restricted-fs sandbox masks with a tmpfs, hiding anything
+  # there), so it stays visible inside the sandbox and the block is what's
+  # actually under test.
+  unixSocketPath = "/run/zed-sandbox-test.sock";
+
   # Quiet boot + a couple of cores; shared by every machine-under-test.
   baseMachine = {
     boot.consoleLogLevel = lib.mkForce 3; # be quiet pls :)
@@ -82,6 +88,18 @@ let
     virtualisation = {
       memorySize = 1024;
       cores = 2;
+    };
+
+    # A unix-socket echo server outside the sandbox, so a sandboxed `connect()`
+    # has a real peer: without a listener the connect would fail with
+    # ECONNREFUSED even absent the sandbox, giving a false "blocked" pass.
+    systemd.services.unix-echo-server = {
+      description = "Unix-domain-socket echo server";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${pkgs.socat}/bin/socat -d UNIX-LISTEN:${unixSocketPath},fork,reuseaddr EXEC:cat";
+        Restart = "on-failure";
+      };
     };
   };
 
@@ -161,6 +179,10 @@ let
         machine.wait_until_succeeds("getent hosts echo1", timeout=30)
         machine.wait_until_succeeds("getent hosts echo2", timeout=30)
 
+        # The unix-socket checks need a real peer outside the sandbox; wait for
+        # the listener to be up before running the helper.
+        machine.wait_until_succeeds("test -S ${unixSocketPath}", timeout=30)
+
         # The helper logs each check tagged `[sandbox_test]:`. `succeed` fails the
         # whole test on a non-zero exit; we print its output so the per-check
         # results show up in the build log.
@@ -237,136 +259,49 @@ in
         succeeds = true;
       }
 
-      # ---- Git protection ----------------------------------------------------
-      # The worktree is writable, but the `.git` directory inside it can be
-      # protected (Git disabled) or opened up (Git allowed) independently. On
-      # Linux a protected `.git` is re-bound read-only *over* the writable
-      # worktree, so its contents stay readable but writes are denied.
-
-      # Git disabled: the worktree is writable but `.git` is protected, so a
-      # write into `.git` is denied. This is the core case the feature exists
-      # for — an agent editing the project must not be able to corrupt Git
-      # metadata.
+      # ---- Protected paths ---------------------------------------------------
+      # A path inside a writable subtree can be re-bound read-only over the
+      # writable bind (order matters: later binds win). On Linux, protected paths
+      # remain readable but writes are denied.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
+        write = "/sandbox-test/repo/protected/test";
         succeeds = false;
       }
 
-      # Git allowed: the same write into `.git` now succeeds because the policy
-      # makes `.git` writable.
+      # Protected paths affect only the protected subtree: ordinary writes
+      # elsewhere in the writable worktree are unaffected.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # Git disabled protects only `.git`: ordinary writes elsewhere in the
-      # writable worktree are unaffected.
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
         write = "/sandbox-test/repo/src/main.rs";
         succeeds = true;
       }
 
-      # Git disabled is a subtree protection: a write to something nested deep
-      # inside `.git` is denied too, not just a top-level file.
+      # Protected paths block writes but NOT reads on Linux because the protected
+      # subtree is read-only.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/hooks/pre-commit";
-        succeeds = false;
-      }
-
-      # Git disabled blocks writes but NOT reads: on Linux a protected `.git` is
-      # read-only, so its contents remain readable from inside the sandbox
-      # (Git status, log, diff, … must keep working).
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        read = "/sandbox-test/repo/.git/HEAD";
+        read = "/sandbox-test/repo/protected/HEAD";
         succeeds = true;
       }
 
-      # Git allowed grants writes to `.git` on its own, even when the worktree
-      # itself is not in `writablePaths`. The policy's Git dirs are made
-      # writable directly.
-      {
-        fs = "restricted";
-        writablePaths = [ ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # ...and that grant is scoped to `.git`: it does not make the surrounding
-      # worktree writable. A write next to `.git` (not in `writablePaths`) is
-      # still denied.
-      {
-        fs = "restricted";
-        writablePaths = [ ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/README.md";
-        succeeds = false;
-      }
-
-      # Multiple repositories: each protected `.git` is independently denied.
-      # This exercises the list handling — a write into the *second* repo's
-      # `.git` must still be blocked.
-      {
-        fs = "restricted";
-        writablePaths = [
-          "/sandbox-test/repo-a"
-          "/sandbox-test/repo-b"
-        ];
-        gitDisabled = [
-          "/sandbox-test/repo-a/.git"
-          "/sandbox-test/repo-b/.git"
-        ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo-b/.git/test";
-        succeeds = false;
-      }
-
-      # The fs escape hatch supersedes Git protection: when filesystem writes
-      # are unrestricted there is no read-only bind to protect `.git`, so the
-      # write succeeds. This documents that `gitDisabled` only has teeth under a
-      # restricted filesystem policy.
+      # Protected paths stay read-only even when ordinary filesystem writes are
+      # otherwise unrestricted.
       {
         fs = "unrestricted";
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # Documented Linux gap: a `.git` that does not yet exist when the sandbox
-      # is built cannot be re-bound read-only, so it is skipped. Writing the
-      # `.git` entry itself (its parent worktree is writable, and `.git` does
-      # not exist beforehand) therefore succeeds. macOS denies this even before
-      # `.git` exists; bwrap cannot, and this test pins that difference.
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/fresh-repo" ];
-        gitDisabled = [ "/sandbox-test/fresh-repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/fresh-repo/.git";
-        succeeds = true;
+        write = "/sandbox-test/repo/protected/test";
+        succeeds = false;
       }
 
       # Blocked network: the echo server is unreachable.
@@ -409,6 +344,31 @@ in
         networkAccess = "restricted";
         allowedDomains = [ "echo1" ];
         network = "echo2";
+        succeeds = false;
+      }
+
+      # ---- Unix-domain socket escape ----------------------------------------
+      # A sandboxed command must NOT be able to connect to a unix-domain socket
+      # owned by a process outside the sandbox (session-IPC escape). Currently
+      # FAILS (no seccomp guard yet); becomes a regression test once the
+      # socket(AF_UNIX) seccomp filter lands.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/writable" ];
+        networkAccess = "blocked";
+        socketPath = unixSocketPath;
+        succeeds = false;
+      }
+
+      # The unix-socket block must hold regardless of network policy: our design
+      # decouples unix-socket blocking from the network grant, so even an
+      # unrestricted-network command must not reach an outside-the-sandbox
+      # session IPC socket. Also currently FAILS until the seccomp filter lands.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/writable" ];
+        networkAccess = "unrestricted";
+        socketPath = unixSocketPath;
         succeeds = false;
       }
 

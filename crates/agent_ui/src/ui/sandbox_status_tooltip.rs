@@ -8,7 +8,6 @@ use ui::{Divider, prelude::*};
 pub enum SandboxRow {
     Message(SharedString),
     Path(PathBuf),
-    Git(PathBuf),
     Domain(SharedString),
 }
 
@@ -19,10 +18,6 @@ impl SandboxRow {
 
     pub fn path(path: impl Into<PathBuf>) -> Self {
         Self::Path(path.into())
-    }
-
-    pub fn git(path: impl Into<PathBuf>) -> Self {
-        Self::Git(path.into())
     }
 
     pub fn domain(domain: impl Into<SharedString>) -> Self {
@@ -53,7 +48,6 @@ impl SandboxRow {
                     .unwrap_or_else(|| icon_basic(IconName::Folder));
                 (icon, path.display().to_string())
             }
-            SandboxRow::Git(path) => (icon_basic(IconName::GitBranch), path.display().to_string()),
             SandboxRow::Domain(domain) => (icon_basic(IconName::Public), domain.to_string()),
         };
 
@@ -234,17 +228,12 @@ impl Component for SandboxStatusTooltip {
             .group(
                 SandboxGroup::new("Write Access").row(SandboxRow::path("/Users/you/project/build")),
             )
-            .group(SandboxGroup::new("Network Access").row(SandboxRow::message("None")))
-            .group(
-                SandboxGroup::new("Git Metadata Access")
-                    .row(SandboxRow::git("/Users/you/project/.git")),
-            );
+            .group(SandboxGroup::new("Network Access").row(SandboxRow::message("None")));
 
         let unrestricted_section = SandboxSection::new("Defined in your settings:")
-            .group(
-                SandboxGroup::new("Write Access")
-                    .row(SandboxRow::message("All paths (unrestricted)")),
-            )
+            .group(SandboxGroup::new("Write Access").row(SandboxRow::message(
+                "All paths except protected Git metadata",
+            )))
             .group(
                 SandboxGroup::new("Network Access")
                     .row(SandboxRow::message("All domains (unrestricted)")),
