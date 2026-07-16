@@ -623,6 +623,7 @@ fn render_zed_agent_button(user_store: &Entity<UserStore>, cx: &mut App) -> impl
                     .with_easing(pulsating_between(0.4, 0.8)),
                 |label, delta| label.alpha(delta),
             )
+            .with_max_fps(15)
             .into_any_element()
     } else if is_signed_in && is_free {
         Label::new("Start Free Trial")

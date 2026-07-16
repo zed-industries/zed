@@ -4049,7 +4049,8 @@ impl ThreadView {
                                         .repeat()
                                         .with_easing(pulsating_between(0.3, 0.7)),
                                     |label, delta| label.alpha(delta),
-                                ),
+                                )
+                                .with_max_fps(15),
                             )
                         } else {
                             let stats = DiffStats::all_files(changed_buffers.iter().cloned(), cx);
@@ -9724,18 +9725,20 @@ impl ThreadView {
                 _ => base.w_1_2(),
             };
 
-            modified.with_animation(
-                ElementId::Integer(n),
-                Animation::new(Duration::from_secs(2)).repeat(),
-                move |tab, delta| {
-                    let delta = (delta - 0.15 * n as f32) / 0.7;
-                    let delta = 1.0 - (0.5 - delta).abs() * 2.;
-                    let delta = ease_in_out(delta.clamp(0., 1.));
-                    let delta = 0.1 + 0.9 * delta;
+            modified
+                .with_animation(
+                    ElementId::Integer(n),
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    move |tab, delta| {
+                        let delta = (delta - 0.15 * n as f32) / 0.7;
+                        let delta = 1.0 - (0.5 - delta).abs() * 2.;
+                        let delta = ease_in_out(delta.clamp(0., 1.));
+                        let delta = 0.1 + 0.9 * delta;
 
-                    tab.bg(bg_color.opacity(delta))
-                },
-            )
+                        tab.bg(bg_color.opacity(delta))
+                    },
+                )
+                .with_max_fps(30)
         };
 
         v_flex()
