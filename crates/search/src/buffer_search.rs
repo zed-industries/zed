@@ -993,9 +993,24 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(item) = &self.active_searchable_item
-            && let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx)
-        {
+        let Some(item) = &self.active_searchable_item else {
+            return;
+        };
+        // A split diff editor picks which side to toggle and keeps both sides
+        // in sync, while its `act_as_type(Editor)` only exposes the RHS
+        // editor, so relay to the split editor itself when it is split.
+        if let Some(split_editor) = item.act_as_type(TypeId::of::<SplittableEditor>(), cx) {
+            let split_editor = split_editor
+                .downcast::<SplittableEditor>()
+                .expect("Is a splittable editor");
+            if split_editor.read(cx).is_split() {
+                split_editor.update(cx, |split_editor, cx| {
+                    split_editor.toggle_soft_wrap(action, window, cx)
+                });
+                return;
+            }
+        }
+        if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
             let editor = item.downcast::<Editor>().expect("Is an editor");
             editor.update(cx, |editor, cx| editor.toggle_soft_wrap(action, window, cx));
         }
