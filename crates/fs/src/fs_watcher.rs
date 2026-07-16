@@ -845,8 +845,7 @@ impl GlobalWatcher {
             match self.watch(path.as_path(), mode) {
                 Ok(()) => {}
                 Err(error)
-                    if mode == WatcherMode::Native
-                        && is_native_watch_saturation_error(&error) =>
+                    if mode == WatcherMode::Native && is_native_watch_saturation_error(&error) =>
                 {
                     // On macOS all native paths share one FSEventStream, and a watch
                     // registration tears the stream down before rebuilding it with the
@@ -863,8 +862,7 @@ impl GlobalWatcher {
                         self.unwatch(path.as_path(), mode).log_err();
                         self.enqueue(
                             mode,
-                            Ok(Event::new(EventKind::Other)
-                                .set_flag(notify::event::Flag::Rescan)),
+                            Ok(Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan)),
                         );
                     }
                     self.start_native_watch_limit_cooldown(path.as_path());
