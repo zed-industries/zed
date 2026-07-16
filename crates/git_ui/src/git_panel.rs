@@ -7996,7 +7996,6 @@ impl GitPanel {
                     .min_w_0()
                     .w_full()
                     .pl_2p5()
-                    .pr_1()
                     .gap_1()
                     .child(
                         Icon::new(if expanded {
