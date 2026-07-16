@@ -96,7 +96,7 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(move |this, _, value| animator(this, value)),
             animations: smallvec::smallvec![animation],
-            frame_interval: None,
+            frame_intervals: smallvec::smallvec![None],
         }
     }
 
@@ -110,12 +110,13 @@ pub trait AnimationExt {
     where
         Self: Sized,
     {
+        let frame_intervals = smallvec::smallvec![None; animations.len()];
         AnimationElement {
             id: id.into(),
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
-            frame_interval: None,
+            frame_intervals,
         }
     }
 
@@ -165,7 +166,7 @@ pub struct AnimationElement<E> {
     id: ElementId,
     element: Option<E>,
     animations: SmallVec<[Animation; 1]>,
-    frame_interval: Option<Duration>,
+    frame_intervals: SmallVec<[Option<Duration>; 1]>,
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
 }
 
@@ -224,7 +225,21 @@ impl<E> AnimationElement<E> {
     /// Cadenced animations use a timer rather than waking at the display's refresh rate, which is
     /// useful when their output only changes at discrete intervals.
     pub fn with_frame_interval(mut self, interval: Duration) -> Self {
-        self.frame_interval = Some(interval.max(Duration::from_nanos(1)));
+        self.frame_intervals
+            .fill(Some(interval.max(Duration::from_nanos(1))));
+        self
+    }
+
+    /// Set the update interval for successive stages of a chained animation.
+    ///
+    /// Missing entries leave the remaining stages unchanged, and extra entries are ignored.
+    pub fn with_frame_intervals(
+        mut self,
+        intervals: impl IntoIterator<Item = Option<Duration>>,
+    ) -> Self {
+        for (frame_interval, interval) in self.frame_intervals.iter_mut().zip(intervals) {
+            *frame_interval = interval.map(|interval| interval.max(Duration::from_nanos(1)));
+        }
         self
     }
 
@@ -631,8 +646,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 } else {
                     now.saturating_duration_since(state.start)
                 };
-                let animation_elapsed = self
-                    .frame_interval
+                let animation_elapsed = self.frame_intervals[animation_ix]
                     .map(|interval| floor_duration_to_interval(elapsed, interval))
                     .unwrap_or(elapsed);
                 let mut delta = animation_elapsed.as_secs_f32() / animation.duration.as_secs_f32();
@@ -668,7 +682,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             } else if animation_advanced {
                 state.scheduled_frame.take();
                 window.request_animation_frame();
-            } else if let Some(frame_interval) = self.frame_interval.or_else(|| {
+            } else if let Some(frame_interval) = self.frame_intervals[animation_ix].or_else(|| {
                 let max_fps = self.animations[animation_ix].max_fps?;
                 (max_fps.is_finite() && max_fps > 0.0)
                     .then(|| Duration::from_secs_f32(1.0 / max_fps))
@@ -909,6 +923,34 @@ mod tests {
                             .with_frame_interval(self.second_frame_interval),
                     )
                 })
+        }
+    }
+
+    struct ChainedAnimationTestView {
+        rendered_values: Rc<RefCell<Vec<(usize, f32)>>>,
+    }
+
+    impl Render for ChainedAnimationTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let rendered_values = self.rendered_values.clone();
+            div().child(
+                div()
+                    .with_animations(
+                        "chained",
+                        vec![
+                            Animation::new(Duration::from_millis(200)),
+                            Animation::new(Duration::from_millis(200)),
+                        ],
+                        move |this, animation_ix, delta| {
+                            rendered_values.borrow_mut().push((animation_ix, delta));
+                            this
+                        },
+                    )
+                    .with_frame_intervals([
+                        Some(Duration::from_millis(100)),
+                        Some(Duration::from_millis(50)),
+                    ]),
+            )
         }
     }
 
@@ -1576,5 +1618,39 @@ mod tests {
             .advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
         assert_eq!(rendered_one_shot_values.borrow().last(), Some(&1.0));
+    }
+
+    #[gpui::test]
+    fn test_chained_animations_use_their_stage_cadence(cx: &mut TestAppContext) {
+        let rendered_values = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let rendered_values = rendered_values.clone();
+            move |_, _| ChainedAnimationTestView { rendered_values }
+        });
+        cx.run_until_parked();
+        assert_eq!(*rendered_values.borrow(), vec![(0, 0.0)]);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(rendered_values.borrow().last(), Some(&(0, 0.5)));
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(rendered_values.borrow().last(), Some(&(0, 1.0)));
+        assert_eq!(simulate_next_frame(&window, cx), 1);
+        assert_eq!(rendered_values.borrow().last(), Some(&(1, 0.0)));
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+        assert_eq!(rendered_values.borrow().last(), Some(&(1, 0.25)));
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        assert_eq!(rendered_values.borrow().last(), Some(&(1, 1.0)));
+        assert_eq!(simulate_next_frame(&window, cx), 0);
     }
 }

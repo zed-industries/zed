@@ -31,6 +31,7 @@ theme.workspace = true
 ui_macros.workspace = true
 web-time.workspace = true
 gpui_util.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
