@@ -2535,7 +2535,12 @@ impl Session {
                     };
 
                     for scope in scopes.iter() {
-                        this.variables(scope.variables_reference, cx);
+                        // `expensive` scopes (e.g. a JavaScript "Global" scope) can be
+                        // arbitrarily slow or hang entirely, so defer fetching their
+                        // variables until the user explicitly expands them.
+                        if !scope.expensive {
+                            this.variables(scope.variables_reference, cx);
+                        }
                     }
 
                     let entry = this

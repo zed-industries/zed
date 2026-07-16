@@ -298,6 +298,13 @@ impl VariableList {
                     contains_local_scope = true;
                 }
 
+                if scope.expensive {
+                    // Don't fetch variables for expensive scopes just to check whether
+                    // they're empty: always keep them in the tree, collapsed, and let
+                    // the user opt in to resolving them by expanding.
+                    return true;
+                }
+
                 self.session.update(cx, |session, cx| {
                     !session.variables(scope.variables_reference, cx).is_empty()
                 })
@@ -347,12 +354,13 @@ impl VariableList {
                 .or_insert(EntryState {
                     depth: path.indices.len(),
                     is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                        (scopes_count == 1 && !contains_local_scope)
-                            || scope
-                                .presentation_hint
-                                .as_ref()
-                                .map(|hint| *hint == ScopePresentationHint::Locals)
-                                .unwrap_or(scope.name.to_lowercase().starts_with("local"))
+                        !scope.expensive
+                            && ((scopes_count == 1 && !contains_local_scope)
+                                || scope
+                                    .presentation_hint
+                                    .as_ref()
+                                    .map(|hint| *hint == ScopePresentationHint::Locals)
+                                    .unwrap_or(scope.name.to_lowercase().starts_with("local")))
                     }),
                     parent_reference: container_reference,
                     has_children: variables_reference != 0,
