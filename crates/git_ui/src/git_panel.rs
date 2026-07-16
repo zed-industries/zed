@@ -2150,7 +2150,7 @@ impl GitPanel {
                     let task = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
-                            .update(cx, |project, cx| project.delete_file(path, true, cx))
+                            .update(cx, |project, cx| project.trash_file(path, cx))
                     })?;
                     if let Some(task) = task {
                         task.await?;
@@ -2341,7 +2341,7 @@ impl GitPanel {
                             let project_path = active_repo
                                 .read(cx)
                                 .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.delete_file(project_path, true, cx)
+                            project.trash_file(project_path, cx)
                         })
                     })
                     .collect::<Vec<_>>()
