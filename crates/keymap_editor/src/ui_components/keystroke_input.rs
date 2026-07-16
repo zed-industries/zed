@@ -488,6 +488,7 @@ impl Render for KeystrokeInput {
                         move |this, delta| this.color(Color::Custom(color.opacity(delta)))
                     },
                 )
+                .with_max_fps(15)
         };
 
         let recording_indicator = h_flex()
