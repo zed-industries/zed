@@ -2415,7 +2415,6 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, Self::window_activation_changed),
                     ]
                 })
                 .unwrap_or_default(),
@@ -10363,19 +10362,6 @@ impl Editor {
 
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
-    }
-
-    fn window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Every editor associated with the window observes activation, including
-        // hidden editors whose independent blink timers would still repaint it.
-        let should_blink = window.is_window_active() && self.is_focused(window);
-        self.blink_manager.update(cx, |blink_manager, cx| {
-            if should_blink {
-                blink_manager.enable(cx);
-            } else {
-                blink_manager.disable(cx);
-            }
-        });
     }
 
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
