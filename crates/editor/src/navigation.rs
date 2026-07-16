@@ -2361,7 +2361,7 @@ impl Editor {
         })
     }
 
-    fn go_to_definition_of_kind(
+    pub(crate) fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,
