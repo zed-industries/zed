@@ -16,6 +16,7 @@ use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,
+    num::NonZeroU32,
     ops::Range,
     sync::LazyLock,
     time::{Duration, Instant},
@@ -1636,6 +1637,34 @@ fn test_range_for_syntax_ancestor(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_indentation_size_for_line_uses_indentation_settings(cx: &mut App) {
+    cx.new(|cx| {
+        let buffer = Buffer::local("\t  text\n  \ttext\n    text", cx);
+        let snapshot = buffer.snapshot();
+        let indentation = crate::language_settings::IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(8).unwrap(),
+            true,
+        );
+
+        assert_eq!(
+            snapshot.indentation_size_for_line(0, indentation),
+            IndentSize::spaces(10)
+        );
+        assert_eq!(
+            snapshot.indentation_size_for_line(1, indentation),
+            IndentSize::spaces(8)
+        );
+        assert_eq!(
+            snapshot.indentation_size_for_line(2, indentation),
+            IndentSize::spaces(4)
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_with_soft_tabs(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -1712,6 +1741,26 @@ fn test_autoindent_with_hard_tabs(cx: &mut App) {
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n\tb()\n\tc\n}");
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_canonicalizes_mixed_indentation(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    cx.new(|cx| {
+        let mut buffer = Buffer::local("fn a() {\n}", cx).with_language(rust_lang(), cx);
+
+        buffer.edit(
+            [(Point::new(1, 0)..Point::new(1, 0), "  \tchild\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tchild\n}");
 
         buffer
     });

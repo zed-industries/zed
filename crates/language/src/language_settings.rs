@@ -55,6 +55,76 @@ pub struct WhitespaceMap {
     pub tab: SharedString,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndentationSettings {
+    indent_size: NonZeroU32,
+    tab_width: NonZeroU32,
+    hard_tabs: bool,
+}
+
+impl IndentationSettings {
+    pub fn new(indent_size: NonZeroU32, tab_width: NonZeroU32, hard_tabs: bool) -> Self {
+        Self {
+            indent_size,
+            tab_width,
+            hard_tabs,
+        }
+    }
+
+    pub fn indent_size(self) -> NonZeroU32 {
+        self.indent_size
+    }
+
+    pub fn tab_width(self) -> NonZeroU32 {
+        self.tab_width
+    }
+
+    pub fn hard_tabs(self) -> bool {
+        self.hard_tabs
+    }
+
+    pub fn column_for_prefix(self, text: impl Iterator<Item = char>) -> u32 {
+        self.column_for_text(text.take_while(|character| matches!(character, ' ' | '\t')))
+    }
+
+    pub fn column_for_text(self, text: impl Iterator<Item = char>) -> u32 {
+        let tab_width = self.tab_width.get();
+        text.fold(0, |column, character| {
+            if character == '\t' {
+                column + tab_width - column % tab_width
+            } else {
+                column + 1
+            }
+        })
+    }
+
+    pub fn indentation_for_column(self, column: u32) -> String {
+        if self.hard_tabs {
+            let tab_width = self.tab_width.get();
+            let tabs = column / tab_width;
+            let spaces = column % tab_width;
+            "\t".repeat(tabs as usize) + &" ".repeat(spaces as usize)
+        } else {
+            " ".repeat(column as usize)
+        }
+    }
+
+    pub fn next_indent_stop(self, column: u32) -> u32 {
+        let indent_size = self.indent_size.get();
+        column + indent_size - column % indent_size
+    }
+
+    pub fn previous_indent_stop(self, column: u32) -> u32 {
+        let indent_size = self.indent_size.get();
+        let remainder = column % indent_size;
+        if remainder == 0 {
+            column.saturating_sub(indent_size)
+        } else {
+            column - remainder
+        }
+    }
+}
+
 /// The settings for a particular language.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LanguageSettings {
@@ -277,6 +347,10 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
+    pub fn indentation(&self) -> IndentationSettings {
+        IndentationSettings::new(self.tab_size, self.tab_size, self.hard_tabs)
+    }
+
     pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
@@ -938,6 +1012,46 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use util::rel_path::rel_path;
+
+    #[test]
+    fn test_indentation_settings_measure_and_generate_indentation() {
+        let indentation = IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(8).unwrap(),
+            true,
+        );
+
+        assert_eq!(indentation.column_for_prefix("\t  text".chars()), 10);
+        assert_eq!(indentation.column_for_text("\t  x\t".chars()), 16);
+        assert_eq!(indentation.indentation_for_column(4), "    ");
+        assert_eq!(indentation.indentation_for_column(8), "\t");
+        assert_eq!(indentation.indentation_for_column(10), "\t  ");
+
+        assert_eq!(indentation.next_indent_stop(0), 4);
+        assert_eq!(indentation.next_indent_stop(4), 8);
+        assert_eq!(indentation.next_indent_stop(6), 8);
+        assert_eq!(indentation.previous_indent_stop(0), 0);
+        assert_eq!(indentation.previous_indent_stop(4), 0);
+        assert_eq!(indentation.previous_indent_stop(6), 4);
+    }
+
+    #[test]
+    fn test_indentation_settings_preserve_equal_width_behavior() {
+        let hard_tabs = IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(4).unwrap(),
+            true,
+        );
+        let soft_tabs = IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(4).unwrap(),
+            false,
+        );
+
+        assert_eq!(hard_tabs.column_for_prefix("\t  text".chars()), 6);
+        assert_eq!(hard_tabs.indentation_for_column(6), "\t  ");
+        assert_eq!(soft_tabs.indentation_for_column(6), "      ");
+    }
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {

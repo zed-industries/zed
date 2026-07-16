@@ -1914,6 +1914,10 @@ impl EditorElement {
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
         let is_valid_row = |row_candidate: u32| -> bool {
+            let candidate_point = MultiBufferPoint {
+                row: row_candidate,
+                column: 0,
+            };
             // move to other row if folded row
             if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
                 return false;
@@ -1924,10 +1928,6 @@ impl EditorElement {
                     return false;
                 }
             } else {
-                let candidate_point = MultiBufferPoint {
-                    row: row_candidate,
-                    column: 0,
-                };
                 // move to other row if different excerpt
                 let range = if candidate_point < buffer_point {
                     candidate_point..buffer_point
@@ -1952,11 +1952,13 @@ impl EditorElement {
                 true
             } else {
                 // use this row if code starts after slot
-                let indent_size = snapshot
-                    .display_snapshot
-                    .buffer_snapshot()
-                    .indent_size_for_line(MultiBufferRow(row_candidate));
-                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
+                let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+                let indentation = buffer_snapshot
+                    .language_settings_at(candidate_point, cx)
+                    .indentation();
+                buffer_snapshot
+                    .indentation_column_for_line(MultiBufferRow(row_candidate), indentation)
+                    >= INLINE_SLOT_CHAR_LIMIT
             }
         };
 
@@ -2294,8 +2296,11 @@ impl EditorElement {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, indent_guide)| {
-                    let single_indent_width =
-                        column_pixels(&self.style, indent_guide.tab_size as usize, window);
+                    let single_indent_width = column_pixels(
+                        &self.style,
+                        indent_guide.indentation.indent_size().get() as usize,
+                        window,
+                    );
                     let total_width = single_indent_width * indent_guide.depth as f32;
                     let start_x = Pixels::from(
                         ScrollOffset::from(content_origin.x + total_width)

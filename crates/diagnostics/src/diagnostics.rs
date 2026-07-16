@@ -1101,17 +1101,22 @@ async fn heuristic_syntactic_expand(
             return Some(node_row_range);
         } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
             // Expand to the nearest dedent or blank line for statements and declarations.
-            let tab_size =
-                cx.update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get());
+            let indentation =
+                cx.update(|cx| snapshot.settings_at(node_range.start, cx).indentation());
             let indent_level = snapshot
-                .line_indent_for_row(node_range.start.row)
-                .len(tab_size);
+                .indentation_size_for_line(node_range.start.row, indentation)
+                .len;
             let rows_remaining = max_row_count.saturating_sub(row_count);
             let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
                 ..node_range.start.row)
                 .rev()
                 .find(|row| {
-                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                    is_line_blank_or_indented_less(
+                        indent_level,
+                        *row,
+                        indentation,
+                        &snapshot.clone(),
+                    )
                 })
             else {
                 return Some(node_row_range);
@@ -1123,7 +1128,12 @@ async fn heuristic_syntactic_expand(
                     snapshot.row_count(),
                 ))
                 .find(|row| {
-                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                    is_line_blank_or_indented_less(
+                        indent_level,
+                        *row,
+                        indentation,
+                        &snapshot.clone(),
+                    )
                 })
             else {
                 return Some(node_row_range);
@@ -1146,9 +1156,10 @@ async fn heuristic_syntactic_expand(
 fn is_line_blank_or_indented_less(
     indent_level: u32,
     row: u32,
-    tab_size: u32,
+    indentation: language::language_settings::IndentationSettings,
     snapshot: &BufferSnapshot,
 ) -> bool {
     let line_indent = snapshot.line_indent_for_row(row);
-    line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
+    line_indent.is_line_blank()
+        || snapshot.indentation_size_for_line(row, indentation).len < indent_level
 }

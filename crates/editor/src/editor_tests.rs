@@ -30,8 +30,8 @@ use language::{
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, PLAIN_TEXT, Point,
     language_settings::{
-        CompletionSettingsContent, FormatOnSave, FormatterList, LanguageSettingsContent,
-        LspInsertMode,
+        CompletionSettingsContent, FormatOnSave, FormatterList, IndentationSettings,
+        LanguageSettingsContent, LspInsertMode,
     },
     tree_sitter_python,
 };
@@ -5554,6 +5554,42 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
                 MultiBufferOffset(9)..MultiBufferOffset(9),
                 MultiBufferOffset(15)..MultiBufferOffset(15)
             ],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_mixed_indentation_prefixes_are_preserved(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+        settings.defaults.auto_indent = Some(language_settings::AutoIndentMode::PreserveIndent);
+        settings.defaults.allow_rewrap = Some(language_settings::RewrapBehavior::Anywhere);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("\t  ˇline");
+    cx.update_editor(|editor, window, cx| editor.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("\tˇline");
+
+    cx.set_state("  ˇ\tline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("\t\tˇline");
+
+    cx.set_state("  \tlineˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("  \tline\n  \tˇ");
+
+    cx.set_state("  \tlineˇ");
+    cx.update_editor(|editor, _, cx| editor.rewrap(RewrapOptions::default(), cx));
+    cx.assert_editor_state("  \tlineˇ");
+
+    cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        assert_eq!(
+            snapshot.indent_and_comment_for_line(MultiBufferRow(0), cx),
+            "  \t"
         );
     });
 }
@@ -27842,7 +27878,11 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
         start_row: MultiBufferRow(start_row),
         end_row: MultiBufferRow(end_row),
         depth,
-        tab_size: 4,
+        indentation: IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
         settings: IndentGuideSettings {
             enabled: true,
             line_width: 1,

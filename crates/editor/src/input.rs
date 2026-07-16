@@ -554,6 +554,12 @@ impl Editor {
                             buffer.indent_size_for_line(MultiBufferRow(start_point.row));
                         let full_indent_len = existing_indent.len;
                         existing_indent.len = cmp::min(existing_indent.len, start_point.column);
+                        let existing_indent_text = buffer
+                            .text_for_range(
+                                Point::new(start_point.row, 0)
+                                    ..Point::new(start_point.row, existing_indent.len),
+                            )
+                            .collect::<String>();
                         let mut start = selection.start;
                         let end = selection.end;
                         let selection_is_empty = start == end;
@@ -660,12 +666,14 @@ impl Editor {
                             NewlineConfig::UnindentCurrentLine { continuation } => {
                                 let row_start =
                                     buffer.point_to_offset(Point::new(start_point.row, 0));
-                                let tab_size = buffer.language_settings_at(start, cx).tab_size;
-                                existing_indent.len = existing_indent
-                                    .len
-                                    .saturating_sub(existing_indent.outdent_len(tab_size));
-                                let mut new_text = String::new();
-                                new_text.extend(existing_indent.chars());
+                                let indentation =
+                                    buffer.language_settings_at(start, cx).indentation();
+                                let current_column =
+                                    indentation.column_for_prefix(existing_indent_text.chars());
+                                let target_column =
+                                    indentation.previous_indent_stop(current_column);
+                                let mut new_text =
+                                    indentation.indentation_for_column(target_column);
                                 new_text.push_str(continuation);
                                 (row_start, new_text, true)
                             }
@@ -683,7 +691,7 @@ impl Editor {
                                 let capacity_for_delimiter =
                                     delimiter.as_deref().map(str::len).unwrap_or_default();
                                 let existing_indent_len = if preserve_indent {
-                                    existing_indent.len as usize
+                                    existing_indent_text.len()
                                 } else {
                                     0
                                 };
@@ -698,7 +706,7 @@ impl Editor {
                                 );
                                 new_text.push('\n');
                                 if preserve_indent {
-                                    new_text.extend(existing_indent.chars());
+                                    new_text.push_str(&existing_indent_text);
                                 }
                                 new_text.extend(additional_indent.chars());
                                 if let Some(delimiter) = &delimiter {
@@ -707,7 +715,7 @@ impl Editor {
                                 if let Some(extra_indent) = extra_line_additional_indent {
                                     new_text.push('\n');
                                     if preserve_indent {
-                                        new_text.extend(existing_indent.chars());
+                                        new_text.push_str(&existing_indent_text);
                                     }
                                     new_text.extend(extra_indent.chars());
                                 }
@@ -943,6 +951,15 @@ impl Editor {
             original_indent_columns: Vec::new(),
         });
         self.replace_selections(text, autoindent, window, cx, false);
+    }
+
+    pub fn insert_without_autoindent(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_selections(text, None, window, cx, false);
     }
 
     /// Collects linked edits for the current selections, pairing each linked
