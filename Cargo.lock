@@ -19816,6 +19816,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui_macros",
+ "unicode-segmentation",
  "windows 0.61.3",
 ]
 
