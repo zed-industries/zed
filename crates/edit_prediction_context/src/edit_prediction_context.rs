@@ -5,8 +5,8 @@ use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, TaskExt, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
-use project::{LocationLink, Project, ProjectPath};
+use language::{Anchor, Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
+use project::{EditPredictionDefinition, Project, ProjectPath};
 use smallvec::SmallVec;
 use std::{
     collections::hash_map,
@@ -77,20 +77,15 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss(
-        Task<
-            Option<(
-                Task<Result<Option<Vec<LocationLink>>>>,
-                Task<Result<Option<Vec<LocationLink>>>>,
-            )>,
-        >,
-    ),
+    CacheMiss {
+        project: WeakEntity<Project>,
+        task: Task<Result<Vec<EditPredictionDefinition>>>,
+    },
 }
 
 #[derive(Debug)]
 struct CacheEntry {
     definitions: SmallVec<[CachedDefinition; 1]>,
-    type_definitions: SmallVec<[CachedDefinition; 1]>,
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +178,7 @@ impl RelatedExcerptStore {
                     .path
                     .strip_prefix(worktree.root_name().as_unix_str())
                     .ok()?;
-                let relative_path = RelPath::new(relative_path, PathStyle::Posix).ok()?;
+                let relative_path = RelPath::new(relative_path, PathStyle::Unix).ok()?;
                 let project_path = ProjectPath {
                     worktree_id: worktree.id(),
                     path: relative_path.into_owned().into(),
@@ -312,34 +307,21 @@ impl RelatedExcerptStore {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
                         let project = this.project.clone();
-                        let buffer = buffer.downgrade();
-                        DefinitionTask::CacheMiss(cx.spawn(async move |_, cx| {
-                            let buffer = buffer.upgrade()?;
-                            let definitions = project
-                                .update(cx, |project, cx| {
-                                    project.workspace_definitions(
-                                        &buffer,
-                                        identifier.range.start,
-                                        cx,
-                                    )
-                                })
-                                .ok()?;
-                            let type_definitions = project
-                                .update(cx, |project, cx| {
-                                    // tombi LSP for toml will open a scratch buffer with the JSON schema of
-                                    // the toml file when a goto type definition is requested
-                                    if is_tombi_lsp_in_toml(project, &buffer, cx) {
-                                        return Task::ready(Ok(None));
-                                    }
-                                    project.workspace_type_definitions(
-                                        &buffer,
-                                        identifier.range.start,
-                                        cx,
-                                    )
-                                })
-                                .ok()?;
-                            Some((definitions, type_definitions))
-                        }))
+                        let task = project
+                            .update(cx, |project, cx| {
+                                // tombi LSP for toml will open a scratch buffer with the JSON schema of
+                                // the toml file when a goto type definition is requested
+                                let include_type_definitions =
+                                    !is_tombi_lsp_in_toml(project, &buffer, cx);
+                                project.edit_prediction_definitions(
+                                    &buffer,
+                                    identifier.range.start,
+                                    include_type_definitions,
+                                    cx,
+                                )
+                            })
+                            .unwrap_or_else(|_| Task::ready(Ok(Vec::new())));
+                        DefinitionTask::CacheMiss { project, task }
                     };
 
                     let cx = async_cx.clone();
@@ -348,50 +330,29 @@ impl RelatedExcerptStore {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry, None))
                             }
-                            DefinitionTask::CacheMiss(task) => {
-                                let (definitions, type_definitions) = task.await?;
-                                let (definition_locations, type_definition_locations) =
-                                    futures::join!(definitions, type_definitions);
+                            DefinitionTask::CacheMiss { project, task } => {
+                                let definition_locations = task.await.log_err().unwrap_or_default();
                                 let duration = start_time.elapsed();
 
-                                let definition_locations =
-                                    definition_locations.log_err().flatten().unwrap_or_default();
-                                let type_definition_locations = type_definition_locations
-                                    .log_err()
-                                    .flatten()
-                                    .unwrap_or_default();
-
                                 let definitions: SmallVec<[CachedDefinition; 1]> =
-                                    definition_locations
-                                        .into_iter()
-                                        .filter_map(|location| {
+                                    future::join_all(definition_locations.into_iter().map(
+                                        |definition| {
+                                            let project = project.clone();
                                             let mut cx = cx.clone();
-                                            process_definition(location, &mut cx)
-                                        })
-                                        .collect();
-
-                                let type_definitions: SmallVec<[CachedDefinition; 1]> =
-                                    type_definition_locations
-                                        .into_iter()
-                                        .filter_map(|location| {
-                                            let mut cx = cx.clone();
-                                            process_definition(location, &mut cx)
-                                        })
-                                        .filter(|type_def| {
-                                            !definitions.iter().any(|def| {
-                                                def.buffer.entity_id()
-                                                    == type_def.buffer.entity_id()
-                                                    && def.anchor_range == type_def.anchor_range
-                                            })
-                                        })
-                                        .collect();
+                                            async move {
+                                                process_definition(definition, &project, &mut cx)
+                                                    .await
+                                            }
+                                        },
+                                    ))
+                                    .await
+                                    .into_iter()
+                                    .flatten()
+                                    .collect();
 
                                 Some((
                                     identifier,
-                                    Arc::new(CacheEntry {
-                                        definitions,
-                                        type_definitions,
-                                    }),
+                                    Arc::new(CacheEntry { definitions }),
                                     Some(duration),
                                 ))
                             }
@@ -469,11 +430,7 @@ async fn rebuild_related_files(
     let mut snapshots = HashMap::default();
     let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
-        for definition in entry
-            .definitions
-            .iter()
-            .chain(entry.type_definitions.iter())
-        {
+        for definition in entry.definitions.iter() {
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
@@ -510,11 +467,7 @@ async fn rebuild_related_files(
                     .get(identifier)
                     .copied()
                     .unwrap_or(usize::MAX);
-                for definition in entry
-                    .definitions
-                    .iter()
-                    .chain(entry.type_definitions.iter())
-                {
+                for definition in entry.definitions.iter() {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
@@ -635,16 +588,24 @@ use language::ToPoint as _;
 
 const MAX_TARGET_LEN: usize = 128;
 
-fn process_definition(location: LocationLink, cx: &mut AsyncApp) -> Option<CachedDefinition> {
+async fn process_definition(
+    definition: EditPredictionDefinition,
+    project: &WeakEntity<Project>,
+    cx: &mut AsyncApp,
+) -> Option<CachedDefinition> {
+    let EditPredictionDefinition { path, range } = definition;
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+        .ok()?
+        .await
+        .log_err()?;
+
     cx.update(|cx| {
-        let buffer = location.target.buffer;
         let buffer_snapshot = buffer.read(cx);
-        let file = buffer_snapshot.file()?;
-        let path = ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        };
-        let anchor_range = location.target.range;
+        let target_start = buffer_snapshot.clip_point_utf16(range.start, Bias::Left);
+        let target_end = buffer_snapshot.clip_point_utf16(range.end, Bias::Left);
+        let anchor_range =
+            buffer_snapshot.anchor_after(target_start)..buffer_snapshot.anchor_before(target_end);
 
         // If the target range is large, it likely means we requested the definition of an entire module.
         // For individual definitions, the target range should be small as it only covers the symbol.

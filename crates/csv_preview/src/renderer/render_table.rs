@@ -51,7 +51,6 @@ impl CsvPreviewView {
 
         Table::new(cols)
             .interactable(&self.table_interaction_state)
-            .striped()
             .width_config(ColumnWidthConfig::Resizable(current_widths.clone()))
             .header(headers)
             .disable_base_style()

@@ -3,9 +3,9 @@ use crate::{
     repository::GitBinary, status::StatusCode,
 };
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::SharedString;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 pub struct ParsedCommitMessage {
@@ -76,6 +76,60 @@ pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMa
         .cloned()
         .zip(output)
         .collect::<HashMap<Oid, String>>())
+}
+
+pub(crate) async fn get_tag_names(
+    git: &GitBinary,
+    shas: &[Oid],
+) -> Result<HashMap<Oid, Vec<String>>> {
+    if shas.is_empty() {
+        return Ok(HashMap::default());
+    }
+
+    let output = git
+        .build_command(&[
+            "for-each-ref",
+            "refs/tags",
+            "--sort=-creatordate",
+            "--format=%(objectname)%00%(*objectname)%00%(refname:short)",
+        ])
+        .output()
+        .await
+        .context("starting git for-each-ref process")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "'git for-each-ref' failed with error {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(parse_tag_names(
+        &String::from_utf8_lossy(&output.stdout),
+        shas,
+    ))
+}
+
+fn parse_tag_names(output: &str, shas: &[Oid]) -> HashMap<Oid, Vec<String>> {
+    let shas = shas.iter().copied().collect::<HashSet<_>>();
+    let mut result = HashMap::<Oid, Vec<String>>::default();
+
+    for line in output.lines() {
+        let mut fields = line.split('\0');
+        let object_sha = fields.next();
+        let peeled_sha = fields.next().filter(|sha| !sha.is_empty());
+        let Some(sha) = peeled_sha
+            .or(object_sha)
+            .and_then(|sha| Oid::from_str(sha).ok())
+        else {
+            continue;
+        };
+        let Some(tag_name) = fields.next().filter(|tag_name| !tag_name.is_empty()) else {
+            continue;
+        };
+        result.entry(sha).or_default().push(tag_name.to_string());
+    }
+
+    result.retain(|sha, _| shas.contains(sha));
+    result
 }
 
 async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>> {
@@ -245,5 +299,28 @@ mod tests {
             .expect("expected a raw diff entry")
             .expect_err("expected malformed metadata to fail");
         assert!(error.to_string().contains("new mode"));
+    }
+
+    #[test]
+    fn test_parse_tag_names_for_lightweight_and_annotated_tags() -> Result<()> {
+        let tagged_commit = Oid::from_str("1111111111111111111111111111111111111111")?;
+        let tag_object = Oid::from_str("2222222222222222222222222222222222222222")?;
+        let other_commit = Oid::from_str("3333333333333333333333333333333333333333")?;
+        let output = format!(
+            "{tagged_commit}\0\0v1.0.0\n\
+             {tag_object}\0{tagged_commit}\0v1.1.0\n\
+             {other_commit}\0\0ignored\n"
+        );
+
+        let parsed = parse_tag_names(&output, &[tagged_commit]);
+
+        assert_eq!(
+            parsed,
+            HashMap::from_iter([(
+                tagged_commit,
+                vec![String::from("v1.0.0"), String::from("v1.1.0")]
+            )])
+        );
+        Ok(())
     }
 }

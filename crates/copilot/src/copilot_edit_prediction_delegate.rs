@@ -283,7 +283,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -491,7 +496,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         // Setup the editor with a completion request.
@@ -623,7 +633,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -718,7 +733,12 @@ mod tests {
         });
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor.update_in(cx, |editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         handle_copilot_completion_request(
@@ -848,7 +868,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -1014,7 +1039,12 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(
+                    Some(copilot_provider),
+                    EditPredictionRequestTrigger::EditorCreated,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
 
