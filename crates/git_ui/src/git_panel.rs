@@ -8760,10 +8760,9 @@ impl GitPanel {
                     )
                     .child(
                         h_flex()
-                            .w(rems(2.0))
+                            .min_w(Checkbox::container_size())
                             .flex_shrink_0()
-                            .justify_end()
-                            .pr_1()
+                            .justify_center()
                             .when(entry.change_count > 0, |this| {
                                 this.child(
                                     Label::new(entry.change_count.to_string())
@@ -8991,10 +8990,9 @@ impl GitPanel {
             )
             .child(
                 h_flex()
-                    .w(rems(2.0))
+                    .min_w(Checkbox::container_size())
                     .flex_shrink_0()
-                    .justify_end()
-                    .pr_1()
+                    .justify_center()
                     .when(entry.change_count > 0, |this| {
                         this.child(
                             Label::new(entry.change_count.to_string())
