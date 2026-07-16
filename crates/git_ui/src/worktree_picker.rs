@@ -1393,7 +1393,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
-                Button::new("configure-worktree-tasks", "Configure")
+                Button::new("configure-worktree-tasks", "Automate Setup")
                     .key_binding(
                         KeyBinding::for_action_in(&OpenWorktreeSetupTasks, &focus_handle, cx)
                             .map(|kb| kb.size(rems_from_px(12.))),
