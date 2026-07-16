@@ -179,6 +179,59 @@ impl AskPassSession {
         }
     }
 
+    /// Like [`AskPassSession::run`], but with an *idle* connection timeout that is
+    /// reset every time a value is received on `activity`.
+    ///
+    /// Git remote commands (push/fetch/pull) run their hooks — notably `pre-push` —
+    /// *inside* the git process, before it ever contacts the remote. A fixed
+    /// wall-clock timeout therefore mistakes a slow-but-healthy hook for a stalled
+    /// connection and kills it. Callers feed `activity` from the git process's output,
+    /// so the timeout only elapses after genuine silence for `connection_timeout`.
+    /// When the `activity` sender is dropped (git's streams closed as it exits), this
+    /// parks so the caller's own output future resolves instead.
+    pub async fn run_with_activity(
+        &mut self,
+        connection_timeout: Duration,
+        activity: smol::channel::Receiver<()>,
+    ) -> AskPassResult {
+        let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
+        let askpass_kill_master_rx = self
+            .askpass_kill_master_rx
+            .take()
+            .expect("Only call run once");
+        let executor = self.executor.clone();
+
+        let idle_timeout = async {
+            loop {
+                select_biased! {
+                    activity = activity.recv().fuse() => {
+                        if activity.is_err() {
+                            // Sender dropped: git's pipes closed, so it is exiting.
+                            // Stop arming the timeout; let the caller's output win.
+                            std::future::pending::<()>().await;
+                        }
+                        // Otherwise git produced output — restart the countdown.
+                    }
+                    _ = executor.timer(connection_timeout).fuse() => {
+                        break;
+                    }
+                }
+            }
+        };
+
+        select_biased! {
+            _ = askpass_opened_rx.fuse() => {
+                // Note: this await can only resolve after we are dropped.
+                askpass_kill_master_rx.await.ok();
+                AskPassResult::CancelledByUser
+            }
+
+            _ = idle_timeout.fuse() => {
+                AskPassResult::Timedout
+            }
+        }
+    }
+
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
     pub fn get_password(&self) -> Option<EncryptedPassword> {

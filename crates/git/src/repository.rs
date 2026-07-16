@@ -3764,10 +3764,66 @@ async fn run_git_command(
 
 async fn run_askpass_command(
     mut ask_pass: AskPassSession,
-    git_process: util::command::Child,
+    mut git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
+    // The connection timeout is *idle*-based rather than a fixed wall-clock cap: git
+    // runs the `pre-push` hook inside this process before it ever contacts the remote,
+    // so a fixed timeout would kill hooks (full test suites, builds) that take longer
+    // than it. We reset the timeout every time git emits output, so it only trips when
+    // the connection is genuinely stalled (no output at all for this long).
+    let connection_timeout = std::time::Duration::from_secs(120);
+    let (activity_tx, activity_rx) = smol::channel::unbounded::<()>();
+
+    let mut stdout = git_process.stdout.take();
+    let mut stderr = git_process.stderr.take();
+    let status = git_process.status();
+
+    let stdout_activity_tx = activity_tx.clone();
+    let stdout_future = async move {
+        let mut data = Vec::new();
+        if let Some(stdout) = stdout.as_mut() {
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = stdout.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&buf[..n]);
+                let _ = stdout_activity_tx.try_send(());
+            }
+        }
+        std::io::Result::Ok(data)
+    };
+
+    let stderr_activity_tx = activity_tx.clone();
+    let stderr_future = async move {
+        let mut data = Vec::new();
+        if let Some(stderr) = stderr.as_mut() {
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = stderr.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&buf[..n]);
+                let _ = stderr_activity_tx.try_send(());
+            }
+        }
+        std::io::Result::Ok(data)
+    };
+
+    // Drop our own sender so `activity` closes once both readers reach EOF.
+    drop(activity_tx);
+
+    let output_future = async move {
+        let (stdout_data, stderr_data) =
+            futures::future::try_join(stdout_future, stderr_future).await?;
+        let status = status.await?;
+        std::io::Result::Ok((status, stdout_data, stderr_data))
+    };
+
     select_biased! {
-        result = ask_pass.run().fuse() => {
+        result = ask_pass.run_with_activity(connection_timeout, activity_rx).fuse() => {
             match result {
                 AskPassResult::CancelledByUser => {
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
@@ -3777,16 +3833,16 @@ async fn run_askpass_command(
                 }
             }
         }
-        output = git_process.output().fuse() => {
-            let output = output?;
+        output = output_future.fuse() => {
+            let (status, stdout, stderr) = output?;
             anyhow::ensure!(
-                output.status.success(),
+                status.success(),
                 "{}",
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&stderr)
             );
             Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                stdout: String::from_utf8_lossy(&stdout).to_string(),
+                stderr: String::from_utf8_lossy(&stderr).to_string(),
             })
         }
     }
