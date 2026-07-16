@@ -163,17 +163,21 @@ impl RenderOnce for SpinnerLabel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let frames = self.frames.clone();
         let duration = self.duration;
+        let frame_interval = duration / frames.len().max(1) as u32;
 
-        self.base.with_animation(
-            self.variant.animation_id(),
-            Animation::new(duration).repeat(),
-            move |mut label, delta| {
-                let frame_index = (delta * frames.len() as f32) as usize % frames.len();
+        self.base
+            .with_animation(
+                self.variant.animation_id(),
+                Animation::new(duration).repeat(),
+                move |mut label, delta| {
+                    let frame_index =
+                        ((delta * frames.len() as f32).round() as usize) % frames.len();
 
-                label.set_text(frames[frame_index]);
-                label
-            },
-        )
+                    label.set_text(frames[frame_index]);
+                    label
+                },
+            )
+            .with_frame_interval(frame_interval)
     }
 }
 
