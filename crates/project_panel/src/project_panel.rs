@@ -1,3 +1,4 @@
+mod persistence;
 pub mod project_panel_settings;
 mod undo;
 mod utils;
@@ -79,7 +80,7 @@ use workspace::{
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, PathChange};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -111,6 +112,11 @@ struct State {
     temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    /// Saved set of expanded relative paths per worktree absolute path, loaded
+    /// from the database on panel construction. When a worktree first appears
+    /// in `expanded_dir_ids`, the matching paths are resolved to entry IDs and
+    /// the entry for that worktree is cleared from this map.
+    pending_expanded_paths: HashMap<Arc<Path>, Vec<String>>,
 }
 
 impl State {
@@ -131,6 +137,7 @@ impl State {
             temporarily_unfolded_pending_state: None,
             unfolded_dir_ids: old.unfolded_dir_ids.clone(),
             expanded_dir_ids: old.expanded_dir_ids.clone(),
+            pending_expanded_paths: old.pending_expanded_paths.clone(),
         }
     }
 }
@@ -166,6 +173,22 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
+    /// Entry-ID snapshot from the most recent scheduled save. Used as a
+    /// cheap first-level guard against running the path-building slow path
+    /// for events that don't touch expansion state (git status updates,
+    /// settings changes, worktree order changes).
+    last_scheduled_expanded_dir_ids: Option<HashMap<WorktreeId, Vec<ProjectEntryId>>>,
+    /// Path payload from the most recent scheduled save. Used as the
+    /// second-level guard so a `WorktreeUpdatedEntries` event that doesn't
+    /// actually change persisted paths (e.g. file content modified) doesn't
+    /// trigger a redundant DB write.
+    last_scheduled_expanded_paths: Option<collections::HashMap<Arc<Path>, Vec<String>>>,
+    /// Set when a `WorktreeUpdatedEntries` event fires, so we know to force
+    /// the slow path on the next scheduled save in case a rename changed a
+    /// persisted path without changing any entry id. Cleared on each
+    /// scheduled save.
+    worktree_entries_changed_since_last_save: bool,
+    _save_collapse_state_task: Task<()>,
 }
 
 struct UpdateVisibleEntriesTask {
@@ -684,9 +707,17 @@ impl ProjectPanel {
                 window,
                 |this, project, event, window, cx| match event {
                     project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                        if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                            this.reveal_entry(project.clone(), *entry_id, true, window, cx)
-                                .ok();
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_reveal_entries {
+                            let skip_ignored = !settings.auto_reveal_ignored_entries;
+                            this.reveal_entry(
+                                project.clone(),
+                                *entry_id,
+                                skip_ignored,
+                                window,
+                                cx,
+                            )
+                            .ok();
                         }
                     }
                     project::Event::ActiveEntryChanged(None) => {
@@ -735,8 +766,32 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeUpdatedEntries(_, _)
-                    | project::Event::WorktreeAdded(_)
+                    project::Event::WorktreeUpdatedEntries(_, changes) => {
+                        // A rename keeps `ProjectEntryId` stable while changing
+                        // the entry's path, which the cheap entry-id guard in
+                        // `schedule_save_collapse_state` cannot detect.
+                        // `worktree::build_diff` represents renames as
+                        // Removed+Added, so only flag a potential path change
+                        // when the change set contains a path-structure change
+                        // (Added/Removed/AddedOrUpdated/Loaded) and not pure
+                        // metadata updates.
+                        let has_path_change = changes.is_empty()
+                            || changes.iter().any(|(_, _, change)| {
+                                matches!(
+                                    change,
+                                    PathChange::Added
+                                        | PathChange::Removed
+                                        | PathChange::AddedOrUpdated
+                                        | PathChange::Loaded
+                                )
+                            });
+                        if has_path_change {
+                            this.worktree_entries_changed_since_last_save = true;
+                        }
+                        this.update_visible_entries(None, false, false, window, cx);
+                        cx.notify();
+                    }
+                    project::Event::WorktreeAdded(_)
                     | project::Event::WorktreeOrderChanged => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -810,6 +865,12 @@ impl ProjectPanel {
             })
             .detach();
 
+            // Flush any pending debounced save before the app exits so the
+            // most recent collapse state isn't lost when the user quits Zed
+            // within the debounce window.
+            cx.on_app_quit(|this, cx| this.flush_collapse_state(cx))
+                .detach();
+
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
@@ -841,6 +902,20 @@ impl ProjectPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
             let weak_project_panel = cx.weak_entity();
+
+            let restore_collapse_state =
+                ProjectPanelSettings::get_global(cx).restore_collapse_state;
+            let pending_expanded_paths = if restore_collapse_state
+                && let Some(workspace_id) = workspace.database_id()
+            {
+                let db = persistence::ProjectPanelDb::global(cx);
+                db.expanded_entries(workspace_id)
+                    .log_err()
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            };
+
             let mut this = Self {
                 project: project.clone(),
                 hover_scroll_task: None,
@@ -874,9 +949,14 @@ impl ProjectPanel {
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
                     unfolded_dir_ids: Default::default(),
+                    pending_expanded_paths,
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                last_scheduled_expanded_dir_ids: None,
+                last_scheduled_expanded_paths: None,
+                worktree_entries_changed_since_last_save: false,
+                _save_collapse_state_task: Task::ready(()),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -4432,13 +4512,32 @@ impl ProjectPanel {
                                 match new_state.expanded_dir_ids.entry(worktree_id) {
                                     hash_map::Entry::Occupied(e) => e.into_mut(),
                                     hash_map::Entry::Vacant(e) => {
-                                        // The first time a worktree's root entry becomes available,
-                                        // mark that root entry as expanded.
-                                        if let Some(entry) = worktree_snapshot.root_entry() {
-                                            e.insert(vec![entry.id]).as_slice()
-                                        } else {
-                                            &[]
+                                        // The first time a worktree's root entry becomes
+                                        // available, seed its expanded entries from any saved
+                                        // collapse state for this worktree. Worktrees with no
+                                        // saved state fall back to the legacy default of
+                                        // auto-expanding the root entry.
+                                        let mut initial = Vec::new();
+                                        if let Some(saved_paths) = new_state
+                                            .pending_expanded_paths
+                                            .remove(worktree_abs_path)
+                                        {
+                                            for saved_path in saved_paths {
+                                                let Ok(rel_path) = RelPath::unix(&saved_path) else {
+                                                    continue;
+                                                };
+                                                if let Some(entry) =
+                                                    worktree_snapshot.entry_for_path(rel_path)
+                                                {
+                                                    initial.push(entry.id);
+                                                }
+                                            }
+                                            initial.sort();
+                                            initial.dedup();
+                                        } else if let Some(entry) = worktree_snapshot.root_entry() {
+                                            initial.push(entry.id);
                                         }
+                                        e.insert(initial).as_slice()
                                     }
                                 };
 
@@ -4515,6 +4614,7 @@ impl ProjectPanel {
                     this.update_visible_entries_task.autoscroll = false;
                     this.autoscroll(cx);
                 }
+                this.schedule_save_collapse_state(cx);
                 cx.notify();
             })
             .ok();
@@ -4526,6 +4626,118 @@ impl ProjectPanel {
                 || self.update_visible_entries_task.focus_filename_editor,
             autoscroll: autoscroll || self.update_visible_entries_task.autoscroll,
         };
+    }
+
+    /// Collects the currently expanded directory paths grouped by worktree
+    /// absolute path. The empty relative path (`""`) represents the worktree
+    /// root entry itself. Returns `None` before any worktree has been seen,
+    /// to avoid a redundant write to the database during panel construction
+    /// when the visible entries task has not yet populated `expanded_dir_ids`.
+    fn current_expanded_paths(
+        &self,
+        cx: &App,
+    ) -> Option<collections::HashMap<Arc<Path>, Vec<String>>> {
+        if self.state.expanded_dir_ids.is_empty() {
+            return None;
+        }
+        let project = self.project.read(cx);
+        let mut result: collections::HashMap<Arc<Path>, Vec<String>> =
+            collections::HashMap::default();
+        for (worktree_id, expanded_ids) in &self.state.expanded_dir_ids {
+            let Some(worktree) = project.worktree_for_id(*worktree_id, cx) else {
+                continue;
+            };
+            let worktree = worktree.read(cx);
+            let abs_path: Arc<Path> = worktree.abs_path();
+            let mut paths: Vec<String> = Vec::with_capacity(expanded_ids.len());
+            for entry_id in expanded_ids {
+                if let Some(entry) = worktree.entry_for_id(*entry_id) {
+                    paths.push(entry.path.as_unix_str().to_owned());
+                }
+            }
+            paths.sort();
+            result.insert(abs_path, paths);
+        }
+        Some(result)
+    }
+
+    /// Builds the payload for a save, returning `None` if persistence is
+    /// disabled, the workspace has no `database_id`, or no worktrees have
+    /// been processed yet.
+    fn collapse_state_save_payload(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        workspace::WorkspaceId,
+        collections::HashMap<Arc<Path>, Vec<String>>,
+    )> {
+        if !ProjectPanelSettings::get_global(cx).restore_collapse_state {
+            return None;
+        }
+        let workspace_id = self.workspace.upgrade()?.read(cx).database_id()?;
+        let entries = self.current_expanded_paths(cx)?;
+        Some((workspace_id, entries))
+    }
+
+    /// Debounced save of the expanded directory state to the database.
+    /// No-ops when persistence is disabled, the workspace has no
+    /// `database_id` yet, or the persisted payload hasn't changed since the
+    /// last scheduled save.
+    ///
+    /// Uses a two-tier guard so unrelated `update_visible_entries` passes
+    /// (git status updates, settings changes, worktree order changes) don't
+    /// pay the cost of rebuilding the path payload:
+    ///
+    /// 1. Cheap entry-id comparison against the last scheduled snapshot. If
+    ///    unchanged and no `WorktreeUpdatedEntries` event has fired since
+    ///    last save, return without rebuilding paths.
+    /// 2. Otherwise build the path payload and compare it (this catches
+    ///    renames, where entry ids stay the same but paths change).
+    fn schedule_save_collapse_state(&mut self, cx: &mut Context<Self>) {
+        let ids_unchanged = self.last_scheduled_expanded_dir_ids.as_ref()
+            == Some(&self.state.expanded_dir_ids);
+        if ids_unchanged && !self.worktree_entries_changed_since_last_save {
+            return;
+        }
+        let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
+            return;
+        };
+
+        // Update the cheap-guard caches even when the path payload turns out
+        // to be unchanged, so we don't redo this work on the next call.
+        self.last_scheduled_expanded_dir_ids = Some(self.state.expanded_dir_ids.clone());
+        self.worktree_entries_changed_since_last_save = false;
+
+        if self.last_scheduled_expanded_paths.as_ref() == Some(&entries) {
+            return;
+        }
+        self.last_scheduled_expanded_paths = Some(entries.clone());
+
+        let db = persistence::ProjectPanelDb::global(cx);
+        let executor = cx.background_executor().clone();
+        self._save_collapse_state_task = cx.background_executor().spawn(async move {
+            executor.timer(Duration::from_millis(100)).await;
+            db.save_expanded_entries(workspace_id, entries)
+                .await
+                .log_err();
+        });
+    }
+
+    /// Cancels any pending debounced save and immediately writes the current
+    /// collapse state to the database. The returned task resolves once the
+    /// write completes; the app quit handler awaits this so the most recent
+    /// state is not lost when the process exits during the debounce window.
+    fn flush_collapse_state(&mut self, cx: &App) -> Task<()> {
+        self._save_collapse_state_task = Task::ready(());
+        let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
+            return Task::ready(());
+        };
+        let db = persistence::ProjectPanelDb::global(cx);
+        cx.background_spawn(async move {
+            db.save_expanded_entries(workspace_id, entries)
+                .await
+                .log_err();
+        })
     }
 
     fn expand_entry(

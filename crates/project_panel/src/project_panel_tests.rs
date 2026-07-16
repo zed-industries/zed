@@ -11340,3 +11340,377 @@ async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::T
 
     assert_eq!(message, "Discard changes to `__init__.py`?");
 }
+
+#[gpui::test]
+async fn test_restores_saved_collapse_state(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            "a": {
+                "b": { "f.txt": "" },
+                "c.txt": "",
+            },
+            "d": { "g.txt": "" },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root2"),
+        json!({
+            "x": { "y.txt": "" },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root3"),
+        json!({
+            "e": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    // Seed the database with: root1 expanded (root and "a"); root3 collapsed
+    // (empty expanded set means even the root entry is collapsed). root2 has
+    // no saved entry, so it should fall back to the default-expanded baseline.
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root1"))),
+        vec!["".to_string(), "a".to_string()],
+    );
+    entries.insert(Arc::from(Path::new(path!("/root3"))), vec![]);
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root1").as_ref(),
+            path!("/root2").as_ref(),
+            path!("/root3").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &[
+            "v root1",
+            "    v a",
+            "        > b",
+            "          c.txt",
+            "    > d",
+            "v root2",
+            "    > x",
+            "> root3",
+        ],
+        "root1 should restore root+a expanded; root2 should fall back to default-expanded root; root3 should restore its collapsed root",
+    );
+}
+
+#[gpui::test]
+async fn test_saves_collapse_state_when_toggled(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "b": {},
+            },
+            "c": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Expand "a", collapse worktree root.
+    toggle_expand_dir(&panel, "root/a", cx);
+    let root_entry = find_project_entry(&panel, "root", cx).expect("root entry exists");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_expanded(root_entry, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Drive the debounced save to completion.
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["a".to_string()],
+        "Only the explicitly expanded directory should remain in the saved state",
+    );
+}
+
+#[gpui::test]
+async fn test_skips_persistence_when_disabled(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .restore_collapse_state = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {},
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    // Pre-seed the DB so we can verify loading is suppressed.
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(Arc::from(Path::new(path!("/root"))), vec!["a".to_string()]);
+    panel_db
+        .save_expanded_entries(workspace_id, entries.clone())
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // With the setting disabled, the saved expanded state for "a" should not
+    // be applied — only the default-expanded root entry is visible.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > a"]
+    );
+
+    // Toggling state should also not overwrite the existing saved state.
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let after = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut after_paths = after
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    after_paths.sort();
+    assert_eq!(
+        after_paths,
+        vec!["a".to_string()],
+        "Saved state should remain unchanged when restore_collapse_state is disabled",
+    );
+}
+
+#[gpui::test]
+async fn test_auto_reveal_ignored_entries_setting(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                let project_panel = settings.project_panel.get_or_insert_default();
+                project_panel.auto_reveal_entries = Some(true);
+                project_panel.auto_reveal_ignored_entries = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "f.txt": "",
+            },
+            "visible": {
+                "g.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let ignored_file = find_project_entry(&panel, "root/ignored/f.txt", cx);
+    assert!(
+        ignored_file.is_none(),
+        "Gitignored files should not be visible before their directory is expanded",
+    );
+
+    // Simulate the user activating a buffer for a gitignored file by emitting
+    // ActiveEntryChanged. With `auto_reveal_ignored_entries` enabled, the
+    // panel should expand the ignored ancestor.
+    //
+    // First we need an entry id for the ignored file; toggle the dir to make
+    // its children visible and fetch the id, then collapse it again.
+    toggle_expand_dir(&panel, "root/ignored", cx);
+    cx.run_until_parked();
+    let ignored_file =
+        find_project_entry(&panel, "root/ignored/f.txt", cx).expect("ignored file entry");
+    toggle_expand_dir(&panel, "root/ignored", cx);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    > ignored  <== selected",
+            "    > visible",
+            "      .gitignore",
+        ],
+        "ignored directory should be collapsed before auto-reveal fires",
+    );
+
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(ignored_file)));
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > .git",
+            "    v ignored",
+            "          f.txt  <== selected  <== marked",
+            "    > visible",
+            "      .gitignore",
+        ],
+        "auto_reveal_ignored_entries=true should auto-expand the gitignored ancestor",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "old_name": { "child.txt": "" },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/old_name", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut before = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    before.sort();
+    assert_eq!(
+        before,
+        vec!["".to_string(), "old_name".to_string()],
+        "old_name should be in the saved expanded set before rename",
+    );
+
+    select_path(&panel, "root/old_name", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("new_name", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut after = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    after.sort();
+    assert_eq!(
+        after,
+        vec!["".to_string(), "new_name".to_string()],
+        "rename should update the persisted path even though the entry id is unchanged",
+    );
+}

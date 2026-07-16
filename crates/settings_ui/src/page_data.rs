@@ -4949,7 +4949,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 29] {
+    fn project_panel_section() -> [SettingsPageItem; 31] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5137,6 +5137,50 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_reveal_entries = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Reveal Ignored Entries",
+                description: "Whether `Auto Reveal Entries` should also unfold ignored ancestors (for example gitignored directories) when revealing an active entry. Has no effect when Auto Reveal Entries is off.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.auto_reveal_ignored_entries"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .auto_reveal_ignored_entries
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .auto_reveal_ignored_entries = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Restore Collapse State",
+                description: "Whether to save and restore the collapsed state of worktree roots and directories in the project panel across sessions.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.restore_collapse_state"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .restore_collapse_state
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .restore_collapse_state = value;
                     },
                 }),
                 metadata: None,

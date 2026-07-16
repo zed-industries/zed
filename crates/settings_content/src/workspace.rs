@@ -763,7 +763,8 @@ pub struct ProjectPanelSettingsContent {
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
-    /// Gitignored entries are never auto revealed.
+    /// By default, gitignored entries are not auto revealed; set
+    /// `auto_reveal_ignored_entries` to override that.
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,
@@ -824,6 +825,17 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to save and restore the collapsed state of worktree roots and
+    /// directories in the project panel across sessions.
+    ///
+    /// Default: true
+    pub restore_collapse_state: Option<bool>,
+    /// Whether `auto_reveal_entries` should also unfold ignored ancestors
+    /// (for example gitignored directories) when revealing an active entry.
+    /// Has no effect when `auto_reveal_entries` is false.
+    ///
+    /// Default: false
+    pub auto_reveal_ignored_entries: Option<bool>,
 }
 
 #[derive(
