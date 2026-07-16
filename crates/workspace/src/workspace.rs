@@ -468,7 +468,6 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
-    /// When set, overrides the `file_finder.include_ignored` setting for this invocation.
     #[serde(default)]
     pub include_ignored: Option<bool>,
 }

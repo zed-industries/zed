@@ -446,16 +446,6 @@ TBD: Centered layout related settings
   },
 ```
 
-The `include_ignored` value can also be overridden per-binding using the `file_finder::Toggle` action, which lets you open the file finder with ignored files pre-included regardless of the global setting:
-
-```json [keymap]
-{
-  "bindings": {
-    "ctrl-shift-o": ["file_finder::Toggle", { "include_ignored": true }]
-  }
-}
-```
-
 ## Project Panel
 
 Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).

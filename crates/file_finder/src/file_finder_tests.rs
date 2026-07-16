@@ -1102,14 +1102,35 @@ async fn test_toggle_action_include_ignored_param(cx: &mut TestAppContext) {
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    for include_ignored in [Some(true), Some(false), None] {
+    let cases = [
+        (None, Some(true), Some(true)),
+        (None, Some(false), Some(false)),
+        (None, None, None),
+        (Some(true), Some(false), Some(false)),
+        (Some(false), Some(true), Some(true)),
+        (Some(true), None, Some(true)),
+    ];
+    for (setting, action_param, expected) in cases {
+        cx.update(|_, cx| {
+            let settings = *FileFinderSettings::get_global(cx);
+            FileFinderSettings::override_global(
+                FileFinderSettings {
+                    include_ignored: setting,
+                    ..settings
+                },
+                cx,
+            );
+        });
         cx.dispatch_action(ToggleFileFinder {
             separate_history: false,
-            include_ignored,
+            include_ignored: action_param,
         });
         let picker = active_file_picker(&workspace, cx);
         picker.update(cx, |picker, _| {
-            assert_eq!(picker.delegate.include_ignored, include_ignored);
+            assert_eq!(
+                picker.delegate.include_ignored, expected,
+                "setting: {setting:?}, action param: {action_param:?}"
+            );
         });
         cx.dispatch_action(menu::Cancel);
     }
