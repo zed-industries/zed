@@ -14,9 +14,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, Anchor, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable,
-    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TaskExt, TextStyle,
-    UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
+    Action, Anchor, App, BackgroundExecutor, ClipboardItem, Context, DismissEvent, Entity,
+    EventEmitter, Focusable, InteractiveElement, KeyContext, ParentElement, Point, Render, Styled,
+    Task, TaskExt, TextStyle, UniformListScrollHandle, WeakEntity, Window, actions, point,
+    uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
 use picker::{Picker, PickerDelegate};
@@ -652,7 +653,7 @@ impl ExtensionsPage {
             };
 
         cx.spawn(async move |this, cx| {
-            let dev_extensions = if let Some(search) = search {
+            let dev_extensions = if let Some(search) = search.as_deref() {
                 let match_candidates = dev_extensions
                     .iter()
                     .enumerate()
@@ -661,7 +662,7 @@ impl ExtensionsPage {
 
                 let matches = match_strings(
                     &match_candidates,
-                    &search,
+                    search,
                     false,
                     true,
                     match_candidates.len(),
@@ -678,6 +679,17 @@ impl ExtensionsPage {
             };
 
             let fetch_result = remote_extensions.await;
+            let fetch_result = match (fetch_result, search.as_deref()) {
+                (Ok(extensions), Some(search)) if !search.starts_with("id:") => Ok(
+                    sort_extensions_by_name_match(
+                        search,
+                        extensions,
+                        cx.background_executor().clone(),
+                    )
+                    .await,
+                ),
+                (fetch_result, _) => fetch_result,
+            };
 
             let result = this.update(cx, |this, cx| {
                 cx.notify();
@@ -2092,5 +2104,86 @@ impl Item for ExtensionsPage {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+/// The remote search endpoint only matches alphanumeric characters, so a query
+/// like `C#` is treated as `C` and the extension actually named `C#` gets
+/// buried in the results. Rank extensions whose names match the raw query
+/// first, preserving the server's order for the rest.
+async fn sort_extensions_by_name_match(
+    search: &str,
+    extensions: Vec<ExtensionMetadata>,
+    executor: BackgroundExecutor,
+) -> Vec<ExtensionMetadata> {
+    let match_candidates = extensions
+        .iter()
+        .enumerate()
+        .map(|(ix, extension)| StringMatchCandidate::new(ix, &extension.manifest.name))
+        .collect::<Vec<_>>();
+
+    let matches = match_strings(
+        &match_candidates,
+        search,
+        false,
+        true,
+        match_candidates.len(),
+        &Default::default(),
+        executor,
+    )
+    .await;
+
+    let mut extensions = extensions.into_iter().map(Some).collect::<Vec<_>>();
+    let mut sorted_extensions = Vec::with_capacity(extensions.len());
+    for string_match in matches {
+        if let Some(extension) = extensions
+            .get_mut(string_match.candidate_id)
+            .and_then(Option::take)
+        {
+            sorted_extensions.push(extension);
+        }
+    }
+    sorted_extensions.extend(extensions.into_iter().flatten());
+    sorted_extensions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn extension_metadata(id: &str, name: &str) -> ExtensionMetadata {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": name,
+            "version": "1.0.0",
+            "authors": [],
+            "repository": "https://example.com",
+            "published_at": "2024-01-01T00:00:00Z",
+            "download_count": 0,
+        }))
+        .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_sort_extensions_by_name_match(cx: &mut gpui::TestAppContext) {
+        let extensions = vec![
+            extension_metadata("cpp", "C++"),
+            extension_metadata("clojure", "Clojure"),
+            extension_metadata("csharp", "C#"),
+            extension_metadata("crystal", "Crystal"),
+            extension_metadata("csharp-snippets", "C# Snippets"),
+        ];
+
+        let sorted = sort_extensions_by_name_match("C#", extensions, cx.executor()).await;
+        let ids = sorted
+            .iter()
+            .map(|extension| extension.id.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            // Name matches first, then the server's order is preserved.
+            vec!["csharp", "csharp-snippets", "cpp", "clojure", "crystal"]
+        );
     }
 }
