@@ -13,7 +13,7 @@ Zed works without AI features or a subscription. No [authentication](../authenti
 
 |                                                | Free    | Pro       | Student   | Business  |
 | ---------------------------------------------- | ------- | --------- | --------- | --------- |
-| Zed-hosted AI models                           | —       | All       | Most      | All       |
+| Zed-hosted AI models                           | —       | ✓         | ✓         | ✓         |
 | [AI via own API keys](../ai/use-api-access.md) | ✓       | ✓         | ✓         | ✓         |
 | [External Agents](../ai/external-agents.md)    | ✓       | ✓         | ✓         | ✓         |
 | Edit Predictions                               | Limited | Unlimited | Unlimited | Unlimited |
@@ -23,7 +23,7 @@ Zed works without AI features or a subscription. No [authentication](../authenti
 
 ### Zed Free {#free}
 
-Zed is free to use. You can configure AI agents with your own API keys via [Use API Access](../ai/use-api-access.md). [Edit Predictions](../ai/edit-prediction.md) are available on a limited basis. Zed-hosted models are available through Pro, Student, and paid Business plans.
+Zed is free to use. You can configure AI agents with your own API keys via [Use API Access](../ai/use-api-access.md). [Edit Predictions](../ai/edit-prediction.md) are available on a limited basis. Zed's hosted models require a Pro subscription.
 
 ### Zed Pro {#pro}
 
@@ -39,7 +39,7 @@ For a full feature overview, see [Zed Business](../business/overview.md). For bi
 
 ### Student Plan {#student}
 
-The [Zed Student plan](https://zed.dev/education) includes unlimited [Edit Predictions](../ai/edit-prediction.md), most [hosted AI models](./zed-hosted-models.md), and $10/month in token credits. It excludes Claude Fable 5, Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro. The plan is available free for one year to verified university students.
+The [Zed Student plan](https://zed.dev/education) includes all Zed Pro features: unlimited [Edit Predictions](../ai/edit-prediction.md), all [hosted AI models](./zed-hosted-models.md) except Claude Opus, and $10/month in token credits. Available free for one year to verified university students.
 
 ## Usage {#usage}
 
@@ -65,4 +65,4 @@ On Zed Business, administrators set a pre-tax org-wide spend limit from the Data
 
 ### Trials {#trials}
 
-Trials automatically convert to Zed Free when they end. Trials do not include Claude Fable 5, Claude Opus models, GPT-5.5 pro, or GPT-5.4 pro. No cancellation is needed to prevent conversion to Zed Pro.
+Trials automatically convert to Zed Free when they end. Trials do not include access to Anthropic's Opus models. No cancellation is needed to prevent conversion to Zed Pro.
