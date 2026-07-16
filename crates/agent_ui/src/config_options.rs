@@ -853,12 +853,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                 .inset(true)
                                 .spacing(ListItemSpacing::Sparse)
                                 .toggle_state(selected)
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(Label::new(option_name).truncate()),
-                                )
+                                .child(Label::new(option_name))
                                 .end_slot(div().pr_2().when(is_selected, |this| {
                                     this.child(Icon::new(IconName::Check).color(Color::Accent))
                                 }))
