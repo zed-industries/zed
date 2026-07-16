@@ -176,6 +176,7 @@ impl CsvPreviewView {
                 },
             );
 
+            const INITIAL_ROW_HEIGHT: Pixels = px(24.);
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
@@ -189,8 +190,8 @@ impl CsvPreviewView {
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(px(24.)),
-                row_height: px(24.),
+                    .with_uniform_item_height(INITIAL_ROW_HEIGHT),
+                row_height: INITIAL_ROW_HEIGHT,
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
