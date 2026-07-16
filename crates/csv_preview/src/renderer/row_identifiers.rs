@@ -1,12 +1,12 @@
 use ui::{
     ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
-    Clickable as _, Context, ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, StyledTypography as _, Tooltip, div,
+    Clickable as _, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, StyledTypography as _, Tooltip, div,
 };
 
 use crate::{
     CsvPreviewView,
-    settings::{RowIdentifiers, VerticalAlignment},
+    settings::RowIdentifiers,
     types::{DataRow, DisplayRow, LineNumber},
 };
 
@@ -34,7 +34,7 @@ impl LineNumber {
                     if start + 1 == end {
                         format!("{start}\n{end}")
                     } else {
-                        format!("{start}\n...\n{end}")
+                        format!("{start}\n-\n{end}")
                     }
                 }
                 RowIdentDisplayMode::Horizontal => {
@@ -77,11 +77,6 @@ impl CsvPreviewView {
         } else {
             (max_line_number as f32).log10().floor() as usize + 1
         };
-
-        // if !self.settings.multiline_cells_enabled {
-        //     // Uses horizontal line numbers layout like `123-456`. Needs twice the size
-        //     digit_count *= 2;
-        // }
 
         let char_width_px = 9.0; // TODO: get real width of the characters
         let base_width = (digit_count as f32) * char_width_px;
@@ -157,7 +152,7 @@ impl CsvPreviewView {
                 .contents
                 .line_numbers
                 .get(*data_row)?
-                .display_string(if self.settings.multiline_cells_enabled {
+                .display_string(if self.settings.multiline_cells_effectively_enabled() {
                     RowIdentDisplayMode::Vertical
                 } else {
                     RowIdentDisplayMode::Horizontal
@@ -172,14 +167,11 @@ impl CsvPreviewView {
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().panel_background)
             .h_full()
-            .text_ui(cx)
             .text_color(cx.theme().colors().text_muted)
             .justify_center()
-            .map(|div| match self.settings.vertical_alignment {
-                VerticalAlignment::Top => div.items_start(),
-                VerticalAlignment::Center => div.items_center(),
-            })
+            .items_center()
             .font_buffer(cx)
+            .text_ui(cx)
             .child(row_identifier)
             .into_any_element();
         Some(value)
