@@ -1259,6 +1259,14 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    /// The editor backing the query input, for pickers that have one.
+    pub fn query_editor(&self) -> Option<&Arc<dyn ErasedEditor>> {
+        match &self.head {
+            Head::Editor(editor) => Some(editor),
+            Head::Empty(_) => None,
+        }
+    }
+
     pub fn set_query(&self, query: &str, window: &mut Window, cx: &mut App) {
         if let Head::Editor(editor) = &self.head {
             editor.set_text(query, window, cx);
