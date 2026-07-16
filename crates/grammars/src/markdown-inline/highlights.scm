@@ -6,9 +6,6 @@
 
 (strikethrough) @strikethrough.markup
 
-((html_tag) @comment
-  (#match? @comment "^<!--"))
-
 [
   (inline_link)
   (shortcut_link)
