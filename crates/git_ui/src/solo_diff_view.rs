@@ -42,7 +42,7 @@ pub struct SoloDiffView {
     repository_id: RepositoryId,
     repo_path: RepoPath,
     buffer: Entity<Buffer>,
-    diff: Entity<buffer_diff::BufferDiff>,
+    pub(crate) diff: Entity<buffer_diff::BufferDiff>,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,

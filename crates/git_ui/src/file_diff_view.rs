@@ -30,6 +30,7 @@ use workspace::{
 };
 
 pub struct FileDiffView {
+    pub(crate) diff: Entity<BufferDiff>,
     editor: Entity<SplittableEditor>,
     old_buffer: Entity<Buffer>,
     new_buffer: Entity<Buffer>,
@@ -144,6 +145,7 @@ impl FileDiffView {
         }
 
         Self {
+            diff: diff.clone(),
             editor,
             buffer_changes_tx,
             old_buffer,

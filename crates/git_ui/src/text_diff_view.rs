@@ -9,7 +9,7 @@ use editor::{
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window,
+    Focusable, IntoElement, Render, Task, Window, Styled, ParentElement, div,
 };
 use language::{self, Buffer, Capability, OffsetRangeExt, Point};
 use project::{Project, ProjectPath};
@@ -32,6 +32,7 @@ use workspace::{
 };
 
 pub struct TextDiffView {
+    pub(crate) diff_buffer: Entity<BufferDiff>,
     diff_editor: Entity<SplittableEditor>,
     title: SharedString,
     path: Option<SharedString>,
@@ -225,6 +226,7 @@ impl TextDiffView {
             .unwrap_or(path);
 
         Self {
+            diff_buffer: diff_buffer.clone(),
             diff_editor,
             title: format!("Clipboard ↔ {selection_location_title}").into(),
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
@@ -466,6 +468,105 @@ impl Render for TextDiffView {
     }
 }
 
+pub struct DiffStatus {
+    active_diff_buffer: Option<Entity<BufferDiff>>,
+    changed_row_counts: Option<(u32, u32)>,
+    _observe_active_diff: Option<gpui::Subscription>,
+}
+
+impl DiffStatus {
+    pub fn new() -> Self {
+        Self {
+            active_diff_buffer: None,
+            changed_row_counts: None,
+            _observe_active_diff: None,
+        }
+    }
+
+    fn update_status(&mut self, cx: &mut Context<Self>) {
+        if let Some(diff_buffer) = &self.active_diff_buffer {
+            let changed_row_counts = diff_buffer.read(cx).snapshot(cx).changed_row_counts();
+            self.changed_row_counts = Some(changed_row_counts);
+        } else {
+            self.changed_row_counts = None;
+        }
+        cx.notify();
+    }
+}
+
+impl Render for DiffStatus {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let Some((added, removed)) = self.changed_row_counts else {
+            return div().hidden();
+        };
+
+        if added == 0 && removed == 0 {
+            div().child(
+                Label::new("No differences")
+                    .size(ui::LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        } else {
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(
+                    Label::new(format!("+{added}"))
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Success),
+                )
+                .child(
+                    Label::new(format!("-{removed}"))
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Error),
+                )
+        }
+    }
+}
+
+impl workspace::StatusItemView for DiffStatus {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn workspace::item::ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let diff_buffer = if let Some(text_diff_view) =
+            active_pane_item.and_then(|item| item.act_as::<TextDiffView>(cx))
+        {
+            Some(text_diff_view.read(cx).diff_buffer.clone())
+        } else if let Some(solo_diff_view) =
+            active_pane_item.and_then(|item| item.act_as::<crate::solo_diff_view::SoloDiffView>(cx))
+        {
+            Some(solo_diff_view.read(cx).diff.clone())
+        } else if let Some(file_diff_view) =
+            active_pane_item.and_then(|item| item.act_as::<crate::file_diff_view::FileDiffView>(cx))
+        {
+            Some(file_diff_view.read(cx).diff.clone())
+        } else {
+            None
+        };
+
+        if let Some(diff_buffer) = diff_buffer {
+            self.active_diff_buffer = Some(diff_buffer.clone());
+            self._observe_active_diff = Some(cx.observe_in(&diff_buffer, window, move |this, _, _, cx| {
+                this.update_status(cx);
+            }));
+            self.update_status(cx);
+        } else {
+            self.active_diff_buffer = None;
+            self._observe_active_diff = None;
+            self.changed_row_counts = None;
+        }
+        cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,7 +578,7 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, StatusItemView};
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -943,6 +1044,118 @@ mod tests {
                 diff_view.tab_tooltip_text(cx).unwrap(),
                 expected_tab_tooltip
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_status(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "test.txt": "line 1\nline 2\nline 3\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(path!("/test/test.txt"), cx))
+            .await
+            .unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&mut *cx, |mw, _| mw.workspace().clone());
+
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer, None, window, cx)
+        });
+
+        // 1. A diff with multiple changes displays the correct count.
+        let diff_view = workspace
+            .update_in(&mut *cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "line 1 modified\nline 2 modified\nline 3\n".to_string(),
+                        editor: editor.clone(),
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // Instantiate our DiffStatus
+        let diff_status = cx.new_window_entity(|_window, _cx| {
+            DiffStatus::new()
+        });
+
+        // Initially it should show no status (None)
+        diff_status.read_with(&mut *cx, |status, _cx| {
+            assert!(status.changed_row_counts.is_none());
+        });
+
+        // Activate the diff view
+        diff_status.update_in(&mut *cx, |status, window, cx| {
+            status.set_active_pane_item(Some(&diff_view), window, cx);
+        });
+
+        cx.executor().run_until_parked();
+
+        // It should display the correct counts
+        diff_status.read_with(&mut *cx, |status, _cx| {
+            assert_eq!(status.changed_row_counts, Some((2, 2)));
+        });
+
+        // 2. An empty diff displays "No differences".
+        let diff_view_empty = workspace
+            .update_in(&mut *cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "line 1\nline 2\nline 3\n".to_string(),
+                        editor,
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // Switch active item to the empty diff
+        diff_status.update_in(&mut *cx, |status, window, cx| {
+            status.set_active_pane_item(Some(&diff_view_empty), window, cx);
+        });
+
+        cx.executor().run_until_parked();
+
+        // Count should be Some((0, 0)) representing "No differences"
+        diff_status.read_with(&mut *cx, |status, _cx| {
+            assert_eq!(status.changed_row_counts, Some((0, 0)));
+        });
+
+        // 3. The status bar updates when the diff changes or the user leaves the diff view.
+        diff_status.update_in(&mut *cx, |status, window, cx| {
+            status.set_active_pane_item(None, window, cx);
+        });
+
+        cx.executor().run_until_parked();
+
+        // Should return to None when active pane item is not a diff view
+        diff_status.read_with(&mut *cx, |status, _cx| {
+            assert!(status.changed_row_counts.is_none());
         });
     }
 }
