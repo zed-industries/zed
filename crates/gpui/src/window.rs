@@ -4813,9 +4813,11 @@ impl Window {
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            let window_is_active = self.is_window_active();
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_keystroke
+                && window_is_active
             {
                 let key = match self.pending_modifier.modifiers {
                     modifiers if modifiers.shift => Some("shift"),
@@ -4834,7 +4836,11 @@ impl Window {
                 }
             }
 
-            if self.pending_modifier.modifiers.number_of_modifiers() == 0
+            if !window_is_active {
+                // Don't re-arm a modifier-only keystroke that started while another
+                // app's non-activating panel had keyboard focus.
+                self.pending_modifier.saw_keystroke = true;
+            } else if self.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
                 self.pending_modifier.saw_keystroke = false

@@ -808,7 +808,8 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, VisualTestContext,
+        Window, div,
     };
 
     struct TestView {
@@ -874,5 +875,53 @@ mod test {
                 assert!(test_view.saw_action);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_modifier_only_binding_requires_active_window(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| TestView {
+            saw_key_down: false,
+            saw_action: false,
+            focus_handle: cx.focus_handle(),
+        });
+
+        cx.update(|_, cx| {
+            cx.bind_keys(vec![KeyBinding::new(
+                "shift shift",
+                TestAction,
+                Some("parent"),
+            )]);
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            window.activate_window();
+            window.focus(&view.focus_handle, cx)
+        });
+        cx.run_until_parked();
+
+        fn double_shift(cx: &mut VisualTestContext) {
+            for _ in 0..2 {
+                cx.simulate_modifiers_change(Modifiers::shift());
+                cx.simulate_modifiers_change(Modifiers::none());
+            }
+        }
+
+        double_shift(cx);
+        view.update(cx, |view, _| {
+            assert!(view.saw_action);
+            view.saw_action = false;
+        });
+
+        cx.deactivate_window();
+        double_shift(cx);
+        view.update(cx, |view, _| assert!(!view.saw_action));
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        view.update_in(cx, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        cx.simulate_modifiers_change(Modifiers::none());
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        view.update(cx, |view, _| assert!(!view.saw_action));
     }
 }
