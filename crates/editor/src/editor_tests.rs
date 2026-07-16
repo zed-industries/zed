@@ -2486,6 +2486,30 @@ fn test_beginning_of_line_single_line_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_only_focused_editor_blinks_when_window_is_activated(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let focused_editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let unfocused_editor = focused_editor
+        .update(cx, |focused_editor, window, cx| {
+            window.focus(&focused_editor.focus_handle(cx), cx);
+            let unfocused_editor = cx.new(|cx| Editor::single_line(window, cx));
+            window.activate_window();
+            unfocused_editor
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    focused_editor
+        .update(cx, |focused_editor, window, cx| {
+            assert!(window.is_window_active());
+            assert!(focused_editor.blink_manager.read(cx).enabled());
+            assert!(!unfocused_editor.read(cx).blink_manager.read(cx).enabled());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
