@@ -247,7 +247,7 @@ impl Editor {
         wrap_guides
     }
 
-    pub(super) fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
+    pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
         let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
@@ -276,7 +276,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn toggle_soft_wrap(
+    pub fn toggle_soft_wrap(
         &mut self,
         _: &ToggleSoftWrap,
         _: &mut Window,
