@@ -49,10 +49,6 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
-    /// Cached row height, refreshed from the actual text line height on every render.
-    /// Used to size not-yet-rendered rows for the scrollbar without a full `.measure_all()`
-    /// pass, so it tracks the real row height instead of a hardcoded guess.
-    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -98,7 +94,7 @@ impl CsvPreviewView {
                         .and_then(|item| item.act_as::<Editor>(cx))
                         .filter(|editor| Self::is_csv_file(editor, cx))
                     {
-                        let csv_preview = Self::new(&editor, window, cx);
+                        let csv_preview = Self::new(&editor, cx);
                         workspace.active_pane().update(cx, |pane, cx| {
                             let existing = pane
                                 .items_of_type::<CsvPreviewView>()
@@ -119,7 +115,7 @@ impl CsvPreviewView {
                             .and_then(|item| item.act_as::<Editor>(cx))
                             .filter(|editor| Self::is_csv_file(editor, cx))
                         {
-                            let csv_preview = Self::new(&editor, window, cx);
+                            let csv_preview = Self::new(&editor, cx);
                             let pane = workspace
                                 .find_pane_in_direction(SplitDirection::Right, cx)
                                 .unwrap_or_else(|| {
@@ -156,7 +152,7 @@ impl CsvPreviewView {
         });
     }
 
-    fn new(editor: &Entity<Editor>, window: &Window, cx: &mut Context<Workspace>) -> Entity<Self> {
+    fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let table_interaction_state = cx.new(|cx| {
             TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
@@ -177,7 +173,6 @@ impl CsvPreviewView {
                 },
             );
 
-            let row_height = window.pixel_snap(window.line_height());
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
@@ -191,8 +186,7 @@ impl CsvPreviewView {
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(row_height),
-                row_height,
+                    .with_uniform_item_height(px(24.)),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -245,10 +239,11 @@ impl CsvPreviewView {
             this.update(cx, |view, cx| {
                 view.engine.set_d2d_mapping(mapping);
                 let visible_rows = view.engine.d2d_mapping().visible_row_count();
-                // Uses the row height measured on the last render. Cheaper than a full
-                // `.measure_all()` pass; exact row heights are re-measured on scrolling.
+                // Approximation of single csv table row height. Will be re-measured on scrolling.
+                // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
+                let approximate_height = px(24.);
                 view.list_state
-                    .reset_with_uniform_height(visible_rows, view.row_height);
+                    .reset_with_uniform_height(visible_rows, approximate_height);
                 cx.notify();
             })
             .ok();

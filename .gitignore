@@ -58,5 +58,3 @@ crates/docs_preprocessor/actions.json
 
 # NixOS integration test state
 .nixos-test-history
-
-.local*
