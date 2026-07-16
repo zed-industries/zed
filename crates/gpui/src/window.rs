@@ -5343,6 +5343,14 @@ impl Window {
         receiver
     }
 
+    /// Returns whether a prompt rendered by GPUI is currently active in this window.
+    ///
+    /// This is only true for prompts rendered in the window (see
+    /// [`App::set_prompt_builder`]), not for platform-native prompt dialogs.
+    pub fn has_active_prompt(&self) -> bool {
+        self.prompt.is_some()
+    }
+
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);

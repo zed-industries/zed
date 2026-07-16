@@ -262,7 +262,10 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && !hitbox.contains(&window.mouse_position()) {
+                if phase == DispatchPhase::Capture
+                    && !window.has_active_prompt()
+                    && !hitbox.contains(&window.mouse_position())
+                {
                     (listener)(event, window, cx)
                 }
             }));
@@ -4521,6 +4524,87 @@ mod tests {
             .unwrap();
 
         assert!(active_tooltip.borrow().is_none());
+    }
+
+    struct MouseDownOutOwner {
+        mouse_down_out_count: Rc<RefCell<usize>>,
+    }
+
+    impl Render for MouseDownOutOwner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mouse_down_out_count = self.mouse_down_out_count.clone();
+            div()
+                .size_full()
+                .child(div().id("target").w(px(50.)).h(px(50.)).on_mouse_down_out(
+                    move |_, _, _| {
+                        *mouse_down_out_count.borrow_mut() += 1;
+                    },
+                ))
+        }
+    }
+
+    #[test]
+    fn mouse_down_out_is_suppressed_while_window_prompt_is_active() {
+        let mut test_app = TestAppContext::single();
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let window = test_app.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            move |_, _| MouseDownOutOwner {
+                mouse_down_out_count,
+            }
+        });
+        let any_window: AnyWindowHandle = window.into();
+
+        fn dispatch_mouse_down_outside_target(
+            test_app: &mut TestAppContext,
+            any_window: AnyWindowHandle,
+        ) {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.dispatch_event(
+                        MouseDownEvent {
+                            position: point(px(75.), px(75.)),
+                            button: MouseButton::Left,
+                            modifiers: Default::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
+        }
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down outside the element should fire mouse-down-out listeners"
+        );
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                cx.set_prompt_builder(crate::fallback_prompt_renderer);
+                let _receiver =
+                    window.prompt(crate::PromptLevel::Warning, "message", None, &["Ok"], cx);
+                assert!(window.has_active_prompt());
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down over an active prompt should not fire mouse-down-out listeners"
+        );
     }
 
     #[test]
