@@ -489,27 +489,56 @@ impl LspAdapter for RustLspAdapter {
                         .collect::<SmallVec<[_; 8]>>();
                     all_stop_ranges.sort_unstable_by_key(|a| (a.start, Reverse(a.end)));
 
+                    // Placeholders may nest, e.g. `$2` inside `${1:"$2"}`
+                    struct OpenPlaceholder {
+                        snippet_text_end: usize,
+                        label_run_start: usize,
+                    }
+                    let mut open_placeholders = SmallVec::<[OpenPlaceholder; 4]>::new();
+
                     for range in &all_stop_ranges {
                         let start_pos = range.start as usize;
                         let end_pos = range.end as usize;
 
+                        while let Some(placeholder) = open_placeholders.last() {
+                            if placeholder.snippet_text_end > start_pos {
+                                break;
+                            }
+                            label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                            text_pos = placeholder.snippet_text_end;
+                            runs.push((
+                                placeholder.label_run_start..label.len(),
+                                HighlightId::TABSTOP_REPLACE_ID,
+                            ));
+                            open_placeholders.pop();
+                        }
+
                         label.push_str(&snippet.text[text_pos..start_pos]);
+                        text_pos = start_pos;
 
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
                             runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
                         } else {
-                            let label_start = label.len();
-                            label.push_str(&snippet.text[start_pos..end_pos]);
-                            let label_end = label.len();
-                            runs.push((label_start..label_end, HighlightId::TABSTOP_REPLACE_ID));
+                            open_placeholders.push(OpenPlaceholder {
+                                snippet_text_end: end_pos,
+                                label_run_start: label.len(),
+                            });
                         }
+                    }
 
-                        text_pos = end_pos;
+                    while let Some(placeholder) = open_placeholders.pop() {
+                        label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                        text_pos = placeholder.snippet_text_end;
+                        runs.push((
+                            placeholder.label_run_start..label.len(),
+                            HighlightId::TABSTOP_REPLACE_ID,
+                        ));
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
+                    runs.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
 
                     if detail_left.is_some_and(|detail_left| detail_left == new_text) {
                         // We only include the left detail if it isn't the snippet again
@@ -1453,6 +1482,7 @@ mod tests {
     use crate::language;
     use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use lsp::CompletionItemLabelDetails;
+    use pretty_assertions::assert_eq;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
     use util::path;
@@ -1872,6 +1902,34 @@ mod tests {
                     (12..16, HighlightId::TABSTOP_REPLACE_ID),
                     (0..3, HighlightId::new(1)),
                     (9..11, HighlightId::new(1)),
+                ],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "unimplemented".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "unimplemented!(${1:\"$2\"})".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "unimplemented!(\"…\")".to_string(),
+                0..13,
+                vec![
+                    (15..20, HighlightId::TABSTOP_REPLACE_ID),
+                    (16..19, HighlightId::TABSTOP_INSERT_ID),
+                    (0..13, HighlightId::new(2)),
+                    (13..14, HighlightId::new(2)),
                 ],
             ))
         );
