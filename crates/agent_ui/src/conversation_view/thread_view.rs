@@ -8057,7 +8057,7 @@ impl ThreadView {
 
         let tool_output_display = if is_open {
             match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => {
+                ToolCallStatus::WaitingForConfirmation { .. } => {
                     let confirmation_content = v_flex()
                         .w_full()
                         .children(tool_call.content.iter().enumerate().map(
@@ -8167,37 +8167,7 @@ impl ThreadView {
                             )
                         });
 
-                    v_flex()
-                        .w_full()
-                        .map(|this| {
-                            if layout == ToolCallLayout::Floating {
-                                // Cap the content (e.g. a full plan awaiting
-                                // approval) so the floating row can never
-                                // consume the entire panel and squeeze the
-                                // conversation list to zero height, while the
-                                // permission buttons below stay visible.
-                                this.child(
-                                    div()
-                                        .id(("floating-confirmation-content", entry_ix))
-                                        .max_h_40()
-                                        .overflow_y_scroll()
-                                        .child(confirmation_content),
-                                )
-                            } else {
-                                this.child(confirmation_content)
-                            }
-                        })
-                        .child(self.render_permission_buttons(
-                            self.thread.read(cx).session_id().clone(),
-                            self.is_first_tool_call(active_session_id, &tool_call.id, cx),
-                            options,
-                            entry_ix,
-                            tool_call.id.clone(),
-                            focus_handle,
-                            self.sandbox_confusables_block_allow(tool_call, cx),
-                            cx,
-                        ))
-                        .into_any()
+                    confirmation_content.into_any()
                 }
                 ToolCallStatus::Pending | ToolCallStatus::InProgress
                     if is_edit
@@ -8295,35 +8265,23 @@ impl ThreadView {
             None
         };
 
-        v_flex()
-            .map(|this| {
-                if matches!(
-                    layout,
-                    ToolCallLayout::Embedded | ToolCallLayout::Floating
-                ) {
-                    this
-                } else if use_card_layout {
-                    this.my_1p5()
-                        .rounded_md()
-                        .border_1()
-                        .when(failed_or_canceled, |this| this.border_dashed())
-                        .border_color(self.tool_card_border_color(cx))
-                        .bg(cx.theme().colors().editor_background)
-                        .overflow_hidden()
-                } else {
-                    this.my_1()
-                }
-            })
-            .when(layout == ToolCallLayout::Standalone, |this| {
-                this.map(|this| {
-                    if has_location && !use_card_layout {
-                        this.ml_4()
-                    } else {
-                        this.ml_5()
-                    }
-                })
-                .mr_5()
-            })
+        let permission_buttons =
+            if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status {
+                Some(self.render_permission_buttons(
+                    self.thread.read(cx).session_id().clone(),
+                    self.is_first_tool_call(active_session_id, &tool_call.id, cx),
+                    options,
+                    entry_ix,
+                    tool_call.id.clone(),
+                    focus_handle,
+                    self.sandbox_confusables_block_allow(tool_call, cx),
+                    cx,
+                ))
+            } else {
+                None
+            };
+
+        let body = v_flex()
             .map(|this| {
                 if is_terminal_tool {
                     this.child(self.render_collapsible_command(
@@ -8498,7 +8456,48 @@ impl ThreadView {
                     )
                 }
             })
-            .children(tool_output_display)
+            .children(tool_output_display);
+
+        v_flex()
+            .map(|this| {
+                if matches!(layout, ToolCallLayout::Embedded | ToolCallLayout::Floating) {
+                    this
+                } else if use_card_layout {
+                    this.my_1p5()
+                        .rounded_md()
+                        .border_1()
+                        .when(failed_or_canceled, |this| this.border_dashed())
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_hidden()
+                } else {
+                    this.my_1()
+                }
+            })
+            .when(layout == ToolCallLayout::Standalone, |this| {
+                this.map(|this| {
+                    if has_location && !use_card_layout {
+                        this.ml_4()
+                    } else {
+                        this.ml_5()
+                    }
+                })
+                .mr_5()
+            })
+            .map(|this| {
+                if layout == ToolCallLayout::Floating {
+                    this.child(
+                        div()
+                            .id(("floating-tool-call-body", entry_ix))
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .child(body),
+                    )
+                } else {
+                    this.child(body)
+                }
+            })
+            .children(permission_buttons)
     }
 
     /// A small "Learn more" link to the sandboxing docs, deep-linked to

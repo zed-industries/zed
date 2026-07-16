@@ -54,8 +54,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         settings::ModelMode::Thinking { budget_tokens } => {
             AnthropicModelMode::Thinking { budget_tokens }
         }
+        settings::ModelMode::Adaptive => AnthropicModelMode::AdaptiveThinking,
     };
-    let supports_thinking = matches!(mode, AnthropicModelMode::Thinking { .. });
+    let supports_thinking = matches!(
+        mode,
+        AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
+    );
+    let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking { .. });
 
     anthropic::Model {
         display_name: available
@@ -68,7 +73,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
         supports_thinking,
-        supports_adaptive_thinking: false,
+        supports_adaptive_thinking,
         supports_images: available.capabilities.images,
         supports_speed: false,
         supports_compaction: false,

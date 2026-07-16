@@ -557,6 +557,7 @@ pub enum ModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+    Adaptive,
 }
 
 /// Settings-layer–free reasoning-effort enum.
