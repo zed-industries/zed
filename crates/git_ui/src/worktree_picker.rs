@@ -1353,6 +1353,35 @@ impl PickerDelegate for WorktreePickerDelegate {
         }
     }
 
+    fn searchbar_trailer(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if self.show_footer {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            IconButton::new("configure-worktree-tasks", IconName::Settings)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Automate Worktree Setup",
+                        &OpenWorktreeSetupTasks,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(OpenWorktreeSetupTasks.boxed_clone(), cx)
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         if !self.show_footer {
             return None;
