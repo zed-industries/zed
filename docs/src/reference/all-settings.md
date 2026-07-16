@@ -4474,7 +4474,7 @@ The name of any font family installed on the user's system
 
 ### Terminal: Font Fallbacks
 
-- Description: The font fallbacks to use for text in the terminal.
+- Description: The font fallbacks to use for text in the terminal. Uses the buffer's font fallback if unset.
 - Setting: "font_fallbacks"
 - Default: `null`
 
