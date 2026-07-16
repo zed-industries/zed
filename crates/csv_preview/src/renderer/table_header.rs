@@ -459,6 +459,9 @@ impl PickerDelegate for ColumnFilterDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        if !self.view.read(cx).engine.has_active_filters(self.col) {
+            return None;
+        }
         let selected_rows: usize = self
             .rows
             .iter()
@@ -471,9 +474,6 @@ impl PickerDelegate for ColumnFilterDelegate {
             .filter(|row| row.hidden_by.is_none())
             .map(|row| row.entry.occurred_times())
             .sum();
-        if selected_rows == 0 {
-            return None;
-        }
 
         let col = self.col;
         Some(
