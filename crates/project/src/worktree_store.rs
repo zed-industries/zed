@@ -513,7 +513,7 @@ impl WorktreeStore {
                 let response = upstream_client.request(proto::CopyProjectEntry {
                     project_id: *upstream_project_id,
                     entry_id: entry_id.to_proto(),
-                    new_path: new_project_path.path.to_proto(),
+                    new_path: new_project_path.path.as_unix_str().to_owned(),
                     new_worktree_id: new_project_path.worktree_id.to_proto(),
                 });
                 cx.spawn(async move |_, cx| {
@@ -668,7 +668,7 @@ impl WorktreeStore {
                 let response = upstream_client.request(proto::RenameProjectEntry {
                     project_id: *upstream_project_id,
                     entry_id: entry_id.to_proto(),
-                    new_path: new_project_path.path.to_proto(),
+                    new_path: new_project_path.path.as_unix_str().to_owned(),
                     new_worktree_id: new_project_path.worktree_id.to_proto(),
                 });
                 cx.spawn(async move |_, cx| {
@@ -1231,7 +1231,7 @@ impl WorktreeStore {
         let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
         let new_project_path = (
             new_worktree_id,
-            RelPath::from_proto(&envelope.payload.new_path)?,
+            RelPath::from_unix_str(&envelope.payload.new_path)?,
         );
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
             let Some((_, project_id)) = this.downstream_client else {
@@ -1289,7 +1289,7 @@ impl WorktreeStore {
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(request.entry_id);
         let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
-        let rel_path = RelPath::from_proto(&request.new_path)
+        let rel_path = RelPath::from_unix_str(&request.new_path)
             .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
 
         let (scan_id, task) = this.update(&mut cx, |this, cx| {

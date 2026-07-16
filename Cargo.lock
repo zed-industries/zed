@@ -954,6 +954,7 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
+ "which 6.0.3",
  "windows 0.61.3",
  "zeroize",
 ]
@@ -6319,6 +6320,7 @@ dependencies = [
  "log",
  "lsp",
  "parking_lot",
+ "path",
  "pretty_assertions",
  "proto",
  "semver",
@@ -6908,6 +6910,7 @@ dependencies = [
  "log",
  "notify 9.0.0-rc.4",
  "parking_lot",
+ "path",
  "paths",
  "proto",
  "rope",
@@ -9752,15 +9755,14 @@ dependencies = [
  "gpui_shared_string",
  "gpui_util",
  "log",
- "lsp-types",
  "parking_lot",
+ "path",
  "regex",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "toml 0.8.23",
  "tree-sitter",
- "util",
 ]
 
 [[package]]
@@ -10579,6 +10581,32 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "lsp_locations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "lsp",
+ "picker",
+ "picker_preview",
+ "project",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -12706,6 +12734,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
+name = "path"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14040,6 +14078,7 @@ dependencies = [
  "markdown",
  "node_runtime",
  "parking_lot",
+ "path",
  "paths",
  "percent-encoding",
  "postage",
@@ -18235,9 +18274,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.10.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aea22054047c16c3f34d3ac473a2170be1424b1115b2a3adcf28cfb067c88859"
+checksum = "73afc801dd6bd47529eaa7c7e90557f107527d1b7c9c7ed7d7803c7b8d0c357f"
 dependencies = [
  "arrayvec",
  "grid",
@@ -19697,9 +19736,11 @@ dependencies = [
  "num-format",
  "schemars 1.0.4",
  "serde",
+ "settings",
  "smallvec",
  "strum 0.27.2",
  "theme",
+ "theme_settings",
  "ui_macros",
  "windows 0.61.3",
 ]
@@ -19952,6 +19993,7 @@ dependencies = [
  "log",
  "mach2 0.5.0",
  "nix 0.29.0",
+ "path",
  "percent-encoding",
  "pretty_assertions",
  "rand 0.9.4",
@@ -23023,7 +23065,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.12.0"
+version = "1.13.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23110,6 +23152,7 @@ dependencies = [
  "languages",
  "line_ending_selector",
  "log",
+ "lsp_locations",
  "markdown",
  "markdown_preview",
  "menu",
