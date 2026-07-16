@@ -5957,8 +5957,7 @@ impl BackgroundScanner {
         // directories hundreds of times. The root entry is exempt: it may itself
         // be reached via a symlinked path, and deferring it would leave the whole
         // worktree unloaded.
-        let follow_symlinks = self.settings.scan_symlinks
-            == settings::ScanSymlinksSetting::Always
+        let follow_symlinks = self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always
             || entry.path.is_empty()
             || entry.canonical_path.is_none();
         let scannable = state.scanning_enabled
