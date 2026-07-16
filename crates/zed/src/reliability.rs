@@ -220,6 +220,21 @@ async fn upload_minidump(
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
     }
+    if let Some(abort_message) = metadata.abort_message.as_ref() {
+        // Sentry tag values are limited to 200 characters on a single line, so
+        // put a searchable prefix in the tag (which grouping rules also match
+        // on) and the full message in a context.
+        let tag: String = abort_message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect();
+        form = form
+            .text("sentry[tags][abort_message]", tag)
+            .text("sentry[contexts][abort][message]", abort_message.clone());
+    }
 
     if let Some(is_staff) = &metadata
         .user_info

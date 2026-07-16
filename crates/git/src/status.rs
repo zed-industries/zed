@@ -454,7 +454,7 @@ impl FromStr for GitStatus {
                 let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
+                let path = RepoPath::from_rel_path(RelPath::from_unix_str(path).log_err()?);
                 Some((path, status))
             })
             .collect::<Vec<_>>();
@@ -544,7 +544,7 @@ impl FromStr for TreeDiff {
         let mut fields = s.split('\0');
         let mut parsed = HashMap::default();
         while let Some((status, path)) = fields.next().zip(fields.next()) {
-            let path = RepoPath::from_rel_path(RelPath::unix(path)?);
+            let path = RepoPath::from_rel_path(RelPath::from_unix_str(path)?);
 
             let mut fields = status.split(" ").skip(2);
             let old_sha = fields

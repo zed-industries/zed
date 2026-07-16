@@ -91,7 +91,7 @@ async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.10.1"
+taffy = "=0.12.1"
 thiserror.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }

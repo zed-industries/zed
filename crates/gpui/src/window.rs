@@ -1997,6 +1997,24 @@ impl Window {
         self.platform_window.request_decorations(decorations);
     }
 
+    /// Set the exclusive zone for a layer-shell surface: how much screen space it
+    /// reserves so other surfaces avoid occluding it (e.g. a panel reserving space).
+    /// Positive values reserve that distance from the anchored edge, 0 lets the
+    /// surface be moved out of others' exclusive zones, and -1 ignores reserved
+    /// space and may extend under other surfaces. (Wayland layer-shell windows only)
+    pub fn set_exclusive_zone(&self, zone: Pixels) {
+        self.platform_window.set_exclusive_zone(zone);
+    }
+
+    /// Set which anchored edge a layer-shell surface's exclusive zone applies to.
+    /// This is only needed to disambiguate a corner-anchored surface; otherwise the
+    /// edge is deduced from the anchor. The edge must be a single edge the surface
+    /// is anchored to, or it is ignored. (Wayland layer-shell windows only)
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_exclusive_edge(&self, edge: crate::layer_shell::Anchor) {
+        self.platform_window.set_exclusive_edge(edge);
+    }
+
     /// Start a window resize operation (Wayland)
     pub fn start_window_resize(&self, edge: ResizeEdge) {
         self.platform_window.start_window_resize(edge);
@@ -2202,9 +2220,29 @@ impl Window {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    ///
+    /// Callers driving purely decorative animations (spinners, pulses, and the
+    /// like) should prefer [`AnimationExt::with_animation`](crate::AnimationExt::with_animation),
+    /// which automatically respects [`App::reduce_motion`]. When using this
+    /// method directly for decorative motion, check [`App::reduce_motion`]
+    /// and skip the frame request when it is set.
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
+    ///
+    /// Tests have no platform frame loop, so this simulates the delivery of the
+    /// next frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_next_frame(&mut self, cx: &mut App) -> usize {
+        let callbacks = self.next_frame_callbacks.take();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(self, cx);
+        }
+        count
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -2703,6 +2741,7 @@ impl Window {
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
+        let mut focus_before_listeners = self.focus;
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
@@ -2711,6 +2750,11 @@ impl Window {
                 self.focus_lost_listeners
                     .clone()
                     .retain(&(), |listener| listener(self, cx));
+                // The focus-lost fallback (e.g. a workspace refocusing itself) may target
+                // an element that isn't part of the element tree, in which case scheduling
+                // a redraw below would dispatch focus-lost again, looping forever. Only
+                // track focus movement caused by the focus listeners.
+                focus_before_listeners = self.focus;
             }
 
             let event = WindowFocusEvent {
@@ -2735,6 +2779,13 @@ impl Window {
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
+        // Focus listeners may move focus (e.g. a dock forwarding focus to its active
+        // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
+        // schedule another frame here to render the new focus state and dispatch the
+        // resulting focus events.
+        if self.focus != focus_before_listeners {
+            self.refresh();
+        }
         self.needs_present.set(true);
 
         if let Some(draw_start) = draw_started_at {
@@ -6360,8 +6411,9 @@ pub fn outline(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Pixels, Render,
-        Styled as _, TestAppContext, Window, canvas, div, px, size,
+        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        ParentElement as _, Pixels, Render, Styled as _, TestAppContext, Window, canvas, div, px,
+        size,
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -6428,5 +6480,64 @@ mod tests {
         .unwrap();
 
         assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    struct FocusForwarder {
+        a: FocusHandle,
+        b: FocusHandle,
+    }
+
+    impl Render for FocusForwarder {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(div().w(px(50.)).h(px(50.)).track_focus(&self.a))
+                .child(div().w(px(50.)).h(px(50.)).track_focus(&self.b))
+        }
+    }
+
+    /// When a focus listener moves focus again (e.g. a dock forwarding focus to its
+    /// active panel), the resulting focus events must be dispatched without waiting
+    /// for an unrelated redraw of the window.
+    #[gpui::test]
+    fn test_focus_moved_by_focus_listener_is_dispatched(cx: &mut TestAppContext) {
+        let b_focus_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let b_focus_count = b_focus_count.clone();
+            move |window, cx| {
+                let a = cx.focus_handle();
+                let b = cx.focus_handle();
+                cx.on_focus(&a, window, |this: &mut FocusForwarder, window, cx| {
+                    let b = this.b.clone();
+                    window.focus(&b, cx);
+                })
+                .detach();
+                cx.on_focus(&b, window, move |_, _, _| {
+                    b_focus_count.set(b_focus_count.get() + 1);
+                })
+                .detach();
+                FocusForwarder { a, b }
+            }
+        });
+
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        window
+            .update(cx, |this, window, cx| {
+                let a = this.a.clone();
+                window.focus(&a, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        window
+            .update(cx, |this, window, _| {
+                assert!(this.b.is_focused(window));
+            })
+            .unwrap();
+        assert_eq!(b_focus_count.get(), 1);
     }
 }
