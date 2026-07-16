@@ -90,15 +90,13 @@ impl ProjectDiff {
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
-        workspace.register_action(
-            |workspace, _: &ToggleBranchDiffIndicators, _window, cx| {
-                let git_store = workspace.project().read(cx).git_store().clone();
-                git_store.update(cx, |git_store, cx| {
-                    let enabled = git_store.branch_diff_indicators_enabled();
-                    git_store.set_branch_diff_indicators_enabled(!enabled, cx);
-                });
-            },
-        );
+        workspace.register_action(|workspace, _: &ToggleBranchDiffIndicators, _window, cx| {
+            let git_store = workspace.project().read(cx).git_store().clone();
+            git_store.update(cx, |git_store, cx| {
+                let enabled = git_store.branch_diff_indicators_enabled();
+                git_store.set_branch_diff_indicators_enabled(!enabled, cx);
+            });
+        });
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 

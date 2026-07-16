@@ -4339,11 +4339,7 @@ impl GitStore {
     }
 
     /// Turns branch-diff-indicators mode on or off, refreshing every repository.
-    pub fn set_branch_diff_indicators_enabled(
-        &mut self,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_branch_diff_indicators_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if enabled == self.branch_diff_indicators.is_some() {
             return;
         }
@@ -10410,7 +10406,10 @@ mod tests {
                     .iter()
                     .any(|entry| entry.repo_path == repo_path("committed.txt"))
             });
-            assert!(has_entry, "merged statuses should include the branch change");
+            assert!(
+                has_entry,
+                "merged statuses should include the branch change"
+            );
         });
 
         // Disable and confirm we're back to working-changes semantics.

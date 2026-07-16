@@ -758,7 +758,10 @@ impl Item for Editor {
                     let path = buffer.project_path(cx)?;
                     let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let status = project.git_store().read(cx).project_path_git_status(&path, cx)?;
+                    let status = project
+                        .git_store()
+                        .read(cx)
+                        .project_path_git_status(&path, cx)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),
