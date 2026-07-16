@@ -398,15 +398,14 @@ pub struct FinalizedDiff {
 /// Resolves a worktree file handle for `path` so that the detached buffers
 /// backing finalized diff cards resolve path-dependent settings (such as
 /// .editorconfig and worktree-specific overrides) like the real buffer would.
-pub fn file_for_path(
-    project: &Entity<Project>,
-    path: &Path,
-    cx: &App,
-) -> Option<Arc<dyn File>> {
+pub fn file_for_path(project: &Entity<Project>, path: &Path, cx: &App) -> Option<Arc<dyn File>> {
     let project = project.read(cx);
     let project_path = project.find_project_path(path, cx)?;
     let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-    let entry = worktree.read(cx).entry_for_path(&project_path.path)?.clone();
+    let entry = worktree
+        .read(cx)
+        .entry_for_path(&project_path.path)?
+        .clone();
     let file: Arc<dyn File> = project::File::for_entry(entry, worktree);
     Some(file)
 }

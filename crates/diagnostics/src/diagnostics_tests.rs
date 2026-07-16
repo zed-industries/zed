@@ -23,6 +23,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{
     env,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -33,6 +34,30 @@ use workspace::MultiWorkspace;
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+#[gpui::test]
+fn test_diagnostic_context_compares_indentation_columns(cx: &mut gpui::App) {
+    cx.new(|cx| {
+        let buffer = Buffer::local("  \tchild\n\t  sibling\nroot\n", cx);
+        let snapshot = buffer.snapshot();
+        let indentation = language::language_settings::IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(4).unwrap(),
+            true,
+        );
+
+        assert!(is_line_blank_or_indented_less(5, 0, indentation, &snapshot));
+        assert!(!is_line_blank_or_indented_less(
+            5,
+            1,
+            indentation,
+            &snapshot
+        ));
+        assert!(is_line_blank_or_indented_less(5, 2, indentation, &snapshot));
+
+        buffer
+    });
 }
 
 #[gpui::test]
