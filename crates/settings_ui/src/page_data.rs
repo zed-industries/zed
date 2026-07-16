@@ -8689,12 +8689,12 @@ fn language_settings_field_mut<T>(
 }
 
 fn language_settings_data() -> Box<[SettingsPageItem]> {
-    fn indentation_section() -> [SettingsPageItem; 5] {
+    fn indentation_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Indentation"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Tab Size",
-                description: "How many columns a tab should occupy.",
+                description: "How many columns each indentation level should occupy.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("languages.$(language).tab_size"), // TODO(cameron): not JQ syntax because not URL-safe
@@ -8706,6 +8706,26 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.tab_size = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Width",
+                description: "How many columns a literal tab character should occupy.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("languages.$(language).tab_width"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.tab_width.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.tab_width = value;
                         })
                     },
                 }),

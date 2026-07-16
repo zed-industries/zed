@@ -4032,6 +4032,36 @@ pub mod tests {
     }
 
     #[gpui::test]
+    fn test_literal_tabs_use_tab_width(cx: &mut gpui::App) {
+        init_test(cx, &|settings| {
+            settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+            settings.project.all_languages.defaults.tab_width = NonZeroU32::new(8);
+        });
+
+        let buffer = MultiBuffer::build_simple("\ttext\n    \ttext", cx);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(snapshot.text(), "        text\n        text");
+        assert_eq!(
+            snapshot.point_to_display_point(MultiBufferPoint::new(0, 1), Bias::Left),
+            DisplayPoint::new(DisplayRow(0), 8),
+        );
+    }
+
+    #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::App) {
         init_test(cx, &|_| {});
 

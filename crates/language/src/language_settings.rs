@@ -128,8 +128,10 @@ impl IndentationSettings {
 /// The settings for a particular language.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LanguageSettings {
-    /// How many columns a tab should occupy.
+    /// How many columns each indentation level should occupy.
     pub tab_size: NonZeroU32,
+    /// How many columns a literal tab character should occupy.
+    pub tab_width: NonZeroU32,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     pub hard_tabs: bool,
@@ -348,7 +350,7 @@ pub struct PrettierSettings {
 
 impl LanguageSettings {
     pub fn indentation(&self) -> IndentationSettings {
-        IndentationSettings::new(self.tab_size, self.tab_size, self.hard_tabs)
+        IndentationSettings::new(self.tab_size, self.tab_width, self.hard_tabs)
     }
 
     pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
@@ -708,8 +710,12 @@ fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSetti
         }
     });
 
+    let modeline_indent_size = modeline.indent_size.or(modeline.tab_size);
     settings
         .tab_size
+        .merge_from_option(modeline_indent_size.as_ref());
+    settings
+        .tab_width
         .merge_from_option(modeline.tab_size.as_ref());
     settings
         .hard_tabs
@@ -740,12 +746,17 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         MaxLineLen::Value(u) => Some(u as u32),
         MaxLineLen::Off => None,
     });
-    let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
-        IndentSize::Value(u) => NonZeroU32::new(u as u32),
-        IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
-            TabWidth::Value(u) => NonZeroU32::new(u as u32),
-        }),
+    let configured_tab_width = cfg.get::<TabWidth>().ok().and_then(|w| match w {
+        TabWidth::Value(u) => NonZeroU32::new(u as u32),
     });
+    let configured_indent_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
+        IndentSize::Value(u) => NonZeroU32::new(u as u32),
+        IndentSize::UseTabWidth => configured_tab_width,
+    });
+    // EditorConfig defines either width in terms of the other when just one is
+    // present, so apply the pair together at the same precedence.
+    let tab_size = configured_indent_size.or(configured_tab_width);
+    let tab_width = configured_tab_width.or(configured_indent_size);
     let hard_tabs = cfg
         .get::<IndentStyle>()
         .map(|v| v.eq(&IndentStyle::Tabs))
@@ -772,6 +783,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         .preferred_line_length
         .merge_from_option(preferred_line_length.as_ref());
     settings.tab_size.merge_from_option(tab_size.as_ref());
+    settings.tab_width.merge_from_option(tab_width.as_ref());
     settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
     // Avoid re-enabling destructive whitespace trimming when Zed settings have
     // disabled it, e.g. for Markdown hard breaks.
@@ -800,8 +812,10 @@ impl settings::Settings for AllLanguageSettings {
             let tasks = settings.tasks.unwrap();
             let whitespace_map = settings.whitespace_map.unwrap();
 
+            let tab_size = settings.tab_size.unwrap();
             LanguageSettings {
-                tab_size: settings.tab_size.unwrap(),
+                tab_size,
+                tab_width: settings.tab_width.unwrap_or(tab_size),
                 hard_tabs: settings.hard_tabs.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),

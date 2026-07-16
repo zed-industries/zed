@@ -4124,9 +4124,21 @@ List of `integer` column numbers
 
 ## Tab Size
 
-- Description: The number of spaces to use for each tab character.
+- Description: The number of columns in each indentation level. This value is
+  also sent to language servers and formatters as their indentation width.
 - Setting: `tab_size`
 - Default: `4`
+
+**Options**
+
+`integer` values
+
+## Tab Width
+
+- Description: The number of columns used to display a literal tab character.
+  When omitted, this uses `tab_size`.
+- Setting: `tab_width`
+- Default: The configured `tab_size`
 
 **Options**
 

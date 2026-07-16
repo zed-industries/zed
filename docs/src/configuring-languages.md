@@ -42,6 +42,8 @@ Here's an example of language-specific settings:
 You can customize a wide range of settings for each language, including:
 
 - [`tab_size`](./reference/all-settings.md#tab-size): The number of spaces for each indentation level
+- [`tab_width`](./reference/all-settings.md#tab-width): The display width of
+  literal tab characters; defaults to `tab_size`
 - [`formatter`](./reference/all-settings.md#formatter): The tool used for code formatting
 - [`format_on_save`](./reference/all-settings.md#format-on-save): Whether to automatically format code when saving
 - [`enable_language_server`](./reference/all-settings.md#enable-language-server): Toggle language server support
