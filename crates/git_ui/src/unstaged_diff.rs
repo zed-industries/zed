@@ -16,7 +16,10 @@ use gpui::{
 use language::Capability;
 use project::{
     Project, ProjectPath,
-    git_store::diff_buffer_list::{DiffBase, DiffBufferList},
+    git_store::{
+        Repository,
+        diff_buffer_list::{DiffBase, DiffBufferList},
+    },
     project_settings::ProjectSettings,
 };
 use settings::Settings;
@@ -207,6 +210,27 @@ impl UnstagedDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let intended_repo = workspace.project().read(cx).active_repository(cx);
+        Self::deploy_at_with_repository(workspace, intended_repo, entry, window, cx);
+    }
+
+    pub fn deploy_at_in_repository(
+        workspace: &mut Workspace,
+        repository: Entity<Repository>,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::deploy_at_with_repository(workspace, Some(repository), entry, window, cx);
+    }
+
+    fn deploy_at_with_repository(
+        workspace: &mut Workspace,
+        intended_repo: Option<Entity<Repository>>,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         telemetry::event!(
             "Git Unstaged Diff Opened",
             source = if entry.is_some() {
@@ -215,7 +239,6 @@ impl UnstagedDiff {
                 "Action"
             }
         );
-        let intended_repo = workspace.project().read(cx).active_repository(cx);
         let existing = workspace.items_of_type::<Self>(cx).next();
         let unstaged_diff = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -265,6 +288,24 @@ impl UnstagedDiff {
     ) {
         self.diff
             .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
+    }
+
+    pub fn move_to_entry_in_repository(
+        &mut self,
+        repository: Entity<Repository>,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let needs_switch = self.diff.read(cx).repo(cx).map_or(true, |current| {
+            current.entity_id() != repository.entity_id()
+        });
+        if needs_switch {
+            self.diff.update(cx, |diff, cx| {
+                diff.set_repo(Some(repository), cx);
+            });
+        }
+        self.move_to_entry(entry, window, cx);
     }
 
     pub(crate) fn new(

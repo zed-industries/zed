@@ -1015,6 +1015,12 @@
     ///
     /// Default: false
     "tree_view": false,
+    // Whether to show changes from all repositories in the current project.
+    // This includes nested repositories and submodules, but not repositories
+    // belonging to other linked-worktree workspaces.
+    //
+    // Default: false
+    "show_all_repositories": false,
     // Whether the git panel should open on startup.
     //
     // Default: false

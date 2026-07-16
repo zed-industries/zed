@@ -14625,6 +14625,181 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_switching_submodule_branch_refreshes_parent_status(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {
+                "modules": {
+                    "nested": {
+                        "HEAD": "",
+                        "config": ""
+                    }
+                }
+            },
+            "README.md": "parent",
+            "nested": {
+                ".git": "gitdir: ../.git/modules/nested\n",
+                "nested.txt": "child"
+            }
+        }),
+    )
+    .await;
+    fs.insert_branches(path!("/project/nested/.git").as_ref(), &["main", "feature"]);
+    fs.set_status_for_repo(path!("/project/.git").as_ref(), &[]);
+    fs.set_status_for_repo(path!("/project/nested/.git").as_ref(), &[]);
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (parent, nested) = project.read_with(cx, |project, cx| {
+        let repositories = project.git_store().read(cx).repositories();
+        let repository_for = |path: &Path| {
+            repositories
+                .values()
+                .find(|repository| repository.read(cx).work_directory_abs_path.as_ref() == path)
+                .cloned()
+                .unwrap_or_else(|| panic!("missing repository at {}", path.display()))
+        };
+        (
+            repository_for(Path::new(path!("/project"))),
+            repository_for(Path::new(path!("/project/nested"))),
+        )
+    });
+    let parent_id = parent.read_with(cx, |repository, _| repository.id);
+    parent.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+    assert!(
+        parent
+            .read_with(cx, |repository, _| repository
+                .status_for_path(&repo_path("nested")))
+            .is_none()
+    );
+
+    // Mutate the fake Git backend without generating a parent worktree event.
+    // A successful branch switch in the nested repository must explicitly
+    // refresh this ancestor path.
+    fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+        state
+            .head_contents
+            .insert(repo_path("nested/nested.txt"), "old".to_owned());
+        state
+            .index_contents
+            .insert(repo_path("nested/nested.txt"), "old".to_owned());
+    })
+    .unwrap();
+    let change_branch = nested.update(cx, |repository, _| {
+        repository.change_branch("feature".to_owned())
+    });
+    change_branch.await.unwrap().unwrap();
+    let barrier = parent.update(cx, |repository, _| repository.barrier());
+    barrier.await.unwrap();
+    cx.run_until_parked();
+
+    parent.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository
+                .status_for_path(&repo_path("nested/nested.txt"))
+                .map(|entry| entry.status),
+            Some(StatusCode::Modified.worktree())
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project
+                .active_repository(cx)
+                .map(|repository| repository.read(cx).id),
+            Some(parent_id)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_switching_linked_worktree_branch_does_not_refresh_main_worktree_status(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {
+                "worktrees": {
+                    "linked": {
+                        "commondir": "../..\n",
+                        "HEAD": "",
+                        "config": ""
+                    }
+                }
+            },
+            "README.md": "parent",
+            "linked": {
+                ".git": "gitdir: ../.git/worktrees/linked\n",
+                "linked.txt": "child"
+            }
+        }),
+    )
+    .await;
+    fs.insert_branches(path!("/project/linked/.git").as_ref(), &["main", "feature"]);
+    fs.set_status_for_repo(path!("/project/.git").as_ref(), &[]);
+    fs.set_status_for_repo(path!("/project/linked/.git").as_ref(), &[]);
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let (main_repository, linked_repository) = project.read_with(cx, |project, cx| {
+        let repositories = project.git_store().read(cx).repositories();
+        let repository_for = |path: &Path| {
+            repositories
+                .values()
+                .find(|repository| repository.read(cx).work_directory_abs_path.as_ref() == path)
+                .cloned()
+                .unwrap_or_else(|| panic!("missing repository at {}", path.display()))
+        };
+        (
+            repository_for(Path::new(path!("/project"))),
+            repository_for(Path::new(path!("/project/linked"))),
+        )
+    });
+    linked_repository.read_with(cx, |linked, _| {
+        main_repository.read_with(cx, |main, _| {
+            assert!(linked.modern_submodule_path_in(main).is_none());
+        });
+    });
+
+    fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+        state
+            .head_contents
+            .insert(repo_path("linked/linked.txt"), "old".to_owned());
+        state
+            .index_contents
+            .insert(repo_path("linked/linked.txt"), "old".to_owned());
+    })
+    .unwrap();
+    let change_branch = linked_repository.update(cx, |repository, _| {
+        repository.change_branch("feature".to_owned())
+    });
+    change_branch.await.unwrap().unwrap();
+    let barrier = main_repository.update(cx, |repository, _| repository.barrier());
+    barrier.await.unwrap();
+    cx.run_until_parked();
+
+    main_repository.read_with(cx, |repository, _| {
+        assert!(
+            repository
+                .status_for_path(&repo_path("linked/linked.txt"))
+                .is_none()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
