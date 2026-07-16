@@ -129,8 +129,18 @@ impl SoloDiffView {
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_id = repository.read(cx).id;
+        let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+            if !showing_full_file {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(0),
+                    buffer.clone(),
+                    Self::hunk_ranges(&buffer, &diff, cx),
+                    excerpt_context_lines(cx),
+                    cx,
+                );
+            }
             multibuffer.add_diff(diff.clone(), cx);
             multibuffer
         });
@@ -181,7 +191,7 @@ impl SoloDiffView {
             diff,
             editor,
             workspace: workspace.downgrade(),
-            showing_full_file: true,
+            showing_full_file,
             _settings_subscription: settings_subscription,
         }
     }
