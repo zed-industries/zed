@@ -35,7 +35,7 @@ CloseApplications=force
 SignTool=Defaultsign
 #endif
 
-DefaultDirName={autopf}\{#AppName}
+DefaultDirName={localappdata}\Programs\{#AppName}
 PrivilegesRequired=lowest
 
 ArchitecturesAllowed=x64compatible
