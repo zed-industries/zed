@@ -238,7 +238,7 @@ fn project_agents_md_path(
     require_existing_file: bool,
     cx: &App,
 ) -> Option<PathBuf> {
-    let rel_path = util::rel_path::RelPath::unix("AGENTS.md").ok()?;
+    let rel_path = util::rel_path::RelPath::from_unix_str("AGENTS.md").ok()?;
     project
         .read(cx)
         .visible_worktrees(cx)
@@ -2037,7 +2037,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pending_terminal_spawn = Some(terminal_id);
         let terminal_working_directory = working_directory.clone();
         let init_command = Self::terminal_init_command(run_init_command, cx);
         let terminal_task = self.project.update(cx, |project, cx| {
@@ -7369,34 +7368,6 @@ mod tests {
             assert!(
                 panel.active_terminal_id().is_some(),
                 "the single initial terminal should become active"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_explicit_terminal_blocks_redundant_auto_init(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
-            assert!(
-                matches!(panel.base_view, BaseView::Uninitialized),
-                "precondition: the panel starts uninitialized"
-            );
-            assert!(
-                panel.pending_terminal_spawn.is_none(),
-                "precondition: no terminal spawn is in-flight yet"
-            );
-            panel.new_terminal(None, AgentThreadSource::AgentPanel, window, cx);
-            let pending = panel.pending_terminal_spawn;
-            assert!(
-                pending.is_some(),
-                "an explicit new terminal must mark a spawn in-flight"
-            );
-            panel.set_active(true, window, cx);
-            assert_eq!(
-                panel.pending_terminal_spawn, pending,
-                "activating the panel while a terminal spawn is in-flight must not schedule a second (auto-init) terminal"
             );
         });
     }

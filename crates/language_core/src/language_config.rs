@@ -5,7 +5,6 @@ use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
-use util::serde::default_true;
 
 /// Controls the soft-wrapping behavior in the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -46,7 +45,7 @@ pub struct LanguageConfig {
     pub brackets: BracketPairConfig,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
-    #[serde(default = "auto_indent_using_last_non_empty_line_default")]
+    #[serde(default = "default_true")]
     pub auto_indent_using_last_non_empty_line: bool,
     // Whether indentation of pasted content should be adjusted based on the context.
     #[serde(default)]
@@ -166,7 +165,7 @@ impl Default for LanguageConfig {
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
-            auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            auto_indent_using_last_non_empty_line: default_true(),
             auto_indent_on_paste: None,
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
@@ -480,7 +479,7 @@ pub struct WrapCharactersConfig {
     pub end_suffix: String,
 }
 
-pub fn auto_indent_using_last_non_empty_line_default() -> bool {
+pub fn default_true() -> bool {
     true
 }
 

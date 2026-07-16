@@ -773,7 +773,7 @@ impl SshRemoteConnection {
 
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
             RemoteOs::Windows => (PathStyle::Windows, ssh_shell.clone()),
-            _ => (PathStyle::Posix, String::from("/bin/sh")),
+            _ => (PathStyle::Unix, String::from("/bin/sh")),
         };
 
         let mut this = Self {
@@ -822,7 +822,7 @@ impl SshRemoteConnection {
             }
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
             .socket
@@ -845,7 +845,7 @@ impl SshRemoteConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::unix(&format!(
+                RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -856,11 +856,11 @@ impl SshRemoteConnection {
                 .await?;
             self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -875,7 +875,7 @@ impl SshRemoteConnection {
         })?;
 
         let tmp_path_compressed = remote_server_dir_relative().join(
-            RelPath::unix(&format!(
+            RelPath::from_unix_str(&format!(
                 "{}-download-{}.{}",
                 binary_name,
                 std::process::id(),
@@ -905,7 +905,7 @@ impl SshRemoteConnection {
                     self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
                         .await
                         .context("extracting server binary")?;
-                    return Ok(dst_path);
+                    return Ok(dst_path.into());
                 }
                 Err(e) => {
                     log::error!(
@@ -930,7 +930,7 @@ impl SshRemoteConnection {
         self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("extracting server binary")?;
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn download_binary_on_server(
@@ -2041,7 +2041,7 @@ mod tests {
             Some("~/work".to_string()),
             None,
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
@@ -2061,7 +2061,7 @@ mod tests {
             Some("~/work".to_string()),
             None,
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
@@ -2096,7 +2096,7 @@ mod tests {
             None,
             Some((1, "foo".to_owned(), 2)),
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
@@ -2136,7 +2136,7 @@ mod tests {
             None,
             None,
             HashMap::default(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec![],
@@ -2291,7 +2291,7 @@ mod tests {
             None,
             Some((8080, "::1".to_owned(), 80)),
             HashMap::default(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec![],

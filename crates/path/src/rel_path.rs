@@ -1,12 +1,16 @@
-use crate::paths::{PathStyle, is_absolute};
 use anyhow::{Context as _, Result, anyhow};
-use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
     fmt,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
+};
+
+use crate::{
+    PathStyle,
+    abs_path::{AbsPath, AbsPathBuf},
+    is_absolute,
 };
 
 /// A file system path that is guaranteed to be relative and normalized.
@@ -20,20 +24,22 @@ use std::{
 ///
 /// Relative paths are also guaranteed to be valid unicode.
 #[repr(transparent)]
-#[derive(PartialEq, Eq, Hash, Serialize)]
+#[derive(PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RelPath(str);
 
 /// An owned representation of a file system path that is guaranteed to be
 /// relative and normalized.
 ///
 /// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
-#[derive(PartialEq, Eq, Clone, Ord, PartialOrd, Serialize)]
+#[derive(PartialEq, Eq, Clone, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RelPathBuf(String);
 
 impl RelPath {
     /// Creates an empty [`RelPath`].
     pub fn empty() -> &'static Self {
-        Self::new_unchecked("")
+        Self::from_str("")
     }
 
     /// Creates an empty [`RelPath`].
@@ -54,7 +60,7 @@ impl RelPath {
         let mut path = path.to_str().context("non utf-8 path")?;
 
         let (prefixes, suffixes): (&[_], &[_]) = match path_style {
-            PathStyle::Posix => (&["./"], &['/']),
+            PathStyle::Unix => (&["./"], &['/']),
             PathStyle::Windows => (&["./", ".\\"], &['/', '\\']),
         };
 
@@ -77,7 +83,7 @@ impl RelPath {
         }
 
         let mut result = match string {
-            Cow::Borrowed(string) => Cow::Borrowed(Self::new_unchecked(string)),
+            Cow::Borrowed(string) => Cow::Borrowed(Self::from_str(string)),
             Cow::Owned(string) => Cow::Owned(RelPathBuf(string)),
         };
 
@@ -95,7 +101,7 @@ impl RelPath {
                             return Err(anyhow!("path is not relative: {result:?}"));
                         }
                     }
-                    other => normalized.push(RelPath::new_unchecked(other)),
+                    other => normalized.push(RelPath::from_str(other)),
                 }
             }
             result = Cow::Owned(normalized)
@@ -104,20 +110,25 @@ impl RelPath {
         Ok(result)
     }
 
+    #[track_caller]
+    pub fn new_test<'a>(path: &'a str) -> Cow<'a, Self> {
+        Self::new(Path::new(path), PathStyle::Unix).unwrap()
+    }
+
     /// Converts a path that is already normalized and uses '/' separators
     /// into a [`RelPath`] .
     ///
     /// Returns an error if the path is not already in the correct format.
     #[track_caller]
-    pub fn unix<S: AsRef<Path> + ?Sized>(path: &S) -> anyhow::Result<&Self> {
+    pub fn from_unix_str<S: AsRef<Path> + ?Sized>(path: &S) -> anyhow::Result<&Self> {
         let path = path.as_ref();
-        match Self::new(path, PathStyle::Posix)? {
+        match Self::new(path, PathStyle::Unix)? {
             Cow::Borrowed(path) => Ok(path),
             Cow::Owned(_) => Err(anyhow!("invalid relative path {path:?}")),
         }
     }
 
-    fn new_unchecked(s: &str) -> &Self {
+    fn from_str(s: &str) -> &Self {
         // Safety: `RelPath` is a transparent wrapper around `str`.
         unsafe { &*(s as *const str as *const Self) }
     }
@@ -131,7 +142,12 @@ impl RelPath {
     }
 
     pub fn ancestors(&self) -> RelPathAncestors<'_> {
-        RelPathAncestors(Some(&self.0))
+        RelPathAncestors {
+            full: &self.0,
+            front: self.0.len(),
+            back: 0,
+            done: false,
+        }
     }
 
     pub fn file_name(&self) -> Option<&str> {
@@ -156,7 +172,22 @@ impl RelPath {
         self.strip_prefix(other).is_ok()
     }
 
+    /// Returns true if this path is a strict descendant of `ancestor`.
+    ///
+    /// Unlike `starts_with`, this returns false when `self == ancestor`
+    /// and false when `ancestor` is empty (since every path trivially
+    /// starts with the empty prefix).
+    pub fn is_descendant_of(&self, ancestor: &Self) -> bool {
+        if ancestor.is_empty() || self == ancestor {
+            return false;
+        }
+        self.starts_with(ancestor)
+    }
+
     pub fn ends_with(&self, other: &Self) -> bool {
+        if other.is_empty() {
+            return true;
+        }
         if let Some(suffix) = self.0.strip_suffix(&other.0) {
             if suffix.ends_with('/') {
                 return true;
@@ -173,7 +204,7 @@ impl RelPath {
         }
         if let Some(suffix) = self.0.strip_prefix(&other.0) {
             if let Some(suffix) = suffix.strip_prefix('/') {
-                return Ok(Self::new_unchecked(suffix));
+                return Ok(Self::from_str(suffix));
             } else if suffix.is_empty() {
                 return Ok(Self::empty());
             }
@@ -182,7 +213,11 @@ impl RelPath {
     }
 
     pub fn len(&self) -> usize {
-        self.0.matches('/').count() + 1
+        if self.0.is_empty() {
+            0
+        } else {
+            self.0.matches('/').count() + 1
+        }
     }
 
     pub fn last_n_components(&self, count: usize) -> Option<&Self> {
@@ -198,15 +233,14 @@ impl RelPath {
         }
     }
 
-    pub fn join(&self, other: &Self) -> Arc<Self> {
-        let result = if self.0.is_empty() {
-            Cow::Borrowed(&other.0)
+    pub fn join(&self, other: &Self) -> RelPathBuf {
+        if self.0.is_empty() {
+            other.to_rel_path_buf()
         } else if other.0.is_empty() {
-            Cow::Borrowed(&self.0)
+            self.to_rel_path_buf()
         } else {
-            Cow::Owned(format!("{}/{}", &self.0, &other.0))
-        };
-        Arc::from(Self::new_unchecked(result.as_ref()))
+            RelPathBuf(format!("{}/{}", &self.0, &other.0))
+        }
     }
 
     pub fn to_rel_path_buf(&self) -> RelPathBuf {
@@ -217,23 +251,13 @@ impl RelPath {
         Arc::from(self)
     }
 
-    /// Convert the path into the wire representation.
-    pub fn to_proto(&self) -> String {
-        self.as_unix_str().to_owned()
-    }
-
-    /// Load the path from its wire representation.
-    pub fn from_proto(path: &str) -> Result<Arc<Self>> {
-        Ok(Arc::from(Self::unix(path)?))
-    }
-
     /// Convert the path into a string with the given path style.
     ///
     /// Whenever a path is presented to the user, it should be converted to
     /// a string via this method.
     pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
         match style {
-            PathStyle::Posix => Cow::Borrowed(&self.0),
+            PathStyle::Unix => Cow::Borrowed(&self.0),
             PathStyle::Windows if self.0.contains('/') => Cow::Owned(self.0.replace('/', "\\")),
             PathStyle::Windows => Cow::Borrowed(&self.0),
         }
@@ -255,18 +279,15 @@ impl RelPath {
     pub fn as_std_path(&self) -> &Path {
         Path::new(&self.0)
     }
+
+    /// Resolves this relative path against an absolute base path.
+    pub fn absolutize(&self, base: impl AsRef<AbsPath>) -> AbsPathBuf {
+        base.as_ref().join(self.as_unix_str())
+    }
 }
 
 #[derive(Debug)]
 pub struct StripPrefixError;
-
-impl std::fmt::Display for StripPrefixError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("prefix not found")
-    }
-}
-
-impl std::error::Error for StripPrefixError {}
 
 impl ToOwned for RelPath {
     type Owned = RelPathBuf;
@@ -324,14 +345,33 @@ impl RelPathBuf {
     }
 
     pub fn push(&mut self, path: &RelPath) {
+        if path.is_empty() {
+            return;
+        }
         if !self.is_empty() {
             self.0.push('/');
         }
         self.0.push_str(&path.0);
     }
 
+    pub fn push_component(&mut self, component: &str) -> Result<()> {
+        anyhow::ensure!(
+            !component.is_empty()
+                && !component.contains('/')
+                && component != "."
+                && component != "..",
+            "invalid relative path component: {component:?}"
+        );
+
+        if !self.is_empty() {
+            self.0.push('/');
+        }
+        self.0.push_str(component);
+        Ok(())
+    }
+
     pub fn as_rel_path(&self) -> &RelPath {
-        RelPath::new_unchecked(self.0.as_str())
+        RelPath::from_str(self.0.as_str())
     }
 
     pub fn set_extension(&mut self, extension: &str) -> bool {
@@ -339,7 +379,7 @@ impl RelPathBuf {
             let mut filename = PathBuf::from(filename);
             filename.set_extension(extension);
             self.pop();
-            self.0.push_str(filename.to_str().unwrap());
+            self.push(RelPath::from_str(filename.to_str().unwrap()));
             true
         } else {
             false
@@ -347,33 +387,21 @@ impl RelPathBuf {
     }
 }
 
-impl<'de> Deserialize<'de> for RelPathBuf {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let path = String::deserialize(deserializer)?;
-        let rel_path =
-            RelPath::new(Path::new(&path), PathStyle::local()).map_err(serde::de::Error::custom)?;
-        Ok(rel_path.into_owned())
+impl PartialOrd for RelPathBuf {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
-impl Into<Arc<RelPath>> for RelPathBuf {
-    fn into(self) -> Arc<RelPath> {
-        Arc::from(self.as_rel_path())
+impl Ord for RelPathBuf {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_rel_path().cmp(other.as_rel_path())
     }
 }
 
-impl AsRef<Path> for RelPathBuf {
-    fn as_ref(&self) -> &Path {
-        self.as_std_path()
-    }
-}
-
-impl AsRef<Path> for RelPath {
-    fn as_ref(&self) -> &Path {
-        self.as_std_path()
+impl From<RelPathBuf> for Arc<RelPath> {
+    fn from(value: RelPathBuf) -> Self {
+        Arc::from(value.as_rel_path())
     }
 }
 
@@ -383,9 +411,21 @@ impl AsRef<RelPath> for RelPathBuf {
     }
 }
 
+impl AsRef<std::path::Path> for RelPathBuf {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
+    }
+}
+
 impl AsRef<RelPath> for RelPath {
     fn as_ref(&self) -> &RelPath {
         self
+    }
+}
+
+impl AsRef<std::path::Path> for RelPath {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
     }
 }
 
@@ -406,20 +446,37 @@ impl<'a> From<&'a RelPath> for Cow<'a, RelPath> {
 impl From<&RelPath> for Arc<RelPath> {
     fn from(rel_path: &RelPath) -> Self {
         let bytes: Arc<str> = Arc::from(&rel_path.0);
+        // SAFETY: `AbsPath` is a `repr(transparent)` wrapper around `Path`.
         unsafe { Arc::from_raw(Arc::into_raw(bytes) as *const RelPath) }
+    }
+}
+
+impl<'a> TryFrom<&'a str> for &'a RelPath {
+    type Error = anyhow::Error;
+
+    fn try_from(s: &'a str) -> Result<Self> {
+        RelPath::from_unix_str(s)
+    }
+}
+
+impl TryFrom<&str> for RelPathBuf {
+    type Error = anyhow::Error;
+
+    fn try_from(s: &str) -> Result<Self> {
+        RelPath::new(Path::new(s), PathStyle::Unix).map(|cow| cow.into_owned())
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[track_caller]
 pub fn rel_path(path: &str) -> &RelPath {
-    RelPath::unix(path).unwrap()
+    RelPath::from_unix_str(path).unwrap()
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[track_caller]
 pub fn rel_path_buf(path: &str) -> RelPathBuf {
-    RelPath::unix(path).unwrap().to_rel_path_buf()
+    rel_path(path).to_owned()
 }
 
 impl PartialEq<str> for RelPath {
@@ -428,26 +485,45 @@ impl PartialEq<str> for RelPath {
     }
 }
 
-pub trait PathExt {
-    fn to_rel_path_buf(&self) -> Result<RelPathBuf>;
+impl PartialEq<RelPath> for RelPathBuf {
+    fn eq(&self, other: &RelPath) -> bool {
+        self.as_rel_path() == other
+    }
 }
 
-impl<T: AsRef<Path> + ?Sized> PathExt for T {
-    fn to_rel_path_buf(&self) -> Result<RelPathBuf> {
-        Ok(RelPath::new(self.as_ref(), PathStyle::local())?.into_owned())
+impl PartialEq<RelPathBuf> for RelPath {
+    fn eq(&self, other: &RelPathBuf) -> bool {
+        other.as_rel_path() == self
+    }
+}
+
+impl fmt::Display for RelPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Display for RelPathBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
 #[derive(Default)]
 pub struct RelPathComponents<'a>(&'a str);
 
-pub struct RelPathAncestors<'a>(Option<&'a str>);
+pub struct RelPathAncestors<'a> {
+    full: &'a str,
+    front: usize,
+    back: usize,
+    done: bool,
+}
 
 const SEPARATOR: char = '/';
 
 impl<'a> RelPathComponents<'a> {
     pub fn rest(&self) -> &'a RelPath {
-        RelPath::new_unchecked(self.0)
+        RelPath::from_str(self.0)
     }
 }
 
@@ -473,15 +549,35 @@ impl<'a> Iterator for RelPathAncestors<'a> {
     type Item = &'a RelPath;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.0?;
-        if let Some(sep_ix) = result.rfind(SEPARATOR) {
-            self.0 = Some(&result[..sep_ix]);
-        } else if !result.is_empty() {
-            self.0 = Some("");
-        } else {
-            self.0 = None;
+        if self.done {
+            return None;
         }
-        Some(RelPath::new_unchecked(result))
+        let result = &self.full[..self.front];
+        if self.front == self.back {
+            self.done = true;
+        } else {
+            self.front = result.rfind(SEPARATOR).unwrap_or_default();
+        }
+        Some(RelPath::from_str(result))
+    }
+}
+
+impl<'a> DoubleEndedIterator for RelPathAncestors<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let result = &self.full[..self.back];
+        if self.front == self.back {
+            self.done = true;
+        } else {
+            let search_start = if self.back == 0 { 0 } else { self.back + 1 };
+            self.back = match self.full[search_start..].find(SEPARATOR) {
+                Some(sep_ix) => search_start + sep_ix,
+                None => self.full.len(),
+            };
+        }
+        Some(RelPath::from_str(result))
     }
 }
 
@@ -501,11 +597,22 @@ impl<'a> DoubleEndedIterator for RelPathComponents<'a> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for RelPathBuf {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let path = String::deserialize(deserializer)?;
+        let rel_path =
+            RelPath::new(Path::new(&path), PathStyle::local()).map_err(serde::de::Error::custom)?;
+        Ok(rel_path.into_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use itertools::Itertools;
-    use pretty_assertions::assert_matches;
 
     #[test]
     fn test_rel_path_new() {
@@ -515,11 +622,11 @@ mod tests {
 
         let path = RelPath::new("foo/".as_ref(), PathStyle::local()).unwrap();
         assert_eq!(path, rel_path("foo").into());
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
         let path = RelPath::new("foo\\".as_ref(), PathStyle::Windows).unwrap();
         assert_eq!(path, rel_path("foo").into());
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
         assert_eq!(
             RelPath::new("foo/bar/../baz/./quux/".as_ref(), PathStyle::local())
@@ -528,29 +635,29 @@ mod tests {
             rel_path("foo/baz/quux")
         );
 
-        let path = RelPath::new("./foo/bar".as_ref(), PathStyle::Posix).unwrap();
+        let path = RelPath::new("./foo/bar".as_ref(), PathStyle::Unix).unwrap();
         assert_eq!(path.as_ref(), rel_path("foo/bar"));
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
         let path = RelPath::new(".\\foo".as_ref(), PathStyle::Windows).unwrap();
         assert_eq!(path, rel_path("foo").into());
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
         let path = RelPath::new("./.\\./foo/\\/".as_ref(), PathStyle::Windows).unwrap();
         assert_eq!(path, rel_path("foo").into());
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
-        let path = RelPath::new("foo/./bar".as_ref(), PathStyle::Posix).unwrap();
+        let path = RelPath::new("foo/./bar".as_ref(), PathStyle::Unix).unwrap();
         assert_eq!(path.as_ref(), rel_path("foo/bar"));
-        assert_matches!(path, Cow::Owned(_));
+        assert!(matches!(path, Cow::Owned(_)));
 
         let path = RelPath::new("./foo/bar".as_ref(), PathStyle::Windows).unwrap();
         assert_eq!(path.as_ref(), rel_path("foo/bar"));
-        assert_matches!(path, Cow::Borrowed(_));
+        assert!(matches!(path, Cow::Borrowed(_)));
 
         let path = RelPath::new(".\\foo\\bar".as_ref(), PathStyle::Windows).unwrap();
         assert_eq!(path.as_ref(), rel_path("foo/bar"));
-        assert_matches!(path, Cow::Owned(_));
+        assert!(matches!(path, Cow::Owned(_)));
     }
 
     #[test]
@@ -590,6 +697,41 @@ mod tests {
         let mut ancestors = path.ancestors();
         assert_eq!(ancestors.next(), Some(RelPath::empty()));
         assert_eq!(ancestors.next(), None);
+
+        let path = rel_path("foo/bar/baz");
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next_back(), Some(rel_path("")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("foo")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("foo/bar")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("foo/bar/baz")));
+        assert_eq!(ancestors.next_back(), None);
+
+        let path = rel_path("foo/bar/baz");
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next(), Some(rel_path("foo/bar/baz")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("")));
+        assert_eq!(ancestors.next(), Some(rel_path("foo/bar")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("foo")));
+        assert_eq!(ancestors.next(), None);
+        assert_eq!(ancestors.next_back(), None);
+
+        let path = rel_path("foo");
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next_back(), Some(RelPath::empty()));
+        assert_eq!(ancestors.next_back(), Some(rel_path("foo")));
+        assert_eq!(ancestors.next_back(), None);
+
+        let path = RelPath::empty();
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next_back(), Some(RelPath::empty()));
+        assert_eq!(ancestors.next_back(), None);
+
+        let path = rel_path("über/x");
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next_back(), Some(RelPath::empty()));
+        assert_eq!(ancestors.next_back(), Some(rel_path("über")));
+        assert_eq!(ancestors.next_back(), Some(rel_path("über/x")));
+        assert_eq!(ancestors.next_back(), None);
     }
 
     #[test]
@@ -602,13 +744,18 @@ mod tests {
     #[test]
     fn test_rel_path_partial_ord_is_compatible_with_std() {
         let test_cases = ["a/b/c", "relative/path/with/dot.", "relative/path/with.dot"];
-        for [lhs, rhs] in test_cases.iter().array_combinations::<2>() {
-            assert_eq!(
-                Path::new(lhs).cmp(Path::new(rhs)),
-                RelPath::unix(lhs)
-                    .unwrap()
-                    .cmp(&RelPath::unix(rhs).unwrap())
-            );
+        for (i, lhs) in test_cases.iter().enumerate() {
+            for rhs in &test_cases[i + 1..] {
+                assert_eq!(
+                    Path::new(lhs).cmp(Path::new(rhs)),
+                    RelPath::from_unix_str(lhs)
+                        .unwrap()
+                        .cmp(RelPath::from_unix_str(rhs).unwrap()),
+                    "ordering mismatch for {:?} vs {:?}",
+                    lhs,
+                    rhs,
+                );
+            }
         }
     }
 
@@ -622,23 +769,55 @@ mod tests {
     }
 
     #[test]
+    fn test_ends_with() {
+        assert!(rel_path("foo/bar").ends_with(rel_path("bar")));
+        assert!(rel_path("foo/bar").ends_with(rel_path("foo/bar")));
+        assert!(rel_path("foo/bar").ends_with(RelPath::empty()));
+        assert!(RelPath::empty().ends_with(RelPath::empty()));
+        assert!(!rel_path("foobar").ends_with(rel_path("bar")));
+    }
+
+    #[test]
     fn test_rel_path_constructors_absolute_path() {
         assert!(RelPath::new(Path::new("/a/b"), PathStyle::Windows).is_err());
         assert!(RelPath::new(Path::new("\\a\\b"), PathStyle::Windows).is_err());
-        assert!(RelPath::new(Path::new("/a/b"), PathStyle::Posix).is_err());
+        assert!(RelPath::new(Path::new("/a/b"), PathStyle::Unix).is_err());
         assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Windows).is_err());
         assert!(RelPath::new(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
-        assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
+        assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Unix).is_ok());
     }
 
     #[test]
     fn test_pop() {
-        let mut path = rel_path("a/b").to_rel_path_buf();
+        let mut path = rel_path_buf("a/b");
         path.pop();
         assert_eq!(path.as_rel_path().as_unix_str(), "a");
         path.pop();
         assert_eq!(path.as_rel_path().as_unix_str(), "");
         path.pop();
         assert_eq!(path.as_rel_path().as_unix_str(), "");
+    }
+
+    #[test]
+    fn test_len() {
+        assert_eq!(RelPath::empty().len(), 0);
+        assert_eq!(rel_path("a").len(), 1);
+        assert_eq!(rel_path("a/b").len(), 2);
+        assert_eq!(rel_path("a/b/c").len(), 3);
+    }
+
+    #[test]
+    fn test_set_extension() {
+        let mut path = rel_path_buf("a/b/c.txt");
+        assert!(path.set_extension("rs"));
+        assert_eq!(path.as_rel_path().as_unix_str(), "a/b/c.rs");
+
+        let mut single = rel_path_buf("file.txt");
+        assert!(single.set_extension("md"));
+        assert_eq!(single.as_rel_path().as_unix_str(), "file.md");
+
+        let mut no_ext = rel_path_buf("a/b/c");
+        assert!(no_ext.set_extension("rs"));
+        assert_eq!(no_ext.as_rel_path().as_unix_str(), "a/b/c.rs");
     }
 }
