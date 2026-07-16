@@ -28,10 +28,10 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
-    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
-    TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle, linear_color_stop,
-    linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, ClickEvent, ClipboardItem, Context, Decorations, DismissEvent,
+    Entity, EntityId, FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render,
+    SharedString, Task, TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle,
+    linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use language_model::LanguageModelRegistry;
@@ -6551,6 +6551,29 @@ impl Sidebar {
                                         );
                                     })
                                     .ok();
+                            }
+                        });
+
+                        menu = menu.entry("Copy Session ID", None, {
+                            let session_id = session_id.clone();
+                            let sidebar = sidebar.clone();
+                            move |_window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    session_id.to_string(),
+                                ));
+                                if let Some(active_workspace) = sidebar
+                                    .upgrade()
+                                    .and_then(|s| s.read(cx).active_workspace(cx))
+                                {
+                                    active_workspace.update(cx, |workspace, cx| {
+                                        let toast = StatusToast::new(
+                                            "Session ID copied to clipboard",
+                                            cx,
+                                            |this, _cx| this,
+                                        );
+                                        workspace.toggle_status_toast(toast, cx);
+                                    });
+                                }
                             }
                         });
 
