@@ -18361,6 +18361,8 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
+ "tree-sitter",
+ "tree-sitter-json",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
