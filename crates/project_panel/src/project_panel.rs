@@ -1980,18 +1980,6 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(cx, |project_panel, cx| {
                 project_panel.state.edit_state = None;
-
-                // Record the operation if the edit was applied
-                if new_entry.is_ok() {
-                    let operation = if let Some(old_entry) = edited_entry {
-                        Change::Renamed((worktree_id, old_entry.path).into(), new_project_path)
-                    } else {
-                        Change::Created(new_project_path)
-                    };
-
-                    project_panel.undo_manager.record([operation]).log_err();
-                }
-
                 cx.notify();
             })?;
 
@@ -2007,6 +1995,23 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update_in(cx, |project_panel, window, cx| {
+                        // Only recording changes in included files as otherwise
+                        // undoing some operations would fail, as
+                        // `Worktree::entry_for_path` would return `None` for
+                        // excluded paths.
+                        // In the future we can look into adding support for recording
+                        // changes in excluded paths, but that would mean updating
+                        // methods that rely on `EntryId` to now rely on the actual
+                        // paths.
+                        let operation = match edited_entry {
+                            Some(old_entry) => {
+                                let project_path = (worktree_id, old_entry.path).into();
+                                Change::Renamed(project_path, new_project_path)
+                            }
+                            None => Change::Created(new_project_path),
+                        };
+                        project_panel.undo_manager.record([operation]).log_err();
+
                         if let Some(selection) = &mut project_panel.selection
                             && selection.entry_id == edited_entry_id
                         {
