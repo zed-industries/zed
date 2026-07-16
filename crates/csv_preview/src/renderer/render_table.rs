@@ -69,6 +69,7 @@ impl CsvPreviewView {
                                     cols,
                                     display_row,
                                     row_identifier_text_color,
+                                    this.row_height,
                                     cx,
                                 )
                                 .unwrap_or_else(|| panic!("Expected to render a table row"))
@@ -83,6 +84,7 @@ impl CsvPreviewView {
                                     .rendered_indices
                                     .extend(range.clone());
 
+                                let row_height = this.row_height;
                                 range
                                     .filter_map(|display_index| {
                                         Self::render_single_table_row(
@@ -90,6 +92,7 @@ impl CsvPreviewView {
                                             cols,
                                             DisplayRow(display_index),
                                             row_identifier_text_color,
+                                            row_height,
                                             cx,
                                         )
                                     })
@@ -110,6 +113,7 @@ impl CsvPreviewView {
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
+        row_height: Pixels,
         cx: &Context<CsvPreviewView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
@@ -130,12 +134,15 @@ impl CsvPreviewView {
 
             let cell = div()
                 .size_full()
-                .when(!this.settings.multiline_cells_enabled, |div| {
-                    div.whitespace_nowrap()
-                        .text_ellipsis()
-                        .h(this.row_height)
-                        .overflow_hidden()
-                })
+                .when(
+                    !this.settings.multiline_cells_effectively_enabled(),
+                    |div| {
+                        div.whitespace_nowrap()
+                            .text_ellipsis()
+                            .h(row_height)
+                            .overflow_hidden()
+                    },
+                )
                 .child(CsvPreviewView::create_selectable_cell(
                     display_cell_id,
                     cell_content,

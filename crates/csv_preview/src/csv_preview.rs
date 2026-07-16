@@ -25,6 +25,10 @@ mod types;
 
 actions!(csv, [OpenPreview, OpenPreviewToTheSide]);
 
+/// Bootstrap row height used only until the first render populates
+/// `CsvPreviewView::row_height` with the actual text line height.
+const INITIAL_ROW_HEIGHT: Pixels = px(24.);
+
 pub struct TabularDataPreviewFeatureFlag;
 
 impl FeatureFlag for TabularDataPreviewFeatureFlag {
@@ -49,8 +53,9 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
-    /// Cached row height used as a scroll height hint for off-screen list items.
-    /// Updated each render frame from the actual text line height.
+    /// Cached row height, refreshed from the actual text line height on every render.
+    /// Used to size not-yet-rendered rows for the scrollbar without a full `.measure_all()`
+    /// pass, so it tracks the real row height instead of a hardcoded guess.
     pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
@@ -176,7 +181,6 @@ impl CsvPreviewView {
                 },
             );
 
-            const INITIAL_ROW_HEIGHT: Pixels = px(24.);
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
@@ -244,8 +248,8 @@ impl CsvPreviewView {
             this.update(cx, |view, cx| {
                 view.engine.set_d2d_mapping(mapping);
                 let visible_rows = view.engine.d2d_mapping().visible_row_count();
-                // Approximation of single csv table row height. Will be re-measured on scrolling.
-                // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
+                // Uses the row height measured on the last render. Cheaper than a full
+                // `.measure_all()` pass; exact row heights are re-measured on scrolling.
                 view.list_state
                     .reset_with_uniform_height(visible_rows, view.row_height);
                 cx.notify();
