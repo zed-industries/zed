@@ -82,6 +82,10 @@ const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
 /// Prevents a tight reconnect loop when the input method server keeps returning bad replies.
 const MAX_XIM_PROTOCOL_ERROR_RECONNECTS: u8 = 3;
 
+/// Maximum events to process after a protocol-error reconnect before retrying if handshake
+/// hasn't completed. Approximately 1-2 seconds of typical event flow.
+const MAX_XIM_RECONNECT_EVENTS: u16 = 100;
+
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_state: Option<RefreshState>,
@@ -217,6 +221,9 @@ pub struct X11ClientState {
     /// Protocol-error reconnect attempts in the current focus session. Reset on FocusOut and
     /// after a successful reconnect.
     xim_protocol_error_reconnect_count: u8,
+    /// Events processed since the last protocol-error reconnect while handshake is still pending.
+    /// When this exceeds MAX_XIM_RECONNECT_EVENTS, trigger another reconnect attempt.
+    xim_protocol_error_reconnect_event_count: u16,
     pub(crate) pre_key_char_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
@@ -557,6 +564,7 @@ impl X11Client {
             composing: false,
             xim_reconnect_attempted_for_focus: false,
             xim_protocol_error_reconnect_count: 0,
+            xim_protocol_error_reconnect_event_count: 0,
 
             cursor_handle,
             cursor_styles: HashMap::default(),
@@ -709,6 +717,30 @@ impl X11Client {
 
                 let mut state = self.0.borrow_mut();
                 state.restore_xim(ximc, xim_handler);
+
+                if state.xim_protocol_error_reconnect_count > 0 {
+                    if let Some(handler) = state.xim_handler.as_ref() {
+                        if !handler.connected {
+                            state.xim_protocol_error_reconnect_event_count += 1;
+                            if state.xim_protocol_error_reconnect_event_count
+                                >= MAX_XIM_RECONNECT_EVENTS
+                            {
+                                drop(state);
+                                log::warn!(
+                                    "XIM handshake did not complete after {MAX_XIM_RECONNECT_EVENTS} events, retrying reconnect"
+                                );
+                                if !self.reconnect_xim_after_protocol_error() {
+                                    log::warn!(
+                                        "IME input unavailable: XIM handshake retry failed; refocus the window or restart Zed to retry"
+                                    );
+                                }
+                                continue;
+                            }
+                        } else {
+                            state.xim_protocol_error_reconnect_event_count = 0;
+                        }
+                    }
+                }
                 drop(state);
 
                 if let Some(event) = xim_callback_event {
@@ -773,8 +805,9 @@ impl X11Client {
             return false;
         }
 
-        log::warn!("XIM connection re-established");
+        log::warn!("XIM reconnect initiated, async handshake pending");
         state.xim_protocol_error_reconnect_count = 0;
+        state.xim_protocol_error_reconnect_event_count = 0;
         true
     }
 
@@ -813,6 +846,8 @@ impl X11Client {
         let Some((mut ximc, xim_handler)) = state.take_xim() else {
             return;
         };
+        let keyboard_focused_window = state.keyboard_focused_window;
+        drop(state);
         log::trace!(
             "enable_ime: im_id={}, ic_id={}, connected={}, handler_window={}",
             xim_handler.im_id,
@@ -822,11 +857,18 @@ impl X11Client {
         );
 
         if !xim_handler.connected {
-            // The async XIM handshake (handle_connect → handle_open → handle_create_ic)
-            // hasn't completed yet. The handler will automatically create the IC with the
-            // correct im_id once the handshake finishes. Creating an IC now would use an
-            // uninitialized im_id and leave orphan ICs on the XIM server.
-            state.restore_xim(ximc, xim_handler);
+            // The async handshake hasn't completed. If the XIM server never
+            // responded (e.g. fcitx restarted), this connection is dead and
+            // will never become connected. Discard it so the next FocusIn can
+            // attempt a fresh reconnect, rather than staying stuck forever.
+            drop(ximc);
+            drop(xim_handler);
+            let mut state = self.0.borrow_mut();
+            state.discard_xim();
+            drop(state);
+
+            log::warn!("enable_ime: XIM handshake incomplete, discarding and retrying");
+            self.ensure_xim_connection_on_focus();
             return;
         }
 
@@ -835,9 +877,7 @@ impl X11Client {
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
-        let window_id = state.keyboard_focused_window;
-        drop(state);
-        if let Some(window_id) = window_id {
+        if let Some(window_id) = keyboard_focused_window {
             let Some(window) = self.get_window(window_id) else {
                 log::error!("Failed to get window for IME positioning");
                 let mut state = self.0.borrow_mut();
@@ -1078,9 +1118,16 @@ impl X11Client {
                 if let Some(handler) = state.xim_handler.as_mut() {
                     handler.window = event.event;
                 }
-                let xim_state = state.xim_handler.as_ref().map(|h| {
-                    format!("im_id={}, ic_id={}, connected={}", h.im_id, h.ic_id, h.connected)
-                }).unwrap_or_else(|| "no handler".to_string());
+                let xim_state = state
+                    .xim_handler
+                    .as_ref()
+                    .map(|h| {
+                        format!(
+                            "im_id={}, ic_id={}, connected={}",
+                            h.im_id, h.ic_id, h.connected
+                        )
+                    })
+                    .unwrap_or_else(|| "no handler".to_string());
                 log::info!("FocusIn: window={}, XIM state: [{xim_state}]", event.event);
                 drop(state);
                 self.enable_ime();
@@ -1093,7 +1140,10 @@ impl X11Client {
                 reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.keyboard_focused_window = None;
                 state.reset_xim_reconnect_state();
-                log::info!("FocusOut: window={}, XIM reconnect state reset", event.event);
+                log::info!(
+                    "FocusOut: window={}, XIM reconnect state reset",
+                    event.event
+                );
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
@@ -1986,14 +2036,19 @@ impl X11ClientState {
 
     /// Drops the current XIM client. Used when the connection is broken and must be replaced.
     fn discard_xim(&mut self) {
+        let had_xim = self.ximc.is_some();
         self.ximc.take();
         self.xim_handler.take();
         self.composing = false;
+        if had_xim {
+            log::trace!("discard_xim: XIM connection discarded");
+        }
     }
 
     fn reset_xim_reconnect_state(&mut self) {
         self.xim_reconnect_attempted_for_focus = false;
         self.xim_protocol_error_reconnect_count = 0;
+        self.xim_protocol_error_reconnect_event_count = 0;
     }
 
     /// Opens a new XIM connection to the input method server (e.g. Fcitx).

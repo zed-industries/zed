@@ -126,6 +126,32 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         client.disconnect()
     }
 
+    fn handle_destroy_ic(
+        &mut self,
+        _client: &mut C,
+        input_method_id: u16,
+        input_context_id: u16,
+    ) -> Result<(), ClientError> {
+        log::trace!(
+            "XIM handle_destroy_ic: im_id={input_method_id}, ic_id={input_context_id}, current_ic_id={}",
+            self.ic_id
+        );
+        if input_context_id == self.ic_id {
+            self.connected = false;
+        }
+        Ok(())
+    }
+
+    fn handle_disconnect(&mut self) {
+        log::trace!(
+            "XIM handle_disconnect: im_id={}, ic_id={}, connected={}",
+            self.im_id,
+            self.ic_id,
+            self.connected
+        );
+        self.connected = false;
+    }
+
     fn handle_preedit_draw(
         &mut self,
         _client: &mut C,
