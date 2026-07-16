@@ -152,6 +152,7 @@ impl Editor {
     pub fn set_edit_prediction_provider<T>(
         &mut self,
         provider: Option<Entity<T>>,
+        trigger: EditPredictionRequestTrigger,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
@@ -166,13 +167,7 @@ impl Editor {
             provider: Arc::new(provider),
         });
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(
-            false,
-            false,
-            EditPredictionRequestTrigger::Other,
-            window,
-            cx,
-        );
+        self.refresh_edit_prediction(false, false, trigger, window, cx);
     }
 
     pub fn set_edit_predictions_hidden_for_vim_mode(
@@ -189,7 +184,7 @@ impl Editor {
                 self.refresh_edit_prediction(
                     true,
                     false,
-                    EditPredictionRequestTrigger::Other,
+                    EditPredictionRequestTrigger::VimModeChanged,
                     window,
                     cx,
                 );
@@ -1660,13 +1655,16 @@ impl Editor {
     ) -> Task<Result<()>> {
         workspace.update(cx, |workspace, cx| {
             let path = snapshot.file().map(|file| file.full_path(cx));
-            let Some(path) =
-                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
+            let Some(project_path) = path
+                .as_ref()
+                .and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
             else {
-                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
+                return Task::ready(Err(anyhow::anyhow!(
+                    "project path not found for edit prediction target {path:?}"
+                )));
             };
             let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(path, None, true, window, cx);
+            let item = workspace.open_path(project_path, None, true, window, cx);
             window.spawn(cx, async move |cx| {
                 let Some(editor) = item.await?.downcast::<Editor>() else {
                     return Ok(());

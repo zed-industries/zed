@@ -164,7 +164,7 @@ pub fn setup_pnpm() -> Step<Use> {
     named::uses(
         "pnpm",
         "action-setup",
-        "fe02b34f77f8bc703788d5817da081398fad5dd2", // v4.0.0
+        "fc06bc1257f339d1d5d8b3a19a8cae5388b55320", // v4.4.0
     )
     .add_with(("version", "9"))
 }

@@ -582,16 +582,12 @@ actions!(
         GoToDeclaration,
         /// Goes to declaration in a split pane.
         GoToDeclarationSplit,
-        /// Goes to the definition of the symbol at cursor.
-        GoToDefinition,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
         /// Goes to the next diff hunk.
         GoToHunk,
         /// Goes to the previous diff hunk.
         GoToPreviousHunk,
-        /// Goes to the implementation of the symbol at cursor.
-        GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
         /// Goes to the next bookmark in the file.
@@ -951,6 +947,28 @@ actions!(
     ]
 );
 
+/// Goes to the definition of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinition {
+    /// Where to show the definitions. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
+/// Goes to the implementation of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToImplementation {
+    /// Where to show the implementations. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
 /// Finds all references to the symbol at cursor.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -958,12 +976,17 @@ actions!(
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+    /// Where to show the references. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
 }
 
 impl Default for FindAllReferences {
     fn default() -> Self {
         Self {
             always_open_multibuffer: true,
+            open_results_in: None,
         }
     }
 }

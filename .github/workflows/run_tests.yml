@@ -157,7 +157,7 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_pnpm
-      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       with:
         version: '9'
     - name: steps::prettier
