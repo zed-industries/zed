@@ -44,6 +44,7 @@ impl CsvPreviewView {
             .w_full()
             .items_center()
             .font_buffer(cx)
+            .text_buffer(cx)
             .child(
                 div()
                     .flex_1()
