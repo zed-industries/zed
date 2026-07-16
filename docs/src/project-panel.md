@@ -191,7 +191,7 @@ The `project_panel.sort_order` setting controls name comparison:
 The Project Panel keeps a history of the file operations you perform through it,
 letting you undo ({#action project_panel::Undo} / {#kb project_panel::Undo}) and
 redo ({#action project_panel::Redo} / {#kb project_panel::Redo}) these
-operations, with support for local, remote, and collaborative projects.
+operations, with support for local and remote projects.
 
 The following operations are tracked:
 
@@ -222,6 +222,15 @@ single step, and a failure in one of the operations does not block the rest.
 
 ### Limitations
 
+- Undo and redo are not available when collaborating in a project shared by
+  someone else. The same applies to {#action project_panel::Trash}, so when
+  working as a guest in a shared project, files can only be permanently
+  deleted, and file operations cannot be undone.
+- Operations whose result is a path excluded from the project via the
+  `file_scan_exclusions` setting are not recorded. For example, with
+  `**/*.secret` excluded, creating a file named `token.secret`, or renaming an
+  existing file to `token.secret`, succeeds on disk, but the operation cannot
+  be undone from the panel.
 - Permanently deleting an item ({#action project_panel::Delete}) is not tracked
   and cannot be undone.
 - Undoing a {#action project_panel::Trash} restores the item from your system's
