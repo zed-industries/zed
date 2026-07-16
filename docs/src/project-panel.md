@@ -51,6 +51,12 @@ Directory** to collapse it again.
 
 ![Project Panel: Auto Fold Directories Disabled](https://images.zed.dev/docs/project-panel/auto-fold-dirs-false.png)
 
+When `project_panel.fold_single_file_dirs` is enabled (disabled by default), a
+directory whose only child is a single file is folded into one `dir/file` row
+that opens the file on click. This is independent of `auto_fold_dirs` and
+combines with it, so a chain of single-child directories ending in a lone file
+collapses into a single compact row.
+
 ## Selecting Multiple Entries
 
 Hold `shift` while pressing the up/down arrow keys to mark additional entries.

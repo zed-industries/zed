@@ -732,6 +732,126 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_fold_single_file_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "single": {
+                "only.txt": "",
+            },
+            "multi": {
+                "a.txt": "",
+                "b.txt": "",
+            },
+            "chain": {
+                "inner": {
+                    "leaf.txt": "",
+                }
+            },
+            "top.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: false,
+                fold_single_file_dirs: true,
+                sort_mode: settings::ProjectPanelSortMode::DirectoriesFirst,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > chain",
+            "    > multi",
+            "      single/only.txt",
+            "      top.txt",
+        ],
+        "A directory holding a single file should collapse into one dir/file row"
+    );
+
+    toggle_expand_dir(&panel, "root/chain", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    v chain  <== selected",
+            "          inner/leaf.txt",
+            "    > multi",
+            "      single/only.txt",
+            "      top.txt",
+        ],
+        "A nested single-file directory should fold as well"
+    );
+
+    toggle_expand_dir(&panel, "root/multi", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    v chain",
+            "          inner/leaf.txt",
+            "    v multi  <== selected",
+            "          a.txt",
+            "          b.txt",
+            "      single/only.txt",
+            "      top.txt",
+        ],
+        "A directory with more than one child should not fold"
+    );
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                fold_single_file_dirs: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    v chain",
+            "        > inner",
+            "    v multi  <== selected",
+            "          a.txt",
+            "          b.txt",
+            "    > single",
+            "      top.txt",
+        ],
+        "Disabling the setting should restore the directory rows"
+    );
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     init_test(cx);

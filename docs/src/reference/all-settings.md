@@ -5173,6 +5173,34 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Fold Single File Dirs
+
+- Description: Whether to fold a directory that contains a single file into one `dir/file` row that opens the file on click. Independent of `auto_fold_dirs`; combines with it so a chain of single-child directories ending in a lone file collapses into a single compact row.
+- Setting: `fold_single_file_dirs`
+- Default: `false`
+
+**Options**
+
+1. Enable folding single-file directories
+
+```json [settings]
+{
+  "project_panel": {
+    "fold_single_file_dirs": true
+  }
+}
+```
+
+2. Disable folding single-file directories
+
+```json [settings]
+{
+  "project_panel": {
+    "fold_single_file_dirs": false
+  }
+}
+```
+
 ### Bold Folder Labels
 
 - Description: Whether to show folder names with bold text in the project panel.
