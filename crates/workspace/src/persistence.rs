@@ -2699,8 +2699,7 @@ async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Opti
                 .unwrap_or_else(|| original.clone())
         })
         .collect();
-    let resolved_path_refs: Vec<&Path> = resolved_paths.iter().map(PathBuf::as_path).collect();
-    Some(PathList::new(&resolved_path_refs))
+    Some(PathList::new(&resolved_paths))
 }
 
 fn dedupe_recent_workspaces(

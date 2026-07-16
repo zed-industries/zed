@@ -12,7 +12,7 @@ use collections::HashMap;
 use fs::{Fs, copy_recursive};
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task, TaskExt,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, TaskExt,
     WeakEntity,
 };
 use itertools::Either;
@@ -199,8 +199,8 @@ pub struct WorktreeStore {
 #[derive(Debug)]
 pub enum WorktreeStoreEvent {
     WorktreeAdded(Entity<Worktree>),
-    WorktreeRemoved(EntityId, WorktreeId),
-    WorktreeReleased(EntityId, WorktreeId),
+    WorktreeRemoved(WorktreeId),
+    WorktreeReleased(WorktreeId),
     WorktreeOrderChanged,
     WorktreeUpdateSent(Entity<Worktree>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
@@ -896,7 +896,6 @@ impl WorktreeStore {
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
         self.send_project_updates(cx);
 
-        let handle_id = worktree.entity_id();
         cx.subscribe(worktree, |_, worktree, event, cx| {
             let worktree_id = worktree.read(cx).id();
             match event {
@@ -928,14 +927,8 @@ impl WorktreeStore {
         })
         .detach();
         cx.observe_release(worktree, move |this, worktree, cx| {
-            cx.emit(WorktreeStoreEvent::WorktreeReleased(
-                handle_id,
-                worktree.id(),
-            ));
-            cx.emit(WorktreeStoreEvent::WorktreeRemoved(
-                handle_id,
-                worktree.id(),
-            ));
+            cx.emit(WorktreeStoreEvent::WorktreeReleased(worktree.id()));
+            cx.emit(WorktreeStoreEvent::WorktreeRemoved(worktree.id()));
             this.send_project_updates(cx);
         })
         .detach();
@@ -945,10 +938,7 @@ impl WorktreeStore {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
-                    cx.emit(WorktreeStoreEvent::WorktreeRemoved(
-                        worktree.entity_id(),
-                        id_to_remove,
-                    ));
+                    cx.emit(WorktreeStoreEvent::WorktreeRemoved(id_to_remove));
                     false
                 } else {
                     true

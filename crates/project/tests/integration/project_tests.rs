@@ -14620,26 +14620,19 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    let (repo_id, repo_entity, repos) = project.read_with(cx, |project, cx| {
+    let repos = project.read_with(cx, |project, cx| {
         let repositories = project.repositories(cx);
         assert_eq!(
             repositories.len(),
             1,
             "two worktrees must coalesce to one repo"
         );
-        let (id, entity) = repositories.iter().next().unwrap();
-        (
-            *id,
-            entity.entity_id(),
-            repositories
-                .values()
-                .map(|repo| repo.read(cx).work_directory_abs_path.clone())
-                .collect::<Vec<_>>(),
-        )
+        repositories
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/project")).into()]);
-    // Membership comes from the association map (two worktree registrations → one id).
-    let _ = (repo_id, repo_entity);
 }
 
 #[gpui::test]

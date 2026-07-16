@@ -196,7 +196,7 @@ impl ManifestTree {
         evt: &WorktreeStoreEvent,
         _: &mut Context<Self>,
     ) {
-        if let WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) = evt {
+        if let WorktreeStoreEvent::WorktreeRemoved(worktree_id) = evt {
             self.root_points.remove(worktree_id);
         }
     }

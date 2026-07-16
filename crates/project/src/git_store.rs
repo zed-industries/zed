@@ -2088,7 +2088,7 @@ impl GitStore {
                     cx,
                 );
             }
-            WorktreeStoreEvent::WorktreeRemoved(_entity_id, worktree_id) => {
+            WorktreeStoreEvent::WorktreeRemoved(worktree_id) => {
                 let associations_for_worktree: Vec<(WorktreeRepositoryKey, RepositoryId)> = self
                     .repository_ids_by_worktree_repository
                     .iter()

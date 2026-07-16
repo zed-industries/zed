@@ -71,7 +71,7 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, maybe,
+    ResultExt,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
     rel_path::RelPath,
 };
@@ -206,13 +206,8 @@ pub struct Snapshot {
 /// project root and the .git folder is located in a parent directory.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub enum WorkDirectory {
-    InProject {
-        relative_path: Arc<RelPath>,
-    },
-    AboveProject {
-        absolute_path: Arc<Path>,
-        location_in_repo: Arc<Path>,
-    },
+    InProject { relative_path: Arc<RelPath> },
+    AboveProject { absolute_path: Arc<Path> },
 }
 
 impl WorkDirectory {
@@ -2479,7 +2474,7 @@ impl Snapshot {
     pub fn work_directory_abs_path(&self, work_directory: &WorkDirectory) -> PathBuf {
         match work_directory {
             WorkDirectory::InProject { relative_path } => self.absolutize(relative_path),
-            WorkDirectory::AboveProject { absolute_path, .. } => absolute_path.as_ref().to_owned(),
+            WorkDirectory::AboveProject { absolute_path } => absolute_path.as_ref().to_owned(),
         }
     }
 
@@ -3485,40 +3480,38 @@ impl BackgroundScannerState {
             watcher,
         )
         .await
-        .log_err()
-        .flatten()
     }
 
     /// Registers a validated git repository for `work_directory`.
     ///
-    /// Returns `Ok(None)` when the `.git` entry is not a repository, otherwise the
-    /// registration outcome (`was_added` is false on re-insert of the same key).
+    /// Returns `None` when the work directory is not indexed or the `.git` entry is not a
+    /// repository; otherwise the registration outcome (`was_added` is false on re-insert
+    /// of the same key).
     async fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
         dot_git_abs_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) -> Result<Option<RegistrationOutcome>> {
-        let work_dir_entry = self
-            .snapshot
-            .entry_for_path(&work_directory.path_key().0)
-            .with_context(|| {
-                format!(
-                    "working directory `{}` not indexed",
-                    work_directory
-                        .path_key()
-                        .0
-                        .display(self.snapshot.path_style)
-                )
-            })?;
+    ) -> Option<RegistrationOutcome> {
+        let Some(work_dir_entry) = self.snapshot.entry_for_path(&work_directory.path_key().0)
+        else {
+            log::error!(
+                "working directory `{}` not indexed",
+                work_directory
+                    .path_key()
+                    .0
+                    .display(self.snapshot.path_style)
+            );
+            return None;
+        };
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
         // Bail before setting up any watches if the `.git` entry isn't a real repository.
         let Some((repository_dir_abs_path, common_dir_abs_path)) =
             discover_valid_git_repository(&dot_git_abs_path, fs).await
         else {
-            return Ok(None);
+            return None;
         };
 
         watcher
@@ -3567,10 +3560,10 @@ impl BackgroundScannerState {
             .insert(work_directory_id, entry);
 
         log::trace!("inserting new local git repository");
-        Ok(Some(RegistrationOutcome {
+        Some(RegistrationOutcome {
             work_directory_id,
             was_added,
-        }))
+        })
     }
 }
 
@@ -3732,11 +3725,7 @@ fn match_git_metadata_event(
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
-    build_gitignore_with_root(abs_path, parent, fs).await
-}
-
-async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let root = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     let contents = fs
         .load(abs_path)
         .await
@@ -4507,28 +4496,22 @@ impl BackgroundScanner {
             None
         };
 
-        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
-            && scanning_enabled
-            && self.track_git_repositories
-        {
-            maybe!(async {
-                let outcome = self
-                    .state
-                    .lock()
-                    .await
-                    .insert_git_repository_for_path(
-                        work_directory,
-                        ancestor_dot_git.clone().into(),
-                        self.fs.as_ref(),
-                        self.watcher.as_ref(),
-                    )
-                    .await
-                    // Bail on both an error and an invalid `.git` (`Ok(None)`), so a
-                    // non-repository is never reported as the containing repo.
-                    .log_err()?;
-                outcome.map(|_| ancestor_dot_git)
-            })
-            .await
+        // `repo` is only `Some` when scanning and git tracking are enabled above.
+        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo {
+            let outcome = self
+                .state
+                .lock()
+                .await
+                .insert_git_repository_for_path(
+                    work_directory,
+                    ancestor_dot_git.clone().into(),
+                    self.fs.as_ref(),
+                    self.watcher.as_ref(),
+                )
+                .await;
+            // Bail on an invalid `.git` (`None`), so a non-repository is never reported
+            // as the containing repo.
+            outcome.map(|_| ancestor_dot_git)
         } else {
             None
         };
@@ -5803,8 +5786,7 @@ impl BackgroundScanner {
                                     self.fs.as_ref(),
                                     self.watcher.as_ref(),
                                 )
-                                .await
-                                .log_err();
+                                .await;
                         }
                     }
                 }
@@ -6348,21 +6330,14 @@ async fn discover_ancestor_git_repo(
             }
 
             if index != 0 {
-                let location_in_repo = root_abs_path
-                    .as_path()
-                    .strip_prefix(ancestor)
-                    .unwrap()
-                    .into();
-                log::info!("inserting parent git repo for this worktree: {location_in_repo:?}");
-                // We associate the external git repo with our root folder and
-                // also mark where in the git repo the root folder is located.
+                log::info!("inserting parent git repo for this worktree: {ancestor:?}");
+                // We associate the external git repo with our root folder.
                 return (
                     ignores,
                     Some((
                         dot_git_abs_path.as_ref().into(),
                         WorkDirectory::AboveProject {
                             absolute_path: ancestor.into(),
-                            location_in_repo,
                         },
                     )),
                 );

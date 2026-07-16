@@ -488,8 +488,7 @@ impl ContextServerStore {
             subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
                 if matches!(
                     event,
-                    WorktreeStoreEvent::WorktreeAdded(_)
-                        | WorktreeStoreEvent::WorktreeRemoved(_, _)
+                    WorktreeStoreEvent::WorktreeAdded(_) | WorktreeStoreEvent::WorktreeRemoved(_)
                 ) && !DisableAiSettings::get_global(cx).disable_ai
                 {
                     this.available_context_servers_changed(cx);

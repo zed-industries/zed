@@ -3874,11 +3874,11 @@ impl Project {
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
                 self.emit_group_key_changed_if_needed(cx);
             }
-            WorktreeStoreEvent::WorktreeRemoved(_, id) => {
+            WorktreeStoreEvent::WorktreeRemoved(id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
                 self.emit_group_key_changed_if_needed(cx);
             }
-            WorktreeStoreEvent::WorktreeReleased(_, id) => {
+            WorktreeStoreEvent::WorktreeReleased(id) => {
                 self.on_worktree_released(*id, cx);
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),

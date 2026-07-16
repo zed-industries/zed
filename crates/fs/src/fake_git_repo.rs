@@ -341,14 +341,6 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn path(&self) -> PathBuf {
-        self.repository_dir_path.clone()
-    }
-
-    fn main_repository_path(&self) -> PathBuf {
-        self.common_dir_path.clone()
-    }
-
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         async move { None }.boxed()
     }

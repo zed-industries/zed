@@ -987,12 +987,6 @@ pub trait GitRepository: Send + Sync {
         line_ending: LineEnding,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
-    /// Returns the absolute path to the repository. For worktrees, this will be the path to the
-    /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
-    fn path(&self) -> PathBuf;
-
-    fn main_repository_path(&self) -> PathBuf;
-
     /// Updates the index to match the worktree at the given paths.
     ///
     /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
@@ -1300,7 +1294,7 @@ impl RealGitRepository {
         Ok(GitBinary::new(
             self.any_git_binary_path.clone(),
             self.working_directory()?,
-            self.path(),
+            self.git_dir.clone(),
             self.executor.clone(),
             self.is_trusted(),
         ))
@@ -1310,7 +1304,7 @@ impl RealGitRepository {
         GitBinary::new(
             self.any_git_binary_path.clone(),
             self.command_directory(),
-            self.path(),
+            self.git_dir.clone(),
             self.executor.clone(),
             self.is_trusted(),
         )
@@ -1402,14 +1396,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
 }
 
 impl GitRepository for RealGitRepository {
-    fn path(&self) -> PathBuf {
-        self.git_dir.clone()
-    }
-
-    fn main_repository_path(&self) -> PathBuf {
-        self.common_dir.clone()
-    }
-
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         let git = self.git_binary();
         self.executor
@@ -1848,7 +1834,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
-        let path = self.path().join("MERGE_MSG");
+        let path = self.git_dir.join("MERGE_MSG");
         self.executor
             .spawn(async move { std::fs::read_to_string(&path).ok() })
             .boxed()
@@ -2139,7 +2125,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = GitBinary::new(
             self.any_git_binary_path.clone(),
             worktree_path,
-            self.path(),
+            self.git_dir.clone(),
             self.executor.clone(),
             self.is_trusted(),
         );
@@ -2570,7 +2556,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.command_directory();
-        let git_directory = self.path();
+        let git_directory = self.git_dir.clone();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2613,7 +2599,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.command_directory();
-        let git_directory = self.path();
+        let git_directory = self.git_dir.clone();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2654,7 +2640,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.command_directory();
-        let git_directory = self.path();
+        let git_directory = self.git_dir.clone();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
@@ -4357,7 +4343,6 @@ mod tests {
         assert_same_path(&repository.git_dir, &repo_dir);
         assert_same_path(&repository.common_dir, &repo_dir);
         assert_eq!(repository.working_directory, None);
-        assert_same_path(repository.main_repository_path(), &repo_dir);
         assert_eq!(
             repository
                 .git_binary()
@@ -5899,7 +5884,7 @@ mod tests {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.command_directory();
-            let git_directory = self.path();
+            let git_directory = self.git_dir.clone();
             let git_binary_path = self.any_git_binary_path.clone();
             let executor = self.executor.clone();
             self.executor

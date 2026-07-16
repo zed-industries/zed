@@ -4606,14 +4606,14 @@ impl LspStore {
                 })
                 .detach()
             }
-            WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
+            WorktreeStoreEvent::WorktreeRemoved(id) => self.remove_worktree(*id, cx),
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
                 self.invalidate_diagnostic_summaries_for_removed_entries(*worktree_id, changes, cx);
             }
-            WorktreeStoreEvent::WorktreeReleased(..)
+            WorktreeStoreEvent::WorktreeReleased(_)
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
             | WorktreeStoreEvent::WorktreeDeletedEntry(..)
