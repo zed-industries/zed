@@ -131,6 +131,24 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    fn supports_explicit_compaction(&self) -> bool {
+        false
+    }
+
+    fn compact(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionContent, LanguageModelCompletionError>> {
+        let provider = self.provider_name();
+        async move {
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "{provider} does not support explicit compaction"
+            )))
+        }
+        .boxed()
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 

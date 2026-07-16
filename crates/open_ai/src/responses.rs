@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeSeq as _};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -14,8 +14,8 @@ pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "ResponseInput::is_empty")]
+    pub input: ResponseInput,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -42,6 +42,61 @@ pub struct Request {
     pub service_tier: Option<ServiceTier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_management: Option<Vec<ContextManagement>>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct CompactRequest {
+    pub model: String,
+    pub input: ResponseInput,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CompactedResponse {
+    pub id: String,
+    pub created_at: u64,
+    pub object: String,
+    pub output: Vec<Value>,
+    pub usage: ResponseUsage,
+}
+
+#[derive(Debug, Default)]
+pub struct ResponseInput {
+    provider_items: Vec<Value>,
+    generated_items: Vec<ResponseInputItem>,
+}
+
+impl ResponseInput {
+    pub fn new(provider_items: Vec<Value>, generated_items: Vec<ResponseInputItem>) -> Self {
+        Self {
+            provider_items,
+            generated_items,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.provider_items.is_empty() && self.generated_items.is_empty()
+    }
+
+    pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
+        self.generated_items.retain(predicate);
+    }
+}
+
+impl Serialize for ResponseInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut sequence = serializer
+            .serialize_seq(Some(self.provider_items.len() + self.generated_items.len()))?;
+        for item in &self.provider_items {
+            sequence.serialize_element(item)?;
+        }
+        for item in &self.generated_items {
+            sequence.serialize_element(item)?;
+        }
+        sequence.end()
+    }
 }
 
 /// Server-side context management configuration.
@@ -546,6 +601,45 @@ pub struct ResponseCustomToolCall {
     pub input: String,
 }
 
+pub async fn compact_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CompactRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<CompactedResponse, RequestError> {
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(format!("{api_url}/responses/compact"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|error| RequestError::Other(error.into()))?,
+        ))
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    if response.status().is_success() {
+        serde_json::from_str(&body).map_err(|error| RequestError::Other(error.into()))
+    } else {
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
 pub async fn stream_response(
     client: &dyn HttpClient,
     provider_name: &str,
@@ -730,5 +824,44 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn compacted_response_preserves_canonical_output_items() {
+        let output = vec![
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            }),
+            json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }),
+        ];
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": &output,
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(response.output, output);
     }
 }

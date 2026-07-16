@@ -165,10 +165,12 @@ fn to_anthropic_content(content: MessageContent) -> Result<Option<RequestContent
                 cache_control: None,
             }))
         }
-        // Encrypted compaction blocks come from other providers, and a
+        // Provider-native compaction blocks come from other providers, and a
         // Pending block is a streaming-only UI signal; neither is replayed.
         MessageContent::Compaction(
-            CompactionContent::Encrypted { .. } | CompactionContent::Pending,
+            CompactionContent::Encrypted { .. }
+            | CompactionContent::ProviderWindow { .. }
+            | CompactionContent::Pending,
         ) => Ok(None),
     }
 }

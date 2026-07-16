@@ -275,6 +275,11 @@ pub enum CompactionContent {
         id: Option<Arc<str>>,
         encrypted_content: Arc<str>,
     },
+    /// A provider's canonical replacement window, which must be replayed
+    /// unchanged and supersedes all request messages that precede it.
+    ProviderWindow {
+        items: Arc<[serde_json::Value]>,
+    },
 }
 
 impl MessageContent {

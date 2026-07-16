@@ -255,6 +255,7 @@ pub fn into_open_ai_response(
 
     let service_tier = service_tier_for(speed);
 
+    let mut provider_items = Vec::new();
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
@@ -264,6 +265,7 @@ pub fn into_open_ai_response(
             index,
             &mut replayed_reasoning_item_indexes,
             &mut tool_use_kinds_by_id,
+            &mut provider_items,
             &mut input_items,
         );
     }
@@ -331,7 +333,7 @@ pub fn into_open_ai_response(
     ResponseRequest {
         model: model_id.into(),
         instructions: None,
-        input: input_items,
+        input: crate::responses::ResponseInput::new(provider_items, input_items),
         store: Some(false),
         include,
         stream,
@@ -366,6 +368,7 @@ fn append_message_to_response_items(
     index: usize,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
+    provider_items: &mut Vec<serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
@@ -411,6 +414,14 @@ fn append_message_to_response_items(
                     id,
                     encrypted_content,
                 }));
+            }
+            MessageContent::Compaction(CompactionContent::ProviderWindow { items }) => {
+                content_parts.clear();
+                input_items.clear();
+                replayed_reasoning_item_indexes.clear();
+                tool_use_kinds_by_id.clear();
+                provider_items.clear();
+                provider_items.extend(items.iter().cloned());
             }
             // Summary compaction blocks come from other providers, and a
             // Pending block is a streaming-only UI signal; neither is replayed.
@@ -3992,6 +4003,68 @@ mod tests {
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
             )
         }));
+    }
+
+    #[test]
+    fn into_open_ai_response_prepends_provider_input_unchanged() {
+        let provider_input = json!([
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            },
+            {
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }
+        ]);
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(
+                        CompactionContent::ProviderWindow {
+                            items: provider_input.as_array().unwrap().clone().into(),
+                        },
+                    )],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, false);
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Retained user context.",
+                    "provider_extension": {"preserve": true}
+                },
+                {
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Continue."}]
+                }
+            ])
+        );
     }
 
     #[test]
