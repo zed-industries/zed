@@ -1980,18 +1980,6 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(cx, |project_panel, cx| {
                 project_panel.state.edit_state = None;
-
-                // Record the operation if the edit was applied
-                if new_entry.is_ok() {
-                    let operation = if let Some(old_entry) = edited_entry {
-                        Change::Renamed((worktree_id, old_entry.path).into(), new_project_path)
-                    } else {
-                        Change::Created(new_project_path)
-                    };
-
-                    project_panel.undo_manager.record([operation]).log_err();
-                }
-
                 cx.notify();
             })?;
 
@@ -2007,6 +1995,23 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update_in(cx, |project_panel, window, cx| {
+                        // Only recording changes in included files as otherwise
+                        // undoing some operations would fail, as
+                        // `Worktree::entry_for_path` would return `None` for
+                        // excluded paths.
+                        // In the future we can look into adding support for recording
+                        // changes in excluded paths, but that would mean updating
+                        // methods that rely on `EntryId` to now rely on the actual
+                        // paths.
+                        let operation = match edited_entry {
+                            Some(old_entry) => {
+                                let project_path = (worktree_id, old_entry.path).into();
+                                Change::Renamed(project_path, new_project_path)
+                            }
+                            None => Change::Created(new_project_path),
+                        };
+                        project_panel.undo_manager.record([operation]).log_err();
+
                         if let Some(selection) = &mut project_panel.selection
                             && selection.entry_id == edited_entry_id
                         {
@@ -6880,6 +6885,7 @@ impl Render for ProjectPanel {
         // version that understands these messages.
         let is_collab = project.is_via_collab();
         let is_local = project.is_local();
+        let supports_undo = cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>();
 
         if has_worktree {
             let item_count = self
@@ -7011,13 +7017,6 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .when(
-                    !is_collab && cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(),
-                    |el| {
-                        el.on_action(cx.listener(Self::undo))
-                            .on_action(cx.listener(Self::redo))
-                    },
-                )
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -7031,6 +7030,10 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::add_to_gitignore))
                         .on_action(cx.listener(Self::add_to_git_info_exclude))
                         .when(!is_collab, |el| el.on_action(cx.listener(Self::trash)))
+                        .when(!is_collab && supports_undo, |el| {
+                            el.on_action(cx.listener(Self::undo))
+                                .on_action(cx.listener(Self::redo))
+                        })
                 })
                 .when(
                     project.is_local() || project.is_via_wsl_with_host_interop(cx),
