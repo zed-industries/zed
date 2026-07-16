@@ -31,7 +31,7 @@ serde_json.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 theme.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 sysinfo.workspace = true
 ui.workspace = true
 util.workspace = true

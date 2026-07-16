@@ -40,6 +40,7 @@ REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 TRACKING_ISSUE_NUMBER = 46355
 STAFF_TEAM_SLUG = "staff"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # area prefixes to collapse in taxonomy (show summary instead of all sub-labels)
 PREFIXES_TO_COLLAPSE = ["languages", "parity", "tooling"]
@@ -170,8 +171,8 @@ No action needed. A maintainer will review this shortly.
     return "\n\n".join(sections)
 
 
-def call_claude(api_key, system, user_content, max_tokens=1024):
-    """Send a message to Claude and return the text response. Raises on non-2xx status."""
+def _claude_request(api_key, payload):
+    """POST to the Claude Messages API, raise on non-2xx, log token usage, return parsed data."""
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -179,24 +180,52 @@ def call_claude(api_key, system, user_content, max_tokens=1024):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
-        json={
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": max_tokens,
-            "temperature": 0.0,
-            "system": system,
-            "messages": [{"role": "user", "content": user_content}],
-        },
+        json={"model": CLAUDE_MODEL, "temperature": 0.0, **payload},
     )
     response.raise_for_status()
     data = response.json()
 
     usage = data.get("usage", {})
     log(f"  Token usage - Input: {usage.get('input_tokens', 'N/A')}, Output: {usage.get('output_tokens', 'N/A')}")
+    return data
+
+
+def call_claude(api_key, system_prompt, user_content, max_tokens=1024):
+    """Send a message to Claude and return the text response. Raises on non-2xx status."""
+    data = _claude_request(api_key, {
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_content}],
+    })
 
     content = data.get("content", [])
     if content and content[0].get("type") == "text":
         return content[0].get("text") or ""
     return ""
+
+
+def call_claude_tool(api_key, system_prompt, user_content, tool, max_tokens=1024):
+    """Call Claude, forcing it to invoke `tool`, and return the structured input dict.
+
+    Forcing a tool call makes the API emit schema-shaped JSON via its tool-use mechanism
+    instead of free-form text we'd have to parse out of prose or markdown fences. Raises on
+    non-2xx status, or if no tool_use block is returned.
+    """
+    data = _claude_request(api_key, {
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_content}],
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": tool["name"]},
+    })
+
+    if data.get("stop_reason") == "max_tokens":
+        log("  Warning: response hit max_tokens; structured output may be truncated")
+
+    for block in data.get("content", []):
+        if block.get("type") == "tool_use":
+            return block.get("input") or {}
+    raise ValueError(f"Claude returned no tool_use block for tool '{tool['name']}'")
 
 
 def fetch_issue(issue_number: int):
@@ -622,33 +651,12 @@ Worth surfacing — strict examples:
 Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of identical
 "not_planned" reports. 0 is a normal outcome.
 
-# Output format
+# Output
 
-Output only valid JSON (no markdown code blocks):
-{
-  "likely_duplicates": [
-    {
-      "number": 12345,
-      "shared_root_cause": "The specific bug/root cause shared by both issues",
-      "explanation": "Brief explanation with concrete evidence from both issues"
-    }
-  ],
-  "possible_duplicates": [
-    {
-      "number": 12345,
-      "shared_root_cause": "The specific bug/root cause shared by both issues",
-      "explanation": "Brief explanation with concrete evidence from both issues"
-    }
-  ],
-  "related_closed_issues": [
-    {
-      "number": 12345,
-      "explanation": "Brief explanation of why this is useful triage context"
-    }
-  ]
-}
-
-Return empty arrays where nothing relevant is found."""
+Report your verdict by calling the report_duplicate_analysis tool. Fill the "reasoning"
+field first with a brief scratchpad weighing the strongest candidates and whether they
+share a root cause, then fill each bucket. Use empty arrays where nothing relevant is
+found."""
 
     user_content = f"""## New Issue #{issue['number']}
 **Title:** {issue['title']}
@@ -659,19 +667,48 @@ Return empty arrays where nothing relevant is found."""
 ## Existing Issues to Compare
 {json.dumps(candidates, indent=2)}"""
 
-    response = call_claude(anthropic_key, system_prompt, user_content, max_tokens=2048)
+    duplicate_match_schema = {
+        "type": "object",
+        "properties": {
+            "number": {"type": "integer", "description": "The candidate issue number"},
+            "shared_root_cause": {"type": "string", "description": "The specific bug/root cause shared by both issues"},
+            "explanation": {"type": "string", "description": "Brief explanation with concrete evidence from both issues"},
+        },
+        "required": ["number", "shared_root_cause", "explanation"],
+    }
+    analysis_tool = {
+        "name": "report_duplicate_analysis",
+        "description": "Report the duplicate analysis for the new issue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "A brief scratchpad (at most 2-3 sentences) weighing the strongest "
+                                   "candidates and whether they share a root cause. Be terse.",
+                    "maxLength": 700,
+                },
+                "likely_duplicates": {"type": "array", "items": duplicate_match_schema},
+                "possible_duplicates": {"type": "array", "items": duplicate_match_schema},
+                "related_closed_issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "number": {"type": "integer", "description": "The candidate issue number"},
+                            "explanation": {"type": "string", "description": "Brief explanation of why this is useful triage context"},
+                        },
+                        "required": ["number", "explanation"],
+                    },
+                },
+            },
+            "required": ["reasoning", "likely_duplicates", "possible_duplicates", "related_closed_issues"],
+        },
+    }
 
-    # Claude sometimes wraps JSON in a ```json ... ``` fence despite the prompt forbidding it
-    fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
-    if fence:
-        response = fence.group(1)
-
-    try:
-        data = json.loads(response)
-    except json.JSONDecodeError as e:
-        log(f"  Failed to parse Claude response as JSON: {e}")
-        log(f"  Raw response:\n{response}")
-        sys.exit(1)
+    data = call_claude_tool(anthropic_key, system_prompt, user_content, analysis_tool, max_tokens=3072)
+    if data.get("reasoning"):
+        log(f"  Reasoning: {data['reasoning']}")
 
     likely = data.get("likely_duplicates", [])
     possible = data.get("possible_duplicates", [])
@@ -749,16 +786,32 @@ Return "omit" if ANY of the following apply (in observed practice, almost everyt
 7. Label or single-keyword overlap. Only connection is a shared area:* label or one shared
    keyword. Omit.
 
-Output only valid JSON (no markdown code blocks):
-{
-  "verdict": "include" | "omit",
-  "rule_violated": null | 1 | 2 | 3 | 4 | 5 | 6 | 7,
-  "rationale": "one concise sentence explaining the verdict"
-}
+Report your decision by calling the report_critique_verdict tool. Fill "rationale" first
+(one concise sentence), then "verdict". When "verdict" is "include", "rule_violated" must be
+null. When "verdict" is "omit", set "rule_violated" to the most relevant rule number, or
+null if the candidate is simply too unrelated for any rule to specifically apply."""
 
-When "verdict" is "include", "rule_violated" must be null.
-When "verdict" is "omit", "rule_violated" should be the most relevant rule number, or null
-if the candidate is simply too unrelated for any rule to specifically apply."""
+
+CRITIQUE_VERDICT_TOOL = {
+    "name": "report_critique_verdict",
+    "description": "Report whether the closed candidate is worth surfacing to a triager.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "One concise sentence justifying the verdict, grounded in the candidate's actual text.",
+                "maxLength": 400,
+            },
+            "verdict": {"type": "string", "enum": ["include", "omit"]},
+            "rule_violated": {
+                "type": ["integer", "null"],
+                "description": "The most relevant omit-rule number (1-7), or null when including.",
+            },
+        },
+        "required": ["rationale", "verdict"],
+    },
+}
 
 
 def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
@@ -802,21 +855,12 @@ def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
 
         log(f"  Critique: evaluating #{number}")
         try:
-            response = call_claude(anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, max_tokens=300)
-        except requests.RequestException as e:
+            verdict_data = call_claude_tool(
+                anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, CRITIQUE_VERDICT_TOOL, max_tokens=600
+            )
+        except (requests.RequestException, ValueError) as e:
             # If the critique call fails, prefer omitting the candidate over posting noise.
-            log(f"  Critique: API call failed for #{number} ({e}); omitting candidate")
-            continue
-
-        fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
-        if fence:
-            response = fence.group(1)
-
-        try:
-            verdict_data = json.loads(response)
-        except json.JSONDecodeError as e:
-            log(f"  Critique: failed to parse verdict for #{number} ({e}); omitting candidate")
-            log(f"    Raw response: {response}")
+            log(f"  Critique: verdict call failed for #{number} ({e}); omitting candidate")
             continue
 
         verdict = verdict_data.get("verdict")

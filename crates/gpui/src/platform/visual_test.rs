@@ -176,6 +176,8 @@ impl Platform for VisualTestPlatform {
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {}
 
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {

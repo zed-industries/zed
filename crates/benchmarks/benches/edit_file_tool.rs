@@ -12,6 +12,10 @@ use agent::{
     Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use agent_settings::{AgentSettings, ToolRules};
+use benchmarks::bench_utils::{
+    RUST_FUNCTION_BODY_LINES, RUST_FUNCTION_LINES, RUST_MODULE_HEADER_LINES, random_rust_file,
+    rust_file_line_count, rust_identifier as identifier,
+};
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
@@ -478,7 +482,7 @@ fn make_fixture(
     seed: u64,
 ) -> EditFixture {
     let mut rng = StdRng::seed_from_u64(seed);
-    let old_lines = random_rust_module(&mut rng, function_count);
+    let old_lines = random_rust_file(&mut rng, rust_file_line_count(function_count));
     let edit_range = edit_range(&old_lines, &pattern);
     let old_text = old_lines[edit_range.clone()].join("\n");
     let mut new_lines = old_lines.clone();
@@ -514,12 +518,8 @@ fn make_large_multi_edit_fixture(
     edit_count: usize,
     seed: u64,
 ) -> EditFixture {
-    const HEADER_LINES: usize = 10;
-    const FUNCTION_LINES: usize = 12;
-    const FUNCTION_BODY_LINES: usize = 11;
-
     let mut rng = StdRng::seed_from_u64(seed);
-    let old_lines = random_rust_module(&mut rng, function_count);
+    let old_lines = random_rust_file(&mut rng, rust_file_line_count(function_count));
     let old_file_text = old_lines.join("\n");
 
     let step = (function_count / edit_count).max(1);
@@ -541,8 +541,8 @@ fn make_large_multi_edit_fixture(
     let edits = replacements
         .iter()
         .map(|(function_index, new_function)| {
-            let start = HEADER_LINES + function_index * FUNCTION_LINES;
-            let end = start + FUNCTION_BODY_LINES;
+            let start = RUST_MODULE_HEADER_LINES + function_index * RUST_FUNCTION_LINES;
+            let end = start + RUST_FUNCTION_BODY_LINES;
             EditOp {
                 old_text: old_lines[start..end].join("\n"),
                 new_text: new_function.join("\n"),
@@ -552,8 +552,8 @@ fn make_large_multi_edit_fixture(
 
     let mut new_lines = old_lines;
     for (function_index, new_function) in replacements.iter().rev() {
-        let start = HEADER_LINES + function_index * FUNCTION_LINES;
-        let end = start + FUNCTION_BODY_LINES;
+        let start = RUST_MODULE_HEADER_LINES + function_index * RUST_FUNCTION_LINES;
+        let end = start + RUST_FUNCTION_BODY_LINES;
         new_lines.splice(start..end, new_function.iter().cloned());
     }
     let expected_file_text = new_lines.join("\n");
@@ -622,56 +622,6 @@ fn edit_range(lines: &[String], pattern: &EditPattern) -> std::ops::Range<usize>
     range
 }
 
-fn random_rust_module(rng: &mut StdRng, function_count: usize) -> Vec<String> {
-    let mut lines = vec![
-        "use anyhow::{Context as _, Result};".to_string(),
-        "use collections::HashMap;".to_string(),
-        "".to_string(),
-        "#[derive(Clone, Debug)]".to_string(),
-        "pub struct WorkspaceSnapshot {".to_string(),
-        "    buffers: HashMap<String, usize>,".to_string(),
-        "    version: usize,".to_string(),
-        "}".to_string(),
-        "".to_string(),
-        "impl WorkspaceSnapshot {".to_string(),
-    ];
-
-    for function_index in 0..function_count {
-        let function_name = identifier(rng, function_index);
-        let argument_name = identifier(rng, function_index + 1_000);
-        let local_name = identifier(rng, function_index + 2_000);
-        let branch_name = identifier(rng, function_index + 3_000);
-        let multiplier = rng.random_range(2..17);
-        let offset = rng.random_range(1..128);
-
-        lines.extend([
-            format!(
-                "    pub fn {function_name}(&mut self, {argument_name}: usize) -> Result<usize> {{"
-            ),
-            format!("        let mut {local_name} = {argument_name}.saturating_mul({multiplier});"),
-            format!("        if {local_name} % 2 == 0 {{"),
-            format!(
-                "            {local_name} = {local_name}.saturating_add(self.version + {offset});"
-            ),
-            "        } else {".to_string(),
-            format!("            {local_name} = {local_name}.saturating_sub({offset});"),
-            "        }".to_string(),
-            format!("        let {branch_name} = self.buffers.len().saturating_add({local_name});"),
-            format!("        self.version = self.version.saturating_add({branch_name});"),
-            format!("        Ok({branch_name})"),
-            "    }".to_string(),
-            "".to_string(),
-        ]);
-    }
-
-    lines.push("}".to_string());
-    lines.push("".to_string());
-    lines.push("pub fn normalize_path(path: &str) -> String {".to_string());
-    lines.push("    path.replace('\\\\', \"/\")".to_string());
-    lines.push("}".to_string());
-    lines
-}
-
 fn rewrite_local_block(lines: &mut [String], rng: &mut StdRng) {
     for (line_index, line) in lines.iter_mut().enumerate() {
         let suffix = identifier(rng, line_index + 10_000);
@@ -725,18 +675,6 @@ fn insert_helper_blocks(
         }
         line_index += 1;
     }
-}
-
-fn identifier(rng: &mut StdRng, salt: usize) -> String {
-    const PARTS: &[&str] = &[
-        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "theta", "lambda", "sigma", "omega",
-    ];
-    format!(
-        "{}_{}_{}",
-        PARTS[rng.random_range(0..PARTS.len())],
-        salt,
-        rng.random_range(0..10_000)
-    )
 }
 
 criterion_group!(benches, edit_file_tool_streaming);
