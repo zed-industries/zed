@@ -2,14 +2,15 @@
 
 use collections::HashSet;
 use fs::{FakeFs, Fs};
-use gpui::{Entity, VisualTestContext};
+use gpui::{App, BorrowAppContext, Entity, VisualTestContext};
 use project::Project;
 use serde_json::{Value, json};
+use settings::SettingsStore;
 use std::path::Path;
 use std::sync::Arc;
-use workspace::MultiWorkspace;
+use workspace::{MultiWorkspace, register_project_item};
 
-use crate::project_panel_tests::{self, find_project_entry, select_path};
+use crate::project_panel_tests::{self, TestProjectItemView, find_project_entry, select_path};
 use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Trash, Undo};
 
 struct TestContext {
@@ -244,6 +245,10 @@ impl TestContext {
 
         TestContext { panel, fs, cx }
     }
+
+    fn update_app<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
+        self.cx.cx.update(update)
+    }
 }
 
 #[gpui::test]
@@ -457,4 +462,43 @@ async fn record_via_collab(cx: &mut gpui::TestAppContext) {
 
     cx.redo().await;
     cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+}
+
+#[gpui::test]
+async fn excluded_create_is_not_recorded(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new_with_tree(
+        cx,
+        json!({
+            "a.txt": "",
+            "b.txt": ""
+        }),
+    )
+    .await;
+
+    cx.update_app(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![
+                    "**/token.secret".to_string(),
+                    "**/banana.secret".to_string(),
+                ]);
+            });
+        });
+
+        register_project_item::<TestProjectItemView>(cx);
+    });
+
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.create_file("token.secret").await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt", "token.secret"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["b.txt", "a.txt", "token.secret"]);
+
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.rename("b.txt", "banana.secret").await;
+    cx.assert_fs_state_is(&["renamed.txt", "token.secret", "banana.secret"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "token.secret", "banana.secret"]);
 }
