@@ -407,6 +407,10 @@ def latest_check_in_time(comments):
 
 
 def handle_assignment(issue, assignee_login, project_number):
+    # A late assignment on an already-closed issue shouldn't drag it back into
+    # In Progress (or flag it as off-board); the work is done.
+    if issue.get("state") == "closed":
+        return
     if not is_guild_member(assignee_login):
         return
 
