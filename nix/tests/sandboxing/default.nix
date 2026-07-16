@@ -23,6 +23,7 @@
 #   { read = "/path"; succeeds = true; }          # read a host file
 #   { write = "/path"; succeeds = false; }        # write a host file
 #   { network = "echo1"; succeeds = true; }       # connect to an echo server
+#   { socketPath = "/run/x.sock"; succeeds = false; }   # connect a unix socket
 #   { canCreate = false; error = "bwrap_not_found"; }   # Sandbox::can_create
 #
 # plus optional policy fields applied to that check (defaults shown):
@@ -71,6 +72,14 @@ let
     };
   };
 
+  # A unix-domain socket, owned by a process *outside* the sandbox, that a
+  # sandboxed command must not be able to `connect()` to. It lives under `/run`
+  # (which the sandbox `--ro-bind`s along with the rest of `/`) and NOT under
+  # `/tmp` (which the restricted-fs sandbox masks with a tmpfs, hiding anything
+  # there), so it stays visible inside the sandbox and the block is what's
+  # actually under test.
+  unixSocketPath = "/run/zed-sandbox-test.sock";
+
   # Quiet boot + a couple of cores; shared by every machine-under-test.
   baseMachine = {
     boot.consoleLogLevel = lib.mkForce 3; # be quiet pls :)
@@ -79,6 +88,18 @@ let
     virtualisation = {
       memorySize = 1024;
       cores = 2;
+    };
+
+    # A unix-socket echo server outside the sandbox, so a sandboxed `connect()`
+    # has a real peer: without a listener the connect would fail with
+    # ECONNREFUSED even absent the sandbox, giving a false "blocked" pass.
+    systemd.services.unix-echo-server = {
+      description = "Unix-domain-socket echo server";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${pkgs.socat}/bin/socat -d UNIX-LISTEN:${unixSocketPath},fork,reuseaddr EXEC:cat";
+        Restart = "on-failure";
+      };
     };
   };
 
@@ -157,6 +178,10 @@ let
         machine.wait_for_unit("multi-user.target")
         machine.wait_until_succeeds("getent hosts echo1", timeout=30)
         machine.wait_until_succeeds("getent hosts echo2", timeout=30)
+
+        # The unix-socket checks need a real peer outside the sandbox; wait for
+        # the listener to be up before running the helper.
+        machine.wait_until_succeeds("test -S ${unixSocketPath}", timeout=30)
 
         # The helper logs each check tagged `[sandbox_test]:`. `succeed` fails the
         # whole test on a non-zero exit; we print its output so the per-check
@@ -319,6 +344,31 @@ in
         networkAccess = "restricted";
         allowedDomains = [ "echo1" ];
         network = "echo2";
+        succeeds = false;
+      }
+
+      # ---- Unix-domain socket escape ----------------------------------------
+      # A sandboxed command must NOT be able to connect to a unix-domain socket
+      # owned by a process outside the sandbox (session-IPC escape). Currently
+      # FAILS (no seccomp guard yet); becomes a regression test once the
+      # socket(AF_UNIX) seccomp filter lands.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/writable" ];
+        networkAccess = "blocked";
+        socketPath = unixSocketPath;
+        succeeds = false;
+      }
+
+      # The unix-socket block must hold regardless of network policy: our design
+      # decouples unix-socket blocking from the network grant, so even an
+      # unrestricted-network command must not reach an outside-the-sandbox
+      # session IPC socket. Also currently FAILS until the seccomp filter lands.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/writable" ];
+        networkAccess = "unrestricted";
+        socketPath = unixSocketPath;
         succeeds = false;
       }
 
