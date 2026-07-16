@@ -152,13 +152,14 @@ fn update_ime_cursor_rectangle(
 
 fn set_ime_cursor_rectangle_after_done(
     text_input: &impl ImeCursorRectangleSink,
-    _last_ime_cursor_rectangle: &mut Option<Bounds<Pixels>>,
+    last_ime_cursor_rectangle: &mut Option<Bounds<Pixels>>,
     bounds: Bounds<Pixels>,
     should_commit: bool,
 ) {
-    set_ime_cursor_rectangle(text_input, bounds);
     if should_commit {
-        text_input.commit_ime_state();
+        update_ime_cursor_rectangle(text_input, last_ime_cursor_rectangle, bounds);
+    } else {
+        set_ime_cursor_rectangle(text_input, bounds);
     }
 }
 
