@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
-use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
+use editor::{Editor, MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
@@ -36,7 +36,7 @@ use gpui::{
     Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle, WeakEntity};
-use language::{Buffer, LanguageAwareStyling};
+use language::{Buffer, Language, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, Search};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
@@ -88,6 +88,7 @@ pub struct Delegate {
     pub(crate) max_line_number: u32,
     pub(crate) selected_matches: Vec<SelectedMatch>,
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
+    pub(crate) regex_language: Option<Arc<Language>>,
 }
 
 /// Wrapper with Eq is path + range equality
@@ -327,6 +328,7 @@ impl Delegate {
                 max_line_number: 0,
                 selected_matches: Vec::new(),
                 collapsed_paths: HashSet::default(),
+                regex_language: None,
             });
 
             this
@@ -595,6 +597,33 @@ impl Delegate {
     }
 }
 
+/// Highlight the query as a regex while the regex filter is on, and drop the
+/// highlighting again when it goes off. Mirrors the buffer and project search bars.
+pub(crate) fn adjust_query_regex_language(picker: &Picker<Delegate>, cx: &mut App) {
+    let Some(query_editor) = picker
+        .query_editor()
+        .and_then(|editor| editor.as_any().downcast_ref::<Entity<Editor>>())
+    else {
+        return;
+    };
+    let Some(query_buffer) = query_editor.read(cx).buffer().read(cx).as_singleton() else {
+        return;
+    };
+
+    let language = if picker
+        .delegate
+        .search_options
+        .contains(SearchOptions::REGEX)
+    {
+        picker.delegate.regex_language.clone()
+    } else {
+        None
+    };
+    query_buffer.update(cx, |query_buffer, cx| {
+        query_buffer.set_language(language, cx);
+    });
+}
+
 pub(crate) enum PopulateProjectSearch {
     Completed,
     SupersededByNewSearch,
@@ -730,6 +759,7 @@ impl PickerDelegate for Delegate {
             .on_click(move |_, window, cx| {
                 picker.update(cx, |picker, cx| {
                     picker.delegate.search_options.toggle(options);
+                    adjust_query_regex_language(picker, cx);
                     picker.refresh(window, cx);
                 });
             })
