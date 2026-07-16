@@ -776,11 +776,34 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the grid columns to CSS `auto` tracks, which size to their
+    /// content: each column is at least as wide as its widest unbreakable
+    /// word and at most as wide as its unwrapped content, with free space
+    /// distributed among columns that can still grow. This is the column
+    /// sizing behavior of `table-layout: auto`.
+    fn grid_cols_auto(mut self, cols: u16) -> Self {
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::Auto,
+        });
+        self
+    }
+
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
         self.style().grid_rows = Some(GridTemplate {
             repeat: rows,
             min_size: TemplateColumnMinSize::Zero,
+        });
+        self
+    }
+
+    /// Sets the grid rows to CSS `auto` tracks, which size to their content.
+    /// See [`Styled::grid_cols_auto`].
+    fn grid_rows_auto(mut self, rows: u16) -> Self {
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: TemplateColumnMinSize::Auto,
         });
         self
     }
