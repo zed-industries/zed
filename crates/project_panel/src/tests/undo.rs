@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use client::proto;
 use collections::HashSet;
 use fs::{FakeFs, Fs};
 use gpui::{Entity, VisualTestContext};
@@ -240,6 +241,12 @@ impl TestContext {
             .unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         let panel = workspace.update_in(&mut cx, ProjectPanel::new);
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<ProjectPanel>(window, cx);
+        });
+
         cx.run_until_parked();
 
         TestContext { panel, fs, cx }
@@ -457,4 +464,38 @@ async fn record_via_collab(cx: &mut gpui::TestAppContext) {
 
     cx.redo().await;
     cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+}
+
+#[gpui::test]
+async fn undo_redo_unavailable_for_read_only_collab_guest(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+    let focus_handle = cx
+        .panel
+        .read_with(&cx.cx, |panel, _| panel.focus_handle.clone());
+
+    cx.cx.update(|window, _cx| {
+        assert!(window.is_action_available_in(&crate::Undo, &focus_handle));
+        assert!(window.is_action_available_in(&crate::Redo, &focus_handle));
+    });
+
+    // In order to simulate a read-only project, we mark it both as a collab
+    // session as well as being a guest, which only has read access.
+    // This is currently a bit redundant, seeing as these actions are already
+    // disabled in collab either way. However, we'll want to enable undo/redo in
+    // collab in the future and this test will ensure that, at that point, we
+    // continue to not allow undo/redo in read-only projects.
+    cx.panel.update(&mut cx.cx, |panel, cx| {
+        panel.project.update(cx, |project, cx| {
+            project.mark_as_collab_for_testing();
+            project.set_role(proto::ChannelRole::Guest, cx);
+        });
+
+        assert!(panel.project.read(cx).is_read_only(cx));
+        cx.notify();
+    });
+
+    cx.cx.update(|window, _cx| {
+        assert!(!window.is_action_available_in(&crate::Undo, &focus_handle));
+        assert!(!window.is_action_available_in(&crate::Redo, &focus_handle));
+    });
 }

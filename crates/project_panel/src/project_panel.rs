@@ -6880,6 +6880,7 @@ impl Render for ProjectPanel {
         // version that understands these messages.
         let is_collab = project.is_via_collab();
         let is_local = project.is_local();
+        let supports_undo = cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>();
 
         if has_worktree {
             let item_count = self
@@ -7011,13 +7012,6 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .when(
-                    !is_collab && cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(),
-                    |el| {
-                        el.on_action(cx.listener(Self::undo))
-                            .on_action(cx.listener(Self::redo))
-                    },
-                )
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -7031,6 +7025,10 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::add_to_gitignore))
                         .on_action(cx.listener(Self::add_to_git_info_exclude))
                         .when(!is_collab, |el| el.on_action(cx.listener(Self::trash)))
+                        .when(!is_collab && supports_undo, |el| {
+                            el.on_action(cx.listener(Self::undo))
+                                .on_action(cx.listener(Self::redo))
+                        })
                 })
                 .when(
                     project.is_local() || project.is_via_wsl_with_host_interop(cx),
