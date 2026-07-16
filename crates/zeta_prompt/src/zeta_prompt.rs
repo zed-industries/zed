@@ -7496,8 +7496,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_zeta3_prompt_tight_budget_accounts_for_diagnostics_in_related_files_selection()
-     {
+    fn test_format_zeta3_prompt_tight_budget_accounts_for_diagnostics_in_related_files_selection() {
         // Same fixture as
         // `test_format_zeta3_prompt_tight_budget_keeps_high_priority_drops_low_priority_tail`,
         // except the input now carries a diagnostic. Retrieval selection
