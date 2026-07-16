@@ -1,0 +1,50 @@
+name: Build fork release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  bundle_linux_x86_64:
+    if: github.repository != 'zed-industries/zed'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      CARGO_INCREMENTAL: 0
+      CC: clang
+      CXX: clang++
+    steps:
+      - name: Check out main
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: main
+
+      - name: Install Linux dependencies
+        run: ./script/linux
+
+      - name: Download WASI SDK
+        run: ./script/download-wasi-sdk
+
+      - name: Build Linux bundle
+        run: ./script/bundle-linux
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git rev-parse HEAD)
+          # Git tags cannot contain ':', so use '.' between the time components.
+          release_tag=$(date -u +%Y-%m-%d-%H.%M.%S)
+          gh release create "$release_tag" \
+            target/release/zed-linux-x86_64.tar.gz \
+            target/zed-remote-server-linux-x86_64.gz \
+            --prerelease \
+            --target "$commit" \
+            --title "Zed fork build $release_tag" \
+            --notes "Custom development build from $commit."
