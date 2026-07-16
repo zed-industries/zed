@@ -48,6 +48,25 @@
               (#eq? @_type "T")))))) @_second_argument))) @_
   (#set! tag go-subtest))
 
+; `t.Run` with a callback built by a setup/wrapper func e.g.
+; `t.Run("name", withFixture(func(t *testing.T) { ... }))` or
+; `t.Run("name", runCtor(func() { ... }))`
+(((call_expression
+  function: (selector_expression
+    field: _ @run @_name
+    (#eq? @_name "Run"))
+  arguments: (argument_list
+    .
+    [
+      (interpreted_string_literal)
+      (raw_string_literal)
+    ] @_subtest_name
+    .
+    (call_expression
+      arguments: (argument_list
+        (func_literal))) @_second_argument))) @_
+  (#set! tag go-subtest))
+
 ; Functions names start with `Example`
 (((function_declaration
   name: (_) @run @_name
