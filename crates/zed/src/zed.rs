@@ -104,8 +104,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings,
-    OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
+    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -131,8 +131,6 @@ actions!(
         OpenDefaultSettings,
         /// Opens project-specific settings file.
         OpenProjectSettingsFile,
-        /// Opens the project tasks configuration.
-        OpenProjectTasks,
         /// Opens the tasks panel.
         OpenTasks,
         /// Opens debug tasks configuration.
@@ -1229,6 +1227,7 @@ fn register_actions(
         })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(open_worktree_setup_tasks_file)
         .register_action(open_project_debug_tasks_file)
         .register_action(
             |workspace: &mut Workspace,
@@ -2392,13 +2391,15 @@ fn open_project_settings_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_settings_file_relative_path(),
         initial_project_settings_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
 }
 
 fn open_project_tasks_file(
@@ -2407,13 +2408,64 @@ fn open_project_tasks_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_tasks_file_relative_path(),
         initial_tasks_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
+}
+
+fn open_worktree_setup_tasks_file(
+    workspace: &mut Workspace,
+    _: &zed_actions::OpenWorktreeSetupTasks,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // Kept harmless on purpose: tasks with the `create_worktree` hook run automatically
+    // when a worktree is created, so the example must be safe to save unedited.
+    const WORKTREE_SETUP_TASK_EXAMPLE: &str = r#"  {
+    // Runs automatically after Zed creates a new git worktree.
+    // $ZED_WORKTREE_ROOT is the new worktree's root directory, and
+    // $ZED_MAIN_GIT_WORKTREE is the original repository's working directory.
+    "label": "Set up new worktree",
+    "command": "echo \"Setting up $ZED_WORKTREE_ROOT — edit this command\"",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"]
+  }"#;
+
+    let Some(open_task) = open_local_file(
+        workspace,
+        local_tasks_file_relative_path(),
+        settings::initial_worktree_setup_tasks_content(),
+        window,
+        cx,
+    ) else {
+        return;
+    };
+
+    cx.spawn_in(window, async move |_, cx| {
+        let editor = open_task.await?;
+        editor.update_in(cx, |editor, window, cx| {
+            // Skip insertion if the file already mentions the hook (even in a comment,
+            // like the seeded template's example — uncommenting it beats duplicating it).
+            // `create_git_worktree` is a serde alias for the same hook.
+            let text = editor.text(cx);
+            if text.contains("create_worktree") || text.contains("create_git_worktree") {
+                return anyhow::Ok(());
+            }
+            tasks_ui::insert_task_json_into_editor(
+                editor,
+                WORKTREE_SETUP_TASK_EXAMPLE.to_string(),
+                window,
+                cx,
+            )
+        })?
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_project_debug_tasks_file(
@@ -2422,13 +2474,15 @@ fn open_project_debug_tasks_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_debug_file_relative_path(),
         initial_local_debug_tasks_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
 }
 
 fn open_local_file(
@@ -2437,7 +2491,7 @@ fn open_local_file(
     initial_contents: Cow<'static, str>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Option<gpui::Task<anyhow::Result<Entity<Editor>>>> {
     let project = workspace.project().clone();
     let worktree = project
         .read(cx)
@@ -2445,7 +2499,7 @@ fn open_local_file(
         .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
-        cx.spawn_in(window, async move |workspace, cx| {
+        Some(cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
                 let full_path = worktree.read_with(cx, |tree, _| {
@@ -2493,28 +2547,25 @@ fn open_local_file(
                 .downcast::<Editor>()
                 .context("unexpected item type: expected editor item")?;
 
-            editor
-                .downgrade()
-                .update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton()
-                        && buffer.read(cx).is_empty()
-                    {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..0, initial_contents)], None, cx)
-                        });
-                    }
-                })
-                .ok();
+            editor.update(cx, |editor, cx| {
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton()
+                    && buffer.read(cx).is_empty()
+                {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(0..0, initial_contents)], None, cx)
+                    });
+                }
+            });
 
-            anyhow::Ok(())
-        })
-        .detach();
+            anyhow::Ok(editor)
+        }))
     } else {
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
-        })
+        });
+        None
     }
 }
 
