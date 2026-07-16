@@ -29,7 +29,7 @@ use util::{
     rel_path::RelPath,
 };
 use worktree::{
-    CreatedEntry, Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
+    CreatedEntry, Entry, GitRepositoryChanges, ProjectEntryId, UpdatedEntriesSet, Worktree,
     WorktreeId,
 };
 
@@ -204,7 +204,7 @@ pub enum WorktreeStoreEvent {
     WorktreeOrderChanged,
     WorktreeUpdateSent(Entity<Worktree>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
+    WorktreeUpdatedGitRepositories(WorktreeId, GitRepositoryChanges),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
 }

@@ -68,7 +68,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
+use sum_tree::{Bias, Dimensions, Edit, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
     ResultExt, maybe,
@@ -245,13 +245,21 @@ impl Default for WorkDirectory {
     }
 }
 
+/// Absolute identity of a registered git repository.
+///
+/// Paths are local-only and never enter the worktree proto envelope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitRepositoryIdentity {
+    pub work_directory_abs_path: Arc<Path>,
+    pub dot_git_abs_path: Arc<Path>,
+    pub repository_dir_abs_path: Arc<Path>,
+    pub common_dir_abs_path: Arc<Path>,
+}
+
 #[derive(Clone)]
 pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
-    /// Exclude files for all git repositories in the worktree, indexed by their absolute path.
-    /// The boolean indicates whether the gitignore needs to be updated.
-    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
@@ -339,58 +347,22 @@ struct EventRoot {
     was_rescanned: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 struct LocalRepositoryEntry {
-    work_directory_id: ProjectEntryId,
-    work_directory: WorkDirectory,
-    work_directory_abs_path: Arc<Path>,
+    identity: GitRepositoryIdentity,
     git_dir_scan_id: usize,
-    /// Absolute path to the original .git entry that caused us to create this repository.
-    ///
-    /// This is normally a directory, but may be a "gitfile" that points to a directory elsewhere
-    /// (whose path we then store in `repository_dir_abs_path`).
-    dot_git_abs_path: Arc<Path>,
-    /// Absolute path to the "commondir" for this repository.
-    ///
-    /// This is always a directory. For a normal repository, this is the same as
-    /// `dot_git_abs_path`. For a linked worktree, this is the main repo's `.git`
-    /// directory (resolved from the worktree's `commondir` file). For a submodule,
-    /// this equals `repository_dir_abs_path` (submodules don't have a `commondir`
-    /// file).
-    common_dir_abs_path: Arc<Path>,
-    /// Absolute path to the directory holding the repository's state.
-    ///
-    /// For a normal repository, this is a directory and coincides with `dot_git_abs_path` and
-    /// `common_dir_abs_path`. For a submodule or worktree, this is some subdirectory of the
-    /// commondir like `/project/.git/modules/foo`.
-    repository_dir_abs_path: Arc<Path>,
+    /// Cached `info/exclude` for this repository (owned by the registration).
+    info_exclude: Arc<Gitignore>,
+    /// When true, re-read `info/exclude` from disk on the next batch.
+    /// Opposite of `ignores_by_parent_abs_path`'s dirty bit (which means recompute
+    /// statuses without re-reading).
+    info_exclude_needs_update: bool,
 }
 
-impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<sum_tree::NoSummary>;
-
-    fn summary(&self, _: <Self::Summary as Summary>::Context<'_>) -> Self::Summary {
-        PathSummary {
-            max_path: self.work_directory.path_key().0,
-            item_summary: sum_tree::NoSummary,
-        }
-    }
-}
-
-impl KeyedItem for LocalRepositoryEntry {
-    type Key = PathKey;
-
-    fn key(&self) -> Self::Key {
-        self.work_directory.path_key()
-    }
-}
-
-impl Deref for LocalRepositoryEntry {
-    type Target = WorkDirectory;
-
-    fn deref(&self) -> &Self::Target {
-        &self.work_directory
-    }
+/// Outcome of inserting a validated repository into the local snapshot.
+struct RegistrationOutcome {
+    work_directory_id: ProjectEntryId,
+    was_added: bool,
 }
 
 impl Deref for LocalSnapshot {
@@ -430,7 +402,7 @@ struct UpdateObservationState {
 #[derive(Debug, Clone)]
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
-    UpdatedGitRepositories(UpdatedGitRepositoriesSet),
+    UpdatedGitRepositories(GitRepositoryChanges),
     UpdatedRootRepoCommonDir {
         old: Option<Arc<SanitizedPath>>,
     },
@@ -490,7 +462,6 @@ impl Worktree {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
-                repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 external_canonical_to_relative: Default::default(),
                 snapshot: Snapshot::new(
@@ -1402,14 +1373,16 @@ impl LocalWorktree {
         entry_changes: UpdatedEntriesSet,
         cx: &mut Context<Worktree>,
     ) {
-        let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
+        // Diff repos before root-metadata derivation so ordering of set_snapshot
+        // (and WorktreeMetadata / project grouping consumers) stays unchanged.
+        let repo_changes = changed_git_repositories(&self.snapshot, &new_snapshot);
 
         if let Some((common_dir, is_linked_worktree)) = new_snapshot
             .local_repo_for_work_directory_path(RelPath::empty())
             .map(|repo| {
                 (
-                    SanitizedPath::from_arc(repo.common_dir_abs_path.clone()),
-                    repo.repository_dir_abs_path != repo.common_dir_abs_path,
+                    SanitizedPath::from_arc(repo.identity.common_dir_abs_path.clone()),
+                    repo.identity.repository_dir_abs_path != repo.identity.common_dir_abs_path,
                 )
             })
         {
@@ -1453,103 +1426,6 @@ impl LocalWorktree {
                 break;
             }
         }
-    }
-
-    fn changed_repos(
-        &self,
-        old_snapshot: &LocalSnapshot,
-        new_snapshot: &mut LocalSnapshot,
-    ) -> UpdatedGitRepositoriesSet {
-        let mut changes = Vec::new();
-        let mut old_repos = old_snapshot.git_repositories.iter().peekable();
-        let new_repos = new_snapshot.git_repositories.clone();
-        let mut new_repos = new_repos.iter().peekable();
-
-        loop {
-            match (new_repos.peek().map(clone), old_repos.peek().map(clone)) {
-                (Some((new_entry_id, new_repo)), Some((old_entry_id, old_repo))) => {
-                    match Ord::cmp(&new_entry_id, &old_entry_id) {
-                        Ordering::Less => {
-                            changes.push(UpdatedGitRepository {
-                                work_directory_id: new_entry_id,
-                                old_work_directory_abs_path: None,
-                                new_work_directory_abs_path: Some(
-                                    new_repo.work_directory_abs_path.clone(),
-                                ),
-                                dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
-                                repository_dir_abs_path: Some(
-                                    new_repo.repository_dir_abs_path.clone(),
-                                ),
-                                common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
-                            });
-                            new_repos.next();
-                        }
-                        Ordering::Equal => {
-                            if repository_identity_or_scan_changed(&old_repo, &new_repo) {
-                                changes.push(UpdatedGitRepository {
-                                    work_directory_id: new_entry_id,
-                                    old_work_directory_abs_path: Some(
-                                        old_repo.work_directory_abs_path.clone(),
-                                    ),
-                                    new_work_directory_abs_path: Some(
-                                        new_repo.work_directory_abs_path.clone(),
-                                    ),
-                                    dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
-                                    repository_dir_abs_path: Some(
-                                        new_repo.repository_dir_abs_path.clone(),
-                                    ),
-                                    common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
-                                });
-                            }
-                            new_repos.next();
-                            old_repos.next();
-                        }
-                        Ordering::Greater => {
-                            changes.push(UpdatedGitRepository {
-                                work_directory_id: old_entry_id,
-                                old_work_directory_abs_path: Some(
-                                    old_repo.work_directory_abs_path.clone(),
-                                ),
-                                new_work_directory_abs_path: None,
-                                dot_git_abs_path: None,
-                                repository_dir_abs_path: None,
-                                common_dir_abs_path: None,
-                            });
-                            old_repos.next();
-                        }
-                    }
-                }
-                (Some((entry_id, repo)), None) => {
-                    changes.push(UpdatedGitRepository {
-                        work_directory_id: entry_id,
-                        old_work_directory_abs_path: None,
-                        new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
-                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
-                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
-                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
-                    });
-                    new_repos.next();
-                }
-                (None, Some((entry_id, repo))) => {
-                    changes.push(UpdatedGitRepository {
-                        work_directory_id: entry_id,
-                        old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
-                        new_work_directory_abs_path: None,
-                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
-                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
-                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
-                    });
-                    old_repos.next();
-                }
-                (None, None) => break,
-            }
-        }
-
-        fn clone<T: Clone, U: Clone>(value: &(&T, &U)) -> (T, U) {
-            (value.0.clone(), value.1.clone())
-        }
-
-        changes.into()
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> + use<> {
@@ -2239,7 +2115,7 @@ impl LocalWorktree {
     pub fn repositories(&self) -> Vec<Arc<Path>> {
         self.git_repositories
             .values()
-            .map(|entry| entry.work_directory_abs_path.clone())
+            .map(|entry| entry.identity.work_directory_abs_path.clone())
             .collect::<Vec<_>>()
     }
 
@@ -2250,20 +2126,11 @@ impl LocalWorktree {
             .values()
             .map(|entry| {
                 (
-                    entry.repository_dir_abs_path.clone(),
-                    entry.common_dir_abs_path.clone(),
+                    entry.identity.repository_dir_abs_path.clone(),
+                    entry.identity.common_dir_abs_path.clone(),
                 )
             })
             .collect()
-    }
-
-    /// Whether the cached `info/exclude` for `work_dir_abs_path` still needs a re-read.
-    #[cfg(feature = "test-support")]
-    pub fn repo_exclude_needs_update(&self, work_dir_abs_path: &Path) -> Option<bool> {
-        self.snapshot
-            .repo_exclude_by_work_dir_abs_path
-            .get(work_dir_abs_path)
-            .map(|(_, needs_update)| *needs_update)
     }
 }
 
@@ -2964,11 +2831,45 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    /// Whether `path` is under this registration's work directory, using the
+    /// already-translated logical relative event path (not a raw absolute path)
+    /// so external-symlink routing stays correct.
+    fn repository_directory_contains(&self, entry: &LocalRepositoryEntry, path: &RelPath) -> bool {
+        match entry
+            .identity
+            .work_directory_abs_path
+            .strip_prefix(self.abs_path.as_path())
+        {
+            // AboveProject: work dir is outside the project root and covers all paths.
+            Err(_) => true,
+            Ok(relative) => RelPath::new(relative, self.path_style)
+                .map(|work_rel| path.starts_with(work_rel.as_ref()))
+                .unwrap_or(false),
+        }
+    }
+
+    /// PathKey formerly stored on `WorkDirectory`: empty for root InProject and
+    /// AboveProject; otherwise the relative path of the work dir within the project.
+    fn work_directory_path_key(&self, entry: &LocalRepositoryEntry) -> PathKey {
+        match entry
+            .identity
+            .work_directory_abs_path
+            .strip_prefix(self.abs_path.as_path())
+        {
+            Ok(relative) if !relative.as_os_str().is_empty() => {
+                match RelPath::new(relative, self.path_style) {
+                    Ok(work_rel) => PathKey(work_rel.into_owned().into()),
+                    Err(_) => PathKey(RelPath::empty_arc()),
+                }
+            }
+            _ => PathKey(RelPath::empty_arc()),
+        }
+    }
+
     fn local_repo_for_work_directory_path(&self, path: &RelPath) -> Option<&LocalRepositoryEntry> {
         self.git_repositories
-            .iter()
-            .map(|(_, entry)| entry)
-            .find(|entry| entry.work_directory.path_key() == PathKey(path.into()))
+            .values()
+            .find(|entry| self.work_directory_path_key(entry).0.as_ref() == path)
     }
 
     fn build_update(
@@ -3080,12 +2981,15 @@ impl LocalSnapshot {
         // registration, so `reload_entries_for_paths` can skip a full resolve on the
         // hot path (thousands of event paths per checkout). Invalid `.git` never
         // enters `git_repositories`, so a phantom cannot win as a registered root.
+        // Prefer the covering entry's owned `info_exclude` over a path-keyed lookup.
         let covering_registered = self
             .git_repositories
             .values()
-            .filter(|repo| abs_path.starts_with(repo.work_directory_abs_path.as_ref()))
-            .max_by_key(|repo| repo.work_directory_abs_path.as_os_str().len())
-            .map(|repo| repo.work_directory_abs_path.clone());
+            .filter(|repo| abs_path.starts_with(repo.identity.work_directory_abs_path.as_ref()))
+            .max_by_key(|repo| repo.identity.work_directory_abs_path.as_os_str().len());
+        let covering_work_dir =
+            covering_registered.map(|repo| repo.identity.work_directory_abs_path.clone());
+        let covering_exclude = covering_registered.map(|repo| repo.info_exclude.clone());
         for (index, ancestor) in abs_path.ancestors().enumerate() {
             if index > 0 {
                 if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
@@ -3102,17 +3006,19 @@ impl LocalSnapshot {
             }
 
             // Covering registered root: free, no filesystem.
-            if covering_registered
+            if covering_work_dir
                 .as_ref()
                 .is_some_and(|root| root.as_ref() == ancestor)
             {
-                repo_root = covering_registered.clone();
+                repo_root = covering_work_dir.clone();
                 continue;
             }
 
             // Deeper than the covering registration, or nothing registered yet: resolve.
             // `reload_entries_for_paths` runs before `update_git_repositories`, so a
             // newly-appeared nested repo may not be registered yet and must still win.
+            // Unregistered deeper repos intentionally miss the registered exclude —
+            // preserved by construction (no parallel exclude map).
             if discover_valid_git_repository(&ancestor.join(DOT_GIT), fs)
                 .await
                 .is_some()
@@ -3127,11 +3033,12 @@ impl LocalSnapshot {
             IgnoreStack::none()
         };
 
-        if let Some((repo_exclude, _)) = repo_root
-            .as_ref()
-            .and_then(|abs_path| self.repo_exclude_by_work_dir_abs_path.get(abs_path))
+        // Only the covering *registered* root contributes its exclude. An unregistered
+        // deeper discovery sets `repo_root` without an exclude entry — same miss as before.
+        if covering_work_dir.as_ref() == repo_root.as_ref()
+            && let Some(repo_exclude) = covering_exclude
         {
-            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
+            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude);
         }
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
@@ -3436,8 +3343,10 @@ impl BackgroundScannerState {
         let mut repository_watches_to_preserve = HashSet::<Arc<Path>>::default();
         if preserve_repository_watches {
             for repository in self.snapshot.git_repositories.values() {
-                repository_watches_to_preserve.insert(repository.common_dir_abs_path.clone());
-                repository_watches_to_preserve.insert(repository.repository_dir_abs_path.clone());
+                repository_watches_to_preserve
+                    .insert(repository.identity.common_dir_abs_path.clone());
+                repository_watches_to_preserve
+                    .insert(repository.identity.repository_dir_abs_path.clone());
             }
         }
 
@@ -3539,7 +3448,7 @@ impl BackgroundScannerState {
         dot_git_path: Arc<RelPath>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) {
+    ) -> Option<RegistrationOutcome> {
         let work_dir_path: Arc<RelPath> = match dot_git_path.parent() {
             Some(parent_dir) => {
                 // Guard against repositories inside the repository metadata
@@ -3550,7 +3459,7 @@ impl BackgroundScannerState {
                     log::debug!(
                         "not building git repository for nested `.git` directory, `.git` path in the worktree: {dot_git_path:?}"
                     );
-                    return;
+                    return None;
                 };
 
                 parent_dir.into()
@@ -3561,7 +3470,7 @@ impl BackgroundScannerState {
                 log::debug!(
                     "not building git repository for the worktree itself, `.git` path in the worktree: {dot_git_path:?}"
                 );
-                return;
+                return None;
             }
         };
 
@@ -3576,18 +3485,21 @@ impl BackgroundScannerState {
             watcher,
         )
         .await
-        .log_err();
+        .log_err()
+        .flatten()
     }
 
-    /// Registers a validated git repository for `work_directory`, returning whether a
-    /// repository was inserted (`Ok(false)` when the `.git` entry is not a repository).
+    /// Registers a validated git repository for `work_directory`.
+    ///
+    /// Returns `Ok(None)` when the `.git` entry is not a repository, otherwise the
+    /// registration outcome (`was_added` is false on re-insert of the same key).
     async fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
         dot_git_abs_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) -> Result<bool> {
+    ) -> Result<Option<RegistrationOutcome>> {
         let work_dir_entry = self
             .snapshot
             .entry_for_path(&work_directory.path_key().0)
@@ -3606,7 +3518,7 @@ impl BackgroundScannerState {
         let Some((repository_dir_abs_path, common_dir_abs_path)) =
             discover_valid_git_repository(&dot_git_abs_path, fs).await
         else {
-            return Ok(false);
+            return Ok(None);
         };
 
         watcher
@@ -3624,47 +3536,41 @@ impl BackgroundScannerState {
         }
 
         let work_directory_id = work_dir_entry.id;
+        // Clone last-good before rebuild; KeepLastGood* leave the seed in place.
+        let previous_info_exclude = self
+            .snapshot
+            .git_repositories
+            .get(&work_directory_id)
+            .map(|previous| previous.info_exclude.clone());
+        let was_added = previous_info_exclude.is_none();
 
         let work_directory_abs_path: Arc<Path> = work_directory_abs_path.as_path().into();
         // Registration owns exclude state: load a present info/exclude now so
         // ignore updates that run after insert (affected_repo_roots) see it.
-        // Always insert an entry so a later info/exclude create can mark it
-        // dirty. Present, confirmed-absent, and unparsable are clean;
-        // indeterminate I/O inserts empty but stays dirty so the reload path
-        // retries instead of treating a transient failure as known-gone.
+        // Present/Absent/Unparsable start clean; Indeterminate starts dirty so
+        // the reload path retries.
         let exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
-        let (exclude, needs_update) =
-            match load_gitignore_existing(&exclude_abs_path, &work_directory_abs_path, fs).await {
-                GitignoreLoad::Present(ignore) => (Arc::new(ignore), false),
-                GitignoreLoad::Absent => (Arc::new(Gitignore::empty()), false),
-                GitignoreLoad::Unparsable(error) => {
-                    Err::<(), _>(error).log_err();
-                    (Arc::new(Gitignore::empty()), false)
-                }
-                GitignoreLoad::Indeterminate(error) => {
-                    Err::<(), _>(error).log_err();
-                    (Arc::new(Gitignore::empty()), true)
-                }
-            };
-        self.snapshot
-            .repo_exclude_by_work_dir_abs_path
-            .insert(work_directory_abs_path.clone(), (exclude, needs_update));
-
-        self.snapshot.git_repositories.insert(
-            work_directory_id,
-            LocalRepositoryEntry {
-                work_directory_id,
-                work_directory,
+        let apply = load_gitignore_existing(&exclude_abs_path, &work_directory_abs_path, fs).await;
+        let entry = local_repository_entry_for_registration(
+            GitRepositoryIdentity {
                 work_directory_abs_path,
-                git_dir_scan_id: 0,
                 dot_git_abs_path,
                 common_dir_abs_path,
                 repository_dir_abs_path,
             },
+            previous_info_exclude,
+            apply,
         );
 
+        self.snapshot
+            .git_repositories
+            .insert(work_directory_id, entry);
+
         log::trace!("inserting new local git repository");
-        Ok(true)
+        Ok(Some(RegistrationOutcome {
+            work_directory_id,
+            was_added,
+        }))
     }
 }
 
@@ -3717,19 +3623,76 @@ async fn watch_dir_tree(root_abs_path: PathBuf, fs: &dyn Fs, watcher: &dyn Watch
     }
 }
 
-/// Whether a registered repository should publish an update between snapshots.
-/// Identity paths are first-class: a gitfile retarget changes repository_dir/
-/// common_dir without moving the work directory. Emitting only on scan_id or
-/// work-dir would miss that unless a scan token happens to bump — not an invariant.
-fn repository_identity_or_scan_changed(
-    old_repo: &LocalRepositoryEntry,
-    new_repo: &LocalRepositoryEntry,
-) -> bool {
-    new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
-        || new_repo.work_directory_abs_path != old_repo.work_directory_abs_path
-        || new_repo.dot_git_abs_path != old_repo.dot_git_abs_path
-        || new_repo.repository_dir_abs_path != old_repo.repository_dir_abs_path
-        || new_repo.common_dir_abs_path != old_repo.common_dir_abs_path
+/// Diffs local repository registrations between two snapshots.
+///
+/// Emits: new-only → AddedOrUpdated{identity_changed:false}; same key + scan-token
+/// change → AddedOrUpdated{false}; same key + identity change → AddedOrUpdated{true};
+/// old-only (both merge branches) → identical Removed carrying the complete old
+/// registration.
+fn changed_git_repositories(
+    old_snapshot: &LocalSnapshot,
+    new_snapshot: &LocalSnapshot,
+) -> GitRepositoryChanges {
+    fn registration(id: ProjectEntryId, entry: &LocalRepositoryEntry) -> GitRepositoryRegistration {
+        GitRepositoryRegistration {
+            work_directory_id: id,
+            identity: entry.identity.clone(),
+        }
+    }
+
+    let mut changes = Vec::new();
+    let mut old_repos = old_snapshot.git_repositories.iter().peekable();
+    let mut new_repos = new_snapshot.git_repositories.iter().peekable();
+
+    loop {
+        match (new_repos.peek().copied(), old_repos.peek().copied()) {
+            (Some((&new_entry_id, new_repo)), Some((&old_entry_id, old_repo))) => {
+                match Ord::cmp(&new_entry_id, &old_entry_id) {
+                    Ordering::Less => {
+                        changes.push(GitRepositoryChange::AddedOrUpdated {
+                            repository: registration(new_entry_id, new_repo),
+                            identity_changed: false,
+                        });
+                        new_repos.next();
+                    }
+                    Ordering::Equal => {
+                        let identity_changed = new_repo.identity != old_repo.identity;
+                        let scan_changed = new_repo.git_dir_scan_id != old_repo.git_dir_scan_id;
+                        if identity_changed || scan_changed {
+                            changes.push(GitRepositoryChange::AddedOrUpdated {
+                                repository: registration(new_entry_id, new_repo),
+                                identity_changed,
+                            });
+                        }
+                        new_repos.next();
+                        old_repos.next();
+                    }
+                    Ordering::Greater => {
+                        changes.push(GitRepositoryChange::Removed {
+                            repository: registration(old_entry_id, old_repo),
+                        });
+                        old_repos.next();
+                    }
+                }
+            }
+            (Some((&entry_id, repo)), None) => {
+                changes.push(GitRepositoryChange::AddedOrUpdated {
+                    repository: registration(entry_id, repo),
+                    identity_changed: false,
+                });
+                new_repos.next();
+            }
+            (None, Some((&entry_id, repo))) => {
+                changes.push(GitRepositoryChange::Removed {
+                    repository: registration(entry_id, repo),
+                });
+                old_repos.next();
+            }
+            (None, None) => break,
+        }
+    }
+
+    changes.into()
 }
 
 /// Classifies an fs event against git metadata directories, returning the matched
@@ -3746,9 +3709,9 @@ fn match_git_metadata_event(
         .values()
         .flat_map(|repo| {
             [
-                repo.dot_git_abs_path.as_ref(),
-                repo.repository_dir_abs_path.as_ref(),
-                repo.common_dir_abs_path.as_ref(),
+                repo.identity.dot_git_abs_path.as_ref(),
+                repo.identity.repository_dir_abs_path.as_ref(),
+                repo.identity.common_dir_abs_path.as_ref(),
             ]
         })
         .filter(|root| abs_path.starts_with(root))
@@ -3783,41 +3746,106 @@ async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) ->
 
 /// Outcome of loading an exclude/gitignore file that may be absent or bad.
 ///
-/// Classified at the error-production site so callers never need to downcast
-/// `anyhow` chains. Unparsable content fails identically forever (clear dirty);
-/// transient I/O is Indeterminate (leave dirty and retry).
-enum GitignoreLoad {
-    Present(Gitignore),
-    Absent,
-    Unparsable(anyhow::Error),
-    Indeterminate(anyhow::Error),
+/// Action-ready outcome of loading a repository's `info/exclude`.
+///
+/// Four states map 1:1 onto apply transitions. Error logging, empty-matcher
+/// creation, and Arc construction happen in the loader (before the snapshot lock).
+/// Unit tests pin Unparsable→clear dirty (keep last-good) vs Indeterminate→stay
+/// pending without a filesystem.
+#[derive(Debug, Clone)]
+enum RepositoryExcludeApply {
+    /// Install matcher and clear dirty.
+    Present(Arc<Gitignore>),
+    /// Install empty matcher and clear dirty.
+    Absent(Arc<Gitignore>),
+    /// Keep last-good matcher, clear dirty (no re-read loop). Error already logged.
+    Unparsable,
+    /// Keep last-good matcher, leave dirty for a later retry. Error already logged.
+    Indeterminate,
 }
 
-/// Loads a gitignore file, distinguishing present / confirmed-absent /
-/// unparsable content / indeterminate I/O.
-async fn load_gitignore_existing(abs_path: &Path, root: &Path, fs: &dyn Fs) -> GitignoreLoad {
+/// Applies an exclude-load decision to a repository entry.
+///
+/// Returns whether ignore statuses under this work directory should recompute
+/// (only when the installed matcher actually changed — Present/Absent).
+fn apply_repository_exclude_to_entry(
+    entry: &mut LocalRepositoryEntry,
+    apply: RepositoryExcludeApply,
+) -> bool {
+    match apply {
+        RepositoryExcludeApply::Present(exclude) | RepositoryExcludeApply::Absent(exclude) => {
+            entry.info_exclude = exclude;
+            entry.info_exclude_needs_update = false;
+            true
+        }
+        RepositoryExcludeApply::Unparsable => {
+            entry.info_exclude_needs_update = false;
+            false
+        }
+        RepositoryExcludeApply::Indeterminate => false,
+    }
+}
+
+/// Builds a registration entry after loading `info/exclude`.
+///
+/// First insert seeds an empty matcher; re-insert carries the previous matcher
+/// so Unparsable/Indeterminate preserve real last-good rather than an empty rebuild seed.
+fn local_repository_entry_for_registration(
+    identity: GitRepositoryIdentity,
+    previous_info_exclude: Option<Arc<Gitignore>>,
+    apply: RepositoryExcludeApply,
+) -> LocalRepositoryEntry {
+    let mut entry = LocalRepositoryEntry {
+        identity,
+        git_dir_scan_id: 0,
+        info_exclude: previous_info_exclude.unwrap_or_else(|| Arc::new(Gitignore::empty())),
+        info_exclude_needs_update: true,
+    };
+    apply_repository_exclude_to_entry(&mut entry, apply);
+    entry
+}
+
+/// Loads `info/exclude` into an action-ready four-state outcome.
+///
+/// Arc construction and error logging complete before the caller takes the
+/// snapshot lock. Unparsable content fails identically forever (clear dirty);
+/// transient I/O is Indeterminate (leave dirty and retry).
+async fn load_gitignore_existing(
+    abs_path: &Path,
+    root: &Path,
+    fs: &dyn Fs,
+) -> RepositoryExcludeApply {
     let bytes = match fs.load_bytes(abs_path).await {
         Ok(bytes) => bytes,
-        Err(error) if io_error_is_absence(&error) => return GitignoreLoad::Absent,
+        Err(error) if io_error_is_absence(&error) => {
+            return RepositoryExcludeApply::Absent(Arc::new(Gitignore::empty()));
+        }
         Err(error) => {
-            return GitignoreLoad::Indeterminate(error.context(format!(
+            Err::<(), _>(error.context(format!(
                 "failed to load gitignore file at {}",
                 abs_path.display()
-            )));
+            )))
+            .log_err();
+            return RepositoryExcludeApply::Indeterminate;
         }
     };
     let contents = match String::from_utf8(bytes) {
         Ok(contents) => contents,
         Err(error) => {
-            return GitignoreLoad::Unparsable(anyhow::Error::new(error).context(format!(
+            Err::<(), _>(anyhow::Error::new(error).context(format!(
                 "gitignore file at {} is not valid UTF-8",
                 abs_path.display()
-            )));
+            )))
+            .log_err();
+            return RepositoryExcludeApply::Unparsable;
         }
     };
     match parse_gitignore_contents(abs_path, root, &contents) {
-        Ok(gitignore) => GitignoreLoad::Present(gitignore),
-        Err(error) => GitignoreLoad::Unparsable(error),
+        Ok(gitignore) => RepositoryExcludeApply::Present(Arc::new(gitignore)),
+        Err(error) => {
+            Err::<(), _>(error).log_err();
+            RepositoryExcludeApply::Unparsable
+        }
     }
 }
 
@@ -4114,24 +4142,34 @@ pub enum PathChange {
     Loaded,
 }
 
+/// A worktree-local registration of a git repository (entry id + absolute identity).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpdatedGitRepository {
-    /// ID of the repository's working directory.
-    ///
-    /// For a repo that's above the worktree root, this is the ID of the worktree root, and hence not unique.
-    /// It's included here to aid the GitStore in detecting when a repository's working directory is renamed.
+pub struct GitRepositoryRegistration {
     pub work_directory_id: ProjectEntryId,
-    pub old_work_directory_abs_path: Option<Arc<Path>>,
-    pub new_work_directory_abs_path: Option<Arc<Path>>,
-    /// For a normal git repository checkout, the absolute path to the .git directory.
-    /// For a worktree, the absolute path to the worktree's subdirectory inside the .git directory.
-    pub dot_git_abs_path: Option<Arc<Path>>,
-    pub repository_dir_abs_path: Option<Arc<Path>>,
-    pub common_dir_abs_path: Option<Arc<Path>>,
+    pub identity: GitRepositoryIdentity,
+}
+
+/// Typed snapshot-diff for local repository bookkeeping.
+///
+/// `Removed` always carries the complete *old* registration. Both merge-removal
+/// branches of the sorted key walk emit identical `Removed` payloads.
+///
+/// `identity_changed` is load-bearing at the consumer (reinit = job cancellation +
+/// failed-open retry + trust re-install for coalesced siblings) and must not be
+/// derived from canonical comparison alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitRepositoryChange {
+    AddedOrUpdated {
+        repository: GitRepositoryRegistration,
+        identity_changed: bool,
+    },
+    Removed {
+        repository: GitRepositoryRegistration,
+    },
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<RelPath>, ProjectEntryId, PathChange)]>;
-pub type UpdatedGitRepositoriesSet = Arc<[UpdatedGitRepository]>;
+pub type GitRepositoryChanges = Arc<[GitRepositoryChange]>;
 
 #[derive(Clone, Debug)]
 pub struct PathProgress<'a> {
@@ -4459,28 +4497,11 @@ impl BackgroundScanner {
 
         // If the worktree root does not contain a git repository, then find
         // the git repository in an ancestor directory. Find any gitignore files
-        // in ancestor directories.
+        // in ancestor directories. Exclude is loaded at registration time.
         let repo = if scanning_enabled && self.track_git_repositories {
-            let (ignores, exclude, repo) =
-                discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
             let mut state = self.state.lock().await;
             state.snapshot.ignores_by_parent_abs_path.extend(ignores);
-            if let Some(exclude) = exclude {
-                let work_directory_abs_path: Arc<Path> = repo
-                    .as_ref()
-                    .map(|(_, work_directory)| {
-                        state
-                            .snapshot
-                            .work_directory_abs_path(work_directory)
-                            .into()
-                    })
-                    .unwrap_or_else(|| root_abs_path.as_path().into());
-                state
-                    .snapshot
-                    .repo_exclude_by_work_dir_abs_path
-                    .insert(work_directory_abs_path, (exclude, false));
-            }
-
             repo
         } else {
             None
@@ -4491,7 +4512,7 @@ impl BackgroundScanner {
             && self.track_git_repositories
         {
             maybe!(async {
-                let inserted = self
+                let outcome = self
                     .state
                     .lock()
                     .await
@@ -4502,10 +4523,10 @@ impl BackgroundScanner {
                         self.watcher.as_ref(),
                     )
                     .await
-                    // Bail on both an error and an invalid `.git` (`Ok(false)`), so a
+                    // Bail on both an error and an invalid `.git` (`Ok(None)`), so a
                     // non-repository is never reported as the containing repo.
                     .log_err()?;
-                inserted.then_some(ancestor_dot_git)
+                outcome.map(|_| ancestor_dot_git)
             })
             .await
         } else {
@@ -4598,16 +4619,22 @@ impl BackgroundScanner {
             }
             for repo in state.snapshot.git_repositories.values() {
                 if !repo
+                    .identity
                     .common_dir_abs_path
                     .starts_with(root_abs_path.as_path())
                 {
-                    self.watcher.add(&repo.common_dir_abs_path).log_err();
+                    self.watcher
+                        .add(&repo.identity.common_dir_abs_path)
+                        .log_err();
                 }
                 if !repo
+                    .identity
                     .repository_dir_abs_path
                     .starts_with(root_abs_path.as_path())
                 {
-                    self.watcher.add(&repo.repository_dir_abs_path).log_err();
+                    self.watcher
+                        .add(&repo.identity.repository_dir_abs_path)
+                        .log_err();
                 }
             }
             drop(state);
@@ -4894,7 +4921,7 @@ impl BackgroundScanner {
         ];
 
         let mut dot_git_abs_paths = Vec::new();
-        let mut work_dirs_needing_exclude_update = Vec::new();
+        let mut repo_ids_needing_exclude_update = Vec::new();
 
         {
             let snapshot = &self.state.lock().await.snapshot;
@@ -4978,13 +5005,12 @@ impl BackgroundScanner {
                 // literal `.git/info/exclude` suffix, so a linked worktree or bare repo
                 // whose common dir is named `foo.git`/`.bare` still refreshes its cache.
                 // A main checkout and linked worktree can share one common dir while
-                // keeping separate cache entries keyed by work dir — dirty every match.
+                // each holding its own entry — dirty every match.
                 if self.track_git_repositories && abs_path.as_path().ends_with(REPO_EXCLUDE) {
-                    for repository in snapshot.git_repositories.values().filter(|repo| {
-                        repo.common_dir_abs_path.join(REPO_EXCLUDE) == abs_path.as_path()
+                    for (id, _) in snapshot.git_repositories.iter().filter(|(_, repo)| {
+                        repo.identity.common_dir_abs_path.join(REPO_EXCLUDE) == abs_path.as_path()
                     }) {
-                        work_dirs_needing_exclude_update
-                            .push(repository.work_directory_abs_path.clone());
+                        repo_ids_needing_exclude_update.push(*id);
                     }
                 }
             }
@@ -5059,15 +5085,15 @@ impl BackgroundScanner {
                 if self.track_git_repositories
                     && abs_path.file_name() == Some(OsStr::new(GITIGNORE))
                 {
-                    for (_, repo) in snapshot
-                        .git_repositories
-                        .iter()
-                        .filter(|(_, repo)| repo.directory_contains(&relative_path))
-                    {
+                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| {
+                        // Logical relative event path — not the raw absolute path —
+                        // preserves external-symlink routing.
+                        snapshot.repository_directory_contains(repo, &relative_path)
+                    }) {
                         if !dot_git_abs_paths.iter().any(|dot_git_abs_path| {
-                            dot_git_abs_path == repo.common_dir_abs_path.as_ref()
+                            dot_git_abs_path == repo.identity.common_dir_abs_path.as_ref()
                         }) {
-                            dot_git_abs_paths.push(repo.common_dir_abs_path.to_path_buf());
+                            dot_git_abs_paths.push(repo.identity.common_dir_abs_path.to_path_buf());
                         }
                     }
                 }
@@ -5103,16 +5129,15 @@ impl BackgroundScanner {
             return;
         }
 
-        if !work_dirs_needing_exclude_update.is_empty() {
+        if !repo_ids_needing_exclude_update.is_empty() {
             let mut state = self.state.lock().await;
-            for work_dir_abs_path in work_dirs_needing_exclude_update {
-                if let Some((_, needs_update)) = state
+            for work_directory_id in repo_ids_needing_exclude_update {
+                state
                     .snapshot
-                    .repo_exclude_by_work_dir_abs_path
-                    .get_mut(&work_dir_abs_path)
-                {
-                    *needs_update = true;
-                }
+                    .git_repositories
+                    .update(&work_directory_id, |entry| {
+                        entry.info_exclude_needs_update = true;
+                    });
             }
         }
 
@@ -5151,6 +5176,7 @@ impl BackgroundScanner {
 
         {
             let mut ignores_to_update = self.ignores_needing_update().await;
+            ignores_to_update.extend(self.reload_repository_excludes().await);
             ignores_to_update.extend(affected_repo_roots);
             let ignores_to_update = self.order_ignores(ignores_to_update).await;
             let snapshot = self.state.lock().await.snapshot.clone();
@@ -5405,34 +5431,27 @@ impl BackgroundScanner {
             if self.track_git_repositories {
                 if child_name == DOT_GIT {
                     let mut state = self.state.lock().await;
-                    // On the initial scan a nested repo is not yet in
-                    // `repo_exclude_by_work_dir_abs_path` when the job's stack
-                    // was built (child jobs inherit the parent's stack), so
-                    // siblings would miss info/exclude. Append after a *new*
-                    // registration only — rescans already have the exclude on
-                    // the stack from `ignore_stack_for_abs_path` (cache hit).
-                    // `Ok(true)` from insert means "valid repo inserted",
-                    // including re-insert, so newness is the pre-insert cache
-                    // miss, not the bool return.
-                    let exclude_already_loaded = state
-                        .snapshot
-                        .repo_exclude_by_work_dir_abs_path
-                        .contains_key(&job.abs_path);
-                    state
+                    // On the initial scan a nested repo is not yet registered when
+                    // the job's stack was built (child jobs inherit the parent's
+                    // stack), so siblings would miss info/exclude. Append after a
+                    // *new* registration only — rescans already have the exclude
+                    // on the stack from `ignore_stack_for_abs_path`.
+                    let outcome = state
                         .insert_git_repository(
                             child_path.clone(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         )
                         .await;
-                    if !exclude_already_loaded
-                        && let Some((exclude, _)) = state
+                    if let Some(outcome) = outcome
+                        && outcome.was_added
+                        && let Some(entry) = state
                             .snapshot
-                            .repo_exclude_by_work_dir_abs_path
-                            .get(&job.abs_path)
+                            .git_repositories
+                            .get(&outcome.work_directory_id)
                     {
-                        ignore_stack =
-                            ignore_stack.append(IgnoreKind::RepoExclude, exclude.clone());
+                        ignore_stack = ignore_stack
+                            .append(IgnoreKind::RepoExclude, entry.info_exclude.clone());
                     }
                 } else if child_name == GITIGNORE {
                     match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -5772,20 +5791,11 @@ impl BackgroundScanner {
                         .await;
 
                     if path.is_empty()
-                        && let Some((ignores, exclude, repo)) = new_ancestor_repo.take()
+                        && let Some((ignores, repo)) = new_ancestor_repo.take()
                     {
                         log::trace!("updating ancestor git repository");
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
-                            if let Some(exclude) = exclude {
-                                let work_directory_abs_path =
-                                    state.snapshot.work_directory_abs_path(&work_directory);
-
-                                state
-                                    .snapshot
-                                    .repo_exclude_by_work_dir_abs_path
-                                    .insert(work_directory_abs_path.into(), (exclude, false));
-                            }
                             state
                                 .insert_git_repository_for_path(
                                     work_directory,
@@ -5799,7 +5809,8 @@ impl BackgroundScanner {
                     }
                 }
                 Ok(None) => {
-                    self.remove_repo_path(path.clone(), &mut state.snapshot);
+                    // Path+registration pruning already done by
+                    // `remove_path_from_snapshot` with repository pruning enabled.
                     state.unwatch_path(
                         self.watcher.as_ref(),
                         path,
@@ -5825,19 +5836,6 @@ impl BackgroundScanner {
             usize::MAX,
             Ord::cmp,
         );
-    }
-
-    fn remove_repo_path(&self, path: Arc<RelPath>, snapshot: &mut LocalSnapshot) -> Option<()> {
-        if !path.components().any(|component| component == DOT_GIT)
-            && let Some(local_repo) = snapshot.local_repo_for_work_directory_path(&path)
-        {
-            let id = local_repo.work_directory_id;
-            log::debug!("remove repo path: {:?}", path);
-            snapshot.git_repositories.remove(&id);
-            return Some(());
-        }
-
-        Some(())
     }
 
     async fn update_ignore_statuses_for_paths(
@@ -5889,40 +5887,13 @@ impl BackgroundScanner {
             .await;
     }
 
+    /// Collects `.gitignore` parents whose dirty bit is set. Repository
+    /// `info/exclude` reloads live in `reload_repository_excludes`.
     async fn ignores_needing_update(&self) -> Vec<Arc<Path>> {
         let mut ignores_to_update = Vec::new();
-        let mut excludes_to_load: Vec<(Arc<Path>, PathBuf)> = Vec::new();
-
-        // First pass: collect updates and drop stale entries without awaiting.
-        // Do not clear exclude dirty flags here — only after Present, Absent, or
-        // Unparsable. Indeterminate I/O must leave dirty set so the next scan
-        // retries instead of stranding a never-loaded exclude.
         {
             let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
-            let mut repo_exclude_keys_to_remove: Vec<Arc<Path>> = Vec::new();
-
-            for (work_dir_abs_path, (_, needs_update)) in
-                snapshot.repo_exclude_by_work_dir_abs_path.iter_mut()
-            {
-                let repository = snapshot
-                    .git_repositories
-                    .iter()
-                    .find(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path);
-
-                if *needs_update && let Some((_, repository)) = repository {
-                    let exclude_abs_path = repository.common_dir_abs_path.join(REPO_EXCLUDE);
-                    excludes_to_load.push((work_dir_abs_path.clone(), exclude_abs_path));
-                }
-
-                if repository.is_none() {
-                    repo_exclude_keys_to_remove.push(work_dir_abs_path.clone());
-                }
-            }
-
-            for key in repo_exclude_keys_to_remove {
-                snapshot.repo_exclude_by_work_dir_abs_path.remove(&key);
-            }
 
             snapshot
                 .ignores_by_parent_abs_path
@@ -5947,67 +5918,75 @@ impl BackgroundScanner {
                     true
                 });
         }
+        ignores_to_update
+    }
 
-        // Load excludes asynchronously (outside the lock).
-        // Present/Absent: install matcher, clear dirty, schedule ignore recompute.
-        // Unparsable: keep last-good matcher, clear dirty (no re-read loop), no
-        // recompute — installed rules did not change.
-        // Indeterminate: leave dirty for retry.
-        let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
-        let mut unparsable_excludes: Vec<Arc<Path>> = Vec::new();
-        for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            match load_gitignore_existing(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
-                .await
-            {
-                GitignoreLoad::Present(current_exclude) => {
-                    loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
-                }
-                GitignoreLoad::Absent => {
-                    loaded_excludes.push((work_dir_abs_path, Arc::new(Gitignore::empty())));
-                }
-                GitignoreLoad::Unparsable(error) => {
-                    Err::<(), _>(error).log_err();
-                    unparsable_excludes.push(work_dir_abs_path);
-                }
-                GitignoreLoad::Indeterminate(error) => {
-                    Err::<(), _>(error).log_err();
-                }
-            }
+    /// Reloads pending `info/exclude` files for registered repositories.
+    ///
+    /// Snapshots `(ProjectEntryId, common_dir, work_dir)` under the lock, loads
+    /// outside it, then reapplies only when the entry's common dir still matches
+    /// (closes the load-after-retarget race). Four-outcome semantics:
+    /// Present=install+clear; Absent=empty+clear; Unparsable=keep last-good+clear+log;
+    /// Indeterminate=keep+stay-pending+log.
+    async fn reload_repository_excludes(&self) -> Vec<Arc<Path>> {
+        let pending: Vec<(ProjectEntryId, Arc<Path>, Arc<Path>)> = {
+            let snapshot = &self.state.lock().await.snapshot;
+            snapshot
+                .git_repositories
+                .iter()
+                .filter(|(_, entry)| entry.info_exclude_needs_update)
+                .map(|(&id, entry)| {
+                    (
+                        id,
+                        entry.identity.common_dir_abs_path.clone(),
+                        entry.identity.work_directory_abs_path.clone(),
+                    )
+                })
+                .collect()
+        };
+
+        if pending.is_empty() {
+            return Vec::new();
         }
 
-        // Second pass: install definitive loads and clear dirty.
-        if !loaded_excludes.is_empty() {
+        // Load (and Arc/empty-matcher/log) before taking the snapshot lock.
+        let mut loaded: Vec<(ProjectEntryId, Arc<Path>, Arc<Path>, RepositoryExcludeApply)> =
+            Vec::new();
+        for (id, common_dir, work_dir) in pending {
+            let exclude_abs_path = common_dir.join(REPO_EXCLUDE);
+            let apply =
+                load_gitignore_existing(&exclude_abs_path, &work_dir, self.fs.as_ref()).await;
+            loaded.push((id, common_dir, work_dir, apply));
+        }
+
+        let mut ignores_to_update = Vec::new();
+        {
             let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
-
-            for (work_dir_abs_path, exclude) in loaded_excludes {
-                if let Some((existing_exclude, needs_update)) = snapshot
-                    .repo_exclude_by_work_dir_abs_path
-                    .get_mut(&work_dir_abs_path)
+            for (id, expected_common_dir, expected_work_dir, apply) in loaded {
+                let Some(entry) = snapshot.git_repositories.get(&id) else {
+                    continue;
+                };
+                // Drop loads whose identity moved underfoot (retarget / concurrent scan).
+                if entry.identity.common_dir_abs_path != expected_common_dir
+                    || entry.identity.work_directory_abs_path != expected_work_dir
                 {
-                    *existing_exclude = exclude;
-                    *needs_update = false;
-                    if work_dir_abs_path.starts_with(abs_path.as_path()) {
-                        ignores_to_update.push(work_dir_abs_path);
+                    continue;
+                }
+                let work_dir = entry.identity.work_directory_abs_path.clone();
+                let recompute = snapshot
+                    .git_repositories
+                    .update(&id, |entry| apply_repository_exclude_to_entry(entry, apply))
+                    .unwrap_or(false);
+                if recompute {
+                    if work_dir.starts_with(abs_path.as_path()) {
+                        ignores_to_update.push(work_dir);
                     } else {
                         ignores_to_update.push(abs_path.as_path().into());
                     }
                 }
             }
         }
-
-        if !unparsable_excludes.is_empty() {
-            let snapshot = &mut self.state.lock().await.snapshot;
-            for work_dir_abs_path in unparsable_excludes {
-                if let Some((_, needs_update)) = snapshot
-                    .repo_exclude_by_work_dir_abs_path
-                    .get_mut(&work_dir_abs_path)
-                {
-                    *needs_update = false;
-                }
-            }
-        }
-
         ignores_to_update
     }
 
@@ -6151,9 +6130,11 @@ impl BackgroundScanner {
                 .iter()
                 .filter_map(|(&work_directory_id, repo)| {
                     let dot_git_dir = SanitizedPath::new(&dot_git_dir);
-                    if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
-                        || SanitizedPath::new(repo.repository_dir_abs_path.as_ref()) == dot_git_dir
-                        || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
+                    if SanitizedPath::new(repo.identity.common_dir_abs_path.as_ref()) == dot_git_dir
+                        || SanitizedPath::new(repo.identity.repository_dir_abs_path.as_ref())
+                            == dot_git_dir
+                        || SanitizedPath::new(repo.identity.dot_git_abs_path.as_ref())
+                            == dot_git_dir
                     {
                         Some(work_directory_id)
                     } else {
@@ -6208,10 +6189,10 @@ impl BackgroundScanner {
             .map(|(&id, repo)| {
                 (
                     id,
-                    repo.dot_git_abs_path.clone(),
-                    repo.repository_dir_abs_path.clone(),
-                    repo.common_dir_abs_path.clone(),
-                    repo.work_directory_abs_path.clone(),
+                    repo.identity.dot_git_abs_path.clone(),
+                    repo.identity.repository_dir_abs_path.clone(),
+                    repo.identity.common_dir_abs_path.clone(),
+                    repo.identity.work_directory_abs_path.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -6246,29 +6227,19 @@ impl BackgroundScanner {
                         )
                         .await;
                     }
+                    // Retarget updates identity + dirties exclude in the same `.update()`.
                     state.snapshot.git_repositories.update(&id, |entry| {
-                        entry.repository_dir_abs_path = new_repository_dir;
-                        entry.common_dir_abs_path = new_common_dir;
+                        entry.identity.repository_dir_abs_path = new_repository_dir;
+                        entry.identity.common_dir_abs_path = new_common_dir;
                         entry.git_dir_scan_id = scan_id;
+                        entry.info_exclude_needs_update = true;
                     });
-                    // Retarget changes which common dir's info/exclude applies; dirty so
-                    // B's rules reload instead of retaining A's.
-                    state
-                        .snapshot
-                        .repo_exclude_by_work_dir_abs_path
-                        .entry(work_directory_abs_path.clone())
-                        .or_insert_with(|| (Arc::new(Gitignore::empty()), true))
-                        .1 = true;
                     affected_repo_roots.push(work_directory_abs_path);
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     if let Some(entry) = state.snapshot.git_repositories.remove(&id) {
-                        state
-                            .snapshot
-                            .repo_exclude_by_work_dir_abs_path
-                            .remove(&entry.work_directory_abs_path);
-                        affected_repo_roots.push(entry.work_directory_abs_path);
+                        affected_repo_roots.push(entry.identity.work_directory_abs_path);
                     }
                 }
                 Err(error) => log::debug!(
@@ -6333,10 +6304,8 @@ async fn discover_ancestor_git_repo(
     root_abs_path: &SanitizedPath,
 ) -> (
     HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
-    Option<Arc<Gitignore>>,
     Option<(PathBuf, WorkDirectory)>,
 ) {
-    let mut exclude = None;
     let mut ignores = HashMap::default();
     for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
         if index != 0 {
@@ -6370,18 +6339,12 @@ async fn discover_ancestor_git_repo(
             };
             let dot_git_abs_path: Arc<Path> = dot_git_abs_path.as_path().into();
 
-            // Keep walking up past an invalid `.git`.
-            let Some((_, common_dir_abs_path)) =
-                discover_valid_git_repository(&dot_git_abs_path, fs.as_ref()).await
-            else {
-                continue;
-            };
-
-            let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
-            if let Ok(repo_exclude) =
-                build_gitignore_with_root(&repo_exclude_abs_path, ancestor, fs.as_ref()).await
+            // Keep walking up past an invalid `.git`. Exclude is loaded at registration.
+            if discover_valid_git_repository(&dot_git_abs_path, fs.as_ref())
+                .await
+                .is_none()
             {
-                exclude = Some(Arc::new(repo_exclude));
+                continue;
             }
 
             if index != 0 {
@@ -6395,7 +6358,6 @@ async fn discover_ancestor_git_repo(
                 // also mark where in the git repo the root folder is located.
                 return (
                     ignores,
-                    exclude,
                     Some((
                         dot_git_abs_path.as_ref().into(),
                         WorkDirectory::AboveProject {
@@ -6410,7 +6372,7 @@ async fn discover_ancestor_git_repo(
         }
     }
 
-    (ignores, exclude, None)
+    (ignores, None)
 }
 
 fn merge_event_roots(changed_paths: &[Arc<RelPath>], event_roots: &[EventRoot]) -> Vec<EventRoot> {
@@ -6688,11 +6650,13 @@ impl WorktreeModelHandle for Entity<Worktree> {
             let local_repo_entry = tree
                 .git_repositories
                 .values()
-                .min_by_key(|local_repo_entry| local_repo_entry.work_directory.clone())
+                .min_by_key(|local_repo_entry| {
+                    local_repo_entry.identity.work_directory_abs_path.clone()
+                })
                 .unwrap();
             (
                 tree.fs.clone(),
-                local_repo_entry.common_dir_abs_path.clone(),
+                local_repo_entry.identity.common_dir_abs_path.clone(),
                 local_repo_entry.git_dir_scan_id,
             )
         });
@@ -6703,7 +6667,9 @@ impl WorktreeModelHandle for Entity<Worktree> {
             let local_repo_entry = tree
                 .git_repositories
                 .values()
-                .min_by_key(|local_repo_entry| local_repo_entry.work_directory.clone())
+                .min_by_key(|local_repo_entry| {
+                    local_repo_entry.identity.work_directory_abs_path.clone()
+                })
                 .unwrap();
 
             if local_repo_entry.git_dir_scan_id > *git_dir_scan_id {
@@ -7346,49 +7312,352 @@ mod tests {
         );
     }
 
+    fn sample_local_snapshot(entries: Vec<(u64, LocalRepositoryEntry)>) -> LocalSnapshot {
+        let mut snapshot = LocalSnapshot {
+            snapshot: Snapshot::new(
+                WorktreeId::from_proto(0),
+                RelPath::empty_arc(),
+                Path::new("/project").into(),
+                PathStyle::local(),
+            ),
+            global_gitignore: None,
+            ignores_by_parent_abs_path: Default::default(),
+            git_repositories: Default::default(),
+            root_file_handle: None,
+            external_canonical_to_relative: Default::default(),
+        };
+        for (id, entry) in entries {
+            snapshot
+                .git_repositories
+                .insert(ProjectEntryId::from_proto(id), entry);
+        }
+        snapshot
+    }
+
     fn sample_repo_entry(
-        work_directory_id: ProjectEntryId,
+        work_dir: &str,
+        dot_git: &str,
         repository_dir: &str,
         common_dir: &str,
         git_dir_scan_id: usize,
     ) -> LocalRepositoryEntry {
-        let work_dir: Arc<Path> = Path::new("/linked").into();
         LocalRepositoryEntry {
-            work_directory_id,
-            work_directory: WorkDirectory::InProject {
-                relative_path: RelPath::empty_arc(),
+            identity: GitRepositoryIdentity {
+                work_directory_abs_path: Path::new(work_dir).into(),
+                dot_git_abs_path: Path::new(dot_git).into(),
+                repository_dir_abs_path: Path::new(repository_dir).into(),
+                common_dir_abs_path: Path::new(common_dir).into(),
             },
-            work_directory_abs_path: work_dir,
             git_dir_scan_id,
-            dot_git_abs_path: Path::new("/linked/.git").into(),
-            repository_dir_abs_path: Path::new(repository_dir).into(),
-            common_dir_abs_path: Path::new(common_dir).into(),
+            info_exclude: Arc::new(Gitignore::empty()),
+            info_exclude_needs_update: false,
+        }
+    }
+
+    /// Unit transition table for info/exclude apply: Unparsable clears dirty and
+    /// keeps last-good; Indeterminate keeps last-good and stays pending for retry.
+    /// Present/Absent install and clear. Drives the real production helpers.
+    #[test]
+    fn test_repository_exclude_apply_transition_table() {
+        let last_good = Arc::new(Gitignore::empty());
+        // Distinct Arc so keep-last-good paths can be checked by pointer identity.
+        let last_good_ptr = Arc::as_ptr(&last_good) as usize;
+
+        // Present → install + clear dirty + recompute
+        {
+            let mut entry = sample_repo_entry("/p", "/p/.git", "/p/.git", "/p/.git", 0);
+            entry.info_exclude = last_good.clone();
+            entry.info_exclude_needs_update = true;
+            let apply = RepositoryExcludeApply::Present(Arc::new(Gitignore::empty()));
+            assert!(matches!(apply, RepositoryExcludeApply::Present(_)));
+            let recompute = apply_repository_exclude_to_entry(&mut entry, apply);
+            assert!(recompute, "Present must recompute ignore statuses");
+            assert!(!entry.info_exclude_needs_update, "Present must clear dirty");
+        }
+
+        // Absent → install empty + clear dirty + recompute
+        {
+            let mut entry = sample_repo_entry("/p", "/p/.git", "/p/.git", "/p/.git", 0);
+            entry.info_exclude = last_good.clone();
+            entry.info_exclude_needs_update = true;
+            let apply = RepositoryExcludeApply::Absent(Arc::new(Gitignore::empty()));
+            assert!(matches!(apply, RepositoryExcludeApply::Absent(_)));
+            let recompute = apply_repository_exclude_to_entry(&mut entry, apply);
+            assert!(recompute, "Absent must recompute ignore statuses");
+            assert!(!entry.info_exclude_needs_update, "Absent must clear dirty");
+        }
+
+        // Unparsable → keep last-good, clear dirty, no recompute
+        {
+            let mut entry = sample_repo_entry("/p", "/p/.git", "/p/.git", "/p/.git", 0);
+            entry.info_exclude = last_good.clone();
+            entry.info_exclude_needs_update = true;
+            let apply = RepositoryExcludeApply::Unparsable;
+            assert!(
+                matches!(apply, RepositoryExcludeApply::Unparsable),
+                "Unparsable must stay Unparsable, got {apply:?}"
+            );
+            let recompute = apply_repository_exclude_to_entry(&mut entry, apply);
+            assert!(
+                !recompute,
+                "Unparsable must not recompute (matcher unchanged)"
+            );
+            assert!(
+                !entry.info_exclude_needs_update,
+                "Unparsable must clear dirty so later batches do not re-read forever"
+            );
+            assert_eq!(
+                Arc::as_ptr(&entry.info_exclude) as usize,
+                last_good_ptr,
+                "Unparsable must keep last-good matcher"
+            );
+        }
+
+        // Indeterminate → keep last-good, stay pending, no recompute
+        {
+            let mut entry = sample_repo_entry("/p", "/p/.git", "/p/.git", "/p/.git", 0);
+            entry.info_exclude = last_good;
+            entry.info_exclude_needs_update = true;
+            let apply = RepositoryExcludeApply::Indeterminate;
+            assert!(
+                matches!(apply, RepositoryExcludeApply::Indeterminate),
+                "Indeterminate must stay Indeterminate, got {apply:?}"
+            );
+            let recompute = apply_repository_exclude_to_entry(&mut entry, apply);
+            assert!(
+                !recompute,
+                "Indeterminate must not recompute (matcher unchanged)"
+            );
+            assert!(
+                entry.info_exclude_needs_update,
+                "Indeterminate must leave dirty so a later batch retries"
+            );
+            assert_eq!(
+                Arc::as_ptr(&entry.info_exclude) as usize,
+                last_good_ptr,
+                "Indeterminate must keep last-good matcher"
+            );
+        }
+    }
+
+    /// Re-registration must seed info_exclude from the previous entry so
+    /// Unparsable/Indeterminate preserve a non-empty installed matcher (not an empty seed).
+    #[test]
+    fn test_reregistration_seeds_info_exclude_from_previous() {
+        let root = Path::new("/p");
+        let exclude_path = root.join(".git/info/exclude");
+        let installed = Arc::new(
+            parse_gitignore_contents(&exclude_path, root, "*.secret\n")
+                .expect("sample exclude patterns must parse"),
+        );
+        assert!(
+            installed
+                .matched(root.join("foo.secret"), false)
+                .is_ignore(),
+            "fixture matcher must match *.secret"
+        );
+        let installed_ptr = Arc::as_ptr(&installed) as usize;
+        let previous = {
+            let mut entry = sample_repo_entry("/p", "/p/.git", "/p/.git", "/p/.git", 0);
+            entry.info_exclude = installed;
+            entry.info_exclude_needs_update = false;
+            entry
+        };
+
+        // Unparsable re-registration: keep last-good, clear dirty.
+        {
+            let apply = RepositoryExcludeApply::Unparsable;
+            let entry = local_repository_entry_for_registration(
+                previous.identity.clone(),
+                Some(previous.info_exclude.clone()),
+                apply,
+            );
+            assert!(
+                !entry.info_exclude_needs_update,
+                "Unparsable re-registration must clear dirty"
+            );
+            assert_eq!(
+                Arc::as_ptr(&entry.info_exclude) as usize,
+                installed_ptr,
+                "Unparsable re-registration must keep previous non-empty matcher"
+            );
+            assert!(
+                entry
+                    .info_exclude
+                    .matched(root.join("foo.secret"), false)
+                    .is_ignore(),
+                "previous matcher must still match after Unparsable re-registration"
+            );
+        }
+
+        // Indeterminate re-registration: keep last-good, stay pending.
+        {
+            let apply = RepositoryExcludeApply::Indeterminate;
+            let entry = local_repository_entry_for_registration(
+                previous.identity,
+                Some(previous.info_exclude),
+                apply,
+            );
+            assert!(
+                entry.info_exclude_needs_update,
+                "Indeterminate re-registration must leave dirty pending"
+            );
+            assert_eq!(
+                Arc::as_ptr(&entry.info_exclude) as usize,
+                installed_ptr,
+                "Indeterminate re-registration must keep previous non-empty matcher"
+            );
+            assert!(
+                entry
+                    .info_exclude
+                    .matched(root.join("foo.secret"), false)
+                    .is_ignore(),
+                "previous matcher must still match after Indeterminate re-registration"
+            );
         }
     }
 
     #[test]
-    fn test_repository_identity_change_emits_without_scan_id_bump() {
-        let work_directory_id = ProjectEntryId::from_proto(1);
-        let old_repo = sample_repo_entry(
-            work_directory_id,
+    fn test_changed_git_repositories_snapshot_diff_table() {
+        let base = sample_repo_entry(
+            "/linked",
+            "/linked/.git",
             "/repo_a/.git/worktrees/feature",
             "/repo_a/.git",
             0,
         );
-        let new_repo = sample_repo_entry(
-            work_directory_id,
-            "/repo_b/.git/worktrees/feature",
-            "/repo_b/.git",
-            0, // same scan token as old — identity-only change
-        );
-        assert!(
-            repository_identity_or_scan_changed(&old_repo, &new_repo),
-            "retarget of repository_dir/common_dir must emit even when git_dir_scan_id is unchanged"
-        );
-        assert!(
-            !repository_identity_or_scan_changed(&old_repo, &old_repo),
-            "identical registration must not look changed"
-        );
+
+        // empty → AddedOrUpdated{identity_changed:false}
+        {
+            let old = sample_local_snapshot(vec![]);
+            let new = sample_local_snapshot(vec![(1, base.clone())]);
+            let changes = changed_git_repositories(&old, &new);
+            assert_eq!(changes.len(), 1);
+            match &changes[0] {
+                GitRepositoryChange::AddedOrUpdated {
+                    repository,
+                    identity_changed: false,
+                } => {
+                    assert_eq!(repository.work_directory_id, ProjectEntryId::from_proto(1));
+                    assert_eq!(repository.identity, base.identity);
+                }
+                other => panic!("expected AddedOrUpdated{{false}}, got {other:?}"),
+            }
+        }
+
+        // scan-token-only → AddedOrUpdated{identity_changed:false}
+        {
+            let mut updated = base.clone();
+            updated.git_dir_scan_id = 7;
+            let old = sample_local_snapshot(vec![(1, base.clone())]);
+            let new = sample_local_snapshot(vec![(1, updated)]);
+            let changes = changed_git_repositories(&old, &new);
+            assert_eq!(changes.len(), 1);
+            match &changes[0] {
+                GitRepositoryChange::AddedOrUpdated {
+                    identity_changed: false,
+                    repository,
+                } => {
+                    assert_eq!(repository.identity, base.identity);
+                }
+                other => panic!("expected AddedOrUpdated{{false}}, got {other:?}"),
+            }
+        }
+
+        // each of the 4 identity paths individually → AddedOrUpdated{true}
+        for (field, altered) in [
+            ("work_directory_abs_path", {
+                let mut e = base.clone();
+                e.identity.work_directory_abs_path = Path::new("/other").into();
+                e
+            }),
+            ("dot_git_abs_path", {
+                let mut e = base.clone();
+                e.identity.dot_git_abs_path = Path::new("/other/.git").into();
+                e
+            }),
+            ("repository_dir_abs_path", {
+                let mut e = base.clone();
+                e.identity.repository_dir_abs_path =
+                    Path::new("/repo_b/.git/worktrees/feature").into();
+                e
+            }),
+            ("common_dir_abs_path", {
+                let mut e = base.clone();
+                e.identity.common_dir_abs_path = Path::new("/repo_b/.git").into();
+                e
+            }),
+        ] {
+            let old = sample_local_snapshot(vec![(1, base.clone())]);
+            let new = sample_local_snapshot(vec![(1, altered.clone())]);
+            let changes = changed_git_repositories(&old, &new);
+            assert_eq!(changes.len(), 1, "field {field}");
+            match &changes[0] {
+                GitRepositoryChange::AddedOrUpdated {
+                    identity_changed: true,
+                    repository,
+                } => {
+                    assert_eq!(repository.identity, altered.identity, "field {field}");
+                }
+                other => panic!("field {field}: expected AddedOrUpdated{{true}}, got {other:?}"),
+            }
+        }
+
+        // unchanged → no event
+        {
+            let old = sample_local_snapshot(vec![(1, base.clone())]);
+            let new = sample_local_snapshot(vec![(1, base.clone())]);
+            let changes = changed_git_repositories(&old, &new);
+            assert!(changes.is_empty());
+        }
+
+        // removal carries complete old identity
+        {
+            let old = sample_local_snapshot(vec![(1, base.clone())]);
+            let new = sample_local_snapshot(vec![]);
+            let changes = changed_git_repositories(&old, &new);
+            assert_eq!(changes.len(), 1);
+            match &changes[0] {
+                GitRepositoryChange::Removed { repository } => {
+                    assert_eq!(repository.identity, base.identity);
+                    assert_eq!(repository.work_directory_id, ProjectEntryId::from_proto(1));
+                }
+                other => panic!("expected Removed, got {other:?}"),
+            }
+        }
+
+        // keys [1,3,5] → [3] forces BOTH removal branches — identical Removed payloads
+        {
+            let entry1 = sample_repo_entry("/a", "/a/.git", "/a/.git", "/a/.git", 0);
+            let entry3 = sample_repo_entry("/b", "/b/.git", "/b/.git", "/b/.git", 0);
+            let entry5 = sample_repo_entry("/c", "/c/.git", "/c/.git", "/c/.git", 0);
+            let old = sample_local_snapshot(vec![
+                (1, entry1.clone()),
+                (3, entry3.clone()),
+                (5, entry5.clone()),
+            ]);
+            let new = sample_local_snapshot(vec![(3, entry3)]);
+            let changes = changed_git_repositories(&old, &new);
+            // Both merge-removal arms (Greater mid-walk + old-only tail) emit
+            // identical Removed payloads carrying the complete old identity.
+            assert_eq!(
+                changes.as_ref(),
+                &[
+                    GitRepositoryChange::Removed {
+                        repository: GitRepositoryRegistration {
+                            work_directory_id: ProjectEntryId::from_proto(1),
+                            identity: entry1.identity,
+                        },
+                    },
+                    GitRepositoryChange::Removed {
+                        repository: GitRepositoryRegistration {
+                            work_directory_id: ProjectEntryId::from_proto(5),
+                            identity: entry5.identity,
+                        },
+                    },
+                ]
+            );
+        }
     }
 
     #[test]

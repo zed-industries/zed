@@ -13623,8 +13623,9 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+    let (repository_id, repository) = project.read_with(cx, |project, cx| {
+        let (id, entity) = project.repositories(cx).iter().next().unwrap();
+        (*id, entity.clone())
     });
 
     repository.read_with(cx, |repository, _| {
@@ -13656,6 +13657,20 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
         .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
+
+    // Id and entity must be stable across work-directory rename (association map,
+    // not path-keyed re-mint).
+    project.read_with(cx, |project, cx| {
+        let repositories = project.repositories(cx);
+        assert_eq!(repositories.len(), 1);
+        let (id, entity) = repositories.iter().next().unwrap();
+        assert_eq!(*id, repository_id, "RepositoryId stable across rename");
+        assert_eq!(
+            entity.entity_id(),
+            repository.entity_id(),
+            "Entity stable across rename"
+        );
+    });
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
@@ -14605,14 +14620,26 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    let repos = project.read_with(cx, |project, cx| {
-        project
-            .repositories(cx)
-            .values()
-            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
-            .collect::<Vec<_>>()
+    let (repo_id, repo_entity, repos) = project.read_with(cx, |project, cx| {
+        let repositories = project.repositories(cx);
+        assert_eq!(
+            repositories.len(),
+            1,
+            "two worktrees must coalesce to one repo"
+        );
+        let (id, entity) = repositories.iter().next().unwrap();
+        (
+            *id,
+            entity.entity_id(),
+            repositories
+                .values()
+                .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+                .collect::<Vec<_>>(),
+        )
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/project")).into()]);
+    // Membership comes from the association map (two worktree registrations → one id).
+    let _ = (repo_id, repo_entity);
 }
 
 #[gpui::test]
@@ -15418,11 +15445,23 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
     let repos = project.update(cx, |p, cx| p.git_store().read(cx).repositories().clone());
     assert_eq!(repos.len(), 2);
 
+    // Capture id+entity for `/root/b` (coalesced across worktree b + b/script).
+    let (repo_b_id, repo_b_entity) = project.read_with(cx, |p, cx| {
+        p.repositories(cx)
+            .iter()
+            .find(|(_, repo)| {
+                repo.read(cx).work_directory_abs_path.as_ref() == Path::new(path!("/root/b"))
+            })
+            .map(|(id, entity)| (*id, entity.entity_id()))
+            .expect("repo b")
+    });
+
     project.update(cx, |project, cx| {
         project.remove_worktree(*worktree_id, cx);
     });
     cx.run_until_parked();
 
+    // Partial removal: drop b/script worktree; repo b survives with same id+entity.
     let mut repo_paths = project
         .update(cx, |p, cx| p.git_store().read(cx).repositories().clone())
         .values()
@@ -15437,6 +15476,21 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/root/b")).into(),
         ]
     );
+    project.read_with(cx, |p, cx| {
+        let (id, entity) = p
+            .repositories(cx)
+            .iter()
+            .find(|(_, repo)| {
+                repo.read(cx).work_directory_abs_path.as_ref() == Path::new(path!("/root/b"))
+            })
+            .expect("repo b survives partial worktree removal");
+        assert_eq!(*id, repo_b_id, "RepositoryId survives partial removal");
+        assert_eq!(
+            entity.entity_id(),
+            repo_b_entity,
+            "Entity survives partial removal"
+        );
+    });
 
     let active_repo_path = project
         .read_with(cx, |p, cx| {
@@ -15462,6 +15516,7 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
         .unwrap();
     assert_eq!(active_repo_path.as_ref(), Path::new(path!("/root/b")));
 
+    // Last association for repo b dies with the last worktree.
     let worktree_id = worktree_id_by_abs_path
         .get(Path::new(path!("/root/b")))
         .unwrap();

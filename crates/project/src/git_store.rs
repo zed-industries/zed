@@ -90,17 +90,29 @@ use util::{
     rel_path::RelPath,
 };
 use worktree::{
-    File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
-    UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
+    File, GitRepositoryChange, GitRepositoryChanges, GitRepositoryIdentity, PathChange, PathKey,
+    PathProgress, PathSummary, PathTarget, ProjectEntryId, Worktree,
 };
 use zeroize::Zeroize;
+
+/// Stable local association from a worktree registration to a GitStore repository.
+///
+/// Many `(WorktreeId, ProjectEntryId)` pairs may map to one `RepositoryId`
+/// (multi-worktree coalescing on work-dir path).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+struct WorktreeRepositoryKey {
+    worktree_id: WorktreeId,
+    work_directory_id: ProjectEntryId,
+}
 
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<RepositoryId, Entity<Repository>>,
-    worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
+    /// Forward map from worktree registration → host-minted repository id.
+    /// Reverse membership (worktrees for a repo) is derived from this map.
+    repository_ids_by_worktree_repository: HashMap<WorktreeRepositoryKey, RepositoryId>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -738,7 +750,7 @@ impl GitStore {
             buffer_store,
             worktree_store,
             repositories: HashMap::default(),
-            worktree_ids: HashMap::default(),
+            repository_ids_by_worktree_repository: HashMap::default(),
             active_repo_id: None,
             _subscriptions,
             loading_diffs: HashMap::default(),
@@ -2034,18 +2046,11 @@ impl GitStore {
 
     fn on_worktree_store_event(
         &mut self,
-        worktree_store: Entity<WorktreeStore>,
+        _worktree_store: Entity<WorktreeStore>,
         event: &WorktreeStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        let GitStoreState::Local {
-            project_environment,
-            downstream,
-            next_repository_id,
-            fs,
-            ..
-        } = &self.state
-        else {
+        let GitStoreState::Local { downstream, .. } = &self.state else {
             return;
         };
 
@@ -2073,51 +2078,45 @@ impl GitStore {
                 }
             }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
-                let Some(worktree) = worktree_store.read(cx).worktree_for_id(*worktree_id, cx)
-                else {
-                    return;
-                };
                 log::debug!("received worktree update for repositories: {changed_repos:?}");
                 self.update_repositories_from_worktree(
                     *worktree_id,
-                    project_environment.clone(),
-                    next_repository_id.clone(),
                     downstream
                         .as_ref()
                         .map(|downstream| downstream.updates_tx.clone()),
                     changed_repos.clone(),
-                    fs.clone(),
                     cx,
                 );
-                self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_entity_id, worktree_id) => {
-                let repos_without_worktree: Vec<RepositoryId> = self
-                    .worktree_ids
-                    .iter_mut()
-                    .filter_map(|(repo_id, worktree_ids)| {
-                        worktree_ids.remove(worktree_id);
-                        if worktree_ids.is_empty() {
-                            Some(*repo_id)
-                        } else {
-                            None
-                        }
+                let associations_for_worktree: Vec<(WorktreeRepositoryKey, RepositoryId)> = self
+                    .repository_ids_by_worktree_repository
+                    .iter()
+                    .filter(|(key, _)| key.worktree_id == *worktree_id)
+                    .map(|(key, repo_id)| (*key, *repo_id))
+                    .collect();
+                for (key, _) in &associations_for_worktree {
+                    self.repository_ids_by_worktree_repository.remove(key);
+                }
+                let repos_without_worktree: Vec<RepositoryId> = associations_for_worktree
+                    .into_iter()
+                    .map(|(_, repo_id)| repo_id)
+                    .filter(|repo_id| {
+                        !self
+                            .repository_ids_by_worktree_repository
+                            .values()
+                            .any(|id| id == repo_id)
                     })
                     .collect();
                 let is_active_repo_removed = repos_without_worktree
                     .iter()
                     .any(|repo_id| self.active_repo_id == Some(*repo_id));
 
+                let updates_tx = downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone());
                 for repo_id in repos_without_worktree {
-                    self.repositories.remove(&repo_id);
-                    self.worktree_ids.remove(&repo_id);
-                    if let Some(updates_tx) =
-                        downstream.as_ref().map(|downstream| &downstream.updates_tx)
-                    {
-                        updates_tx
-                            .unbounded_send(DownstreamUpdate::RemoveRepository(repo_id))
-                            .ok();
-                    }
+                    self.remove_repository_if_unreferenced(repo_id, updates_tx.as_ref());
                 }
 
                 if is_active_repo_removed {
@@ -2178,33 +2177,76 @@ impl GitStore {
     }
 
     fn repository_is_trusted(&self, repository_id: RepositoryId, cx: &mut Context<Self>) -> bool {
-        let Some(worktree_ids) = self.worktree_ids.get(&repository_id) else {
-            return false;
-        };
         let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
             return false;
         };
 
-        worktree_ids.iter().any(|worktree_id| {
-            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                trusted_worktrees.can_trust(&self.worktree_store, *worktree_id, cx)
+        self.repository_ids_by_worktree_repository
+            .iter()
+            .filter(|(_, id)| **id == repository_id)
+            .any(|(key, _)| {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&self.worktree_store, key.worktree_id, cx)
+                })
             })
-        })
     }
 
-    /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
+    fn repository_has_associations(&self, repository_id: RepositoryId) -> bool {
+        self.repository_ids_by_worktree_repository
+            .values()
+            .any(|id| *id == repository_id)
+    }
+
+    /// Last-reference check + `repositories.remove` + optional downstream
+    /// `RemoveRepository`. Association-key removal and active-repository policy
+    /// stay at callers (worktree removal elects a survivor; registration removal
+    /// clears to None).
+    fn remove_repository_if_unreferenced(
+        &mut self,
+        id: RepositoryId,
+        updates_tx: Option<&mpsc::UnboundedSender<DownstreamUpdate>>,
+    ) -> bool {
+        if self.repository_has_associations(id) {
+            return false;
+        }
+        self.repositories.remove(&id);
+        if let Some(updates_tx) = updates_tx {
+            updates_tx
+                .unbounded_send(DownstreamUpdate::RemoveRepository(id))
+                .ok();
+        }
+        true
+    }
+
+    /// Associations are keyed by `(WorktreeId, ProjectEntryId)`. Path equality is used only
+    /// once, on first sight of a registration, to coalesce many worktrees onto one repo.
+    ///
+    /// `updates_tx` stays injectable so same-batch tests can observe the absence of a
+    /// downstream removal. `project_environment` / `next_repository_id` / `fs` are taken
+    /// from `GitStoreState::Local`.
     fn update_repositories_from_worktree(
         &mut self,
         worktree_id: WorktreeId,
-        project_environment: Entity<ProjectEnvironment>,
-        next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
-        updated_git_repositories: UpdatedGitRepositoriesSet,
-        fs: Arc<dyn Fs>,
+        changed_repos: GitRepositoryChanges,
         cx: &mut Context<Self>,
     ) {
-        let mut removed_ids = Vec::new();
+        let (project_environment, next_repository_id, fs) = match &self.state {
+            GitStoreState::Local {
+                project_environment,
+                next_repository_id,
+                fs,
+                ..
+            } => (
+                project_environment.clone(),
+                next_repository_id.clone(),
+                fs.clone(),
+            ),
+            GitStoreState::Remote { .. } => return,
+        };
 
+        let mut removed_ids = Vec::new();
+        let mut affected_repo_ids: HashSet<RepositoryId> = HashSet::default();
         let is_trusted = TrustedWorktrees::try_get_global(cx)
             .map(|trusted_worktrees| {
                 trusted_worktrees.update(cx, |trusted_worktrees, cx| {
@@ -2213,130 +2255,144 @@ impl GitStore {
             })
             .unwrap_or(false);
 
-        for update in updated_git_repositories.iter() {
-            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                let existing_work_directory_abs_path = &repo.read(cx).work_directory_abs_path;
-                Some(existing_work_directory_abs_path)
-                    == update.old_work_directory_abs_path.as_ref()
-                    || Some(existing_work_directory_abs_path)
-                        == update.new_work_directory_abs_path.as_ref()
-            }) {
-                let repo_id = *id;
-                if let Some(new_work_directory_abs_path) =
-                    update.new_work_directory_abs_path.clone()
-                {
-                    self.worktree_ids
-                        .entry(repo_id)
-                        .or_insert_with(HashSet::new)
-                        .insert(worktree_id);
-                    // Reinitialize the backend when the repository's identity changes —
-                    // not only its work-directory path but also its resolved `.git`,
-                    // repository, or common dir. The latter happens when a gitfile is
-                    // retargeted to a different repository while the checkout stays put;
-                    // without this the backend would keep pointing at the old repository.
-                    let identity_changed = {
-                        let snapshot = &existing.read(cx).snapshot;
-                        let changed = |new: &Option<Arc<Path>>, current: &Arc<Path>| {
-                            new.as_ref().is_some_and(|new| new != current)
-                        };
-                        update.old_work_directory_abs_path.as_ref()
-                            != update.new_work_directory_abs_path.as_ref()
-                            || changed(
-                                &update.repository_dir_abs_path,
-                                &snapshot.repository_dir_abs_path,
-                            )
-                            || changed(&update.common_dir_abs_path, &snapshot.common_dir_abs_path)
-                            || changed(&update.dot_git_abs_path, &snapshot.dot_git_abs_path)
+        for change in changed_repos.iter() {
+            match change {
+                GitRepositoryChange::Removed { repository } => {
+                    let key = WorktreeRepositoryKey {
+                        worktree_id,
+                        work_directory_id: repository.work_directory_id,
                     };
-                    if identity_changed
-                        && let Some(dot_git_abs_path) = update.dot_git_abs_path.clone()
-                        && let Some(repository_dir_abs_path) =
-                            update.repository_dir_abs_path.clone()
-                        && let Some(common_dir_abs_path) = update.common_dir_abs_path.clone()
+                    if let Some(repo_id) = self.repository_ids_by_worktree_repository.remove(&key) {
+                        if self.repository_has_associations(repo_id) {
+                            affected_repo_ids.insert(repo_id);
+                        } else {
+                            removed_ids.push(repo_id);
+                        }
+                    }
+                }
+                GitRepositoryChange::AddedOrUpdated {
+                    repository,
+                    identity_changed,
+                } => {
+                    let key = WorktreeRepositoryKey {
+                        worktree_id,
+                        work_directory_id: repository.work_directory_id,
+                    };
+                    let identity = &repository.identity;
+                    let identity_changed = *identity_changed;
+
+                    // Select (RepositoryId, Entity) together. Live association only when
+                    // the entity still exists; dangling keys are overwritten by coalesce
+                    // or mint below (both re-insert the association key).
+                    let (repo_id, existing) = if let Some(pair) = self
+                        .repository_ids_by_worktree_repository
+                        .get(&key)
+                        .copied()
+                        .and_then(|id| {
+                            self.repositories
+                                .get(&id)
+                                .cloned()
+                                .map(|entity| (id, entity))
+                        }) {
+                        pair
+                    } else if let Some((&id, entity)) =
+                        self.repositories.iter().find(|(_, repo)| {
+                            repo.read(cx).work_directory_abs_path
+                                == identity.work_directory_abs_path
+                        })
                     {
-                        existing.update(cx, |existing, cx| {
+                        self.repository_ids_by_worktree_repository.insert(key, id);
+                        (id, entity.clone())
+                    } else {
+                        let id = RepositoryId(
+                            next_repository_id.fetch_add(1, atomic::Ordering::Release),
+                        );
+                        let git_store = cx.weak_entity();
+                        let repo = cx.new(|cx| {
+                            let mut repo = Repository::local(
+                                id,
+                                identity,
+                                project_environment.downgrade(),
+                                fs.clone(),
+                                is_trusted,
+                                git_store,
+                                cx,
+                            );
+                            if let Some(updates_tx) = updates_tx.as_ref() {
+                                updates_tx
+                                    .unbounded_send(DownstreamUpdate::UpdateRepository(
+                                        repo.snapshot(),
+                                    ))
+                                    .ok();
+                            }
+                            repo.schedule_scan(updates_tx.clone(), cx);
+                            repo
+                        });
+                        self._subscriptions
+                            .push(cx.subscribe(&repo, Self::on_repository_event));
+                        self._subscriptions
+                            .push(cx.subscribe(&repo, Self::on_jobs_updated));
+                        self.repositories.insert(id, repo);
+                        self.repository_ids_by_worktree_repository.insert(key, id);
+                        cx.emit(GitStoreEvent::RepositoryAdded);
+                        self.active_repo_id.get_or_insert_with(|| {
+                            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
+                            id
+                        });
+                        affected_repo_ids.insert(id);
+                        continue;
+                    };
+
+                    self.repository_ids_by_worktree_repository
+                        .insert(key, repo_id);
+
+                    // Reinit when identity_changed OR received identity differs from the
+                    // canonical snapshot (preserves coalesced-registration behavior).
+                    let needs_reinit = {
+                        let snapshot = &existing.read(cx).snapshot;
+                        identity_changed
+                            || identity.repository_dir_abs_path != snapshot.repository_dir_abs_path
+                            || identity.common_dir_abs_path != snapshot.common_dir_abs_path
+                            || identity.dot_git_abs_path != snapshot.dot_git_abs_path
+                            || identity.work_directory_abs_path != snapshot.work_directory_abs_path
+                    };
+                    existing.update(cx, |existing, cx| {
+                        if needs_reinit {
                             existing.reinitialize_local_backend(
-                                new_work_directory_abs_path,
-                                dot_git_abs_path,
-                                repository_dir_abs_path,
-                                common_dir_abs_path,
+                                identity,
                                 project_environment.downgrade(),
                                 fs.clone(),
                                 is_trusted,
                                 cx,
                             );
-                            existing.schedule_scan(updates_tx.clone(), cx);
-                        });
-                    } else {
-                        existing.update(cx, |existing, cx| {
-                            existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
-                            existing.schedule_scan(updates_tx.clone(), cx);
-                        });
-                    }
-                } else {
-                    if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
-                        worktree_ids.remove(&worktree_id);
-                        if worktree_ids.is_empty() {
-                            removed_ids.push(repo_id);
                         }
-                    }
+                        existing.schedule_scan(updates_tx.clone(), cx);
+                    });
+                    affected_repo_ids.insert(repo_id);
                 }
-            } else if let UpdatedGitRepository {
-                new_work_directory_abs_path: Some(work_directory_abs_path),
-                dot_git_abs_path: Some(dot_git_abs_path),
-                repository_dir_abs_path: Some(repository_dir_abs_path),
-                common_dir_abs_path: Some(common_dir_abs_path),
-                ..
-            } = update
-            {
-                let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
-                let git_store = cx.weak_entity();
-                let repo = cx.new(|cx| {
-                    let mut repo = Repository::local(
-                        id,
-                        work_directory_abs_path.clone(),
-                        repository_dir_abs_path.clone(),
-                        common_dir_abs_path.clone(),
-                        dot_git_abs_path.clone(),
-                        project_environment.downgrade(),
-                        fs.clone(),
-                        is_trusted,
-                        git_store,
-                        cx,
-                    );
-                    if let Some(updates_tx) = updates_tx.as_ref() {
-                        // trigger an empty `UpdateRepository` to ensure remote active_repo_id is set correctly
-                        updates_tx
-                            .unbounded_send(DownstreamUpdate::UpdateRepository(repo.snapshot()))
-                            .ok();
-                    }
-                    repo.schedule_scan(updates_tx.clone(), cx);
-                    repo
-                });
-                self._subscriptions
-                    .push(cx.subscribe(&repo, Self::on_repository_event));
-                self._subscriptions
-                    .push(cx.subscribe(&repo, Self::on_jobs_updated));
-                self.repositories.insert(id, repo);
-                self.worktree_ids.insert(id, HashSet::from([worktree_id]));
-                cx.emit(GitStoreEvent::RepositoryAdded);
-                self.active_repo_id.get_or_insert_with(|| {
-                    cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                    id
-                });
             }
         }
 
         for id in removed_ids {
+            // Same-batch Added may re-associate this id after it was queued for
+            // removal (inode swap → Removed{old} then Added{new}, same work dir).
+            // Active-repo policy stays at the caller: clear to None on registration removal.
+            if self.repository_has_associations(id) {
+                continue;
+            }
             if self.active_repo_id == Some(id) {
                 self.active_repo_id = None;
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
-            self.repositories.remove(&id);
-            if let Some(updates_tx) = updates_tx.as_ref() {
-                updates_tx
-                    .unbounded_send(DownstreamUpdate::RemoveRepository(id))
-                    .ok();
+            self.remove_repository_if_unreferenced(id, updates_tx.as_ref());
+        }
+
+        for repo_id in affected_repo_ids {
+            if let Some(repository) = self.repositories.get(&repo_id) {
+                repository.update(cx, |repository, cx| {
+                    repository.reload_buffer_diff_bases(cx);
+                    cx.emit(RepositoryEvent::GitDirectoryChanged);
+                });
             }
         }
     }
@@ -2356,20 +2412,22 @@ impl GitStore {
             TrustedWorktreesEvent::Restricted(_, restricted_paths) => (false, restricted_paths),
         };
 
-        for (repo_id, worktree_ids) in &self.worktree_ids {
-            if worktree_ids
-                .iter()
-                .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
-            {
-                if let Some(repo) = self.repositories.get(repo_id) {
-                    let repository_state = repo.read(cx).repository_state.clone();
-                    cx.background_spawn(async move {
-                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
-                            state.backend.set_trusted(is_trusted);
-                        }
-                    })
-                    .detach();
-                }
+        let mut notified_repo_ids: HashSet<RepositoryId> = HashSet::default();
+        for (key, repo_id) in &self.repository_ids_by_worktree_repository {
+            if !event_paths.contains(&PathTrust::Worktree(key.worktree_id)) {
+                continue;
+            }
+            if !notified_repo_ids.insert(*repo_id) {
+                continue;
+            }
+            if let Some(repo) = self.repositories.get(repo_id) {
+                let repository_state = repo.read(cx).repository_state.clone();
+                cx.background_spawn(async move {
+                    if let Ok(RepositoryState::Local(state)) = repository_state.await {
+                        state.backend.set_trusted(is_trusted);
+                    }
+                })
+                .detach();
             }
         }
     }
@@ -2520,29 +2578,6 @@ impl GitStore {
         .detach();
     }
 
-    fn local_worktree_git_repos_changed(
-        &mut self,
-        worktree: Entity<Worktree>,
-        changed_repos: &UpdatedGitRepositoriesSet,
-        cx: &mut Context<Self>,
-    ) {
-        log::debug!("local worktree repos changed");
-        debug_assert!(worktree.read(cx).is_local());
-
-        for repository in self.repositories.values() {
-            repository.update(cx, |repository, cx| {
-                let repo_abs_path = &repository.work_directory_abs_path;
-                if changed_repos.iter().any(|update| {
-                    update.old_work_directory_abs_path.as_ref() == Some(repo_abs_path)
-                        || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
-                }) {
-                    repository.reload_buffer_diff_bases(cx);
-                    cx.emit(RepositoryEvent::GitDirectoryChanged);
-                }
-            });
-        }
-    }
-
     pub fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
         &self.repositories
     }
@@ -2556,15 +2591,20 @@ impl GitStore {
         worktree_id: WorktreeId,
         cx: &App,
     ) -> Option<Arc<Path>> {
+        let associated = |repo_id: RepositoryId| {
+            self.repository_ids_by_worktree_repository
+                .iter()
+                .any(|(key, id)| key.worktree_id == worktree_id && *id == repo_id)
+        };
         self.active_repo_id
-            .iter()
-            .chain(self.worktree_ids.keys())
-            .find(|repo_id| {
-                self.worktree_ids
-                    .get(repo_id)
-                    .is_some_and(|ids| ids.contains(&worktree_id))
+            .filter(|id| associated(*id))
+            .or_else(|| {
+                self.repository_ids_by_worktree_repository
+                    .iter()
+                    .find(|(key, _)| key.worktree_id == worktree_id)
+                    .map(|(_, id)| *id)
             })
-            .and_then(|repo_id| self.repositories.get(repo_id))
+            .and_then(|repo_id| self.repositories.get(&repo_id))
             .and_then(|repo| {
                 repo.read(cx)
                     .snapshot()
@@ -5493,28 +5533,22 @@ impl Repository {
 
     fn reinitialize_local_backend(
         &mut self,
-        work_directory_abs_path: Arc<Path>,
-        dot_git_abs_path: Arc<Path>,
-        repository_dir_abs_path: Arc<Path>,
-        common_dir_abs_path: Arc<Path>,
+        identity: &GitRepositoryIdentity,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         is_trusted: bool,
         cx: &mut Context<Self>,
     ) {
-        self.snapshot.work_directory_abs_path = work_directory_abs_path;
-        self.snapshot.dot_git_abs_path = dot_git_abs_path;
-        self.snapshot.repository_dir_abs_path = repository_dir_abs_path;
-        self.snapshot.common_dir_abs_path = common_dir_abs_path;
+        self.snapshot.work_directory_abs_path = identity.work_directory_abs_path.clone();
+        self.snapshot.dot_git_abs_path = identity.dot_git_abs_path.clone();
+        self.snapshot.repository_dir_abs_path = identity.repository_dir_abs_path.clone();
+        self.snapshot.common_dir_abs_path = identity.common_dir_abs_path.clone();
         self.respawn_local_worker(project_environment, fs, is_trusted, cx);
     }
 
     fn local(
         id: RepositoryId,
-        work_directory_abs_path: Arc<Path>,
-        repository_dir_abs_path: Arc<Path>,
-        common_dir_abs_path: Arc<Path>,
-        dot_git_abs_path: Arc<Path>,
+        identity: &GitRepositoryIdentity,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         is_trusted: bool,
@@ -5523,10 +5557,10 @@ impl Repository {
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
             id,
-            work_directory_abs_path,
-            Some(repository_dir_abs_path),
-            Some(dot_git_abs_path),
-            Some(common_dir_abs_path),
+            identity.work_directory_abs_path.clone(),
+            Some(identity.repository_dir_abs_path.clone()),
+            Some(identity.dot_git_abs_path.clone()),
+            Some(identity.common_dir_abs_path.clone()),
             PathStyle::local(),
         );
 
@@ -10055,6 +10089,287 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs.load(&path).await.unwrap(), "build/\ntarget/\n");
+    }
+
+    /// Host/downstream: same host-minted id across add/retarget/remove; proto
+    /// round-trip preserves fields; absent optional paths leave last-good defaults.
+    #[gpui::test]
+    async fn test_host_downstream_repository_id_stability(cx: &mut TestAppContext) {
+        use git::repository::Worktree as GitWorktree;
+        use util::path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/repo_a"), json!({ ".git": {}, "file.txt": "a" }))
+            .await;
+        fs.insert_tree(path!("/repo_b"), json!({ ".git": {}, "file.txt": "b" }))
+            .await;
+        fs.add_linked_worktree_for_repo(
+            Path::new(path!("/repo_a/.git")),
+            false,
+            GitWorktree {
+                path: PathBuf::from(path!("/linked")),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "aaa111".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.write(path!("/linked/file.txt").as_ref(), b"content")
+            .await
+            .unwrap();
+
+        let admin_b = PathBuf::from(path!("/repo_b/.git/worktrees/feature"));
+        fs.create_dir(&admin_b).await.unwrap();
+        fs.write(&admin_b.join("HEAD"), b"ref: refs/heads/feature\n")
+            .await
+            .unwrap();
+        fs.write(&admin_b.join("commondir"), path!("/repo_b/.git").as_bytes())
+            .await
+            .unwrap();
+        fs.write(&admin_b.join("gitdir"), path!("/linked/.git").as_bytes())
+            .await
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/linked").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.executor().run_until_parked();
+
+        let (repository_id, snapshot_before) = project.read_with(cx, |project, cx| {
+            let repositories = project.repositories(cx);
+            assert_eq!(repositories.len(), 1, "add → one repository");
+            let (id, entity) = repositories.iter().next().unwrap();
+            (*id, entity.read(cx).snapshot())
+        });
+
+        let encoded = snapshot_before.initial_update(1);
+        assert_eq!(RepositoryId::from_proto(encoded.id), repository_id);
+        assert_eq!(
+            encoded.abs_path.as_str(),
+            snapshot_before.work_directory_abs_path.to_string_lossy()
+        );
+        assert_eq!(
+            encoded.repository_dir_abs_path.as_deref(),
+            Some(
+                snapshot_before
+                    .repository_dir_abs_path
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(
+            encoded.common_dir_abs_path.as_deref(),
+            Some(
+                snapshot_before
+                    .common_dir_abs_path
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+
+        fs.pause_events();
+        fs.remove_file(path!("/linked/.git").as_ref(), Default::default())
+            .await
+            .unwrap();
+        fs.write(
+            path!("/linked/.git").as_ref(),
+            format!("gitdir: {}\n", admin_b.display()).as_bytes(),
+        )
+        .await
+        .unwrap();
+        fs.unpause_events_and_flush();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.executor().run_until_parked();
+
+        let after = project.read_with(cx, |project, cx| {
+            let repositories = project.repositories(cx);
+            assert_eq!(repositories.len(), 1, "retarget is not remove+add");
+            let (id, entity) = repositories.iter().next().unwrap();
+            assert_eq!(*id, repository_id, "same RepositoryId after retarget");
+            entity.read(cx).snapshot()
+        });
+        assert_eq!(
+            after.common_dir_abs_path.as_ref(),
+            Path::new(path!("/repo_b/.git"))
+        );
+
+        let relayed = after.initial_update(1);
+        assert_eq!(RepositoryId::from_proto(relayed.id), repository_id);
+        assert_eq!(
+            relayed.repository_dir_abs_path.as_deref(),
+            Some(after.repository_dir_abs_path.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            relayed.common_dir_abs_path.as_deref(),
+            Some(after.common_dir_abs_path.to_string_lossy().as_ref())
+        );
+
+        // apply_remote_update only overwrites optional paths when present.
+        let mut sparse = after.initial_update(1);
+        sparse.repository_dir_abs_path = None;
+        sparse.common_dir_abs_path = None;
+        assert!(sparse.repository_dir_abs_path.is_none() && sparse.common_dir_abs_path.is_none());
+        // Guest keeps last-good when optionals are absent (mirrors apply_remote_update).
+        assert_eq!(
+            sparse
+                .repository_dir_abs_path
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or(after.repository_dir_abs_path.as_ref()),
+            after.repository_dir_abs_path.as_ref()
+        );
+        assert_eq!(
+            sparse
+                .common_dir_abs_path
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or(after.common_dir_abs_path.as_ref()),
+            after.common_dir_abs_path.as_ref()
+        );
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        cx.executor().run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert!(
+                !project.repositories(cx).contains_key(&repository_id),
+                "last association removal drops the same RepositoryId"
+            );
+        });
+    }
+
+    /// Same-batch Removed{old entry id} + Added{new entry id} with identical work-dir
+    /// identity must coalesce onto the surviving RepositoryId and must not emit
+    /// RemoveRepository (inode swap within one debounce window).
+    #[gpui::test]
+    async fn test_same_batch_removed_added_coalesces_repository(cx: &mut TestAppContext) {
+        use util::path;
+        use worktree::{GitRepositoryChange, GitRepositoryIdentity, GitRepositoryRegistration};
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/project"), json!({ ".git": {}, "file.txt": "a" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.executor().run_until_parked();
+
+        let (worktree_id, old_entry_id, identity, repository_id) =
+            project.read_with(cx, |project, cx| {
+                let worktree = project.worktrees(cx).next().unwrap();
+                let worktree_id = worktree.read(cx).id();
+                let git_store = project.git_store().read(cx);
+                assert_eq!(git_store.repositories.len(), 1, "one repository after scan");
+                let (&repository_id, entity) = git_store.repositories.iter().next().unwrap();
+                let snapshot = entity.read(cx).snapshot();
+                let identity = GitRepositoryIdentity {
+                    work_directory_abs_path: snapshot.work_directory_abs_path,
+                    dot_git_abs_path: snapshot.dot_git_abs_path,
+                    repository_dir_abs_path: snapshot.repository_dir_abs_path,
+                    common_dir_abs_path: snapshot.common_dir_abs_path,
+                };
+                let old_entry_id = git_store
+                    .repository_ids_by_worktree_repository
+                    .iter()
+                    .find(|(key, id)| key.worktree_id == worktree_id && **id == repository_id)
+                    .map(|(key, _)| key.work_directory_id)
+                    .expect("association for scanned repository");
+                (worktree_id, old_entry_id, identity, repository_id)
+            });
+
+        // Fresh larger ProjectEntryId as after an inode-minting work-dir replace.
+        let new_entry_id = ProjectEntryId::from_proto(old_entry_id.to_proto().saturating_add(1000));
+        assert_ne!(old_entry_id, new_entry_id);
+
+        let (updates_tx, mut updates_rx) = mpsc::unbounded();
+        let removed = GitRepositoryRegistration {
+            work_directory_id: old_entry_id,
+            identity: identity.clone(),
+        };
+        let added = GitRepositoryRegistration {
+            work_directory_id: new_entry_id,
+            identity,
+        };
+        let batch: GitRepositoryChanges = Arc::from([
+            GitRepositoryChange::Removed {
+                repository: removed,
+            },
+            GitRepositoryChange::AddedOrUpdated {
+                repository: added,
+                identity_changed: false,
+            },
+        ]);
+
+        project.update(cx, |project, cx| {
+            project.git_store().update(cx, |git_store, cx| {
+                git_store.update_repositories_from_worktree(
+                    worktree_id,
+                    Some(updates_tx),
+                    batch,
+                    cx,
+                );
+            });
+        });
+        cx.executor().run_until_parked();
+
+        let mut saw_remove = false;
+        while let Ok(update) = updates_rx.try_recv() {
+            if matches!(update, DownstreamUpdate::RemoveRepository(_)) {
+                saw_remove = true;
+            }
+        }
+        assert!(
+            !saw_remove,
+            "same-batch Removed+Added must not emit RemoveRepository"
+        );
+
+        project.read_with(cx, |project, cx| {
+            let git_store = project.git_store().read(cx);
+            assert!(
+                git_store.repositories.contains_key(&repository_id),
+                "repository must survive same-batch inode swap"
+            );
+            assert_eq!(
+                git_store.repositories.len(),
+                1,
+                "must not mint a second repository"
+            );
+            let associated =
+                git_store
+                    .repository_ids_by_worktree_repository
+                    .get(&WorktreeRepositoryKey {
+                        worktree_id,
+                        work_directory_id: new_entry_id,
+                    });
+            assert_eq!(
+                associated.copied(),
+                Some(repository_id),
+                "new entry id must associate to the coalesced RepositoryId"
+            );
+            assert!(
+                !git_store
+                    .repository_ids_by_worktree_repository
+                    .contains_key(&WorktreeRepositoryKey {
+                        worktree_id,
+                        work_directory_id: old_entry_id,
+                    }),
+                "old entry association must be dropped"
+            );
+        });
     }
 
     #[gpui::test]

@@ -3875,12 +3875,14 @@ async fn test_info_exclude_unparsable_preserves_last_good_and_clears_dirty(
 
     let fs = FakeFs::new(executor);
     let project_dir = Path::new(path!("/project"));
+    // Pattern matches any `*.env` so a second matching file can prove last-good
+    // rules remain installed after an unparsable rewrite (not only the original path).
     fs.insert_tree(
         project_dir,
         json!({
             ".git": {
                 "info": {
-                    "exclude": "secret.env\n"
+                    "exclude": "*.env\n"
                 }
             },
             "secret.env": "x=1",
@@ -3916,14 +3918,6 @@ async fn test_info_exclude_unparsable_preserves_last_good_and_clears_dirty(
                 ..Default::default()
             },
         );
-        assert_eq!(
-            worktree
-                .as_local()
-                .unwrap()
-                .repo_exclude_needs_update(project_dir),
-            Some(false),
-            "valid exclude should be clean after registration"
-        );
     });
 
     // `[z-a]` is rejected by globset (reversed character range). Unclosed `[` is
@@ -3947,13 +3941,32 @@ async fn test_info_exclude_unparsable_preserves_last_good_and_clears_dirty(
                 ..Default::default()
             },
         );
-        assert_eq!(
-            worktree
-                .as_local()
-                .unwrap()
-                .repo_exclude_needs_update(project_dir),
-            Some(false),
-            "unparsable exclude must clear dirty so later batches do not re-read forever"
+    });
+
+    // Observable last-good: a second matching file created after unparsable write
+    // must still be excluded by the preserved rules. One unrelated real event
+    // (touch tracked.txt) forces a batch so ignore status recomputes if needed.
+    fs.write(&project_dir.join("secret2.env"), b"y=2")
+        .await
+        .unwrap();
+    fs.write(&project_dir.join("tracked.txt"), b"ok2")
+        .await
+        .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &["secret.env", "secret2.env"],
+                tracked_paths: &["tracked.txt"],
+                ..Default::default()
+            },
         );
     });
 
@@ -3969,17 +3982,10 @@ async fn test_info_exclude_unparsable_preserves_last_good_and_clears_dirty(
         check_worktree_entries(
             worktree,
             WorktreeExpectations {
-                ignored_paths: &["secret.env"],
+                ignored_paths: &["secret.env", "secret2.env"],
                 tracked_paths: &["tracked.txt"],
                 ..Default::default()
             },
-        );
-        assert_eq!(
-            worktree
-                .as_local()
-                .unwrap()
-                .repo_exclude_needs_update(project_dir),
-            Some(false),
         );
     });
 }
@@ -5160,11 +5166,12 @@ async fn test_shared_common_dir_event_updates_all_repositories(
     let mut updated_work_dirs = Vec::new();
     while let Ok(event) = events.try_recv() {
         if let Event::UpdatedGitRepositories(updates) = event {
-            updated_work_dirs.extend(
-                updates
-                    .iter()
-                    .filter_map(|update| update.new_work_directory_abs_path.clone()),
-            );
+            updated_work_dirs.extend(updates.iter().filter_map(|update| match update {
+                worktree::GitRepositoryChange::AddedOrUpdated { repository, .. } => {
+                    Some(repository.identity.work_directory_abs_path.clone())
+                }
+                worktree::GitRepositoryChange::Removed { .. } => None,
+            }));
         }
     }
     updated_work_dirs.sort();
