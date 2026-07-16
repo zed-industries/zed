@@ -99,29 +99,55 @@ function Configure-Sccache {
         exit 1
     }
 
-    Write-Host "Configuring sccache with Cloudflare R2..."
+    Write-Host "Configuring sccache with local disk and Cloudflare R2..."
 
     $bucket = if ($env:SCCACHE_BUCKET) { $env:SCCACHE_BUCKET } else { "sccache-zed" }
     $keyPrefix = if ($env:SCCACHE_KEY_PREFIX) { $env:SCCACHE_KEY_PREFIX } else { "sccache/" }
     $baseDir = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Get-Location).Path }
-
-    # Use the absolute path to sccache binary for RUSTC_WRAPPER to avoid
-    # any PATH race conditions between GITHUB_PATH and GITHUB_ENV
     $sccacheBin = (Get-Command sccache).Source
 
-    # Set in current process
+    if (-not $env:SCCACHE_DIR) {
+        # Prefer LOCALAPPDATA so the L0 disk cache survives target/ pruning on
+        # reused self-hosted Windows runners. Fall back if the env var is empty.
+        $localAppData = $env:LOCALAPPDATA
+        if (-not $localAppData) {
+            $localAppData = Join-Path $env:USERPROFILE "AppData\Local"
+        }
+        $env:SCCACHE_DIR = Join-Path $localAppData "sccache"
+    }
+    $env:SCCACHE_BASEDIRS = $baseDir
+    $env:SCCACHE_MULTILEVEL_CHAIN = "disk,s3"
+    $env:SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY = "ignore"
     $env:SCCACHE_ENDPOINT = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
     $env:SCCACHE_BUCKET = $bucket
     $env:SCCACHE_REGION = "auto"
     $env:SCCACHE_S3_KEY_PREFIX = $keyPrefix
-    $env:SCCACHE_BASEDIRS = $baseDir
     $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
     $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
     $env:RUSTC_WRAPPER = $sccacheBin
 
+    New-Item -ItemType Directory -Path $env:SCCACHE_DIR -Force | Out-Null
+    # Persist an absolute path so later steps do not resolve a relative SCCACHE_DIR.
+    $env:SCCACHE_DIR = (Resolve-Path $env:SCCACHE_DIR).Path
+
+    # The server reads its cache configuration at startup. Restart any server
+    # left by an earlier job so the next command uses the current hierarchy.
+    try {
+        & $sccacheBin --stop-server *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "No running sccache server to stop"
+        }
+    }
+    catch {
+        Write-Host "No running sccache server to stop"
+    }
+
     # Also write to GITHUB_ENV for subsequent steps
     if ($env:GITHUB_ENV) {
         @(
+            "SCCACHE_DIR=$($env:SCCACHE_DIR)"
+            "SCCACHE_MULTILEVEL_CHAIN=$($env:SCCACHE_MULTILEVEL_CHAIN)"
+            "SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY=$($env:SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY)"
             "SCCACHE_ENDPOINT=$($env:SCCACHE_ENDPOINT)"
             "SCCACHE_BUCKET=$($env:SCCACHE_BUCKET)"
             "SCCACHE_REGION=$($env:SCCACHE_REGION)"
@@ -133,7 +159,7 @@ function Configure-Sccache {
         ) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
     }
 
-    Write-Host "✓ sccache configured with Cloudflare R2 (bucket: $bucket)"
+    Write-Host "sccache configured with local disk and Cloudflare R2 (bucket: $bucket)"
 }
 
 function Show-Config {
@@ -141,6 +167,9 @@ function Show-Config {
     Write-Host "sccache version: $(sccache --version)"
     Write-Host "sccache path: $((Get-Command sccache).Source)"
     Write-Host "RUSTC_WRAPPER: $($env:RUSTC_WRAPPER ?? '<not set>')"
+    Write-Host "SCCACHE_DIR: $($env:SCCACHE_DIR ?? '<not set>')"
+    Write-Host "SCCACHE_MULTILEVEL_CHAIN: $($env:SCCACHE_MULTILEVEL_CHAIN ?? '<not set>')"
+    Write-Host "SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY: $($env:SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY ?? '<not set>')"
     Write-Host "SCCACHE_BUCKET: $($env:SCCACHE_BUCKET ?? '<not set>')"
     Write-Host "SCCACHE_ENDPOINT: $($env:SCCACHE_ENDPOINT ?? '<not set>')"
     Write-Host "SCCACHE_REGION: $($env:SCCACHE_REGION ?? '<not set>')"
