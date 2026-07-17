@@ -498,6 +498,7 @@ pub struct Content {
     pub last_hovered_word: Option<HoveredWord>,
     pub scrolled_to_top: bool,
     pub scrolled_to_bottom: bool,
+    pub bottom_row_occupied: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -524,6 +525,7 @@ impl Default for Content {
             last_hovered_word: None,
             scrolled_to_top: false,
             scrolled_to_bottom: false,
+            bottom_row_occupied: false,
         }
     }
 }
@@ -2673,7 +2675,8 @@ impl Terminal {
 
                 Some(new_offset - old_offset)
             }
-            TouchPhase::Ended => None,
+            // Cancellation does not commit a scroll, same as a plain end.
+            TouchPhase::Ended | TouchPhase::Cancelled => None,
         }
     }
 

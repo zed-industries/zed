@@ -327,12 +327,24 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         settings::ModelMode::Thinking { budget_tokens } => {
             AnthropicModelMode::Thinking { budget_tokens }
         }
+        settings::ModelMode::Adaptive => AnthropicModelMode::AdaptiveThinking,
     };
     let supports_thinking = matches!(
         mode,
         AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
     );
     let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking);
+    let supports_speed = available
+        .supports_fast_mode
+        .unwrap_or_else(|| anthropic::supports_fast_mode(&available.name));
+    let mut extra_beta_headers = available.extra_beta_headers.clone();
+    if supports_speed
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::FAST_MODE_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -347,7 +359,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
-        supports_speed: false,
+        supports_speed,
         supports_compaction: false,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
@@ -361,7 +373,76 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
             vec![]
         },
         tool_override: available.tool_override.clone(),
-        extra_beta_headers: available.extra_beta_headers.clone(),
+        extra_beta_headers,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_available_model(json: &str) -> AvailableModel {
+        serde_json::from_str(json).expect("test fixture should parse")
+    }
+
+    #[test]
+    fn adaptive_mode_maps_to_adaptive_thinking_with_all_effort_levels() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-opus-4-7",
+                "max_tokens": 1000000,
+                "max_output_tokens": 128000,
+                "mode": { "type": "adaptive" }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::AdaptiveThinking);
+        assert!(model.supports_thinking);
+        assert!(model.supports_adaptive_thinking);
+        assert_eq!(
+            model.supported_effort_levels,
+            vec![
+                anthropic::Effort::Low,
+                anthropic::Effort::Medium,
+                anthropic::Effort::High,
+                anthropic::Effort::XHigh,
+                anthropic::Effort::Max,
+            ]
+        );
+    }
+
+    #[test]
+    fn thinking_mode_does_not_enable_adaptive() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-sonnet-4-5",
+                "max_tokens": 200000,
+                "mode": { "type": "thinking", "budget_tokens": 4096 }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        assert!(model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
+    }
+
+    #[test]
+    fn default_mode_disables_thinking() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-3-5-haiku",
+                "max_tokens": 200000
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::Default);
+        assert!(!model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
     }
 }
 

@@ -1,16 +1,20 @@
 ---
 title: Zed-Hosted Models - Zed
-description: AI models available via Zed Pro including Claude, GPT-5.5, Gemini 3.1 Pro, and Gemini 3.5 Flash. Pricing, context windows, and tool call support.
+description: AI models available via Zed Pro including Claude Fable 5, Claude Sonnet 5, GPT-5.6, and Gemini 3. Pricing, context windows, and tool call support.
 ---
 
 # Zed-Hosted Models
 
 Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](../ai/llm-providers.md). For general setup, see [AI Quick Start](../ai/quick-start.md).
 
-> **Note:** Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro are only available on Zed Pro and Zed Business.
+> **Note:** Claude Fable 5, Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro are only available on Zed Pro and Zed Business.
 
 | Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ----------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
+| Claude Fable 5    | Anthropic | Input               | $10.00                       | $11.00                  |
+|                   | Anthropic | Output              | $50.00                       | $55.00                  |
+|                   | Anthropic | Input - Cache Write | $12.50                       | $13.75                  |
+|                   | Anthropic | Input - Cache Read  | $1.00                        | $1.10                   |
 | Claude Opus 4.5   | Anthropic | Input               | $5.00                        | $5.50                   |
 |                   | Anthropic | Output              | $25.00                       | $27.50                  |
 |                   | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
@@ -27,6 +31,10 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $25.00                       | $27.50                  |
 |                   | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
 |                   | Anthropic | Input - Cache Read  | $0.50                        | $0.55                   |
+| Claude Sonnet 5   | Anthropic | Input               | $2.00                        | $2.20                   |
+|                   | Anthropic | Output              | $10.00                       | $11.00                  |
+|                   | Anthropic | Input - Cache Write | $2.50                        | $2.75                   |
+|                   | Anthropic | Input - Cache Read  | $0.20                        | $0.22                   |
 | Claude Sonnet 4.5 | Anthropic | Input               | $3.00                        | $3.30                   |
 |                   | Anthropic | Output              | $15.00                       | $16.50                  |
 |                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
@@ -39,6 +47,18 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $5.00                        | $5.50                   |
 |                   | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                   | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
+| GPT-5.6 Sol       | OpenAI    | Input               | $5.00                        | $5.50                   |
+|                   | OpenAI    | Output              | $30.00                       | $33.00                  |
+|                   | OpenAI    | Input - Cache Write | $6.25                        | $6.875                  |
+|                   | OpenAI    | Cached Input        | $0.50                        | $0.55                   |
+| GPT-5.6 Terra     | OpenAI    | Input               | $2.50                        | $2.75                   |
+|                   | OpenAI    | Output              | $15.00                       | $16.50                  |
+|                   | OpenAI    | Input - Cache Write | $3.125                       | $3.4375                 |
+|                   | OpenAI    | Cached Input        | $0.25                        | $0.275                  |
+| GPT-5.6 Luna      | OpenAI    | Input               | $1.00                        | $1.10                   |
+|                   | OpenAI    | Output              | $6.00                        | $6.60                   |
+|                   | OpenAI    | Input - Cache Write | $1.25                        | $1.375                  |
+|                   | OpenAI    | Cached Input        | $0.10                        | $0.11                   |
 | GPT-5.5 pro       | OpenAI    | Input               | $30.00                       | $33.00                  |
 |                   | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.5           | OpenAI    | Input               | $5.00                        | $5.50                   |
@@ -71,17 +91,22 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | Gemini 3 Flash    | Google    | Input               | $0.50                        | $0.55                   |
 |                   | Google    | Output              | $3.00                        | $3.30                   |
 
-## Recent Model Retirements
+> **Warn:** Anthropic retains prompts and outputs sent to Claude Fable 5 for at least 30 days for trust and safety purposes. The no-training commitment still applies, and Zed does not retain your prompts or outputs. See [Provider Safety Retention for Designated Models](../ai/privacy-and-security.md#provider-safety-retention).
 
-As of February 19, 2026, Zed Pro serves newer model versions in place of the retired models below:
+The Claude Sonnet 5 prices shown above use Anthropic's introductory pricing through August 31, 2026.
+
+## Recent Model Retirements {#recent-model-retirements}
+
+Zed no longer offers the models below:
 
 - Claude Opus 4.1 → Claude Opus 4.5, Claude Opus 4.6, Claude Opus 4.7, or Claude Opus 4.8
 - Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6
-- Claude Sonnet 3.7 (retired Feb 19) → Claude Sonnet 4.5 or Claude Sonnet 4.6
+- Claude Sonnet 3.7 (retired February 19, 2026) → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - GPT-5.1 and GPT-5 → GPT-5.2 or GPT-5.2-Codex
 - Gemini 2.5 Pro → Gemini 3.1 Pro
-- Gemini 3 Pro → Gemini 3.1 Pro
+- Gemini 3 Pro (retired March 26, 2026) → Gemini 3.1 Pro
 - Gemini 2.5 Flash → Gemini 3 Flash or Gemini 3.5 Flash
+- Grok 4, Grok 4 Fast, Grok 4 Fast (Non-Reasoning), and Grok Code Fast 1 ([retired May 15, 2026](https://docs.x.ai/developers/migration/may-15-retirement)). Zed no longer offers hosted xAI models.
 
 ## Usage {#usage}
 
@@ -97,13 +122,18 @@ A context window is the maximum span of text and code an LLM can consider at onc
 
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
+| Claude Fable 5    | Anthropic | 1M                        |
 | Claude Opus 4.5   | Anthropic | 200k                      |
 | Claude Opus 4.6   | Anthropic | 1M                        |
 | Claude Opus 4.7   | Anthropic | 1M                        |
 | Claude Opus 4.8   | Anthropic | 1M                        |
+| Claude Sonnet 5   | Anthropic | 1M                        |
 | Claude Sonnet 4.5 | Anthropic | 200k                      |
 | Claude Sonnet 4.6 | Anthropic | 1M                        |
 | Claude Haiku 4.5  | Anthropic | 200k                      |
+| GPT-5.6 Sol       | OpenAI    | 272k input / 400k total   |
+| GPT-5.6 Terra     | OpenAI    | 272k input / 400k total   |
+| GPT-5.6 Luna      | OpenAI    | 272k input / 400k total   |
 | GPT-5.5 pro       | OpenAI    | 272k input / 400k total   |
 | GPT-5.5           | OpenAI    | 272k input / 400k total   |
 | GPT-5.4 pro       | OpenAI    | 272k input / 400k total   |

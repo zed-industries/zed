@@ -14,7 +14,7 @@ use settings::Settings;
 use std::hash::Hash;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
+use ui::{Avatar, Chip, CopyButton, Divider, Tooltip, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
@@ -24,6 +24,51 @@ pub struct CommitDetails {
     pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
+    pub tag_names: Vec<SharedString>,
+}
+
+const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 2;
+
+pub(crate) fn commit_tag_chips(tag_names: &[SharedString]) -> Option<impl IntoElement> {
+    if tag_names.is_empty() {
+        return None;
+    }
+
+    let (visible_tags, hidden_tags) =
+        tag_names.split_at(tag_names.len().min(MAX_COMMIT_TOOLTIP_TAG_CHIPS));
+
+    Some(
+        h_flex().max_w(relative(0.6)).gap_1().child(
+            h_flex()
+                .gap_1()
+                .min_w_0()
+                .children(
+                    visible_tags
+                        .iter()
+                        .map(|tag_name| Chip::new(tag_name.clone()).truncate()),
+                )
+                .when(!hidden_tags.is_empty(), |this| {
+                    let hidden_tags = hidden_tags.to_vec();
+                    this.child(Chip::new(format!("+{}", hidden_tags.len())).tooltip(
+                        Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .children(itertools::Itertools::intersperse_with(
+                                    hidden_tags.iter().map(|tag_name| {
+                                        Label::new(tag_name.clone())
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .into_any_element()
+                                    }),
+                                    || Divider::horizontal().into_any_element(),
+                                ))
+                                .into_any_element()
+                        }),
+                    ))
+                })
+                .child(Divider::vertical()),
+        ),
+    )
 }
 
 pub struct CommitAvatar<'a> {
@@ -172,6 +217,7 @@ impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
+        tag_names: Vec<SharedString>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
@@ -192,6 +238,7 @@ impl CommitTooltip {
                     .into(),
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
+                tag_names,
             },
             repository,
             workspace,
@@ -270,6 +317,7 @@ impl Render for CommitTooltip {
             .message
             .as_ref()
             .and_then(|details| details.pull_request.clone());
+        let tag_names = self.commit.tag_names.clone();
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
@@ -336,12 +384,16 @@ impl Render for CommitTooltip {
                                 .w_full()
                                 .justify_between()
                                 .pt_1()
+                                .gap_1()
+                                .flex_wrap()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(absolute_timestamp)
                                 .child(
                                     h_flex()
                                         .gap_1()
+                                        .min_w_0()
+                                        .children(commit_tag_chips(&tag_names))
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(

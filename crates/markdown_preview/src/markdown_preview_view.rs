@@ -32,12 +32,13 @@ use workspace::notifications::NotifyResultExt;
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
+use workspace::{ItemId, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
+    CloseAndReturnToEditor, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown,
+    ScrollDownByItem,
 };
 use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
@@ -596,9 +597,10 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn move_cursor_to_source_index(
+    fn change_selection_to_source_index(
         editor: &Entity<Editor>,
         source_index: usize,
+        move_focus: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -610,7 +612,9 @@ impl MarkdownPreviewView {
                 cx,
                 |selections| selections.select_ranges(vec![selection]),
             );
-            window.focus(&editor.focus_handle(cx), cx);
+            if move_focus {
+                window.focus(&editor.focus_handle(cx), cx);
+            }
         });
     }
 
@@ -803,6 +807,40 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
+    fn close_and_return_to_editor(
+        &mut self,
+        _: &CloseAndReturnToEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self
+            .active_editor
+            .as_ref()
+            .map(|state| state.editor.clone())
+        else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let preview_id = cx.entity_id();
+
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                if !workspace.activate_item(&editor, true, true, window, cx) {
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                }
+
+                if let Some(pane) = workspace.pane_for_item_id(preview_id) {
+                    pane.update(cx, |pane, cx| {
+                        pane.close_item_by_id(preview_id, SaveIntent::Skip, window, cx)
+                    })
+                    .detach_and_log_err(cx);
+                }
+            });
+        });
+    }
+
     /// Returns the theme chosen in `markdown_preview_theme`, or `None` if the
     /// user hasn't set one or it can't be resolved.
     fn resolve_preview_theme(&self, cx: &App) -> Option<Arc<Theme>> {
@@ -882,12 +920,16 @@ impl MarkdownPreviewView {
             let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
                 .on_source_click(move |source_index, click_count, window, cx| {
-                    if click_count == 2 {
-                        Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
-                        true
-                    } else {
-                        false
+                    if click_count == 1 {
+                        Self::change_selection_to_source_index(
+                            &active_editor,
+                            source_index,
+                            false,
+                            window,
+                            cx,
+                        );
                     }
+                    false
                 })
                 .on_checkbox_toggle(move |source_range, new_checked, window, cx| {
                     Self::apply_checkbox_toggle_to_editor(
@@ -976,9 +1018,10 @@ fn handle_url_click(
 
                     if let Some(source_index) = source_index {
                         if let Some(editor) = active_editor {
-                            MarkdownPreviewView::move_cursor_to_source_index(
+                            MarkdownPreviewView::change_selection_to_source_index(
                                 &editor,
                                 source_index,
+                                true,
                                 window,
                                 cx,
                             );
@@ -1238,6 +1281,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
+            .on_action(cx.listener(MarkdownPreviewView::close_and_return_to_editor))
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
@@ -1618,12 +1662,13 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use crate::CloseAndReturnToEditor;
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
     use buffer_diff::BufferDiff;
     use editor::Editor;
-    use gpui::{AppContext as _, Entity, TestAppContext};
+    use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, WindowHandle};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1903,6 +1948,69 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
         );
+    }
+
+    #[gpui::test]
+    async fn close_and_return_to_editor_closes_preview_and_focuses_source_editor(
+        cx: &mut TestAppContext,
+    ) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        dispatch_close_and_return_to_editor(cx, &multi_workspace, &preview);
+        cx.run_until_parked();
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
+    }
+
+    #[gpui::test]
+    async fn close_and_return_to_editor_reopens_source_editor_when_editor_tab_was_closed(
+        cx: &mut TestAppContext,
+    ) {
+        let (multi_workspace, editor) = open_markdown_file(cx, "note.md", "# Note\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        let close_editor_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(editor.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        close_editor_task.await.unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "preview should remain focused after closing the source editor tab"
+                );
+                assert!(
+                    workspace
+                        .items_of_type::<Editor>(cx)
+                        .all(|open_editor| open_editor != editor),
+                    "source editor should no longer be open in any pane"
+                );
+                assert_eq!(
+                    workspace.items_of_type::<MarkdownPreviewView>(cx).count(),
+                    1
+                );
+            })
+            .unwrap();
+
+        dispatch_close_and_return_to_editor(cx, &multi_workspace, &preview);
+        cx.run_until_parked();
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
     }
 
     #[gpui::test]
@@ -2250,6 +2358,119 @@ mod tests {
             "a Default preview must stay bound to the editor it was opened from, not another \
              editor that happens to share the same buffer in a different split"
         );
+    }
+
+    async fn open_markdown_file(
+        cx: &mut TestAppContext,
+        file_name: &str,
+        contents: &str,
+    ) -> (WindowHandle<MultiWorkspace>, Entity<Editor>) {
+        let app_state = init_test(cx);
+        let mut entries = serde_json::Map::new();
+        entries.insert(file_name.to_string(), json!(contents));
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), serde_json::Value::Object(entries))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir")).join(file_name)],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item_as::<Editor>(cx)
+                    .unwrap()
+            })
+            .unwrap();
+        (multi_workspace, editor)
+    }
+
+    fn open_preview_for_active_editor(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+    ) -> Entity<MarkdownPreviewView> {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let editor: Entity<Editor> = workspace.active_item_as(cx).unwrap();
+                    let preview =
+                        MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                })
+            })
+            .unwrap()
+    }
+
+    fn dispatch_close_and_return_to_editor(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        preview: &Entity<MarkdownPreviewView>,
+    ) {
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "preview must be focused for the keyboard action to dispatch to it"
+                );
+                window.dispatch_action(Box::new(CloseAndReturnToEditor), cx);
+            })
+            .unwrap();
+    }
+
+    fn assert_editor_is_active_and_focused(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        expected_editor: &Entity<Editor>,
+    ) {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(active_editor, *expected_editor);
+                assert!(
+                    expected_editor
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx),
+                    "source editor should be focused"
+                );
+            })
+            .unwrap();
+    }
+
+    fn assert_no_markdown_preview_items(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+    ) {
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .items_of_type::<MarkdownPreviewView>(cx)
+                        .count(),
+                    0
+                );
+            })
+            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

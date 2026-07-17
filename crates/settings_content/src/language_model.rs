@@ -106,6 +106,8 @@ pub struct AnthropicAvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// Whether Anthropic's fast mode is available for this model.
+    pub supports_fast_mode: Option<bool>,
     /// The model's mode (e.g. thinking)
     pub mode: Option<ModelMode>,
 }
@@ -116,7 +118,7 @@ pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
     /// Custom models served through the `bedrock-mantle` endpoint's
     /// OpenAI-compatible APIs, in addition to the built-in Mantle models
-    /// (GPT-5.5, GPT-5.4, Grok 4.3).
+    /// (GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, Grok 4.3).
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,

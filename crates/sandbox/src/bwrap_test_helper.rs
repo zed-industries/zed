@@ -46,6 +46,12 @@ mod imp {
     /// successful round-trip, non-zero otherwise. Run *inside* the sandbox.
     const SUBCOMMAND_ECHO_CHECK: &str = "__echo_check";
 
+    /// Internal subcommand: connect to the unix-domain socket at the given path
+    /// and round-trip a byte through it. Exits 0 on a successful round-trip,
+    /// non-zero on any failure (including `socket(AF_UNIX)` being blocked once
+    /// the seccomp guard lands). Run *inside* the sandbox.
+    const SUBCOMMAND_UNIX_CONNECT_CHECK: &str = "__unix_connect_check";
+
     /// Default port for echo targets given as a bare hostname (e.g. `echo1`).
     const DEFAULT_ECHO_PORT: &str = "7000";
 
@@ -57,6 +63,9 @@ mod imp {
         let args: Vec<String> = std::env::args().collect();
         let result = match args.get(1).map(String::as_str) {
             Some(SUBCOMMAND_ECHO_CHECK) => run_echo_check(args.get(2).map(String::as_str)),
+            Some(SUBCOMMAND_UNIX_CONNECT_CHECK) => {
+                run_unix_connect_check(args.get(2).map(String::as_str))
+            }
             _ => run_checks(),
         };
 
@@ -93,8 +102,8 @@ mod imp {
     /// One declarative check: a sandbox policy, an operation, and the expected
     /// result. Deserialized from the JSON the Nix test produces.
     ///
-    /// Exactly one operation field (`read`, `write`, `network`, or `canCreate`)
-    /// must be set. Policy fields default to the most-confined policy
+    /// Exactly one operation field (`read`, `write`, `network`, `socketPath`, or
+    /// `canCreate`) must be set. Policy fields default to the most-confined policy
     /// (restricted filesystem with no writable paths, blocked network).
     #[derive(Debug, Default, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -127,6 +136,9 @@ mod imp {
         /// the sandbox.
         #[serde(default)]
         network: Option<String>,
+        /// Connect to this unix-domain socket path from inside the sandbox.
+        #[serde(default)]
+        socket_path: Option<String>,
         /// Assert that `Sandbox::can_create` for this policy matches the value:
         /// `true` => the sandbox can be created, `false` => it cannot.
         #[serde(default)]
@@ -239,6 +251,8 @@ mod imp {
             format!("write {path}")
         } else if let Some(host) = &check.network {
             format!("network {host}")
+        } else if let Some(path) = &check.socket_path {
+            format!("socket_connect {path}")
         } else if let Some(expected) = check.can_create {
             format!("can_create == {expected}")
         } else {
@@ -277,6 +291,8 @@ mod imp {
             run_write(check, path)?
         } else if let Some(host) = &check.network {
             run_network(check, host, echo_port)?
+        } else if let Some(path) = &check.socket_path {
+            run_socket_connect(check, path)?
         } else {
             bail!("check {label:?} has no operation");
         };
@@ -354,6 +370,21 @@ mod imp {
         run_command(&mut sandbox, &exe, &[SUBCOMMAND_ECHO_CHECK, &target])
     }
 
+    /// Attempt to connect to the unix-domain socket at `path` from inside the
+    /// sandbox via the `__unix_connect_check` subcommand, returning whether the
+    /// round-trip succeeded. A read-only bind mount of `/` leaves the socket
+    /// reachable, so a sandboxed command can currently `connect()` to a session
+    /// IPC socket owned by a process *outside* the sandbox — the escape a
+    /// `socket(AF_UNIX)` seccomp filter is meant to block. When that guard lands,
+    /// `socket(AF_UNIX)` returns `EPERM`, the subcommand fails, and this returns
+    /// `false`.
+    fn run_socket_connect(check: &Check, path: &str) -> Result<bool> {
+        let exe = current_exe_str()?;
+        let policy = policy_of(check)?;
+        let mut sandbox = Sandbox::new(policy).map_err(sandbox_err)?;
+        run_command(&mut sandbox, &exe, &[SUBCOMMAND_UNIX_CONNECT_CHECK, path])
+    }
+
     fn error_matches(error: &SandboxError, expected: &str) -> bool {
         matches!(
             (error, expected),
@@ -426,6 +457,35 @@ mod imp {
             Ok(())
         } else {
             bail!("echo server returned unexpected data: {echoed:?}");
+        }
+    }
+
+    /// Inner command: connect to the unix-domain socket at `path` and round-trip
+    /// a byte through it.
+    ///
+    /// Any failure — `socket(AF_UNIX)` being denied (how the seccomp guard will
+    /// manifest, as `EPERM`), `connect()` failing, or a bad round-trip — exits
+    /// non-zero, so the caller reads it as "not connected". A clean round-trip
+    /// (exit 0) means the socket outside the sandbox was reachable.
+    fn run_unix_connect_check(path: Option<&str>) -> Result<()> {
+        use std::os::unix::net::UnixStream;
+
+        let path = path.context("unix connect check requires a socket path argument")?;
+        let mut stream = UnixStream::connect(path)
+            .with_context(|| format!("failed to connect to unix socket {path}"))?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream
+            .write_all(b"ping\n")
+            .context("failed to write to unix socket")?;
+        let mut buffer = [0u8; 32];
+        let read = stream
+            .read(&mut buffer)
+            .context("failed to read from unix socket")?;
+        let echoed = String::from_utf8_lossy(&buffer[..read]);
+        if echoed.contains("ping") {
+            Ok(())
+        } else {
+            bail!("unix socket returned unexpected data: {echoed:?}");
         }
     }
 

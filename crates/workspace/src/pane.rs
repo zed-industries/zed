@@ -9110,11 +9110,11 @@ mod tests {
             path: util::rel_path::rel_path("dir/__init__.py").into(),
         };
         assert_eq!(
-            dirty_message_for(Some(project_path), PathStyle::Posix),
+            dirty_message_for(Some(project_path), PathStyle::Unix),
             "`dir/__init__.py` contains unsaved edits. Do you want to save it?"
         );
         assert_eq!(
-            dirty_message_for(None, PathStyle::Posix),
+            dirty_message_for(None, PathStyle::Unix),
             "This buffer contains unsaved edits. Do you want to save it?"
         );
     }

@@ -4367,6 +4367,90 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
     })
 }
 
+fn typescript_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/typescript/indents.scm"))
+        .unwrap(),
+    )
+}
+
+fn tsx_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/tsx/indents.scm"))
+        .unwrap(),
+    )
+}
+
+#[gpui::test]
+fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
+    init_settings(cx, |_| {});
+    cx.new(|cx| {
+        for lang in [typescript_lang_with_indents(), tsx_lang_with_indents()] {
+            let mut indent = |header: &str, header_len: usize, body: &str| {
+                let mut buffer = Buffer::local(header, cx).with_language(lang.clone(), cx);
+                buffer.edit(
+                    [(header_len..header_len, body)],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+                buffer.text()
+            };
+
+            // A braceless body is indented under its `if`/`for`/`while`.
+            assert_eq!(indent("if (true)", 9, "\nx()"), "if (true)\n    x()");
+            assert_eq!(indent("for (;;)", 8, "\nx()"), "for (;;)\n    x()");
+            assert_eq!(indent("while (true)", 12, "\nx()"), "while (true)\n    x()");
+            assert_eq!(
+                indent("for (const a of b)", 18, "\nx()"),
+                "for (const a of b)\n    x()"
+            );
+
+            // The statement after a braceless body returns to the outer indent.
+            assert_eq!(
+                indent("if (true)\n    x()", 17, "\ny()"),
+                "if (true)\n    x()\ny()"
+            );
+
+            // A `{}` block keeps its brace unindented (Allman style), leaving the
+            // block rule to indent the contents. Regression guard for #24976.
+            assert_eq!(indent("if (true)", 9, "\n{}"), "if (true)\n{}");
+            assert_eq!(indent("for (;;)", 8, "\n{}"), "for (;;)\n{}");
+            assert_eq!(indent("while (true)", 12, "\n{}"), "while (true)\n{}");
+
+            // K&R braced bodies indent their contents once.
+            assert_eq!(
+                indent("if (true) {\n}", 11, "\nx()"),
+                "if (true) {\n    x()\n}"
+            );
+
+            // A braceless `else` body is indented under the `else`.
+            assert_eq!(
+                indent("if (true)\n    x()\nelse", 22, "\ny()"),
+                "if (true)\n    x()\nelse\n    y()"
+            );
+        }
+        Buffer::local("", cx)
+    });
+}
+
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
 #[track_caller]
 fn assert_bracket_pairs(

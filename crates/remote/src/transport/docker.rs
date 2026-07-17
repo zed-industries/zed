@@ -90,7 +90,7 @@ impl DockerExecConnection {
 
         this.path_style = match remote_platform.os {
             RemoteOs::Windows => Some(PathStyle::Windows),
-            _ => Some(PathStyle::Posix),
+            _ => Some(PathStyle::Unix),
         };
 
         this.remote_platform = Some(remote_platform);
@@ -219,7 +219,7 @@ impl DockerExecConnection {
             version_str
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
             .run_docker_exec(
@@ -240,7 +240,7 @@ impl DockerExecConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::unix(&format!(
+                RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -257,11 +257,11 @@ impl DockerExecConnection {
             .await?;
             self.extract_server_binary(&dst_path, &tmp_path, &remote_dir_for_server, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -276,7 +276,7 @@ impl DockerExecConnection {
         })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
-            RelPath::unix(&format!(
+            RelPath::from_unix_str(&format!(
                 "{}-download-{}.gz",
                 binary_name,
                 std::process::id()
@@ -302,7 +302,7 @@ impl DockerExecConnection {
                     )
                     .await
                     .context("extracting server binary")?;
-                    return Ok(dst_path);
+                    return Ok(dst_path.into());
                 }
                 Err(e) => {
                     log::error!(
@@ -334,7 +334,7 @@ impl DockerExecConnection {
         )
         .await
         .context("extracting server binary")?;
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn docker_user_home_dir(&self) -> Result<String> {
@@ -850,7 +850,7 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        self.path_style.unwrap_or(PathStyle::Posix)
+        self.path_style.unwrap_or(PathStyle::Unix)
     }
 
     fn remote_platform(&self) -> RemotePlatform {

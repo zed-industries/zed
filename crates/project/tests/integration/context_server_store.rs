@@ -1488,6 +1488,176 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_multi_worktree_context_server_settings(cx: &mut TestAppContext) {
+    const SERVER_A: &str = "server-from-project-a";
+    const SERVER_B: &str = "server-from-project-b";
+
+    let server_a_id = ContextServerId(SERVER_A.into());
+    let server_b_id = ContextServerId(SERVER_B.into());
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project_a"),
+        json!({
+            ".zed": {
+                "settings.json": serde_json::to_string(&json!({
+                    "context_servers": {
+                        "server-from-project-a": {
+                            "command": "server-a-binary",
+                            "args": []
+                        }
+                    }
+                })).unwrap()
+            },
+            "code.rs": ""
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project_b"),
+        json!({
+            ".zed": {
+                "settings.json": serde_json::to_string(&json!({
+                    "context_servers": {
+                        "server-from-project-b": {
+                            "command": "server-b-binary",
+                            "args": []
+                        }
+                    }
+                })).unwrap()
+            },
+            "code.rs": ""
+        }),
+    )
+    .await;
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
+
+    // Create project with only project_a initially
+    let project = Project::test(fs.clone(), [path!("/project_a").as_ref()], cx).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    cx.run_until_parked();
+
+    // Only server-a should be configured
+    cx.update(|cx| {
+        let configured = store.read(cx).configured_server_ids();
+        assert!(
+            configured.contains(&server_a_id),
+            "server-a should be configured from project_a"
+        );
+        assert!(
+            !configured.contains(&server_b_id),
+            "server-b should not be configured yet"
+        );
+    });
+
+    // Add project_b as a second worktree
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project_b"), true, cx)
+        })
+        .await
+        .expect("Failed to add second worktree");
+
+    cx.run_until_parked();
+
+    // Both servers should now be configured
+    cx.update(|cx| {
+        let configured = store.read(cx).configured_server_ids();
+        assert!(
+            configured.contains(&server_a_id),
+            "server-a should still be configured from project_a"
+        );
+        assert!(
+            configured.contains(&server_b_id),
+            "server-b should now be configured from project_b"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_multi_worktree_duplicate_server_first_wins(cx: &mut TestAppContext) {
+    const SHARED_SERVER: &str = "shared-server";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project_a"),
+        json!({
+            ".zed": {
+                "settings.json": serde_json::to_string(&json!({
+                    "context_servers": {
+                        "shared-server": {
+                            "command": "binary-from-a",
+                            "args": ["arg-a"]
+                        }
+                    }
+                })).unwrap()
+            },
+            "code.rs": ""
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project_b"),
+        json!({
+            ".zed": {
+                "settings.json": serde_json::to_string(&json!({
+                    "context_servers": {
+                        "shared-server": {
+                            "command": "binary-from-b",
+                            "args": ["arg-b"]
+                        }
+                    }
+                })).unwrap()
+            },
+            "code.rs": ""
+        }),
+    )
+    .await;
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
+
+    // Create project with both worktrees
+    let project = Project::test(
+        fs.clone(),
+        [path!("/project_a").as_ref(), path!("/project_b").as_ref()],
+        cx,
+    )
+    .await;
+
+    cx.run_until_parked();
+
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    // The server should appear exactly once
+    cx.update(|cx| {
+        let configured = store.read(cx).configured_server_ids();
+        let count = configured
+            .iter()
+            .filter(|id| id.0.as_ref() == SHARED_SERVER)
+            .count();
+        assert_eq!(count, 1, "duplicate server ID should appear exactly once");
+    });
+}
+
 fn assert_server_events(
     store: &Entity<ContextServerStore>,
     expected_events: Vec<(ContextServerId, ContextServerStatus)>,

@@ -224,6 +224,11 @@ pub struct SandboxFallbackAuthorizationDetails {
     /// whether to run the command without a sandbox.
     #[serde(default)]
     pub reason: String,
+    /// Slug of the sandboxing docs section that best explains how to fix this
+    /// failure (see [`crate::LinuxWslSandboxError::docs_section`]), rendered as a
+    /// "Learn more" link. `None` when the cause is unknown.
+    #[serde(default)]
+    pub docs_section: Option<String>,
 }
 
 pub fn meta_with_sandbox_fallback_authorization(
@@ -430,16 +435,7 @@ impl ElicitationStore {
         &self.elicitations
     }
 
-    fn validate_request(
-        request: &acp::CreateElicitationRequest,
-        cx: &App,
-    ) -> Result<(), acp::Error> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return Err(
-                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
-            );
-        }
-
+    fn validate_request(request: &acp::CreateElicitationRequest) -> Result<(), acp::Error> {
         if let acp::ElicitationMode::Url(mode) = &request.mode {
             url::Url::parse(&mode.url)
                 .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
@@ -590,7 +586,7 @@ impl ElicitationStore {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
-        Self::validate_request(&request, cx)?;
+        Self::validate_request(&request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
@@ -3485,7 +3481,7 @@ impl AcpThread {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
-        ElicitationStore::validate_request(&request, cx)?;
+        ElicitationStore::validate_request(&request)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
@@ -7416,7 +7412,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_elicitation_requires_acp_beta_flag(cx: &mut TestAppContext) {
+    async fn test_elicitation_is_available_without_acp_beta_flag(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             cx.update_flags(false, vec![]);
@@ -7438,8 +7434,13 @@ mod tests {
             )
         });
 
-        assert!(result.is_err());
-        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+        assert!(result.is_ok());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.entries(),
+                [AgentThreadEntry::Elicitation(_)]
+            ));
+        });
     }
 
     #[gpui::test]

@@ -233,6 +233,9 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -265,6 +268,15 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to reduce non-essential motion in the UI, such as loading
+  // spinners and pulsating labels, by rendering them in a static state.
+  //
+  // May take 2 values:
+  // 1. Always reduce motion:
+  //    "on"
+  // 2. Never reduce motion:
+  //    "off"
+  "reduce_motion": "off",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
@@ -398,6 +410,14 @@
   // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
   //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
+  // Where to show LSP results that can contain multiple locations
+  // (Go to Definition, Go to Implementation, Find All References). A single
+  // result always opens directly. Individual actions can override this with
+  // their `open_results_in` argument.
+  //
+  // 1. Open the results in a multibuffer: `multi_buffer` (default)
+  // 2. Open the results in a filterable picker: `picker`
+  "lsp_results_location": "multi_buffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt

@@ -1,5 +1,5 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitTooltip},
+    commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips},
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
@@ -131,6 +131,7 @@ impl BlameRenderer for GitBlameRenderer {
         style: &TextStyle,
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
+        tag_names: Vec<SharedString>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         editor: Entity<Editor>,
@@ -226,6 +227,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     CommitTooltip::blame_entry(
                                         &blame_entry,
                                         details.clone(),
+                                        tag_names.clone(),
                                         repository.clone(),
                                         workspace.clone(),
                                         cx,
@@ -266,6 +268,7 @@ impl BlameRenderer for GitBlameRenderer {
         blame: BlameEntry,
         scroll_handle: ScrollHandle,
         details: Option<ParsedCommitMessage>,
+        tag_names: Vec<SharedString>,
         markdown: Entity<Markdown>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
@@ -402,12 +405,16 @@ impl BlameRenderer for GitBlameRenderer {
                                     .w_full()
                                     .justify_between()
                                     .pt_1()
+                                    .gap_1()
+                                    .flex_wrap()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(absolute_timestamp)
                                     .child(
                                         h_flex()
                                             .gap_1()
+                                            .min_w_0()
+                                            .children(commit_tag_chips(&tag_names))
                                             .when_some(pull_request, |this, pr| {
                                                 this.child(
                                                     Button::new(

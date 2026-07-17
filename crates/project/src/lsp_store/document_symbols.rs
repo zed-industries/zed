@@ -328,6 +328,7 @@ fn enriched_symbol_text(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use language::lsp_to_symbol_kind;
     use text::{OffsetRangeExt, Point, Unclipped};
 
     fn make_symbol(
@@ -340,7 +341,7 @@ mod tests {
         use text::PointUtf16;
         DocumentSymbol {
             name: name.to_string(),
-            kind,
+            kind: lsp_to_symbol_kind(kind),
             range: Unclipped(PointUtf16::new(range.start.0, range.start.1))
                 ..Unclipped(PointUtf16::new(range.end.0, range.end.1)),
             selection_range: Unclipped(PointUtf16::new(

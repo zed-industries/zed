@@ -1077,7 +1077,7 @@ mod tests {
             .enumerate()
             .filter_map(|(i, path)| {
                 Some((
-                    Arc::from(RelPath::unix(path).ok()?),
+                    Arc::from(RelPath::from_unix_str(path).ok()?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
                 ))

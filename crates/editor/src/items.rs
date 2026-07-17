@@ -43,7 +43,7 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
+use util::{ResultExt, TryFutureExt, debug_panic, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
@@ -2100,6 +2100,75 @@ pub fn active_match_index(
     }
 }
 
+/// Opens a path-like target (e.g. `items.rs:100:5`) in the workspace, moving the cursor
+/// to the one-based row/column if present. Returns whether the target was opened.
+pub async fn open_resolved_target(
+    workspace: &WeakEntity<Workspace>,
+    open_target: &workspace::path_link::OpenTarget,
+    cx: &mut AsyncWindowContext,
+) -> Result<bool> {
+    let path_to_open = open_target.path();
+    let mut opened_items = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_paths(
+                vec![path_to_open.path.clone()],
+                workspace::OpenOptions {
+                    visible: Some(workspace::OpenVisible::OnlyDirectories),
+                    ..Default::default()
+                },
+                None,
+                window,
+                cx,
+            )
+        })
+        .context("workspace update")?
+        .await;
+    if opened_items.len() != 1 {
+        debug_panic!(
+            "Received {} items for one path {path_to_open:?}",
+            opened_items.len(),
+        );
+    }
+    let Some(opened_item) = opened_items.pop() else {
+        return Ok(false);
+    };
+
+    if open_target.is_file() {
+        let Some(opened_item) = opened_item else {
+            return Ok(false);
+        };
+        let opened_item =
+            opened_item.with_context(|| format!("opening {:?}", path_to_open.path))?;
+        if let Some(row) = path_to_open.row
+            && let Some(editor) = opened_item.downcast::<Editor>()
+        {
+            let column = path_to_open.column.unwrap_or(0);
+            editor
+                .downgrade()
+                .update_in(cx, |editor, window, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        let point = buffer.read(cx).snapshot().point_from_external_input(
+                            row.saturating_sub(1),
+                            column.saturating_sub(1),
+                        );
+                        editor.go_to_singleton_buffer_point(point, window, cx);
+                    }
+                })
+                .log_err();
+        }
+        Ok(true)
+    } else if open_target.is_dir() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |_, cx| {
+                cx.emit(project::Event::ActivateProjectPanel);
+            })
+        })?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 pub fn entry_label_color(selected: bool) -> Color {
     if selected {
         Color::Default
@@ -2221,14 +2290,14 @@ fn restore_serialized_buffer_contents(
 fn serialize_path_key(path_key: &PathKey) -> proto::PathKey {
     proto::PathKey {
         sort_prefix: path_key.sort_prefix,
-        path: path_key.path.to_proto(),
+        path: path_key.path.as_unix_str().to_owned(),
     }
 }
 
 fn deserialize_path_key(path_key: proto::PathKey) -> Option<PathKey> {
     Some(PathKey {
         sort_prefix: path_key.sort_prefix,
-        path: RelPath::from_proto(&path_key.path).ok()?,
+        path: RelPath::from_unix_str(&path_key.path).ok()?.into(),
     })
 }
 
@@ -2396,7 +2465,8 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use util::{path, rel_path::RelPath};
+    use util::{path, paths::PathWithPosition, rel_path::RelPath};
+    use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
@@ -3036,6 +3106,62 @@ mod tests {
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_resolved_target_at_non_ascii_column(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "main.rs": "first\naéøbc\n",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let open_target = OpenTarget::Path(
+            PathWithPosition {
+                path: PathBuf::from(path!("/root/src/main.rs")),
+                row: Some(2),
+                column: Some(4),
+            },
+            false,
+            OpenTargetFoundBy::BackgroundPathResolution,
+        );
+
+        let opened = workspace
+            .update_in(cx, |_, window, cx| {
+                cx.spawn_in(window, async move |workspace, cx| {
+                    open_resolved_target(&workspace, &open_target, cx).await
+                })
+            })
+            .await
+            .expect("opening the target should succeed");
+        assert!(opened, "target should open as a file");
+
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .expect("active item should be an editor")
+        });
+        let cursor = editor.update_in(cx, |editor, _, cx| {
+            editor
+                .selections
+                .newest::<language::Point>(&editor.display_snapshot(cx))
+                .head()
+        });
+        // Column 4 is the fourth character of `aéøbc` (the `b`), which starts at byte 5.
+        assert_eq!(cursor, language::Point::new(1, 5));
     }
 
     #[gpui::test]

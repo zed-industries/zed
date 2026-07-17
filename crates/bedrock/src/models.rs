@@ -834,6 +834,12 @@ pub enum MantleProtocol {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum MantleModel {
+    #[serde(rename = "gpt-5.6-sol")]
+    Gpt5_6Sol,
+    #[serde(rename = "gpt-5.6-terra")]
+    Gpt5_6Terra,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt5_6Luna,
     #[serde(rename = "gpt-5.5")]
     Gpt5_5,
     #[serde(rename = "gpt-5.4")]
@@ -857,6 +863,9 @@ impl MantleModel {
     /// The model id Zed uses internally (also used as the `name` in settings).
     pub fn id(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "gpt-5.6-sol",
+            Self::Gpt5_6Terra => "gpt-5.6-terra",
+            Self::Gpt5_6Luna => "gpt-5.6-luna",
             Self::Gpt5_5 => "gpt-5.5",
             Self::Gpt5_4 => "gpt-5.4",
             Self::Grok4_3 => "grok-4.3",
@@ -867,6 +876,9 @@ impl MantleModel {
     /// The model id as expected in Bedrock Mantle request bodies, e.g. `openai.gpt-5.5`.
     pub fn request_id(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "openai.gpt-5.6-sol",
+            Self::Gpt5_6Terra => "openai.gpt-5.6-terra",
+            Self::Gpt5_6Luna => "openai.gpt-5.6-luna",
             Self::Gpt5_5 => "openai.gpt-5.5",
             Self::Gpt5_4 => "openai.gpt-5.4",
             Self::Grok4_3 => "xai.grok-4.3",
@@ -876,6 +888,9 @@ impl MantleModel {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Gpt5_6Sol => "GPT-5.6 Sol",
+            Self::Gpt5_6Terra => "GPT-5.6 Terra",
+            Self::Gpt5_6Luna => "GPT-5.6 Luna",
             Self::Gpt5_5 => "GPT-5.5",
             Self::Gpt5_4 => "GPT-5.4",
             Self::Grok4_3 => "Grok 4.3",
@@ -888,14 +903,23 @@ impl MantleModel {
     /// Which OpenAI-compatible API this model must be called through.
     pub fn protocol(&self) -> MantleProtocol {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => MantleProtocol::Responses,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => MantleProtocol::Responses,
             Self::Custom { protocol, .. } => *protocol,
         }
     }
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 => 272_000,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4 => 272_000,
             Self::Grok4_3 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -903,8 +927,12 @@ impl MantleModel {
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
-            // AWS doesn't document a hard cap for GPT-5.5/5.4 on Mantle.
-            Self::Gpt5_5 | Self::Gpt5_4 => 128_000,
+            // AWS doesn't document a hard cap for the GPT-5.x models on Mantle.
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4 => 128_000,
             Self::Grok4_3 => 131_072,
             Self::Custom {
                 max_output_tokens, ..
@@ -914,14 +942,24 @@ impl MantleModel {
 
     pub fn supports_tools(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom { supports_tools, .. } => *supports_tools,
         }
     }
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom {
                 supports_images, ..
             } => *supports_images,
@@ -930,7 +968,12 @@ impl MantleModel {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
             Self::Custom {
                 supports_thinking, ..
             } => *supports_thinking,
@@ -944,9 +987,82 @@ mod tests {
 
     #[test]
     fn test_builtin_mantle_models_use_responses_protocol() {
+        assert_eq!(MantleModel::Gpt5_6Sol.protocol(), MantleProtocol::Responses);
+        assert_eq!(
+            MantleModel::Gpt5_6Terra.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(
+            MantleModel::Gpt5_6Luna.protocol(),
+            MantleProtocol::Responses
+        );
         assert_eq!(MantleModel::Gpt5_5.protocol(), MantleProtocol::Responses);
         assert_eq!(MantleModel::Gpt5_4.protocol(), MantleProtocol::Responses);
         assert_eq!(MantleModel::Grok4_3.protocol(), MantleProtocol::Responses);
+    }
+
+    #[test]
+    fn test_gpt_5_6_mantle_model_metadata() {
+        // Values mirror the AWS Bedrock model cards for GPT-5.6 Sol/Terra/Luna,
+        // which are served only through the `bedrock-mantle` Responses API.
+        for (model, id, request_id, display_name) in [
+            (
+                MantleModel::Gpt5_6Sol,
+                "gpt-5.6-sol",
+                "openai.gpt-5.6-sol",
+                "GPT-5.6 Sol",
+            ),
+            (
+                MantleModel::Gpt5_6Terra,
+                "gpt-5.6-terra",
+                "openai.gpt-5.6-terra",
+                "GPT-5.6 Terra",
+            ),
+            (
+                MantleModel::Gpt5_6Luna,
+                "gpt-5.6-luna",
+                "openai.gpt-5.6-luna",
+                "GPT-5.6 Luna",
+            ),
+        ] {
+            assert_eq!(model.id(), id);
+            assert_eq!(model.request_id(), request_id);
+            assert_eq!(model.display_name(), display_name);
+            assert_eq!(model.max_token_count(), 272_000);
+            assert!(model.supports_tools());
+            assert!(model.supports_images());
+            assert!(model.supports_thinking());
+        }
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            MantleModel::iter().filter(|model| !matches!(model, MantleModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate MantleModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate MantleModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
     }
 
     #[test]

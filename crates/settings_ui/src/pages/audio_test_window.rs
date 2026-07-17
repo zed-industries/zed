@@ -171,6 +171,8 @@ impl Render for AudioTestWindow {
                     )
                     .log_err();
                 },
+                None,
+                None,
                 window,
                 cx,
             )
@@ -200,6 +202,8 @@ impl Render for AudioTestWindow {
                 )
                 .log_err();
             },
+            None,
+            None,
             window,
             cx,
         );
