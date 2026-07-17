@@ -11124,10 +11124,10 @@ pub fn client_side_decorations(
         Decorations::Client { tiling } => tiling,
     };
     let corner_tiling = Tiling {
-        top: tiling.top || border_radius_tiling.top,
-        bottom: tiling.bottom || border_radius_tiling.bottom,
-        left: tiling.left || border_radius_tiling.left,
-        right: tiling.right || border_radius_tiling.right,
+        top: tiling.is_tiled() || border_radius_tiling.top,
+        bottom: tiling.is_tiled() || border_radius_tiling.bottom,
+        left: tiling.is_tiled() || border_radius_tiling.left,
+        right: tiling.is_tiled() || border_radius_tiling.right,
     };
 
     match decorations {

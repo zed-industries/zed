@@ -263,13 +263,11 @@ impl Render for PlatformTitleBar {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
                     .when(
-                        !(tiling.top || tiling.right)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                        !tiling.is_tiled() && !(sidebar.open && sidebar.side == SidebarSide::Right),
                         |el| el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     .when(
-                        !(tiling.top || tiling.left)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                        !tiling.is_tiled() && !(sidebar.open && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     // this border is to avoid a transparent gap in the rounded corners

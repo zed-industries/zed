@@ -156,13 +156,11 @@ impl Render for StatusBar {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
                     .when(
-                        !(tiling.bottom || tiling.right)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                        !tiling.is_tiled() && !(sidebar.open && sidebar.side == SidebarSide::Right),
                         |el| el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     .when(
-                        !(tiling.bottom || tiling.left)
-                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                        !tiling.is_tiled() && !(sidebar.open && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     // This border is to avoid a transparent gap in the rounded corners
