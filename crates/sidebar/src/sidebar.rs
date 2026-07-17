@@ -8091,8 +8091,8 @@ impl Render for Sidebar {
                         .absolute()
                         .top(if tiling.top { px(0.) } else { px(-1.) })
                         .bottom(if tiling.bottom { px(0.) } else { px(-1.) })
-                        .when(!tiling.top, |el| el.pt(px(1.)))
-                        .when(!tiling.bottom, |el| el.pb(px(1.)))
+                        .when(!tiling.top, |el| el.pt_px())
+                        .when(!tiling.bottom, |el| el.pb_px())
                         .map(|el| {
                             if on_left {
                                 el.right(px(0.))
