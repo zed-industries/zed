@@ -161,6 +161,26 @@ pub use window::*;
 
 pub use pollster::block_on;
 
+static STARTUP_ACTIVATION_TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Stores the XDG desktop startup activation token that was read from the
+/// environment during single-threaded process startup.
+///
+/// The token has to be read (and removed from the environment) before any
+/// threads are spawned: mutating the process environment after other threads
+/// exist races with concurrent `getenv` calls. Platform code reads the stashed
+/// value later via [`startup_activation_token`] instead of touching the
+/// environment itself. See `crates/zed/src/main.rs`.
+pub fn set_startup_activation_token(token: Option<String>) {
+    STARTUP_ACTIVATION_TOKEN.set(token).ok();
+}
+
+/// Returns the XDG desktop startup activation token that was captured from the
+/// environment at process startup, if one was present.
+pub fn startup_activation_token() -> Option<String> {
+    STARTUP_ACTIVATION_TOKEN.get().cloned().flatten()
+}
+
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {

@@ -29,8 +29,11 @@ use tracing_subscriber::{
 use util::ResultExt as _;
 
 #[expect(clippy::result_large_err)]
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Load environment variables before starting the tokio runtime. `set_var`
+    // mutates the process environment, which races with concurrent `getenv`
+    // calls on other threads, so it must happen while we are still
+    // single-threaded (i.e. before the runtime spawns its worker threads).
     if let Err(error) = env::load_dotenv() {
         eprintln!(
             "error loading .env.toml (this is expected in production): {}",
@@ -38,6 +41,14 @@ async fn main() -> Result<()> {
         );
     }
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| anyhow!(error))?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let mut args = args().skip(1);
     match args.next().as_deref() {
         Some("version") => {

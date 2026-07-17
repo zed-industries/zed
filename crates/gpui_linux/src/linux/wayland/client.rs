@@ -110,19 +110,6 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
-const XDG_ACTIVATION_TOKEN_ENV_VAR: &str = "XDG_ACTIVATION_TOKEN";
-
-fn take_startup_activation_token_from_environment() -> Option<String> {
-    let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
-        .ok()
-        .filter(|token| !token.is_empty());
-    // The token must be removed from the environment so it isn't inherited by child
-    // processes we spawn, per the xdg-activation spec: https://wayland.app/protocols/xdg-activation-v1
-    // SAFETY: This runs during Wayland platform initialization before GPUI starts
-    // concurrent environment access or spawning child processes.
-    unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
-    startup_activation_token
-}
 
 #[derive(Clone)]
 pub struct Globals {
@@ -565,7 +552,10 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
-        let startup_activation_token = take_startup_activation_token_from_environment();
+        // The XDG desktop startup activation token was read from the environment
+        // (and removed from it) during single-threaded process startup; see
+        // `gpui::startup_activation_token` and `crates/zed/src/main.rs`.
+        let startup_activation_token = gpui::startup_activation_token();
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
