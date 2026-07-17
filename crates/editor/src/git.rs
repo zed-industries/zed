@@ -1780,12 +1780,6 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    // TODO(partial-commit): stage/unstage only the individual lines under the
-    // cursor within their hunk. The line-level index computation was written
-    // against the old whole-index-rebuild staging path; it still needs to be
-    // reimplemented on top of the current optimistic-index model in
-    // `project::git_store`. Until then, toggling selected lines falls back to
-    // toggling the whole hunk(s) the selection covers.
     pub(super) fn toggle_staged_selected_lines(
         &mut self,
         _: &::git::ToggleStagedSelectedLines,
@@ -3335,7 +3329,7 @@ impl EditorSnapshot {
                         multi_buffer_range,
                         is_created_file,
                         staged_added,
-                        staged_deleted: hunk.staged_deleted.clone(),
+                        staged_deleted: hunk.staged_deleted,
                         deleted_lines,
                         is_expanded,
                     }
