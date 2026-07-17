@@ -566,15 +566,15 @@ impl LanguageModel for OpenAiLanguageModel {
                 .supported_reasoning_efforts()
                 .contains(&open_ai::ReasoningEffort::None),
         );
-        let request = CompactRequest {
-            model: request.model,
-            input: request.input,
-        };
+        let request = request.into_compact_request();
         let response = self.compact_response(request, cx);
         async move {
             let response = response.await?;
+            let items = response
+                .into_compaction_items()
+                .map_err(LanguageModelCompletionError::Other)?;
             Ok(CompactionContent::ProviderWindow {
-                items: response.output.into(),
+                items: items.into(),
             })
         }
         .boxed()

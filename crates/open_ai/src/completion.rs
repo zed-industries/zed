@@ -4068,6 +4068,45 @@ mod tests {
     }
 
     #[test]
+    fn open_ai_response_converts_to_compact_request_with_supported_controls() {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-123".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Retain this context.".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            speed: Some(Speed::Fast),
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let mut response_request =
+            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false);
+        response_request.instructions = Some("Preserve implementation details.".to_string());
+        let compact_request = response_request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(compact_request).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "instructions": "Preserve implementation details.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_maps_compact_at_tokens_to_context_management() {
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {

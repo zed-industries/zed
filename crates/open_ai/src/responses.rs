@@ -44,10 +44,28 @@ pub struct Request {
     pub context_management: Option<Vec<ContextManagement>>,
 }
 
+impl Request {
+    pub fn into_compact_request(self) -> CompactRequest {
+        CompactRequest {
+            model: self.model,
+            instructions: self.instructions,
+            input: self.input,
+            prompt_cache_key: self.prompt_cache_key,
+            service_tier: self.service_tier,
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct CompactRequest {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     pub input: ResponseInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -57,6 +75,24 @@ pub struct CompactedResponse {
     pub object: String,
     pub output: Vec<Value>,
     pub usage: ResponseUsage,
+}
+
+impl CompactedResponse {
+    pub fn into_compaction_items(self) -> Result<Vec<Value>> {
+        if self.output.is_empty() {
+            return Err(anyhow!("OpenAI returned an empty compaction output"));
+        }
+        if !self.output.iter().any(|item| {
+            item.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|item_type| item_type == "compaction")
+        }) {
+            return Err(anyhow!(
+                "OpenAI compaction output did not contain a compaction item"
+            ));
+        }
+        Ok(self.output)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -830,7 +866,149 @@ pub async fn stream_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor::block_on;
+    use http_client::FakeHttpClient;
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn compact_response_posts_supported_request_fields() {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let method = request.method().clone();
+                let uri = request.uri().to_string();
+                let authorization = request
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((method, uri, authorization, body_text));
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(
+                        json!({
+                            "id": "resp_compact",
+                            "created_at": 1_700_000_000,
+                            "object": "response.compaction",
+                            "output": [{
+                                "type": "compaction",
+                                "id": "cmp_manual",
+                                "encrypted_content": "opaque-state"
+                            }],
+                            "usage": {
+                                "input_tokens": 100,
+                                "input_tokens_details": {"cached_tokens": 20},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 5},
+                                "total_tokens": 110
+                            }
+                        })
+                        .to_string(),
+                    ))?)
+            }
+        });
+        let response = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            response.into_compaction_items().unwrap(),
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            })]
+        );
+        let (method, uri, authorization, body) = captured_request.lock().unwrap().take().unwrap();
+        assert_eq!(method, Method::POST);
+        assert_eq!(uri, "https://api.openai.com/v1/responses/compact");
+        assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
+    fn compact_response_reports_http_and_deserialization_errors() {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(429)
+                .header("retry-after", "5")
+                .body(AsyncBody::from("rate limited"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                assert_eq!(provider, "OpenAI");
+                assert_eq!(status_code, 429);
+                assert_eq!(body, "rate limited");
+                assert_eq!(headers["retry-after"], "5");
+            }
+            error => panic!("expected an HTTP response error, got {error:?}"),
+        }
+
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from("not valid JSON"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, RequestError::Other(_)),
+            "expected malformed JSON to produce a request error, got {error:?}"
+        );
+    }
 
     #[test]
     fn compacted_response_preserves_canonical_output_items() {
@@ -862,6 +1040,81 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(response.output, output);
+        assert_eq!(response.into_compaction_items().unwrap(), output);
+    }
+
+    #[test]
+    fn compacted_response_rejects_output_without_compaction_item() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [{
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context."
+            }],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compaction_items()
+                .unwrap_err()
+                .to_string()
+                .contains("compaction item")
+        );
+    }
+
+    #[test]
+    fn compacted_response_rejects_empty_output() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compaction_items()
+                .unwrap_err()
+                .to_string()
+                .contains("empty")
+        );
+    }
+
+    fn compact_test_request() -> CompactRequest {
+        CompactRequest {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(
+                Vec::new(),
+                vec![ResponseInputItem::Message(ResponseMessageItem {
+                    role: Role::User,
+                    content: vec![ResponseInputContent::Text {
+                        text: "Retain this context.".to_string(),
+                    }],
+                    phase: None,
+                })],
+            ),
+            prompt_cache_key: Some("thread-123".to_string()),
+            service_tier: Some(ServiceTier::Priority),
+        }
     }
 }

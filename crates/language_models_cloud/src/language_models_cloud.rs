@@ -457,10 +457,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             None,
             supports_none_reasoning_effort,
         );
-        let compact_request = open_ai::responses::CompactRequest {
-            model: request.model.clone(),
-            input: request.input,
-        };
+        let compact_request = request.into_compact_request();
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
         let auth_context = token_provider.auth_context(cx);
@@ -477,7 +474,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     thread_id,
                     prompt_id,
                     provider: cloud_llm_client::LanguageModelProvider::OpenAi,
-                    model: request.model,
+                    model: compact_request.model.clone(),
                     provider_request: serde_json::to_value(compact_request).map_err(|error| {
                         LanguageModelCompletionError::SerializeRequest {
                             provider: provider_name.clone(),
@@ -496,8 +493,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             while let Some(event) = events.next().await {
                 match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
                     CompletionEvent::Event(response) => {
+                        let items = response
+                            .into_compaction_items()
+                            .map_err(LanguageModelCompletionError::Other)?;
                         return Ok(CompactionContent::ProviderWindow {
-                            items: response.output.into(),
+                            items: items.into(),
                         });
                     }
                     CompletionEvent::Status(_) => {}
@@ -1104,8 +1104,158 @@ pub fn response_lines<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_client::FakeHttpClient;
     use http_client::http::{HeaderMap, StatusCode};
-    use language_model::LanguageModelCompletionError;
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent, Role, Speed,
+    };
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_forwards_supported_request_fields(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let method = request.method().clone();
+                let uri = request.uri().to_string();
+                let authorization = request
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let requested_status_messages = request
+                    .headers()
+                    .contains_key(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME);
+                let requested_stream_end = request
+                    .headers()
+                    .contains_key(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME);
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((
+                    method,
+                    uri,
+                    authorization,
+                    requested_status_messages,
+                    requested_stream_end,
+                    body_text,
+                ));
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(format!(
+                        "{}\n",
+                        json!({
+                            "id": "resp_compact",
+                            "created_at": 1_700_000_000,
+                            "object": "response.compaction",
+                            "output": [{
+                                "type": "compaction",
+                                "id": "cmp_manual",
+                                "encrypted_content": "opaque-state"
+                            }],
+                            "usage": {
+                                "input_tokens": 100,
+                                "input_tokens_details": {"cached_tokens": 20},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 5},
+                                "total_tokens": 110
+                            }
+                        })
+                    )))?)
+            }
+        });
+        let model = cloud_test_model(http_client);
+        let request = compact_test_request();
+
+        let content = model.compact(request, &cx.to_async()).await.unwrap();
+
+        assert_eq!(
+            content,
+            CompactionContent::ProviderWindow {
+                items: vec![json!({
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                })]
+                .into()
+            }
+        );
+        let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
+            captured_request.lock().unwrap().take().unwrap();
+        assert_eq!(method, Method::POST);
+        assert_eq!(uri, "http://test.example/completions/compact?");
+        assert_eq!(authorization.as_deref(), Some("Bearer test-token"));
+        assert!(!requested_status_messages);
+        assert!(!requested_stream_end);
+        let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+        assert_eq!(body["thread_id"], "thread-123");
+        assert_eq!(body["provider"], "open_ai");
+        assert_eq!(body["model"], "gpt-5.4");
+        assert_eq!(
+            body["provider_request"],
+            json!({
+                "model": "gpt-5.4",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_rejects_output_without_compaction_item(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from(format!(
+                    "{}\n",
+                    json!({
+                        "id": "resp_compact",
+                        "created_at": 1_700_000_000,
+                        "object": "response.compaction",
+                        "output": [{
+                            "type": "message",
+                            "role": "assistant",
+                            "content": "This is not an opaque compaction item."
+                        }],
+                        "usage": {
+                            "input_tokens": 100,
+                            "input_tokens_details": {"cached_tokens": 20},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 5},
+                            "total_tokens": 110
+                        }
+                    })
+                )))?)
+        });
+        let model = cloud_test_model(http_client);
+
+        let error = model
+            .compact(compact_test_request(), &cx.to_async())
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, LanguageModelCompletionError::Other(_)),
+            "expected invalid canonical output to be rejected, got {error:?}"
+        );
+        assert!(error.to_string().contains("compaction item"));
+    }
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
@@ -1278,5 +1428,77 @@ mod tests {
             ),
             "Expected DeserializeResponse, got: {deserialize:?}"
         );
+    }
+
+    fn compact_test_request() -> LanguageModelRequest {
+        LanguageModelRequest {
+            thread_id: Some("thread-123".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Retain this context.".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            speed: Some(Speed::Fast),
+            ..Default::default()
+        }
+    }
+
+    fn cloud_test_model(
+        http_client: Arc<HttpClientWithUrl>,
+    ) -> CloudLanguageModel<TestTokenProvider> {
+        CloudLanguageModel {
+            id: LanguageModelId::from("gpt-5.4".to_string()),
+            model: Arc::new(cloud_llm_client::LanguageModel {
+                provider: cloud_llm_client::LanguageModelProvider::OpenAi,
+                id: cloud_llm_client::LanguageModelId(Arc::from("gpt-5.4")),
+                display_name: "GPT-5.4".to_string(),
+                is_latest: true,
+                max_token_count: 1_000_000,
+                max_token_count_in_max_mode: None,
+                max_output_tokens: 128_000,
+                supports_tools: true,
+                supports_images: true,
+                supports_thinking: true,
+                supports_disabling_thinking: true,
+                supports_fast_mode: true,
+                supports_server_side_compaction: true,
+                supported_effort_levels: Vec::new(),
+                supports_streaming_tools: true,
+                supports_parallel_tool_calls: true,
+                is_disabled: false,
+                disabled_reason: None,
+            }),
+            token_provider: Arc::new(TestTokenProvider),
+            http_client,
+            app_version: None,
+            request_limiter: RateLimiter::new(4),
+        }
+    }
+
+    struct TestTokenProvider;
+
+    impl CloudLlmTokenProvider for TestTokenProvider {
+        type AuthContext = ();
+
+        fn auth_context(&self, _cx: &impl AppContext) -> Self::AuthContext {}
+
+        fn cached_token(
+            &self,
+            _auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String>> {
+            async { Ok("test-token".to_string()) }.boxed()
+        }
+
+        fn refresh_token(
+            &self,
+            _auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String>> {
+            async { Ok("refreshed-test-token".to_string()) }.boxed()
+        }
+
+        fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
+            false
+        }
     }
 }
