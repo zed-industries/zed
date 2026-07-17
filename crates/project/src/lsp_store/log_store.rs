@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, TaskExt, WeakEntity,
@@ -140,7 +140,8 @@ pub struct LanguageServerState {
     pub trace_level: TraceValue,
     pub log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
-    pub toggled_log_kind: Option<LogKind>,
+    view_log_stream_refcounts: HashMap<LogKind, usize>,
+    downstream_log_kinds: HashSet<LogKind>,
 }
 
 impl std::fmt::Debug for LanguageServerState {
@@ -154,7 +155,8 @@ impl std::fmt::Debug for LanguageServerState {
             .field("rpc_state", &self.rpc_state)
             .field("trace_level", &self.trace_level)
             .field("log_level", &self.log_level)
-            .field("toggled_log_kind", &self.toggled_log_kind)
+            .field("view_log_stream_refcounts", &self.view_log_stream_refcounts)
+            .field("downstream_log_kinds", &self.downstream_log_kinds)
             .finish_non_exhaustive()
     }
 }
@@ -357,7 +359,7 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum LogKind {
     Rpc,
     Trace,
@@ -566,7 +568,8 @@ impl LogStore {
                     trace_level: TraceValue::Off,
                     log_level: MessageType::LOG,
                     io_logs_subscription: None,
-                    toggled_log_kind: None,
+                    view_log_stream_refcounts: HashMap::default(),
+                    downstream_log_kinds: HashSet::default(),
                 }
             });
 
@@ -797,30 +800,6 @@ impl LogStore {
             .cloned()
     }
 
-    pub fn enable_rpc_trace_for_language_server(
-        &mut self,
-        key: &LanguageServerLogKey,
-    ) -> Option<&mut LanguageServerRpcState> {
-        let rpc_state = self
-            .language_servers
-            .get_mut(key)?
-            .rpc_state
-            .get_or_insert_with(|| LanguageServerRpcState {
-                rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
-                last_message_kind: None,
-                request_tracker: RpcRequestTracker::default(),
-            });
-        Some(rpc_state)
-    }
-
-    pub fn disable_rpc_trace_for_language_server(
-        &mut self,
-        key: &LanguageServerLogKey,
-    ) -> Option<()> {
-        self.language_servers.get_mut(key)?.rpc_state.take();
-        Some(())
-    }
-
     pub fn has_server_logs(
         &self,
         server: &LanguageServerSelector,
@@ -878,7 +857,10 @@ impl LogStore {
                     }
                     .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
                     if let Some((client, project_id)) = downstream_client {
-                        if state.toggled_log_kind == Some(LogKind::from_server_log_type(kind)) {
+                        if state
+                            .downstream_log_kinds
+                            .contains(&LogKind::from_server_log_type(kind))
+                        {
                             client
                                 .send(proto::LanguageServerLog {
                                     project_id,
@@ -896,24 +878,73 @@ impl LogStore {
         cx.emit(e);
     }
 
+    pub fn retain_view_log_stream(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+    ) -> Option<bool> {
+        let state = self.get_language_server_state(key)?;
+        let refcount = state.view_log_stream_refcounts.entry(log_kind).or_default();
+        let is_first = *refcount == 0;
+        *refcount += 1;
+        if log_kind == LogKind::Rpc {
+            state
+                .rpc_state
+                .get_or_insert_with(|| LanguageServerRpcState {
+                    rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                    last_message_kind: None,
+                    request_tracker: RpcRequestTracker::default(),
+                });
+        }
+        Some(is_first)
+    }
+
+    pub fn release_view_log_stream(
+        &mut self,
+        key: &LanguageServerLogKey,
+        log_kind: LogKind,
+    ) -> Option<bool> {
+        let state = self.get_language_server_state(key)?;
+        let refcount = state.view_log_stream_refcounts.get_mut(&log_kind)?;
+        if *refcount > 1 {
+            *refcount -= 1;
+            return Some(false);
+        }
+        state.view_log_stream_refcounts.remove(&log_kind);
+        if log_kind == LogKind::Rpc && !state.downstream_log_kinds.contains(&log_kind) {
+            state.rpc_state.take();
+        }
+        Some(true)
+    }
+
     pub fn toggle_lsp_logs(
         &mut self,
         key: &LanguageServerLogKey,
         enabled: bool,
         toggled_log_kind: LogKind,
     ) {
-        if let Some(server_state) = self.get_language_server_state(key) {
-            if enabled {
-                server_state.toggled_log_kind = Some(toggled_log_kind);
-            } else {
-                server_state.toggled_log_kind = None;
-            }
+        let Some(server_state) = self.get_language_server_state(key) else {
+            return;
+        };
+        if enabled {
+            server_state.downstream_log_kinds.insert(toggled_log_kind);
+        } else {
+            server_state.downstream_log_kinds.remove(&toggled_log_kind);
         }
         if toggled_log_kind == LogKind::Rpc {
-            if enabled {
-                self.enable_rpc_trace_for_language_server(key);
+            let has_view = server_state
+                .view_log_stream_refcounts
+                .contains_key(&toggled_log_kind);
+            if enabled || has_view {
+                server_state
+                    .rpc_state
+                    .get_or_insert_with(|| LanguageServerRpcState {
+                        rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                        last_message_kind: None,
+                        request_tracker: RpcRequestTracker::default(),
+                    });
             } else {
-                self.disable_rpc_trace_for_language_server(key);
+                server_state.rpc_state.take();
             }
         }
     }
