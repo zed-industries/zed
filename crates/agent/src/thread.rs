@@ -1219,7 +1219,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
-    title_generation_failed: bool,
+    title_generation_error: Option<SharedString>,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
     messages: Vec<Arc<Message>>,
@@ -1369,7 +1369,7 @@ impl Thread {
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
-            title_generation_failed: false,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
@@ -1748,7 +1748,7 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
-            title_generation_failed: false,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
@@ -3751,7 +3751,11 @@ impl Thread {
     }
 
     pub fn has_failed_title_generation(&self) -> bool {
-        self.title_generation_failed
+        self.title_generation_error.is_some()
+    }
+
+    pub fn title_generation_error(&self) -> Option<SharedString> {
+        self.title_generation_error.clone()
     }
 
     pub fn can_generate_title(&self) -> bool {
@@ -3854,7 +3858,7 @@ impl Thread {
         on_generated_title: Option<Box<dyn FnOnce(SharedString, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
-        self.title_generation_failed = false;
+        self.title_generation_error = None;
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
@@ -3865,22 +3869,26 @@ impl Thread {
                 .await
                 .context("failed to generate thread title")
                 .map(SharedString::from)
-                .log_err()
         });
 
         self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let title = title_generation.await;
             _ = this.update(cx, |this, cx| {
                 this.pending_title_generation = None;
-                if let Some(title) = title {
-                    this.set_title(title.clone(), cx);
-                    if let Some(on_generated_title) = on_generated_title {
-                        on_generated_title(title, cx);
+                match title {
+                    Ok(title) => {
+                        this.set_title(title.clone(), cx);
+                        if let Some(on_generated_title) = on_generated_title {
+                            on_generated_title(title, cx);
+                        }
                     }
-                } else {
-                    this.title_generation_failed = true;
-                    cx.emit(TitleUpdated);
-                    cx.notify();
+                    Err(error) => {
+                        let error = format!("{error:#}");
+                        log::error!("{error}");
+                        this.title_generation_error = Some(error.into());
+                        cx.emit(TitleUpdated);
+                        cx.notify();
+                    }
                 }
             });
         }));
@@ -3889,7 +3897,7 @@ impl Thread {
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.pending_title_generation = None;
-        self.title_generation_failed = false;
+        self.title_generation_error = None;
         if Some(&title) != self.title.as_ref() {
             self.title = Some(title);
             cx.emit(TitleUpdated);
