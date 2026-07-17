@@ -719,7 +719,14 @@ message GetCommitDataResponse {
   repeated CommitData commits = 1;
 }
 
-message GitLogSourceAll {}
+message GitLogSourceAll {
+  enum BranchFilter {
+    ALL = 0;
+    LOCAL = 1;
+    REMOTE = 2;
+  }
+  BranchFilter branch_filter = 1;
+}
 
 message GitLogSource {
   oneof source {

@@ -119,6 +119,9 @@ impl InitialGraphCommitData {
             .iter()
             .filter_map(|ref_name| {
                 let tag_name = ref_name.strip_prefix("tag: ")?;
+                // Decorations use full ref names (`--decorate=full`), but
+                // collab hosts predating that send the short form.
+                let tag_name = tag_name.strip_prefix("refs/tags/").unwrap_or(tag_name);
 
                 if tag_name.is_empty() {
                     return None;
@@ -799,25 +802,74 @@ impl LogOrder {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub enum LogSource {
+/// Which branch types to include when walking all history in the git graph.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BranchFilter {
+    /// Show commits reachable from both local and remote branches.
     #[default]
     All,
+    /// Only show commits reachable from local branches.
+    Local,
+    /// Only show commits reachable from remote-tracking branches.
+    Remote,
+}
+
+impl BranchFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Local,
+            Self::Local => Self::Remote,
+            Self::Remote => Self::All,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LogSource {
+    All(BranchFilter),
     Branch(SharedString),
     Sha(Oid),
     Path(RepoPath),
 }
 
+impl Default for LogSource {
+    fn default() -> Self {
+        LogSource::All(BranchFilter::All)
+    }
+}
+
 impl LogSource {
     fn get_args(&self) -> Vec<Cow<'_, str>> {
         match self {
-            LogSource::All => vec![
-                Cow::Borrowed("--ignore-missing"), // needed in case of unborn HEAD
-                Cow::Borrowed("--branches"),
-                Cow::Borrowed("--remotes"),
-                Cow::Borrowed("--tags"),
-                Cow::Borrowed("HEAD"),
-            ],
+            LogSource::All(filter) => {
+                let mut args = vec![
+                    Cow::Borrowed("--ignore-missing"), // needed in case of unborn HEAD
+                ];
+                match filter {
+                    BranchFilter::All => {
+                        args.push(Cow::Borrowed("--branches"));
+                        args.push(Cow::Borrowed("--remotes"));
+                        args.push(Cow::Borrowed("--tags"));
+                        args.push(Cow::Borrowed("HEAD"));
+                    }
+                    BranchFilter::Local => {
+                        // Only walk from local branches and HEAD. Tags are
+                        // intentionally excluded: git stores all tags in a
+                        // single `refs/tags/*` namespace with no local/remote
+                        // distinction, so `--tags` would leak in commits
+                        // reachable only via tags.
+                        args.push(Cow::Borrowed("--branches"));
+                        args.push(Cow::Borrowed("HEAD"));
+                    }
+                    BranchFilter::Remote => {
+                        // HEAD is intentionally excluded so that commits
+                        // reachable only from the local checkout don't appear
+                        // when filtering to remote branches.
+                        args.push(Cow::Borrowed("--remotes"));
+                    }
+                }
+                args
+            }
             LogSource::Branch(branch) => vec![Cow::Borrowed(branch.as_str())],
             LogSource::Sha(oid) => vec![Cow::Owned(oid.to_string())],
             LogSource::Path(path) => vec![
@@ -3151,7 +3203,17 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let log_source_args = log_source.get_args();
-            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
+            // `--decorate=full` makes `%D` emit full ref names
+            // (`refs/heads/main`, `refs/remotes/origin/main`), which is the
+            // only unambiguous way to tell local branches from remote ones: in
+            // short form, a local branch named `origin/tricky` is
+            // indistinguishable from a remote-tracking ref.
+            let mut git_log_command = vec![
+                "log",
+                GRAPH_COMMIT_FORMAT,
+                "--decorate=full",
+                log_order.as_arg(),
+            ];
             git_log_command.extend(log_source_args.iter().map(|arg| arg.as_ref()));
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
@@ -3987,6 +4049,35 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    #[test]
+    fn test_log_source_branch_filter_args() {
+        let args = |filter| {
+            LogSource::All(filter)
+                .get_args()
+                .into_iter()
+                .map(|arg| arg.into_owned())
+                .collect::<Vec<_>>()
+        };
+
+        let all = args(BranchFilter::All);
+        assert!(all.contains(&"--branches".to_string()));
+        assert!(all.contains(&"--remotes".to_string()));
+        assert!(all.contains(&"--tags".to_string()));
+        assert!(all.contains(&"HEAD".to_string()));
+
+        let local = args(BranchFilter::Local);
+        assert!(local.contains(&"--branches".to_string()));
+        assert!(!local.contains(&"--remotes".to_string()));
+        assert!(!local.contains(&"--tags".to_string()));
+        assert!(local.contains(&"HEAD".to_string()));
+
+        let remote = args(BranchFilter::Remote);
+        assert!(!remote.contains(&"--branches".to_string()));
+        assert!(remote.contains(&"--remotes".to_string()));
+        assert!(!remote.contains(&"--tags".to_string()));
+        assert!(!remote.contains(&"HEAD".to_string()));
+    }
+
     fn disable_git_global_config() {
         unsafe {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
@@ -4592,9 +4683,10 @@ mod tests {
             sha: Oid::from_bytes(&[0; 20]).unwrap(),
             parents: SmallVec::new(),
             ref_names: vec![
-                SharedString::from("HEAD -> main"),
-                SharedString::from("origin/main"),
-                SharedString::from("tag: v1.0.0"),
+                SharedString::from("HEAD -> refs/heads/main"),
+                SharedString::from("refs/remotes/origin/main"),
+                SharedString::from("tag: refs/tags/v1.0.0"),
+                // Short form, as sent by collab hosts predating `--decorate=full`.
                 SharedString::from("tag: v1.1.0"),
                 SharedString::from("tag: "),
                 SharedString::from("refs/heads/feature"),
@@ -5813,7 +5905,7 @@ mod tests {
 
         let graph_commits = async || {
             let (tx, rx) = smol::channel::unbounded();
-            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
+            repo.initial_graph_data(LogSource::All(BranchFilter::All), LogOrder::DateOrder, tx)
                 .await
                 .unwrap();
             let mut commits = std::collections::HashSet::new();
@@ -5853,6 +5945,71 @@ mod tests {
         let graph = graph_commits().await;
         assert!(graph.contains(&branch_sha));
         assert!(graph.contains(&hidden_sha));
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_full_ref_decorations(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file1"), "1")
+            .await
+            .unwrap();
+        let sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/heads/main".into(), sha.to_string())
+            .await
+            .unwrap();
+        repo.update_ref("refs/remotes/origin/main".into(), sha.to_string())
+            .await
+            .unwrap();
+        // A local branch whose short decoration (`origin/tricky`) is
+        // indistinguishable from a remote-tracking ref.
+        repo.update_ref("refs/heads/origin/tricky".into(), sha.to_string())
+            .await
+            .unwrap();
+        git_command(repo_dir.path(), ["tag", "v1.0", &sha.to_string()]);
+
+        let (tx, rx) = smol::channel::unbounded();
+        repo.initial_graph_data(LogSource::All(BranchFilter::All), LogOrder::DateOrder, tx)
+            .await
+            .unwrap();
+        let mut ref_names = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            for commit in chunk {
+                if commit.sha == sha {
+                    ref_names = commit.ref_names.clone();
+                }
+            }
+        }
+
+        let contains = |name: &str| ref_names.iter().any(|ref_name| ref_name == name);
+        assert!(
+            contains("HEAD -> refs/heads/main"),
+            "expected full local ref decoration, got {ref_names:?}"
+        );
+        assert!(
+            contains("refs/remotes/origin/main"),
+            "expected full remote ref decoration, got {ref_names:?}"
+        );
+        assert!(
+            contains("refs/heads/origin/tricky"),
+            "expected full local ref decoration, got {ref_names:?}"
+        );
+        assert!(
+            contains("tag: refs/tags/v1.0"),
+            "expected full tag decoration, got {ref_names:?}"
+        );
     }
 
     #[gpui::test]

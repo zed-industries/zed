@@ -12,8 +12,8 @@ use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
     repository::{
-        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
-        SearchCommitArgs,
+        BranchFilter, CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource,
+        RepoPath, SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
@@ -52,12 +52,13 @@ use std::{
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
-    RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
-    TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
-    prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
-    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
+    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
+    Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, Indicator, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, RedistributableColumnsState, ScrollableHandle,
+    Table, TableInteractionState, TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar,
+    bind_redistributable_columns, prelude::*, redistribute_hidden_fractions,
+    redistribute_hidden_widths, render_redistributable_columns_resize_handles, render_table_header,
+    table_row::TableRow,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{
@@ -592,6 +593,8 @@ actions!(
         ScrollDown,
         /// Toggles the selected commit's changed files between flat and tree views.
         ToggleChangedFilesView,
+        /// Cycles the branch filter between all, local, and remote branches.
+        CycleBranchFilter,
     ]
 );
 
@@ -1102,7 +1105,7 @@ pub fn init(cx: &mut App) {
                                         workspace,
                                         selected_repo_id,
                                         git_store,
-                                        LogSource::All,
+                                        LogSource::All(BranchFilter::All),
                                         None,
                                         window,
                                         cx,
@@ -1126,7 +1129,7 @@ pub fn init(cx: &mut App) {
                                     workspace,
                                     selected_repo_id,
                                     git_store,
-                                    LogSource::All,
+                                    LogSource::All(BranchFilter::All),
                                     Some(sha),
                                     window,
                                     cx,
@@ -1154,7 +1157,7 @@ pub fn resolve_file_history_target_from_project_path(
         .read(cx)
         .repository_and_path_for_project_path(project_path, cx)?;
     let log_source = if repo_path.is_empty() {
-        LogSource::All
+        LogSource::All(BranchFilter::All)
     } else {
         LogSource::Path(repo_path)
     };
@@ -1188,6 +1191,52 @@ fn resolve_file_history_target(
         .read(cx)
         .repository_and_path_for_project_path(&project_path, cx)?;
     Some((repo.read(cx).id, LogSource::Path(repo_path)))
+}
+
+fn build_branch_filter_menu(
+    current: BranchFilter,
+    graph: WeakEntity<GitGraph>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
+    ContextMenu::build(window, cx, |menu, _, _| {
+        menu.header("Show")
+            .item(branch_filter_menu_entry(
+                "All Branches",
+                BranchFilter::All,
+                current,
+                graph.clone(),
+            ))
+            .item(branch_filter_menu_entry(
+                "Local Branches",
+                BranchFilter::Local,
+                current,
+                graph.clone(),
+            ))
+            .item(branch_filter_menu_entry(
+                "Remote Branches",
+                BranchFilter::Remote,
+                current,
+                graph,
+            ))
+    })
+}
+
+fn branch_filter_menu_entry(
+    label: &'static str,
+    filter: BranchFilter,
+    current: BranchFilter,
+    graph: WeakEntity<GitGraph>,
+) -> ContextMenuEntry {
+    ContextMenuEntry::new(label)
+        .toggle(IconPosition::End, filter == current)
+        .handler(move |_window, cx| {
+            graph
+                .update(cx, |graph, cx| {
+                    graph.set_branch_filter(filter, cx);
+                })
+                .log_err();
+        })
 }
 
 pub fn open_or_reuse_graph(
@@ -1332,6 +1381,7 @@ pub struct GitGraph {
     changed_files_view_mode: ChangedFilesViewMode,
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
+    branch_filter_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl GitGraph {
@@ -1343,6 +1393,30 @@ impl GitGraph {
         self.context_menu = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
+    }
+
+    /// The branch-type filter currently applied to the graph. Only meaningful
+    /// when the log source walks all history; other sources (path/sha/branch
+    /// history) report `All` since the filter control is hidden for them.
+    fn branch_filter(&self) -> BranchFilter {
+        match self.log_source {
+            LogSource::All(filter) => filter,
+            _ => BranchFilter::All,
+        }
+    }
+
+    fn set_branch_filter(&mut self, filter: BranchFilter, cx: &mut Context<Self>) {
+        if !matches!(self.log_source, LogSource::All(_)) || self.branch_filter() == filter {
+            return;
+        }
+        self.log_source = LogSource::All(filter);
+        self.pending_select_sha = None;
+        self.invalidate_state(cx);
+        self.fetch_initial_graph_data(cx);
+    }
+
+    fn cycle_branch_filter(&mut self, cx: &mut Context<Self>) {
+        self.set_branch_filter(self.branch_filter().next(), cx);
     }
 
     /// Computes the height of a single commit row in the git graph.
@@ -1578,6 +1652,7 @@ impl GitGraph {
             changed_files_view_mode: ChangedFilesViewMode::default(),
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
+            branch_filter_menu_handle: PopoverMenuHandle::default(),
         };
 
         this.fetch_initial_graph_data(cx);
@@ -1665,7 +1740,9 @@ impl GitGraph {
                     self.invalidate_state(cx);
                 }
             }
-            RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
+            RepositoryEvent::StashEntriesChanged
+                if matches!(self.log_source, LogSource::All(_)) =>
+            {
                 // Stash entries initial's scan id is 2, so we don't want to invalidate the graph before that
                 if repository.read(cx).scan_id > 2 {
                     self.pending_select_sha = None;
@@ -1697,17 +1774,65 @@ impl GitGraph {
     ///  format refers to the currently checked-out branch.
     fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
         head_branch_name.as_ref().is_some_and(|head| {
-            ref_name == head.as_ref() || ref_name.strip_prefix("HEAD -> ") == Some(head.as_ref())
+            let name = ref_name.strip_prefix("HEAD -> ").unwrap_or(ref_name);
+            let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+            name == head.as_ref()
         })
     }
 
-    /// Extracts a ref name (branch, remote ref, or tag) from a decoration in
-    /// git's `%D` format, returning `None` for a detached `HEAD`.
+    /// Whether a decoration in git's `%D` format (with `--decorate=full`) names
+    /// a remote-tracking ref.
+    fn is_remote_decoration(decoration: &str) -> bool {
+        decoration.starts_with("refs/remotes/")
+    }
+
+    /// Whether a ref decoration should be shown under the given branch filter.
+    fn decoration_matches_filter(decoration: &str, filter: BranchFilter) -> bool {
+        match filter {
+            BranchFilter::All => true,
+            BranchFilter::Local => !Self::is_remote_decoration(decoration),
+            BranchFilter::Remote => Self::is_remote_decoration(decoration),
+        }
+    }
+
+    /// Strips the shortening namespaces (`refs/heads/`, `refs/remotes/`,
+    /// `refs/tags/`) from a ref path, if present.
+    fn short_ref_name(name: &str) -> &str {
+        name.strip_prefix("refs/heads/")
+            .or_else(|| name.strip_prefix("refs/remotes/"))
+            .or_else(|| name.strip_prefix("refs/tags/"))
+            .unwrap_or(name)
+    }
+
+    /// Converts a full-form decoration (`--decorate=full`) into the short form
+    /// used for display, e.g. `HEAD -> refs/heads/main` becomes `HEAD -> main`.
+    /// Decorations that carry no shortening namespace (detached `HEAD`,
+    /// `refs/stash`, or short forms from a collab host predating
+    /// `--decorate=full`) pass through unchanged.
+    fn decoration_display_name(decoration: &SharedString) -> SharedString {
+        let (prefix, name) = if let Some(name) = decoration.strip_prefix("tag: ") {
+            ("tag: ", name)
+        } else if let Some(name) = decoration.strip_prefix("HEAD -> ") {
+            ("HEAD -> ", name)
+        } else {
+            ("", decoration.as_ref())
+        };
+        let short_name = Self::short_ref_name(name);
+        if short_name.len() == name.len() {
+            decoration.clone()
+        } else {
+            SharedString::from(format!("{prefix}{short_name}"))
+        }
+    }
+
+    /// Extracts a short ref name (branch, remote ref, or tag) from a decoration
+    /// in git's `%D` format, returning `None` for a detached `HEAD`.
     fn ref_name_from_decoration(decoration: &str) -> Option<SharedString> {
         let name = decoration
             .strip_prefix("tag: ")
             .or_else(|| decoration.strip_prefix("HEAD -> "))
             .unwrap_or(decoration);
+        let name = Self::short_ref_name(name);
         if name.is_empty() || name == "HEAD" {
             return None;
         }
@@ -1720,7 +1845,7 @@ impl GitGraph {
         accent_color: gpui::Hsla,
         is_head: bool,
     ) -> impl IntoElement {
-        Chip::new(name.clone())
+        Chip::new(Self::decoration_display_name(name))
             .label_size(LabelSize::Small)
             .truncate()
             .map(|chip| {
@@ -1784,6 +1909,8 @@ impl GitGraph {
                 .as_ref()
                 .map(|branch| SharedString::from(branch.name().to_string()))
         });
+
+        let branch_filter = self.branch_filter();
 
         let row_height = Self::row_height(window, cx);
 
@@ -1897,21 +2024,37 @@ impl GitGraph {
                             h_flex()
                                 .gap_2()
                                 .overflow_hidden()
-                                .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
-                                        |name| {
-                                            let is_head =
-                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                            self.render_ref_chip(
-                                                name,
-                                                accent_color,
-                                                is_head,
-                                                idx,
-                                                cx,
+                                .children({
+                                    let visible_refs = commit
+                                        .data
+                                        .ref_names
+                                        .iter()
+                                        .filter(|name| {
+                                            Self::decoration_matches_filter(
+                                                name.as_ref(),
+                                                branch_filter,
                                             )
-                                        },
-                                    ))
-                                }))
+                                        })
+                                        .cloned()
+                                        .collect::<Vec<_>>();
+                                    (!visible_refs.is_empty()).then(|| {
+                                        h_flex().gap_1().children(visible_refs.into_iter().map(
+                                            |name| {
+                                                let is_head = Self::is_head_ref(
+                                                    name.as_ref(),
+                                                    &head_branch_name,
+                                                );
+                                                self.render_ref_chip(
+                                                    &name,
+                                                    accent_color,
+                                                    is_head,
+                                                    idx,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    })
+                                })
                                 .child(subject_label),
                         )
                         .into_any_element(),
@@ -2665,6 +2808,46 @@ impl GitGraph {
                             ),
                     ),
             )
+            .children(self.render_branch_filter_menu(cx))
+    }
+
+    /// Renders the branch-type filter control (All / Local / Remote) shown after
+    /// the search navigation controls. Hidden when the log source does not walk
+    /// all history (e.g. path or single-commit history), where the filter has no
+    /// meaning.
+    fn render_branch_filter_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !matches!(self.log_source, LogSource::All(_)) {
+            return None;
+        }
+
+        let branch_filter = self.branch_filter();
+        let is_filtered = branch_filter != BranchFilter::All;
+
+        Some(
+            PopoverMenu::new("git-graph-branch-filter-menu")
+                .with_handle(self.branch_filter_menu_handle.clone())
+                .trigger(
+                    IconButton::new("git-graph-branch-filter", IconName::Filter)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(is_filtered)
+                        .when(is_filtered, |this| {
+                            this.indicator(Indicator::dot().color(Color::Info))
+                        })
+                        .tooltip(Tooltip::text("Filter Branches")),
+                )
+                .menu({
+                    let graph = cx.entity().downgrade();
+                    move |window, cx| {
+                        let graph = graph.clone();
+                        graph
+                            .read_with(cx, |graph, _| graph.branch_filter())
+                            .ok()
+                            .map(|current| build_branch_filter_menu(current, graph, window, cx))
+                    }
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_loading_spinner(&self, cx: &App) -> AnyElement {
@@ -2700,7 +2883,14 @@ impl GitGraph {
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
-        let ref_names = commit_entry.data.ref_names.clone();
+        let branch_filter = self.branch_filter();
+        let ref_names = commit_entry
+            .data
+            .ref_names
+            .iter()
+            .filter(|name| Self::decoration_matches_filter(name.as_ref(), branch_filter))
+            .cloned()
+            .collect::<Vec<_>>();
 
         let head_branch_name: Option<SharedString> = repository
             .read(cx)
@@ -4052,6 +4242,9 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::toggle_changed_files_view))
+            .on_action(cx.listener(|this, _: &CycleBranchFilter, _window, cx| {
+                this.cycle_branch_filter(cx);
+            }))
             .on_action(cx.listener(Self::focus_next_tab_stop))
             .on_action(cx.listener(Self::focus_previous_tab_stop))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
@@ -4357,7 +4550,7 @@ mod persistence {
     };
     use git::{
         Oid,
-        repository::{LogOrder, LogSource, RepoPath},
+        repository::{BranchFilter, LogOrder, LogSource, RepoPath},
     };
     use workspace::WorkspaceDb;
 
@@ -4409,16 +4602,33 @@ mod persistence {
 
     pub fn serialize_log_source_type(log_source: &LogSource) -> i32 {
         match log_source {
-            LogSource::All => LOG_SOURCE_ALL,
+            LogSource::All(_) => LOG_SOURCE_ALL,
             LogSource::Branch(_) => LOG_SOURCE_BRANCH,
             LogSource::Sha(_) => LOG_SOURCE_SHA,
             LogSource::Path(_) => LOG_SOURCE_PATH,
         }
     }
 
+    fn serialize_branch_filter(filter: BranchFilter) -> String {
+        match filter {
+            BranchFilter::All => "all",
+            BranchFilter::Local => "local",
+            BranchFilter::Remote => "remote",
+        }
+        .to_string()
+    }
+
+    fn deserialize_branch_filter(value: Option<&String>) -> BranchFilter {
+        match value.map(String::as_str) {
+            Some("local") => BranchFilter::Local,
+            Some("remote") => BranchFilter::Remote,
+            _ => BranchFilter::All,
+        }
+    }
+
     pub fn serialize_log_source_value(log_source: &LogSource) -> Option<String> {
         match log_source {
-            LogSource::All => None,
+            LogSource::All(filter) => Some(serialize_branch_filter(*filter)),
             LogSource::Branch(branch) => Some(branch.to_string()),
             LogSource::Sha(oid) => Some(oid.to_string()),
             LogSource::Path(path) => Some(path.as_unix_str().to_string()),
@@ -4436,7 +4646,9 @@ mod persistence {
 
     pub fn deserialize_log_source(state: &SerializedGitGraphState) -> LogSource {
         match state.log_source_type {
-            Some(LOG_SOURCE_ALL) => LogSource::All,
+            Some(LOG_SOURCE_ALL) => {
+                LogSource::All(deserialize_branch_filter(state.log_source_value.as_ref()))
+            }
             Some(LOG_SOURCE_BRANCH) => state
                 .log_source_value
                 .as_ref()
@@ -4717,6 +4929,71 @@ mod tests {
             language_model::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[test]
+    fn test_decoration_matches_filter() {
+        let is_remote = GitGraph::is_remote_decoration;
+        assert!(is_remote("refs/remotes/origin/main"));
+        assert!(is_remote("refs/remotes/upstream/feature"));
+        assert!(!is_remote("refs/heads/main"));
+        // A local branch whose short form (`origin/tricky`) looks like a
+        // remote ref.
+        assert!(!is_remote("refs/heads/origin/tricky"));
+        assert!(!is_remote("tag: refs/tags/v1.0.0"));
+        assert!(!is_remote("HEAD -> refs/heads/main"));
+        assert!(!is_remote("HEAD"));
+        assert!(!is_remote("refs/stash"));
+
+        let matches = GitGraph::decoration_matches_filter;
+
+        // All keeps everything.
+        assert!(matches("refs/remotes/origin/main", BranchFilter::All));
+        assert!(matches("refs/heads/main", BranchFilter::All));
+        assert!(matches("tag: refs/tags/v1.0.0", BranchFilter::All));
+
+        // Local drops remote refs, keeps local branches, tags, and HEAD.
+        assert!(!matches("refs/remotes/origin/main", BranchFilter::Local));
+        assert!(matches("refs/heads/main", BranchFilter::Local));
+        assert!(matches("tag: refs/tags/v1.0.0", BranchFilter::Local));
+        assert!(matches("HEAD -> refs/heads/main", BranchFilter::Local));
+
+        // Remote keeps only remote refs.
+        assert!(matches("refs/remotes/origin/main", BranchFilter::Remote));
+        assert!(!matches("refs/heads/main", BranchFilter::Remote));
+        assert!(!matches("tag: refs/tags/v1.0.0", BranchFilter::Remote));
+        assert!(!matches("HEAD -> refs/heads/main", BranchFilter::Remote));
+    }
+
+    #[test]
+    fn test_decoration_display_name() {
+        let display =
+            |d: &str| GitGraph::decoration_display_name(&SharedString::from(d.to_string()));
+        assert_eq!(display("HEAD -> refs/heads/main"), "HEAD -> main");
+        assert_eq!(display("refs/heads/main"), "main");
+        assert_eq!(display("refs/heads/origin/tricky"), "origin/tricky");
+        assert_eq!(display("refs/remotes/origin/main"), "origin/main");
+        assert_eq!(display("tag: refs/tags/v1.0.0"), "tag: v1.0.0");
+        assert_eq!(display("refs/stash"), "refs/stash");
+        assert_eq!(display("HEAD"), "HEAD");
+        // Short decorations from a collab host predating `--decorate=full`
+        // pass through unchanged.
+        assert_eq!(display("HEAD -> main"), "HEAD -> main");
+        assert_eq!(display("origin/main"), "origin/main");
+        assert_eq!(display("tag: v1.0.0"), "tag: v1.0.0");
+    }
+
+    #[test]
+    fn test_is_head_ref() {
+        let head = Some(SharedString::from("main"));
+        assert!(GitGraph::is_head_ref("HEAD -> refs/heads/main", &head));
+        assert!(GitGraph::is_head_ref("refs/heads/main", &head));
+        // Short decorations from a collab host predating `--decorate=full`.
+        assert!(GitGraph::is_head_ref("HEAD -> main", &head));
+        assert!(GitGraph::is_head_ref("main", &head));
+        assert!(!GitGraph::is_head_ref("refs/remotes/origin/main", &head));
+        assert!(!GitGraph::is_head_ref("refs/heads/other", &head));
+        assert!(!GitGraph::is_head_ref("main", &None));
     }
 
     fn build_oid_to_row_map(graph: &GraphData) -> HashMap<Oid, usize> {
@@ -5862,7 +6139,7 @@ mod tests {
         };
         assert_eq!(
             persistence::deserialize_log_source(&all_state),
-            LogSource::All
+            LogSource::All(BranchFilter::All)
         );
         assert!(matches!(
             persistence::deserialize_log_order(&all_state),
@@ -5892,7 +6169,7 @@ mod tests {
         let empty_state = SerializedGitGraphState::default();
         assert_eq!(
             persistence::deserialize_log_source(&empty_state),
-            LogSource::All
+            LogSource::All(BranchFilter::All)
         );
         assert!(matches!(
             persistence::deserialize_log_order(&empty_state),
@@ -6053,7 +6330,7 @@ mod tests {
         restored_graph.read_with(&*cx, |graph, _| {
             assert_eq!(
                 graph.log_source,
-                LogSource::All,
+                LogSource::All(BranchFilter::All),
                 "log_source should be restored"
             );
 
@@ -6760,7 +7037,7 @@ mod tests {
                 workspace,
                 repository.read(cx).id,
                 project.read(cx).git_store().clone(),
-                LogSource::All,
+                LogSource::All(BranchFilter::All),
                 Some(first_sha.to_string()),
                 window,
                 cx,
@@ -7244,6 +7521,22 @@ mod tests {
             Some("v1.0".into())
         );
         assert_eq!(GitGraph::ref_name_from_decoration("HEAD"), None);
+        assert_eq!(
+            GitGraph::ref_name_from_decoration("HEAD -> refs/heads/main"),
+            Some("main".into())
+        );
+        assert_eq!(
+            GitGraph::ref_name_from_decoration("refs/heads/main"),
+            Some("main".into())
+        );
+        assert_eq!(
+            GitGraph::ref_name_from_decoration("refs/remotes/origin/main"),
+            Some("origin/main".into())
+        );
+        assert_eq!(
+            GitGraph::ref_name_from_decoration("tag: refs/tags/v1.0"),
+            Some("v1.0".into())
+        );
     }
 
     #[gpui::test]

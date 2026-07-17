@@ -34,11 +34,12 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        Branch, BranchFilter, BranchesScanResult, CommitData, CommitDetails, CommitDiff,
+        CommitFile, CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions,
+        FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
+        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
+        delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -5595,7 +5596,7 @@ impl Repository {
             RepositoryEvent::StashEntriesChanged => {
                 if self.scan_id > 2 {
                     self.initial_graph_data
-                        .retain(|(log_source, _), _| *log_source != LogSource::All);
+                        .retain(|(log_source, _), _| !matches!(log_source, LogSource::All(_)));
                 }
             }
             _ => {}
@@ -9661,10 +9662,28 @@ fn deserialize_blame_buffer_response(
     })
 }
 
+fn branch_filter_to_proto(filter: BranchFilter) -> proto::git_log_source_all::BranchFilter {
+    match filter {
+        BranchFilter::All => proto::git_log_source_all::BranchFilter::All,
+        BranchFilter::Local => proto::git_log_source_all::BranchFilter::Local,
+        BranchFilter::Remote => proto::git_log_source_all::BranchFilter::Remote,
+    }
+}
+
+fn branch_filter_from_proto(filter: i32) -> BranchFilter {
+    match proto::git_log_source_all::BranchFilter::from_i32(filter) {
+        Some(proto::git_log_source_all::BranchFilter::Local) => BranchFilter::Local,
+        Some(proto::git_log_source_all::BranchFilter::Remote) => BranchFilter::Remote,
+        Some(proto::git_log_source_all::BranchFilter::All) | None => BranchFilter::All,
+    }
+}
+
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
     proto::GitLogSource {
         source: Some(match log_source {
-            LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
+            LogSource::All(filter) => proto::git_log_source::Source::All(proto::GitLogSourceAll {
+                branch_filter: branch_filter_to_proto(*filter) as i32,
+            }),
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
             LogSource::Path(path) => {
@@ -9679,7 +9698,9 @@ fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
         .source
         .context("git log source is missing source")?
     {
-        proto::git_log_source::Source::All(_) => Ok(LogSource::All),
+        proto::git_log_source::Source::All(all) => {
+            Ok(LogSource::All(branch_filter_from_proto(all.branch_filter)))
+        }
         proto::git_log_source::Source::Branch(branch) => Ok(LogSource::Branch(branch.into())),
         proto::git_log_source::Source::Sha(sha) => Ok(LogSource::Sha(Oid::from_str(&sha)?)),
         proto::git_log_source::Source::Path(path) => {
@@ -9949,6 +9970,16 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_log_source_all_branch_filter_proto_round_trip() {
+        for filter in [BranchFilter::All, BranchFilter::Local, BranchFilter::Remote] {
+            let source = LogSource::All(filter);
+            let round_tripped = log_source_from_proto(log_source_to_proto(&source))
+                .expect("round trip should succeed");
+            assert_eq!(round_tripped, source);
+        }
     }
 
     #[gpui::test]
