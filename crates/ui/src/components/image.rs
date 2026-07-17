@@ -86,13 +86,12 @@ impl RenderOnce for Vector {
         let width = self.size.width;
         let height = self.size.height;
 
-        svg()
+        svg(self.path)
             // By default, prevent the SVG from stretching
             // to fill its container.
             .flex_none()
             .w(width)
             .h(height)
-            .path(self.path)
             .text_color(self.color.color(cx))
             .with_transformation(self.transformation)
     }

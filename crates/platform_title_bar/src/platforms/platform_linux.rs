@@ -211,10 +211,9 @@ impl RenderOnce for WindowControl {
             WindowControlType::Restore | WindowControlType::Maximize => window.is_resizable(),
             WindowControlType::Close => true,
         };
-        let icon = svg()
+        let icon = svg(self.icon.icon().path())
             .size_4()
             .flex_none()
-            .path(self.icon.icon().path())
             .text_color(if enabled {
                 self.style.icon
             } else {
