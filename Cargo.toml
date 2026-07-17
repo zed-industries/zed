@@ -555,6 +555,7 @@ aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bitflags = "2.6.0"
+block2 = "0.6"
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -669,6 +670,7 @@ moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+notify-rust = "4"
 nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
@@ -700,6 +702,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSProcessInfo",
     "NSRange",
     "NSRunLoop",
+    "NSSet",
     "NSString",
     "NSURL",
     "NSUndoManager",
@@ -707,6 +710,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-user-notifications = "0.3"
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -880,15 +884,16 @@ yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
 
-
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
+    "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
+    "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Foundation",
@@ -910,6 +915,7 @@ features = [
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
