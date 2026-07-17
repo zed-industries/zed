@@ -1130,6 +1130,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    registered_language_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
     load_diff_task: Option<Shared<Task<()>>>,
     diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
     selection_mark_mode: bool,
@@ -2030,8 +2031,14 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::LanguageServerRemoved(_) => {
+                    project::Event::LanguageServerRemoved(server_id) => {
                         editor.registered_buffers.clear();
+                        editor
+                            .registered_language_servers
+                            .retain(|_, known_servers| {
+                                known_servers.remove(server_id);
+                                !known_servers.is_empty()
+                            });
                         editor.register_visible_buffers(cx);
                         editor.invalidate_semantic_tokens(None);
                         editor.refresh_runnables(None, window, cx);
@@ -2060,13 +2067,37 @@ impl Editor {
                             }
                         }
                     }
-                    project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                    project::Event::LanguageServerBufferRegistered {
+                        buffer_id,
+                        server_id,
+                        ..
+                    } => {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            // `hint_chunk_fetching` is tracked per buffer, not per server,
+                            // so a newly-added server requires re-fetching visible chunks.
+                            let known_servers = editor
+                                .registered_language_servers
+                                .entry(buffer_id)
+                                .or_default();
+                            let is_new_server = known_servers.insert(*server_id);
+                            if is_new_server && known_servers.len() > 1 {
+                                if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
+                                    inlay_hints.invalidate_for_new_server(&buffer_id);
+                                }
+                                if let Some(semantics_provider) = editor.semantics_provider() {
+                                    let mut buffers = HashSet::default();
+                                    buffers.insert(buffer_id);
+                                    semantics_provider.invalidate_inlay_hints(&buffers, cx);
+                                }
+                                editor.refresh_inlay_hints(InlayHintRefreshReason::ServerAdded, cx);
+                            } else {
+                                editor
+                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            }
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);
@@ -2438,6 +2469,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
             registered_buffers: HashMap::default(),
+            registered_language_servers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -9612,6 +9644,7 @@ impl Editor {
                 );
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
+                    self.registered_language_servers.remove(buffer_id);
                     self.clear_runnables(Some(*buffer_id));
                     self.semantic_token_state.invalidate_buffer(buffer_id);
                     self.lsp_document_symbols.remove(buffer_id);

@@ -224,6 +224,13 @@ impl LspInlayHintData {
             self.hint_chunk_fetching.remove(buffer_id);
         }
     }
+
+    pub(crate) fn invalidate_for_new_server(&mut self, buffer_id: &BufferId) {
+        self.hint_refresh_tasks.remove(buffer_id);
+        if let Some((_, chunks)) = self.hint_chunk_fetching.get_mut(buffer_id) {
+            chunks.clear();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +241,7 @@ pub enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(BufferId),
     ServerRemoved,
+    ServerAdded,
     RefreshRequested {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -323,7 +331,8 @@ impl Editor {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_)
-            | InlayHintRefreshReason::ServerRemoved => true,
+            | InlayHintRefreshReason::ServerRemoved
+            | InlayHintRefreshReason::ServerAdded => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::BuffersRemoved(_) => false,
@@ -539,6 +548,7 @@ impl Editor {
                 return None;
             }
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
+            InlayHintRefreshReason::ServerAdded => InvalidationStrategy::None,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {
@@ -4384,7 +4394,7 @@ let c = 3;"#
             .unwrap();
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 30)]
     async fn test_refresh_requested_multi_server(cx: &mut gpui::TestAppContext) {
         // Bug 2: When one LSP server sends workspace/inlayHint/refresh, the editor
         // wipes all tracking state via clear(), then spawns tasks that call
