@@ -7,20 +7,20 @@ use futures::channel::mpsc::unbounded;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, Stream, StreamExt as _, TryStreamExt as _, pin_mut};
 use gpui::{App, BackgroundExecutor, Task};
-use yawc::WebSocket;
-use yawc::frame::{FrameView, OpCode};
+use yawc::TcpWebSocket;
+use yawc::frame::{Frame, OpCode};
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type MessageStream = Pin<Box<dyn Stream<Item = Result<MessageToClient>>>>;
 
 pub struct Connection {
-    tx: SplitSink<WebSocket, FrameView>,
-    rx: SplitStream<WebSocket>,
+    tx: SplitSink<TcpWebSocket, Frame>,
+    rx: SplitStream<TcpWebSocket>,
 }
 
 impl Connection {
-    pub fn new(ws: WebSocket) -> Self {
+    pub fn new(ws: TcpWebSocket) -> Self {
         let (tx, rx) = ws.split();
 
         Self { tx, rx }
@@ -42,7 +42,7 @@ impl Connection {
             loop {
                 futures::select_biased! {
                     _ = keepalive_timer => {
-                        let _ = tx.send(FrameView::ping(Vec::new())).await;
+                        let _ = tx.send(Frame::ping(Vec::new())).await;
 
                         keepalive_timer.set(executor.timer(KEEPALIVE_INTERVAL).fuse());
                     }
@@ -51,9 +51,9 @@ impl Connection {
                             break;
                         };
 
-                        match frame.opcode {
+                        match frame.opcode() {
                             OpCode::Binary => {
-                                let message_result = MessageToClient::deserialize(&frame.payload);
+                                let message_result = MessageToClient::deserialize(frame.payload());
                                 message_tx.unbounded_send(message_result).ok();
                             }
                             OpCode::Close => {
