@@ -61,7 +61,7 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot,
-    future::{Either, Shared, join_all, pending, select},
+    future::{Either, Shared, join_all, select},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -123,7 +123,6 @@ use std::{
     collections::{VecDeque, hash_map},
     convert::TryInto,
     ffi::OsStr,
-    future::ready,
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
@@ -14152,9 +14151,10 @@ fn lsp_workspace_diagnostics_refresh(
         let mut requests = 0;
 
         loop {
-            let Some(mut completion_tx) = refresh_rx.recv().await else {
+            let Some(completion_tx) = refresh_rx.recv().await else {
                 return;
             };
+            let mut completion_txs = completion_tx.into_iter().collect::<Vec<_>>();
 
             'request: loop {
                 requests += 1;
@@ -14169,6 +14169,12 @@ fn lsp_workspace_diagnostics_refresh(
                     .timer(Duration::from_millis(backoff_millis))
                     .await;
                 attempts += 1;
+
+                // Absorb refresh requests that queued up in the meantime, so their
+                // waiters are resolved by this attempt instead of waiting behind it.
+                while let Ok(queued_refresh) = refresh_rx.try_recv() {
+                    completion_txs.extend(queued_refresh);
+                }
 
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
@@ -14196,8 +14202,21 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                let timer = server.request_timer(timeout).fuse();
-                let progress = pin!(progress_rx.recv().fuse());
+                // Restart the timeout whenever a partial result arrives: streaming
+                // servers may legitimately take longer than a single timeout period,
+                // but a server that stops streaming without completing the request
+                // should still time out instead of hanging forever.
+                let timer = async {
+                    loop {
+                        let timer = pin!(server.request_timer(timeout).fuse());
+                        let progress = pin!(progress_rx.recv().fuse());
+                        match select(timer, progress).await {
+                            Either::Left((message, ..)) => break message,
+                            Either::Right((Some(()), ..)) => {}
+                            Either::Right((None, timer)) => break timer.await,
+                        }
+                    }
+                };
                 let response_result = server
                     .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
                         lsp::WorkspaceDiagnosticParams {
@@ -14208,10 +14227,7 @@ fn lsp_workspace_diagnostics_refresh(
                                 partial_result_token: Some(lsp::ProgressToken::String(token)),
                             },
                         },
-                        select(timer, progress).then(|either| match either {
-                            Either::Left((message, ..)) => ready(message).left_future(),
-                            Either::Right(..) => pending::<String>().right_future(),
-                        }),
+                        timer,
                     )
                     .await;
 
@@ -14220,6 +14236,16 @@ fn lsp_workspace_diagnostics_refresh(
                 match response_result {
                     ConnectionResult::Timeout => {
                         log::error!("Timeout during workspace diagnostics pull");
+                        // Release everyone waiting on this refresh (e.g. the agent's
+                        // diagnostics tool), including waiters that queued up while the
+                        // request was in flight, so they can fall back to cached
+                        // diagnostics instead of waiting through every retry.
+                        while let Ok(queued_refresh) = refresh_rx.try_recv() {
+                            completion_txs.extend(queued_refresh);
+                        }
+                        for tx in completion_txs.drain(..) {
+                            tx.send(false).ok();
+                        }
                         continue 'request;
                     }
                     ConnectionResult::ConnectionReset => {
@@ -14228,7 +14254,7 @@ fn lsp_workspace_diagnostics_refresh(
                     }
                     ConnectionResult::Result(Err(e)) => {
                         log::error!("Error during workspace diagnostics pull: {e:#}");
-                        if let Some(tx) = completion_tx.take() {
+                        for tx in completion_txs.drain(..) {
                             tx.send(false).ok();
                         }
                         break 'request;
@@ -14248,7 +14274,7 @@ fn lsp_workspace_diagnostics_refresh(
                         {
                             return;
                         }
-                        if let Some(tx) = completion_tx.take() {
+                        for tx in completion_txs.drain(..) {
                             tx.send(true).ok();
                         }
                         break 'request;
