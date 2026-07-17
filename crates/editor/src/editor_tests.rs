@@ -9485,6 +9485,59 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
 }
 
 #[gpui::test]
+async fn test_kill_ring_yank_pastes_copied_text_when_kill_ring_is_empty(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("«oneˇ» two three");
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+
+    cx.set_state("two three ˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("two three oneˇ");
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_prefers_clipboard_text_copied_after_kill(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇstale kill\nfresh copy");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state("ˇ\nfresh copy");
+
+    cx.set_state("«freshˇ» copy");
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+
+    cx.set_state("target: ˇline");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("target: freshˇline");
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_uses_kill_ring_when_clipboard_unchanged_since_kill(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("«older copyˇ»");
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+
+    cx.set_state("ˇnewer kill");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("newer killˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("newer killnewer killˇ");
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

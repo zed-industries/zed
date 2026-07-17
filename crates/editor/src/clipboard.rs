@@ -469,6 +469,11 @@ impl Editor {
             _ => None,
         });
 
+        let clipboard_text_at_kill = cx
+            .read_from_clipboard()
+            .and_then(clipboard_string_entry)
+            .map(|(text, _)| text);
+
         let can_append = selection_count == 1 && first_selection_is_empty;
         let item = if can_append
             && let Some(previous_ring) = cx.try_global::<KillRing>()
@@ -496,6 +501,7 @@ impl Editor {
                 column: previous_ring.column,
                 buffer_id: previous_ring.buffer_id,
                 can_append,
+                clipboard_text_at_kill,
             }
         } else {
             KillRing {
@@ -505,6 +511,7 @@ impl Editor {
                 column: selection_start_column,
                 buffer_id,
                 can_append,
+                clipboard_text_at_kill,
             }
         };
 
@@ -517,14 +524,36 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_global::<KillRing>() {
-            return;
+        let clipboard_entry = cx.read_from_clipboard().and_then(clipboard_string_entry);
+
+        // Emacs-style "interprogram paste": if the system clipboard changed
+        // since the last kill (e.g. via `editor::Copy`/`editor::Cut` or
+        // another application), yank the clipboard contents instead of the
+        // kill ring.
+        let clipboard_is_newer = match (cx.try_global::<KillRing>(), &clipboard_entry) {
+            (Some(kill_ring), Some((clipboard_text, _))) => {
+                kill_ring.clipboard_text_at_kill.as_ref() != Some(clipboard_text)
+            }
+            (None, Some(_)) => true,
+            (_, None) => false,
+        };
+
+        if cx.has_global::<KillRing>() {
+            cx.update_global::<KillRing, _>(|kill_ring, _| {
+                kill_ring.can_append = false;
+            });
         }
 
-        let (text, metadata) = cx.update_global::<KillRing, _>(|kill_ring, _| {
-            kill_ring.can_append = false;
-            (kill_ring.text.clone(), kill_ring.metadata.clone())
-        });
+        let (text, metadata) = if clipboard_is_newer && let Some((text, metadata)) = clipboard_entry
+        {
+            (text, metadata)
+        } else if cx.has_global::<KillRing>() {
+            cx.update_global::<KillRing, _>(|kill_ring, _| {
+                (kill_ring.text.clone(), kill_ring.metadata.clone())
+            })
+        } else {
+            return;
+        };
 
         self.do_paste(&text, metadata, false, window, cx);
     }
@@ -686,8 +715,24 @@ struct KillRing {
     column: u32,
     buffer_id: BufferId,
     can_append: bool,
+    /// The system clipboard text observed when this kill happened, used to
+    /// detect whether the clipboard changed after the kill (in which case a
+    /// yank should paste the clipboard instead of the kill ring).
+    clipboard_text_at_kill: Option<String>,
 }
 impl Global for KillRing {}
+
+fn clipboard_string_entry(
+    item: ClipboardItem,
+) -> Option<(String, Option<Vec<ClipboardSelection>>)> {
+    match item.entries().first() {
+        Some(ClipboardEntry::String(entry)) => Some((
+            entry.text().to_string(),
+            entry.metadata_json::<Vec<ClipboardSelection>>(),
+        )),
+        _ => None,
+    }
+}
 
 fn kill_ring_metadata_for_text(
     mut metadata: Vec<ClipboardSelection>,
