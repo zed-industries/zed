@@ -83,14 +83,14 @@ impl CsvPreviewView {
         cx: &mut Context<'_, CsvPreviewView>,
         col_idx: AnyColumn,
     ) -> Button {
-        let sort_btn = Button::new(
+        Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.engine.applied_sorting {
                 Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
                     SortDirection::Asc => "↓",
                     SortDirection::Desc => "↑",
                 },
-                _ => "↕", // Unsorted/available for sorting
+                _ => "↕",
             },
         )
         .size(ButtonSize::Compact)
@@ -114,30 +114,22 @@ impl CsvPreviewView {
         }))
         .on_click(cx.listener(move |this, _event, _window, cx| {
             let new_sorting = match this.engine.applied_sorting {
-                Some(ordering) if ordering.col_idx == col_idx => {
-                    // Same column clicked - cycle through states
-                    match ordering.direction {
-                        SortDirection::Asc => Some(AppliedSorting {
-                            col_idx,
-                            direction: SortDirection::Desc,
-                        }),
-                        SortDirection::Desc => None, // Clear sorting
-                    }
-                }
-                _ => {
-                    // Different column or no sorting - start with ascending
-                    Some(AppliedSorting {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    SortDirection::Asc => Some(AppliedSorting {
                         col_idx,
-                        direction: SortDirection::Asc,
-                    })
-                }
+                        direction: SortDirection::Desc,
+                    }),
+                    SortDirection::Desc => None,
+                },
+                _ => Some(AppliedSorting {
+                    col_idx,
+                    direction: SortDirection::Asc,
+                }),
             };
-
             this.engine.applied_sorting = new_sorting;
             this.apply_sort(cx);
             cx.notify();
-        }));
-        sort_btn
+        }))
     }
 
     fn create_filter_button(
