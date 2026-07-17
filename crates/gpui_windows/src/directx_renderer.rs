@@ -27,6 +27,8 @@ pub(crate) const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSI
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
+// Number of consecutive frames a pipeline buffer must stay at low usage.
+const SHRINK_AFTER_LOW_USAGE_FRAMES: u32 = 8;
 
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
@@ -380,6 +382,10 @@ impl DirectXRenderer {
                 )
             })?;
         }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        self.pipelines
+            .path_rasterization_pipeline
+            .end_frame_maintenance(&devices.device)?;
         self.present()
     }
 
@@ -1003,6 +1009,10 @@ struct PipelineState<T> {
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
+    min_buffer_size: usize,
+    frame_peak: usize,
+    window_peak: usize,
+    low_usage_frames: u32,
     view: Option<ID3D11ShaderResourceView>,
     blend_state: ID3D11BlendState,
     _marker: std::marker::PhantomData<T>,
@@ -1033,6 +1043,10 @@ impl<T> PipelineState<T> {
             fragment,
             buffer,
             buffer_size,
+            min_buffer_size: buffer_size,
+            frame_peak: 0,
+            window_peak: 0,
+            low_usage_frames: 0,
             view,
             blend_state,
             _marker: std::marker::PhantomData,
@@ -1045,6 +1059,7 @@ impl<T> PipelineState<T> {
         device_context: &ID3D11DeviceContext,
         data: &[T],
     ) -> Result<()> {
+        self.frame_peak = self.frame_peak.max(data.len());
         if self.buffer_size < data.len() {
             let new_buffer_size = data.len().next_power_of_two();
             log::debug!(
@@ -1060,6 +1075,40 @@ impl<T> PipelineState<T> {
             self.buffer_size = new_buffer_size;
         }
         update_buffer(device_context, &self.buffer, data)
+    }
+
+    fn end_frame_maintenance(&mut self, device: &ID3D11Device) -> Result<()> {
+        let peak = std::mem::take(&mut self.frame_peak);
+        if self.buffer_size > self.min_buffer_size && peak.saturating_mul(4) <= self.buffer_size {
+            self.low_usage_frames = self.low_usage_frames.saturating_add(1);
+            self.window_peak = self.window_peak.max(peak);
+            if self.low_usage_frames >= SHRINK_AFTER_LOW_USAGE_FRAMES {
+                let new_buffer_size = self
+                    .window_peak
+                    .saturating_mul(2)
+                    .next_power_of_two()
+                    .max(self.min_buffer_size);
+                if new_buffer_size < self.buffer_size {
+                    log::debug!(
+                        "Shrinking {} buffer size from {} to {}",
+                        self.label,
+                        self.buffer_size,
+                        new_buffer_size
+                    );
+                    let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
+                    let view = create_buffer_view(device, &buffer)?;
+                    self.buffer = buffer;
+                    self.view = view;
+                    self.buffer_size = new_buffer_size;
+                }
+                self.low_usage_frames = 0;
+                self.window_peak = 0;
+            }
+        } else {
+            self.low_usage_frames = 0;
+            self.window_peak = 0;
+        }
+        Ok(())
     }
 
     fn draw(
