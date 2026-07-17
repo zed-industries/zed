@@ -643,7 +643,7 @@ fn run() -> Result<()> {
         cli::OpenBehavior::Default
     };
 
-    let mut env = {
+    let mut env: Option<collections::HashMap<String, String>> = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             use collections::HashMap;
