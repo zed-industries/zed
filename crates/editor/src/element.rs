@@ -5988,6 +5988,7 @@ impl EditorElement {
                 start: point.row(),
                 end: point.row(),
                 color: *color,
+                hollow: false,
             })
             .collect_vec();
         scrollbar_layout.marker_quads_for_ranges(cursor_ranges, None)
@@ -6014,6 +6015,42 @@ impl EditorElement {
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+            let git_diff_marker_ranges = if scrollbar_settings.git_diff {
+                let diff_hunk_delegate = editor.diff_hunk_delegate();
+                let hunk_style = ProjectSettings::get_global(cx).git.hunk_style;
+                snapshot
+                    .buffer_snapshot()
+                    .diff_hunks()
+                    .map(|hunk| {
+                        let start_display_row = MultiBufferPoint::new(hunk.row_range.start.0, 0)
+                            .to_display_point(&snapshot.display_snapshot)
+                            .row();
+                        let mut end_display_row = MultiBufferPoint::new(hunk.row_range.end.0, 0)
+                            .to_display_point(&snapshot.display_snapshot)
+                            .row();
+                        if end_display_row != start_display_row {
+                            end_display_row.0 -= 1;
+                        }
+                        let status = hunk.status();
+                        let color = match &status.kind {
+                            DiffHunkStatusKind::Added => theme.colors().version_control_added,
+                            DiffHunkStatusKind::Modified => theme.colors().version_control_modified,
+                            DiffHunkStatusKind::Deleted => theme.colors().version_control_deleted,
+                        };
+                        ColoredRange {
+                            start: start_display_row,
+                            end: end_display_row,
+                            color,
+                            hollow: Self::diff_hunk_hollow_for_staging(
+                                diff_hunk_delegate.render_hunk_as_staged(&status, cx),
+                                hunk_style,
+                            ),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -6024,40 +6061,9 @@ impl EditorElement {
                             let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
-                                let marker_row_ranges =
-                                    snapshot.buffer_snapshot().diff_hunks().map(|hunk| {
-                                        let start_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        if end_display_row != start_display_row {
-                                            end_display_row.0 -= 1;
-                                        }
-                                        let color = match &hunk.status().kind {
-                                            DiffHunkStatusKind::Added => {
-                                                theme.colors().version_control_added
-                                            }
-                                            DiffHunkStatusKind::Modified => {
-                                                theme.colors().version_control_modified
-                                            }
-                                            DiffHunkStatusKind::Deleted => {
-                                                theme.colors().version_control_deleted
-                                            }
-                                        };
-                                        ColoredRange {
-                                            start: start_display_row,
-                                            end: end_display_row,
-                                            color,
-                                        }
-                                    });
-
                                 marker_quads.extend(
                                     scrollbar_layout
-                                        .marker_quads_for_ranges(marker_row_ranges, Some(0)),
+                                        .marker_quads_for_ranges(git_diff_marker_ranges, Some(0)),
                                 );
                             }
 
@@ -6090,6 +6096,7 @@ impl EditorElement {
                                             start: display_start.row(),
                                             end: display_end.row(),
                                             color,
+                                            hollow: false,
                                         }
                                     });
                                     marker_quads.extend(
@@ -6152,6 +6159,7 @@ impl EditorElement {
                                         start: start_display.row(),
                                         end: end_display.row(),
                                         color,
+                                        hollow: false,
                                     }
                                 });
                                 marker_quads.extend(
@@ -6564,15 +6572,24 @@ impl EditorElement {
     }
 
     fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged = !self
+        let render_hunk_as_staged = self
             .editor
             .read(cx)
             .diff_hunk_delegate()
             .render_hunk_as_staged(&status, cx);
-        let unstaged_hollow = matches!(
+
+        Self::diff_hunk_hollow_for_staging(
+            render_hunk_as_staged,
             ProjectSettings::get_global(cx).git.hunk_style,
-            GitHunkStyleSetting::UnstagedHollow
-        );
+        )
+    }
+
+    fn diff_hunk_hollow_for_staging(
+        render_hunk_as_staged: bool,
+        hunk_style: GitHunkStyleSetting,
+    ) -> bool {
+        let unstaged = !render_hunk_as_staged;
+        let unstaged_hollow = matches!(hunk_style, GitHunkStyleSetting::UnstagedHollow);
 
         unstaged == unstaged_hollow
     }
@@ -9660,6 +9677,7 @@ struct ColoredRange<T> {
     start: T,
     end: T,
     color: Hsla,
+    hollow: bool,
 }
 
 impl Along for ScrollbarAxes {
@@ -9996,6 +10014,7 @@ impl ScrollbarLayout {
                     start: start_y,
                     end: end_y,
                     color: range.color,
+                    hollow: range.hollow,
                 }
             })
             .peekable();
@@ -10005,6 +10024,7 @@ impl ScrollbarLayout {
             while let Some(next_pixel_range) = pixel_ranges.peek() {
                 if pixel_range.end >= next_pixel_range.start - px(1.0)
                     && pixel_range.color == next_pixel_range.color
+                    && pixel_range.hollow == next_pixel_range.hollow
                 {
                     pixel_range.end = next_pixel_range.end.max(pixel_range.end);
                     pixel_ranges.next();
@@ -10017,13 +10037,28 @@ impl ScrollbarLayout {
                 point(x_range.start, pixel_range.start),
                 point(x_range.end, pixel_range.end),
             );
+            let (background, border_widths, border_color, border_style) = if pixel_range.hollow {
+                (
+                    pixel_range.color.opacity(0.3),
+                    Edges::all(Self::BORDER_WIDTH),
+                    pixel_range.color,
+                    BorderStyle::Solid,
+                )
+            } else {
+                (
+                    pixel_range.color,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                    BorderStyle::default(),
+                )
+            };
             quads.push(quad(
                 bounds,
                 Corners::default(),
-                pixel_range.color,
-                Edges::default(),
-                Hsla::transparent_black(),
-                BorderStyle::default(),
+                background,
+                border_widths,
+                border_color,
+                border_style,
             ));
         }
 
