@@ -4581,6 +4581,7 @@ dependencies = [
  "anyhow",
  "editor",
  "feature_flags",
+ "fuzzy",
  "gpui",
  "log",
  "picker",

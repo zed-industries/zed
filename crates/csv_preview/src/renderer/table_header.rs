@@ -1,10 +1,19 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use gpui::{DismissEvent, ElementId, Entity, Focusable, Task};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use gpui::{
+    BackgroundExecutor, DismissEvent, ElementId, Entity, Focusable, ForegroundExecutor, Task,
+};
 use picker::{Picker, PickerDelegate};
 use ui::{
-    Color, GradientFade, Icon, IconButton, IconName, IconSize, Label, LabelSize, ListItem,
-    ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
+    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label,
+    LabelSize, ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
@@ -27,7 +36,10 @@ struct ColumnFilterRow {
 
 enum ColumnFilterListEntry {
     Header(SharedString),
-    Row { row_index: usize },
+    Row {
+        row_index: usize,
+        positions: Vec<usize>,
+    },
 }
 
 struct ColumnFilterDelegate {
@@ -41,9 +53,13 @@ struct ColumnFilterDelegate {
     rows: Vec<ColumnFilterRow>,
     /// Number of available (non-hidden) rows, shown in the search placeholder.
     available_count: usize,
+    string_candidates: Arc<Vec<StringMatchCandidate>>,
     filtered: Vec<ColumnFilterListEntry>,
     selected_index: usize,
     query: String,
+    foreground: ForegroundExecutor,
+    background: BackgroundExecutor,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl ColumnFilterDelegate {
@@ -52,6 +68,7 @@ impl ColumnFilterDelegate {
         view: Entity<CsvPreviewView>,
         sort_order: FilterSortOrder,
         column_filters: Arc<Vec<(FilterEntry, FilterEntryState)>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let mut available: Vec<(FilterEntry, bool)> = Vec::new();
         let mut hidden: Vec<(FilterEntry, AnyColumn)> = Vec::new();
@@ -97,16 +114,35 @@ impl ColumnFilterDelegate {
             }))
             .collect();
 
-        let filtered = Self::build_entries(&rows, (0..rows.len()).collect());
+        let string_candidates = Arc::new(
+            rows.iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    StringMatchCandidate::new(index, &Self::display_text(&row.entry))
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let filtered = Self::build_entries(
+            &rows,
+            rows.iter()
+                .enumerate()
+                .map(|(index, _)| (index, Vec::new()))
+                .collect(),
+        );
 
         Self {
             col,
             view,
             rows,
             available_count,
+            string_candidates,
             filtered,
             selected_index: 0,
             query: String::new(),
+            foreground: cx.foreground_executor().clone(),
+            background: cx.background_executor().clone(),
+            cancel: None,
         }
     }
 
@@ -117,21 +153,27 @@ impl ColumnFilterDelegate {
         }
     }
 
-    /// Assembles the flat list shown to the user from matched row indices
-    /// (which must be sorted ascending, matching `rows`' available-then-hidden
-    /// order), inserting a "Hidden by other filters" header before the first
-    /// hidden row.
-    fn build_entries(rows: &[ColumnFilterRow], matches: Vec<usize>) -> Vec<ColumnFilterListEntry> {
+    /// Assembles the flat list shown to the user from matched
+    /// `(row_index, positions)` pairs (which must be sorted ascending by
+    /// `row_index`, matching `rows`' available-then-hidden order), inserting a
+    /// "Hidden by other filters" header before the first hidden row.
+    fn build_entries(
+        rows: &[ColumnFilterRow],
+        matches: Vec<(usize, Vec<usize>)>,
+    ) -> Vec<ColumnFilterListEntry> {
         let mut entries = Vec::with_capacity(matches.len() + 1);
         let mut header_inserted = false;
-        for row_index in matches {
+        for (row_index, positions) in matches {
             if rows[row_index].hidden_by.is_some() && !header_inserted {
                 entries.push(ColumnFilterListEntry::Header(
                     "Hidden by other filters".into(),
                 ));
                 header_inserted = true;
             }
-            entries.push(ColumnFilterListEntry::Row { row_index });
+            entries.push(ColumnFilterListEntry::Row {
+                row_index,
+                positions,
+            });
         }
         entries
     }
@@ -140,23 +182,36 @@ impl ColumnFilterDelegate {
         self.filtered
             .iter()
             .position(|entry| {
-                matches!(entry, ColumnFilterListEntry::Row { row_index }
+                matches!(entry, ColumnFilterListEntry::Row { row_index, .. }
                     if self.rows[*row_index].hidden_by.is_none())
             })
             .unwrap_or(0)
     }
 
-    fn matches_for_query(&self, query: &str) -> Vec<usize> {
+    fn matches_for_query(&self, query: &str) -> Vec<(usize, Vec<usize>)> {
         if query.is_empty() {
-            return (0..self.rows.len()).collect();
+            return self
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(index, _)| (index, Vec::new()))
+                .collect();
         }
 
-        let query = query.to_lowercase();
-        self.rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| Self::display_text(&row.entry).to_lowercase().contains(&query))
-            .map(|(index, _)| index)
+        let cancel_flag = AtomicBool::new(false);
+        let mut matches: Vec<StringMatch> = self.foreground.block_on(match_strings(
+            self.string_candidates.as_ref(),
+            query,
+            false,
+            true,
+            usize::MAX,
+            &cancel_flag,
+            self.background.clone(),
+        ));
+        matches.sort_by_key(|m| m.candidate_id);
+        matches
+            .into_iter()
+            .map(|m| (m.candidate_id, m.positions))
             .collect()
     }
 
@@ -224,7 +279,7 @@ impl PickerDelegate for ColumnFilterDelegate {
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered.get(ix) {
-            Some(ColumnFilterListEntry::Row { row_index }) => {
+            Some(ColumnFilterListEntry::Row { row_index, .. }) => {
                 self.rows[*row_index].hidden_by.is_none()
             }
             _ => false,
@@ -238,18 +293,57 @@ impl PickerDelegate for ColumnFilterDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         self.query = query.clone();
-        self.filtered = Self::build_entries(&self.rows, self.matches_for_query(&query));
-        self.selected_index = self.first_selectable_index();
-        cx.notify();
-        Task::ready(())
+
+        if query.is_empty() {
+            self.filtered = Self::build_entries(&self.rows, self.matches_for_query(&query));
+            self.selected_index = self.first_selectable_index();
+            cx.notify();
+            return Task::ready(());
+        }
+
+        if let Some(prev) = &self.cancel {
+            prev.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = Some(cancel.clone());
+
+        let string_candidates = self.string_candidates.clone();
+        let background = self.background.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut matches = match_strings(
+                string_candidates.as_ref(),
+                &query,
+                false,
+                true,
+                usize::MAX,
+                cancel.as_ref(),
+                background,
+            )
+            .await;
+            matches.sort_by_key(|m| m.candidate_id);
+
+            this.update_in(cx, |this, _, cx| {
+                if this.delegate.query != query {
+                    return;
+                }
+                let rows = &this.delegate.rows;
+                let matches = matches.into_iter().map(|m| (m.candidate_id, m.positions)).collect();
+                this.delegate.filtered = ColumnFilterDelegate::build_entries(rows, matches);
+                this.delegate.selected_index = this.delegate.first_selectable_index();
+                cx.notify();
+            })
+            .ok();
+        })
     }
 
     fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(ColumnFilterListEntry::Row { row_index }) = self.filtered.get(self.selected_index)
+        let Some(ColumnFilterListEntry::Row { row_index, .. }) =
+            self.filtered.get(self.selected_index)
         else {
             return;
         };
@@ -289,14 +383,17 @@ impl PickerDelegate for ColumnFilterDelegate {
                     )
                     .into_any_element(),
             ),
-            ColumnFilterListEntry::Row { row_index } => {
+            ColumnFilterListEntry::Row {
+                row_index,
+                positions,
+            } => {
                 let row = &self.rows[*row_index];
                 let value_text: SharedString = match &row.entry.content {
                     Some(s) => s.clone(),
                     None => "<null>".into(),
                 };
                 let count_text = SharedString::from(row.entry.occurred_times().to_string());
-                let label = Label::new(value_text.clone())
+                let label = HighlightedLabel::new(value_text.clone(), positions.clone())
                     .size(LabelSize::Small)
                     .single_line()
                     .truncate();
@@ -569,7 +666,7 @@ impl CsvPreviewView {
 
                 let picker = cx.new(|cx| {
                     let delegate =
-                        ColumnFilterDelegate::new(col, view_entity, sort_order, column_filters);
+                        ColumnFilterDelegate::new(col, view_entity, sort_order, column_filters, cx);
                     Picker::list(delegate, window, cx)
                         .popover()
                         .initial_width(rems(18.75))
