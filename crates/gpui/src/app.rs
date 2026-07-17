@@ -46,8 +46,8 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, NetworkAvailability,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
     SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
@@ -320,6 +320,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type NetworkAvailabilityHandler = Box<dyn FnMut(NetworkAvailability, &mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -703,6 +704,7 @@ pub struct App {
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) network_availability_observers: SubscriberSet<(), NetworkAvailabilityHandler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -827,6 +829,7 @@ impl App {
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
                 thermal_state_observers: SubscriberSet::new(),
+                network_availability_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -1461,6 +1464,46 @@ impl App {
                     callback(response, &mut app.borrow_mut());
                 }
             }));
+    }
+
+    /// The last network availability reported by the OS.
+    ///
+    /// Returns [`NetworkAvailability::Unknown`] until the platform's monitor
+    /// has delivered its first report; monitoring starts lazily on the first
+    /// call to this method or to [`App::on_network_availability_change`].
+    pub fn network_availability(&self) -> NetworkAvailability {
+        self.platform.network_availability()
+    }
+
+    /// Invokes a handler when network availability changes.
+    pub fn on_network_availability_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(NetworkAvailability, &mut App),
+    {
+        let was_empty = self.network_availability_observers.is_empty();
+        let (subscription, activate) = self.network_availability_observers.insert(
+            (),
+            Box::new(move |availability, cx| {
+                callback(availability, cx);
+                true
+            }),
+        );
+        activate();
+
+        if was_empty {
+            let app = self.this.clone();
+            self.platform
+                .on_network_availability_change(Box::new(move |availability| {
+                    if let Some(app) = app.upgrade() {
+                        let cx = &mut app.borrow_mut();
+                        cx.network_availability_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(availability, cx));
+                    }
+                }));
+        }
+
+        subscription
     }
 
     /// Returns the full pathname of the current app bundle.

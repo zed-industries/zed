@@ -1,10 +1,11 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, NetworkAvailability, NoopTextSystem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
+    SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
+    WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -34,6 +35,8 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub(crate) system_notifications: RefCell<TestSystemNotifications>,
+    network_availability: RefCell<NetworkAvailability>,
+    network_availability_callback: RefCell<Option<Box<dyn FnMut(NetworkAvailability)>>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
@@ -145,6 +148,8 @@ impl TestPlatform {
             weak: weak.clone(),
             opened_url: Default::default(),
             system_notifications: Default::default(),
+            network_availability: RefCell::new(NetworkAvailability::Unknown),
+            network_availability_callback: RefCell::new(None),
             text_system,
             headless_renderer_factory,
         })
@@ -300,6 +305,19 @@ impl TestPlatform {
             self.system_notifications
                 .borrow_mut()
                 .response_callback
+                .get_or_insert(callback);
+        }
+    }
+
+    pub(crate) fn simulate_network_availability_change(&self, availability: NetworkAvailability) {
+        if self.network_availability.replace(availability) == availability {
+            return;
+        }
+        let callback = self.network_availability_callback.borrow_mut().take();
+        if let Some(mut callback) = callback {
+            callback(availability);
+            self.network_availability_callback
+                .borrow_mut()
                 .get_or_insert(callback);
         }
     }
@@ -499,6 +517,16 @@ impl Platform for TestPlatform {
         callback: Box<dyn FnMut(SystemNotificationResponse)>,
     ) {
         self.system_notifications.borrow_mut().response_callback = Some(callback);
+    }
+
+    fn network_availability(&self) -> NetworkAvailability {
+        *self.network_availability.borrow()
+    }
+
+    fn on_network_availability_change(&self, callback: Box<dyn FnMut(NetworkAvailability)>) {
+        self.network_availability_callback
+            .borrow_mut()
+            .replace(callback);
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
