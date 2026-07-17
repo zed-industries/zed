@@ -298,16 +298,10 @@ impl VariableList {
                     contains_local_scope = true;
                 }
 
-                if scope.expensive {
-                    // Don't fetch variables for expensive scopes just to check whether
-                    // they're empty: always keep them in the tree, collapsed, and let
-                    // the user opt in to resolving them by expanding.
-                    return true;
-                }
-
-                self.session.update(cx, |session, cx| {
-                    !session.variables(scope.variables_reference, cx).is_empty()
-                })
+                scope.expensive
+                    || self.session.update(cx, |session, cx| {
+                        !session.variables(scope.variables_reference, cx).is_empty()
+                    })
             })
             .map(|scope| {
                 (
