@@ -1501,7 +1501,6 @@ impl EditorElement {
             thumb_layout: layout,
             thumb_border_style: minimap_settings.thumb_border,
             minimap_line_height,
-            minimap_scroll_top,
             max_scroll_top: total_editor_lines,
         })
     }
@@ -6466,15 +6465,12 @@ impl EditorElement {
                                 let click_position =
                                     event_position.relative_to(&minimap_hitbox.origin).y;
 
-                                let top_position = (click_position
-                                    - thumb_bounds.size.along(minimap_axis) / 2.0)
-                                    .max(Pixels::ZERO);
-
-                                let scroll_offset = (layout.minimap_scroll_top
-                                    + ScrollPixelOffset::from(
-                                        top_position / layout.minimap_line_height,
-                                    ))
-                                .min(layout.max_scroll_top);
+                                let clicked_line =
+                                    ScrollPixelOffset::from(click_position / pixels_per_line);
+                                let visible_lines = layout.thumb_layout.visible_range.end
+                                    - layout.thumb_layout.visible_range.start;
+                                let scroll_offset = (clicked_line - visible_lines / 2.0)
+                                    .clamp(0.0, layout.max_scroll_top);
 
                                 let scroll_position = editor
                                     .scroll_position(cx)
@@ -10038,7 +10034,6 @@ impl ScrollbarLayout {
 struct MinimapLayout {
     pub minimap: AnyElement,
     pub thumb_layout: ScrollbarLayout,
-    pub minimap_scroll_top: ScrollOffset,
     pub minimap_line_height: Pixels,
     pub thumb_border_style: MinimapThumbBorder,
     pub max_scroll_top: ScrollOffset,
