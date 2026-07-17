@@ -5450,6 +5450,24 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 
 See the [debugger page](../debugger.md) for more information about debugging support within Zed.
 
+## Git Graph
+
+- Description: Settings to customize the behavior of the git graph.
+- Setting: `git_graph`
+- Default:
+
+```json [settings]
+{
+  "git_graph": {
+    "default_branch_filter": "all"
+  }
+}
+```
+
+**Options**
+
+- `default_branch_filter`: Which branch types to show when opening the git graph. Can be `all`, `local`, or `remote`
+
 ## Git Panel
 
 - Description: Setting to customize the behavior of the git panel.

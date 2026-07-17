@@ -975,6 +975,11 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "git_graph": {
+    // Which branch types to show when opening the git graph.
+    // Can be 'all', 'local', or 'remote'.
+    "default_branch_filter": "all",
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,

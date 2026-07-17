@@ -162,6 +162,8 @@ pub struct SettingsContent {
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
+    pub git_graph: Option<GitGraphSettingsContent>,
+
     pub git_panel: Option<GitPanelSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
@@ -753,6 +755,40 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct GitGraphSettingsContent {
+    /// Which branch types to show when opening the git graph.
+    ///
+    /// Default: all
+    pub default_branch_filter: Option<GitGraphBranchFilter>,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGraphBranchFilter {
+    /// Show commits reachable from both local and remote branches.
+    #[default]
+    All,
+    /// Only show commits reachable from local branches.
+    Local,
+    /// Only show commits reachable from remote-tracking branches.
+    Remote,
 }
 
 #[derive(

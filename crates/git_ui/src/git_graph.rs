@@ -40,6 +40,7 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
+use settings::{RegisterSetting, Settings};
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -65,6 +66,30 @@ use workspace::{
     ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
+pub struct GitGraphSettings {
+    pub default_branch_filter: BranchFilter,
+}
+
+impl Settings for GitGraphSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let git_graph = content.git_graph.clone().unwrap();
+        Self {
+            default_branch_filter: match git_graph.default_branch_filter.unwrap() {
+                settings::GitGraphBranchFilter::All => BranchFilter::All,
+                settings::GitGraphBranchFilter::Local => BranchFilter::Local,
+                settings::GitGraphBranchFilter::Remote => BranchFilter::Remote,
+            },
+        }
+    }
+}
+
+/// The log source used when opening the git graph without an explicit target,
+/// walking all history with the user's configured default branch filter.
+fn default_log_source(cx: &App) -> LogSource {
+    LogSource::All(GitGraphSettings::get_global(cx).default_branch_filter)
+}
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
@@ -1105,7 +1130,7 @@ pub fn init(cx: &mut App) {
                                         workspace,
                                         selected_repo_id,
                                         git_store,
-                                        LogSource::All(BranchFilter::All),
+                                        default_log_source(cx),
                                         None,
                                         window,
                                         cx,
@@ -1129,7 +1154,7 @@ pub fn init(cx: &mut App) {
                                     workspace,
                                     selected_repo_id,
                                     git_store,
-                                    LogSource::All(BranchFilter::All),
+                                    default_log_source(cx),
                                     Some(sha),
                                     window,
                                     cx,
@@ -1157,7 +1182,7 @@ pub fn resolve_file_history_target_from_project_path(
         .read(cx)
         .repository_and_path_for_project_path(project_path, cx)?;
     let log_source = if repo_path.is_empty() {
-        LogSource::All(BranchFilter::All)
+        default_log_source(cx)
     } else {
         LogSource::Path(repo_path)
     };
@@ -4928,6 +4953,39 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             language_model::init(cx);
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_default_branch_filter_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            assert_eq!(
+                default_log_source(cx),
+                LogSource::All(BranchFilter::All),
+                "the default branch filter should be All"
+            );
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git_graph
+                        .get_or_insert_default()
+                        .default_branch_filter = Some(settings::GitGraphBranchFilter::Remote);
+                })
+            });
+            assert_eq!(default_log_source(cx), LogSource::All(BranchFilter::Remote));
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git_graph
+                        .get_or_insert_default()
+                        .default_branch_filter = Some(settings::GitGraphBranchFilter::Local);
+                })
+            });
+            assert_eq!(default_log_source(cx), LogSource::All(BranchFilter::Local));
         });
     }
 

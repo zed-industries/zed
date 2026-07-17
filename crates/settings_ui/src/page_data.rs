@@ -7818,6 +7818,35 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn git_graph_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Git Graph"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Branch Filter",
+                description: "Which branch types to show when opening the git graph.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_graph.default_branch_filter"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_graph
+                            .as_ref()?
+                            .default_branch_filter
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_graph
+                            .get_or_insert_default()
+                            .default_branch_filter = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_hunks_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
@@ -7883,6 +7912,7 @@ fn version_control_page() -> SettingsPage {
             inline_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
+            git_graph_section(),
             git_hunks_section(),
         ],
     }
