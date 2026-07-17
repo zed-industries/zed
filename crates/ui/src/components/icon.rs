@@ -117,14 +117,12 @@ impl From<IconName> for Icon {
 enum IconSource {
     /// An SVG embedded in the Zed binary.
     Embedded(SharedString),
+    /// A polychrome SVG located at the specified path.
+    ExternalPolychromeSvg(SharedString),
     /// An image file located at the specified path.
-    ///
-    /// Currently our SVG renderer is missing support for rendering polychrome SVGs.
-    ///
-    /// In order to support icon themes, we render the icons as images instead.
-    External(Arc<Path>),
-    /// An SVG not embedded in the Zed binary.
-    ExternalSvg(SharedString),
+    ExternalImage(Arc<Path>),
+    /// A monochrome SVG not embedded in the Zed binary.
+    ExternalMonochromeSvg(SharedString),
 }
 
 #[derive(Clone, IntoElement, RegisterComponent)]
@@ -147,13 +145,20 @@ impl Icon {
 
     /// Create an icon from a path. Uses a heuristic to determine if it's embedded or external:
     /// - Paths starting with "icons/" are treated as embedded SVGs
-    /// - Other paths are treated as external raster images (from icon themes)
+    /// - Other SVG paths are treated as external polychrome SVGs (from icon themes)
+    /// - Other paths are treated as external raster images
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
         let source = if path.starts_with("icons/") {
             IconSource::Embedded(path)
+        } else if Path::new(path.as_ref())
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+        {
+            IconSource::ExternalPolychromeSvg(path)
         } else {
-            IconSource::External(Arc::from(PathBuf::from(path.as_ref())))
+            IconSource::ExternalImage(Arc::from(PathBuf::from(path.as_ref())))
         };
         Self {
             source,
@@ -165,7 +170,7 @@ impl Icon {
 
     pub fn from_external_svg(svg: SharedString) -> Self {
         Self {
-            source: IconSource::ExternalSvg(svg),
+            source: IconSource::ExternalMonochromeSvg(svg),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -208,14 +213,20 @@ impl RenderOnce for Icon {
                 .path(path)
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::ExternalSvg(path) => svg()
+            IconSource::ExternalPolychromeSvg(path) => svg()
+                .external_path(path)
+                .polychrome()
+                .size(self.size)
+                .flex_none()
+                .into_any_element(),
+            IconSource::ExternalMonochromeSvg(path) => svg()
                 .external_path(path)
                 .with_transformation(self.transformation)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::External(path) => img(path)
+            IconSource::ExternalImage(path) => img(path)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))
@@ -280,6 +291,31 @@ impl RenderOnce for IconWithIndicator {
                         .child(indicator),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_path_selects_source_by_path_kind() {
+        assert!(matches!(
+            Icon::from_path("icons/file.svg").source,
+            IconSource::Embedded(_)
+        ));
+        assert!(matches!(
+            Icon::from_path("theme/file.SVG").source,
+            IconSource::ExternalPolychromeSvg(_)
+        ));
+        assert!(matches!(
+            Icon::from_path("theme/file.png").source,
+            IconSource::ExternalImage(_)
+        ));
+        assert!(matches!(
+            Icon::from_external_svg("theme/monochrome.svg".into()).source,
+            IconSource::ExternalMonochromeSvg(_)
+        ));
     }
 }
 
