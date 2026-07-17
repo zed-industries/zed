@@ -439,6 +439,7 @@ message GetRemotesResponse {
 
   message Remote {
     string name = 1;
+    optional string url = 2;
   }
 }
 
