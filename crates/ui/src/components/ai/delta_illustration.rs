@@ -31,27 +31,24 @@ impl RenderOnce for DeltaIllustration {
                 linear_color_stop(background_color.opacity(top_opacity), 1.),
             ))
             .child(
-                svg()
+                svg("images/delta_announcement_grid.svg")
                     .absolute()
                     .inset_0()
                     .size_full()
-                    .path("images/delta_announcement_grid.svg")
                     .text_color(cx.theme().colors().border),
             )
             .child(
-                svg()
+                svg("images/delta_announcement_diagram.svg")
                     .absolute()
                     .inset_0()
                     .size_full()
-                    .path("images/delta_announcement_diagram.svg")
                     .text_color(cx.theme().colors().text),
             )
             .child(
-                svg()
+                svg("images/delta_mark.svg")
                     .absolute()
                     .inset_0()
                     .size_full()
-                    .path("images/delta_mark.svg")
                     .text_color(gpui::rgb(0xd5442c)),
             )
     }
