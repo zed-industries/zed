@@ -61,14 +61,11 @@ pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
     let name = uri
         .to_file_path()
         .ok()
-        .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .or_else(|| {
-                    let path = path.to_string_lossy().into_owned();
-                    (!path.is_empty()).then_some(path)
-                })
+        .map(|path| {
+            let name = path.file_name().unwrap_or(path.as_os_str());
+            name.to_string_lossy().into_owned()
         })
+        .filter(|name| !name.is_empty())
         .or_else(|| {
             uri.path_segments()
                 .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
