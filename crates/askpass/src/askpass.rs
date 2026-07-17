@@ -156,15 +156,25 @@ impl AskPassSession {
     // The caller is responsible for examining the result of their own commands and cancelling this
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
-    pub async fn run(&mut self) -> AskPassResult {
-        // This is the default timeout setting used by VSCode.
-        let connection_timeout = Duration::from_secs(17);
+    //
+    // When `timeout` is provided, this resolves with `AskPassResult::Timedout` if no askpass prompt
+    // has been opened within that duration. This is intended for connection establishment (e.g.
+    // SSH), where "no prompt and no connection" indicates an unreachable host. Callers wrapping
+    // commands that may legitimately run for a long time without prompting (e.g. git) should pass
+    // `None` and rely on the command's own completion instead.
+    pub async fn run(&mut self, timeout: Option<Duration>) -> AskPassResult {
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
             .take()
             .expect("Only call run once");
         let executor = self.executor.clone();
+        let timer = async move {
+            match timeout {
+                Some(timeout) => executor.timer(timeout).await,
+                None => std::future::pending().await,
+            }
+        };
 
         select_biased! {
             _ = askpass_opened_rx.fuse() => {
@@ -173,7 +183,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(executor.timer(connection_timeout)) => {
+            _ = futures::FutureExt::fuse(timer) => {
                 AskPassResult::Timedout
             }
         }
