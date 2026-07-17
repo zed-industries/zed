@@ -45,6 +45,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub scroll_multiplier: f32,
     pub toolbar: Toolbar,
+    pub tab_title_from_program: bool,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
@@ -118,6 +119,7 @@ impl settings::Settings for TerminalSettings {
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
             },
+            tab_title_from_program: user_content.tab_title_from_program.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: user_content.scrollbar.unwrap().show,
             },

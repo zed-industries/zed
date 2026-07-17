@@ -7143,7 +7143,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 6] {
+    fn behavior_settings_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7179,6 +7179,29 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .copy_on_select = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Title From Program",
+                description: "Whether to title a terminal tab using the title emitted by the program running inside it (for example tmux, a shell PROMPT_COMMAND, or a TUI like Claude Code).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.tab_title_from_program"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .tab_title_from_program
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .tab_title_from_program = value;
                     },
                 }),
                 metadata: None,

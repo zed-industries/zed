@@ -165,6 +165,18 @@ pub struct TerminalSettingsContent {
     pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
+    /// Whether a terminal tab should be titled by the program running inside it,
+    /// using the title that program emits via the OSC 0/2 escape sequence (the
+    /// same value shown in breadcrumbs). This is what `tmux`, a shell
+    /// `PROMPT_COMMAND`, or a TUI such as Claude Code use to name the tab.
+    ///
+    /// When enabled, a program-provided title takes precedence over the automatic
+    /// `<directory> — <program>` title and over a shell `title_override`. A
+    /// manually renamed tab, or a running task's label, still takes precedence
+    /// over the program title.
+    ///
+    /// Default: false
+    pub tab_title_from_program: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// The minimum APCA perceptual contrast between foreground and background colors.
