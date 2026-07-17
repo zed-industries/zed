@@ -3733,12 +3733,12 @@ impl GitGraph {
             .child(
                 div()
                     .relative()
-                    .size_full()
+                    .w_full()
                     .child(
                         div()
                             .id("commit-message")
                             .text_sm()
-                            .size_full()
+                            .w_full()
                             .max_h(line_height * 12.)
                             .overflow_y_scroll()
                             .track_scroll(scroll_handle)
