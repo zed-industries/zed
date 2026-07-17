@@ -39,6 +39,8 @@ use crate::PackageJsonData;
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
+const PACKAGE_SCRIPT_LABEL_PREFIX: &str = "package script";
+const COMPOSER_SCRIPT_LABEL_PREFIX: &str = "composer script";
 
 pub(crate) struct JsonTaskProvider;
 
@@ -81,14 +83,14 @@ impl ContextProvider for JsonTaskProvider {
                     .scripts
                     .into_iter()
                     .map(|(_, key)| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("{PACKAGE_SCRIPT_LABEL_PREFIX}: \"{key}\""),
                         command: command.clone(),
                         args: vec!["run".into(), key],
                         cwd: Some(VariableName::Dirname.template_value()),
                         ..TaskTemplate::default()
                     })
                     .chain([TaskTemplate {
-                        label: "package script $ZED_CUSTOM_script".to_owned(),
+                        label: format!("{PACKAGE_SCRIPT_LABEL_PREFIX}: \"$ZED_CUSTOM_script\""),
                         command: command.clone(),
                         args: vec![
                             "run".into(),
@@ -106,13 +108,13 @@ impl ContextProvider for JsonTaskProvider {
                     .as_object()?
                     .keys()
                     .map(|key| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("{COMPOSER_SCRIPT_LABEL_PREFIX}: \"{key}\""),
                         command: "composer".to_owned(),
                         args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
                         ..TaskTemplate::default()
                     })
                     .chain([TaskTemplate {
-                        label: "composer script $ZED_CUSTOM_script".to_owned(),
+                        label: format!("{COMPOSER_SCRIPT_LABEL_PREFIX}: \"$ZED_CUSTOM_script\""),
                         command: "composer".to_owned(),
                         args: vec![
                             "-d".into(),
