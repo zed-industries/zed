@@ -783,7 +783,7 @@ impl DiffHunkDelegate for AgentDiffDelegate {
         &self,
         _stage: bool,
         _hunks: Vec<ResolvedDiffHunks>,
-        _ranges: Vec<Range<editor::Anchor>>,
+        _selections: HashMap<BufferId, Vec<(Range<u32>, bool)>>,
         _editor: &mut Editor,
         _window: &mut Window,
         _cx: &mut Context<Editor>,
