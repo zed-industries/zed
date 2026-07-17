@@ -753,10 +753,7 @@ fn connect_client_future(
         )
 }
 
-fn client_capabilities_for_agent(
-    agent_id: &AgentId,
-    supports_beta_features: bool,
-) -> acp::ClientCapabilities {
+fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
@@ -766,7 +763,7 @@ fn client_capabilities_for_agent(
         meta.insert(PARAMETERIZED_MODEL_PICKER_META_KEY.into(), true.into());
     }
 
-    let mut capabilities = acp::ClientCapabilities::new()
+    acp::ClientCapabilities::new()
         .fs(acp::FileSystemCapabilities::new()
             .read_text_file(true)
             .write_text_file(true))
@@ -778,17 +775,12 @@ fn client_capabilities_for_agent(
                     .boolean(acp::BooleanConfigOptionCapabilities::new()),
             ),
         )
-        .meta(meta);
-
-    if supports_beta_features {
-        capabilities = capabilities.elicitation(
+        .elicitation(
             acp::ElicitationCapabilities::new()
                 .form(acp::ElicitationFormCapabilities::new())
                 .url(acp::ElicitationUrlCapabilities::new()),
-        );
-    }
-
-    capabilities
+        )
+        .meta(meta)
 }
 
 impl AcpConnection {
@@ -980,10 +972,7 @@ impl AcpConnection {
         let initialize_response = connection
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1)
-                    .client_capabilities(client_capabilities_for_agent(
-                        &agent_id,
-                        cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()),
-                    ))
+                    .client_capabilities(client_capabilities_for_agent(&agent_id))
                     .client_info(
                         acp::Implementation::new("zed", version)
                             .title(release_channel.map(ToOwned::to_owned)),
@@ -2698,7 +2687,6 @@ mod tests {
 
     use super::*;
     use feature_flags::FeatureFlag as _;
-    use gpui::UpdateGlobal as _;
     use settings::Settings as _;
 
     fn init_feature_flags_test(cx: &mut gpui::TestAppContext) {
@@ -2710,50 +2698,15 @@ mod tests {
         });
     }
 
-    fn set_acp_beta_override(value: &str, cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    content
-                        .feature_flags
-                        .get_or_insert_default()
-                        .insert(AcpBetaFeatureFlag::NAME.to_string(), value.to_string());
-                });
-            });
-        });
-    }
-
     #[gpui::test]
-    async fn client_capabilities_omit_elicitation_without_acp_beta(cx: &mut gpui::TestAppContext) {
+    async fn client_capabilities_include_elicitation_without_acp_beta(
+        cx: &mut gpui::TestAppContext,
+    ) {
         init_feature_flags_test(cx);
-        set_acp_beta_override("off", cx);
-
-        let capabilities = cx.update(|cx| {
-            client_capabilities_for_agent(
-                &AgentId::new("codex-acp"),
-                cx.has_flag::<AcpBetaFeatureFlag>(),
-            )
-        });
-
-        assert!(capabilities.elicitation.is_none());
-    }
-
-    #[gpui::test]
-    async fn client_capabilities_include_elicitation_with_acp_beta(cx: &mut gpui::TestAppContext) {
-        init_feature_flags_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
-
-        let capabilities = cx.update(|cx| {
-            client_capabilities_for_agent(
-                &AgentId::new("codex-acp"),
-                cx.has_flag::<AcpBetaFeatureFlag>(),
-            )
-        });
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
         let elicitation = capabilities
             .elicitation
-            .expect("elicitation should be advertised when acp-beta is enabled");
+            .expect("elicitation should always be advertised");
 
         assert!(elicitation.form.is_some());
         assert!(elicitation.url.is_some());
@@ -3016,7 +2969,7 @@ mod tests {
 
     #[test]
     fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3031,7 +2984,7 @@ mod tests {
 
     #[test]
     fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -3041,7 +2994,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_boolean_config_options() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
 
         assert!(
             capabilities
@@ -4566,13 +4519,6 @@ fn handle_create_elicitation(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    if !cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()) {
-        return respond_err(
-            responder,
-            acp::Error::invalid_params().data("elicitation support requires the ACP beta flag"),
-        );
-    }
-
     match args.scope() {
         acp::ElicitationScope::Session(scope) => {
             let thread = match session_thread(ctx, &scope.session_id) {
@@ -4661,10 +4607,6 @@ fn handle_complete_elicitation(
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
-    if !cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()) {
-        return;
-    }
-
     let threads = ctx
         .sessions
         .borrow()

@@ -122,7 +122,7 @@ mod tests {
             root_name: "my-project".to_string(),
             abs_path: std::path::Path::new("/tmp/my-project").into(),
             rules_file: Some(RulesFileContext {
-                path_in_worktree: RelPath::unix("AGENTS.md").unwrap().into(),
+                path_in_worktree: RelPath::from_unix_str("AGENTS.md").unwrap().into(),
                 text: "project-specific guidance".to_string(),
                 project_entry_id: 1,
             }),
