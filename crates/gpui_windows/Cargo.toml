@@ -35,6 +35,7 @@ parking_lot.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 smallvec.workspace = true
+tauri-winrt-notification.workspace = true
 uuid.workspace = true
 windows.workspace = true
 windows-core.workspace = true
