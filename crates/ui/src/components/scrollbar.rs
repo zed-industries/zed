@@ -1264,29 +1264,43 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         current_delta,
                         animation_duration: delta_duration,
                         showing: should_invert,
-                    } => window.with_element_state(id.unwrap(), |state, window| {
-                        let state = state.unwrap_or_else(|| Instant::now());
-                        let current = Instant::now();
-
-                        let new_delta = DELTA_MAX.min(
-                            current_delta + (current - state).div_duration_f32(delta_duration),
-                        );
-                        self.state.update(cx, |state, _| {
-                            let has_border = state
-                                .track_color
-                                .as_ref()
-                                .is_some_and(|track_colors| track_colors.has_border);
-                            state.show_state.set_delta(new_delta, has_border)
-                        });
-
-                        window.request_animation_frame();
-                        let delta = if should_invert {
-                            DELTA_MAX - current_delta
+                    } => {
+                        if cx.reduce_motion() {
+                            self.state.update(cx, |state, _| {
+                                let has_border = state
+                                    .track_color
+                                    .as_ref()
+                                    .is_some_and(|track_colors| track_colors.has_border);
+                                state.show_state.set_delta(DELTA_MAX, has_border)
+                            });
+                            if should_invert { 0.0 } else { DELTA_MAX }
                         } else {
-                            current_delta
-                        };
-                        (ease_in_out(delta), current)
-                    }),
+                            window.with_element_state(id.unwrap(), |state, window| {
+                                let state = state.unwrap_or_else(|| Instant::now());
+                                let current = Instant::now();
+
+                                let new_delta = DELTA_MAX.min(
+                                    current_delta
+                                        + (current - state).div_duration_f32(delta_duration),
+                                );
+                                self.state.update(cx, |state, _| {
+                                    let has_border = state
+                                        .track_color
+                                        .as_ref()
+                                        .is_some_and(|track_colors| track_colors.has_border);
+                                    state.show_state.set_delta(new_delta, has_border)
+                                });
+
+                                window.request_animation_frame();
+                                let delta = if should_invert {
+                                    DELTA_MAX - current_delta
+                                } else {
+                                    current_delta
+                                };
+                                (ease_in_out(delta), current)
+                            })
+                        }
+                    }
                     AnimationState::Stale => 1.0,
                 });
 

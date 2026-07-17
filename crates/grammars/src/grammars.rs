@@ -1,7 +1,8 @@
+use std::borrow::Cow;
+
 use anyhow::Context as _;
 use language_core::{LanguageConfig, LanguageQueries, QUERY_FILENAME_PREFIXES};
 use rust_embed::RustEmbed;
-use util::asset_str;
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -95,7 +96,10 @@ pub fn load_queries(name: &str) -> LanguageQueries {
             }
             for (prefix, query) in QUERY_FILENAME_PREFIXES {
                 if remainder.starts_with(prefix) {
-                    let contents = asset_str::<GrammarDir>(path.as_ref());
+                    let contents = match GrammarDir::get(path.as_ref()).unwrap().data {
+                        Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
+                        Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
+                    };
                     match query(&mut result) {
                         None => *query(&mut result) = Some(contents),
                         Some(existing) => existing.to_mut().push_str(contents.as_ref()),

@@ -586,7 +586,7 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let mut path = image.file.path().clone();
+    let mut path = image.file.path().to_rel_path_buf();
     if project.visible_worktrees(cx).count() > 1
         && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
     {

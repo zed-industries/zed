@@ -3360,6 +3360,82 @@ async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Response 1");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.latest_token_usage().unwrap().ratio(),
+            acp_thread::TokenUsageRatio::Normal
+        );
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 2"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
+        tokens: None,
+    });
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        let usage = thread.latest_token_usage().unwrap();
+        assert_eq!(usage.used_tokens, 1_000_000);
+        assert_eq!(usage.max_tokens, 1_000_000);
+        assert_eq!(usage.ratio(), acp_thread::TokenUsageRatio::Exceeded);
+    });
+}
+
+#[gpui::test]
+async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
+        tokens: Some(1_500_000),
+    });
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        let usage = thread.latest_token_usage().unwrap();
+        assert_eq!(usage.used_tokens, 1_500_000);
+        assert_eq!(usage.ratio(), acp_thread::TokenUsageRatio::Exceeded);
+    });
+}
+
+#[gpui::test]
 async fn test_cumulative_token_usage(cx: &mut TestAppContext) {
     let ThreadTest {
         model,
@@ -3766,6 +3842,11 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), None);
         assert!(thread.has_failed_title_generation());
+        assert!(
+            thread
+                .title_generation_error()
+                .is_some_and(|error| error.contains("Internal server error"))
+        );
         assert!(!thread.is_generating_title());
     });
 
@@ -3776,6 +3857,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
 
     thread.read_with(cx, |thread, _| {
         assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
         assert!(thread.is_generating_title());
     });
 
@@ -3786,6 +3868,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Retried title".into()));
         assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
         assert!(!thread.is_generating_title());
     });
 }
