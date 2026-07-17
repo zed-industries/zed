@@ -323,6 +323,91 @@ async fn test_log_store_removes_unavailable_copilot_server(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_local_views_and_downstream_requests_own_rpc_streams_independently(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/stream-ownership"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/stream-ownership").as_ref()], cx).await;
+    let server_id = LanguageServerId(100);
+    let server_key = LanguageServerLogKey::new(
+        LanguageServerKind::Local {
+            project: project.downgrade(),
+        },
+        server_id,
+    );
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+
+    log_store.update(cx, |store, cx| {
+        store.add_language_server(
+            server_key.kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("test-server")),
+            None,
+            None,
+            cx,
+        );
+
+        store.toggle_lsp_logs(&server_key, true, LogKind::Rpc);
+        assert!(
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_some())
+        );
+        assert_eq!(
+            store.retain_view_log_stream(&server_key, LogKind::Rpc),
+            Some(true)
+        );
+        assert_eq!(
+            store.release_view_log_stream(&server_key, LogKind::Rpc),
+            Some(true)
+        );
+        assert!(
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_some()),
+            "releasing the final local view must preserve a downstream RPC request"
+        );
+        store.toggle_lsp_logs(&server_key, false, LogKind::Rpc);
+        assert!(
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_none())
+        );
+
+        assert_eq!(
+            store.retain_view_log_stream(&server_key, LogKind::Rpc),
+            Some(true)
+        );
+        store.toggle_lsp_logs(&server_key, true, LogKind::Rpc);
+        store.toggle_lsp_logs(&server_key, false, LogKind::Rpc);
+        assert!(
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_some()),
+            "disabling a downstream RPC request must preserve a local view's stream"
+        );
+        assert_eq!(
+            store.release_view_log_stream(&server_key, LogKind::Rpc),
+            Some(true)
+        );
+        assert!(
+            store
+                .language_servers
+                .get(&server_key)
+                .is_some_and(|state| state.rpc_state.is_none())
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_lsp_log_view(cx: &mut TestAppContext) {
     zlog::init_test();
 
