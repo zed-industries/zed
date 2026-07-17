@@ -2295,41 +2295,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_initialize_params_has_root_path_and_root_uri(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            release_channel::init(semver::Version::new(0, 0, 0), cx);
-        });
-        let (server, _fake) = FakeLanguageServer::new(
-            LanguageServerId(0),
-            LanguageServerBinary {
-                path: "path/to/language-server".into(),
-                arguments: vec![],
-                env: None,
-            },
-            "test-lsp".to_string(),
-            Default::default(),
-            &mut cx.to_async(),
-        );
-
-        let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
-
-        #[allow(deprecated)]
-        let root_uri = params.root_uri.expect("root_uri should be set");
-        #[allow(deprecated)]
-        let root_path = params.root_path.expect("root_path should be set");
-
-        let expected_path = root_uri
-            .to_file_path()
-            .expect("root_uri should be a valid file path");
-        assert_eq!(
-            root_path,
-            expected_path.to_string_lossy(),
-            "root_path should be derived from root_uri"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_initialize_params_has_named_workspace_folders(cx: &mut TestAppContext) {
+    async fn test_default_initialize_params(cx: &mut TestAppContext) {
         cx.update(|cx| {
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
@@ -2346,10 +2312,27 @@ mod tests {
         );
         let project_uri = Uri::from_str("file:///path/to/my%20project/")
             .expect("workspace folder URI should be valid");
-        let root_uri = Uri::from_str("file:///").expect("root URI should be valid");
-        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone(), root_uri.clone()]));
+        let workspace_root_uri = Uri::from_str("file:///").expect("root URI should be valid");
+        server.set_workspace_folders(BTreeSet::from_iter([
+            project_uri.clone(),
+            workspace_root_uri.clone(),
+        ]));
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+
+        #[allow(deprecated)]
+        let root_uri = params.root_uri.expect("root_uri should be set");
+        #[allow(deprecated)]
+        let root_path = params.root_path.expect("root_path should be set");
+
+        let expected_path = root_uri
+            .to_file_path()
+            .expect("root_uri should be a valid file path");
+        assert_eq!(
+            root_path,
+            expected_path.to_string_lossy(),
+            "root_path should be derived from root_uri"
+        );
         let workspace_folders = params
             .workspace_folders
             .expect("workspace folders should be set");
@@ -2365,7 +2348,7 @@ mod tests {
         assert!(
             !workspace_folders
                 .iter()
-                .find(|folder| folder.uri == root_uri)
+                .find(|folder| folder.uri == workspace_root_uri)
                 .expect("root workspace folder should be present")
                 .name
                 .is_empty(),
