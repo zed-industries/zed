@@ -3725,7 +3725,6 @@ impl GitGraph {
             // grid, on the other hand, doesn't appear to give taffy the same
             // problems.
             .w_full()
-            .max_h(line_height * 12.)
             .py_2()
             .pl_2()
             .grid()
@@ -3740,6 +3739,7 @@ impl GitGraph {
                             .id("commit-message")
                             .text_sm()
                             .size_full()
+                            .max_h(line_height * 12.)
                             .overflow_y_scroll()
                             .track_scroll(scroll_handle)
                             .child(MarkdownElement::new(message.clone(), message_style)),
@@ -7379,6 +7379,136 @@ mod tests {
             assert!(source.contains("Fix crash"));
             assert!(source.contains("This fixes a crash"));
         });
+    }
+
+    #[gpui::test]
+    async fn test_long_commit_message_is_constrained_to_scroll_viewport(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).expect("commit SHA should be valid");
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec!["HEAD -> main".into()],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let message = (0..40)
+            .map(|line_number| {
+                format!(
+                    "Line {line_number}: This commit message is long enough to require scrolling."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [(
+                CommitData {
+                    sha: commit_sha,
+                    parents: smallvec![],
+                    author_name: "Author".into(),
+                    author_email: "author@example.com".into(),
+                    commit_timestamp: 1_700_000_000,
+                    subject: "Long commit message".into(),
+                    message: message.into(),
+                },
+                false,
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.selected_commit_diff = Some(CommitDiff {
+                files: vec![CommitFile {
+                    path: RepoPath::new("file.txt").expect("repository path should be valid"),
+                    old_text: Some("content".into()),
+                    new_text: Some("updated content".into()),
+                    is_binary: false,
+                }],
+            });
+            graph.selected_commit_diff_stats = Some((1, 1));
+            cx.notify();
+        });
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let (message_scroll_handle, changed_files_scroll_handle) =
+            git_graph.read_with(&*cx, |graph, _| {
+                (
+                    graph
+                        .selected_commit_message
+                        .as_ref()
+                        .expect("selected commit message should be loaded")
+                        .scroll_handle
+                        .clone(),
+                    graph.changed_files_scroll_handle.clone(),
+                )
+            });
+        let maximum_message_height = git_graph.update_in(cx, |_, window, cx| {
+            editor::hover_markdown_style(window, cx)
+                .base_text_style
+                .line_height_in_pixels(window.rem_size())
+                * 12.
+        });
+        let message_bounds = message_scroll_handle.bounds();
+        let changed_files_bounds = changed_files_scroll_handle.0.borrow().base_handle.bounds();
+
+        assert!(
+            message_bounds.size.height <= maximum_message_height,
+            "commit message viewport height ({}) should not exceed its maximum ({})",
+            message_bounds.size.height,
+            maximum_message_height,
+        );
+        assert!(
+            message_scroll_handle.max_offset().y > px(0.),
+            "long commit message should be scrollable"
+        );
+        assert!(
+            message_bounds.bottom() <= changed_files_bounds.top(),
+            "commit message viewport {message_bounds:?} should not overlap changed files {changed_files_bounds:?}"
+        );
     }
 
     #[gpui::test]
