@@ -52,8 +52,12 @@ impl ContextProvider for JsonTaskProvider {
         let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
-        let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
-        let is_composer_json = file.path.ends_with(RelPath::unix("composer.json").unwrap());
+        let is_package_json = file
+            .path
+            .ends_with(RelPath::from_unix_str("package.json").unwrap());
+        let is_composer_json = file
+            .path
+            .ends_with(RelPath::from_unix_str("composer.json").unwrap());
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }

@@ -1,9 +1,13 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
-    IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonSize, Checkbox, Context, ContextMenu, DropdownMenu,
+    ElementId, IntoElement as _, ParentElement as _, Styled as _, ToggleState, Tooltip, Window,
+    div, h_flex,
 };
 
-use crate::{CsvPreviewView, settings::VerticalAlignment};
+use crate::{
+    CsvPreviewView,
+    settings::{FilterSortOrder, VerticalAlignment},
+};
 
 ///// Settings related /////
 impl CsvPreviewView {
@@ -16,6 +20,11 @@ impl CsvPreviewView {
         let current_alignment_text = match self.settings.vertical_alignment {
             VerticalAlignment::Top => "Top",
             VerticalAlignment::Center => "Center",
+        };
+
+        let current_filter_sort_text = match self.settings.filter_sort_order {
+            FilterSortOrder::AlphaThenCount => "A-Z, then Count",
+            FilterSortOrder::CountThenAlpha => "Count, then A-Z",
         };
 
         let view = cx.entity();
@@ -34,6 +43,27 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.vertical_alignment = VerticalAlignment::Center;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
+        let filter_sort_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("A-Z, then Count", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.filter_sort_order = FilterSortOrder::AlphaThenCount;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("Count, then A-Z", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.filter_sort_order = FilterSortOrder::CountThenAlpha;
                         cx.notify();
                     });
                 }
@@ -68,7 +98,53 @@ impl CsvPreviewView {
                             "Choose vertical text alignment within cells",
                         )),
                     ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child("Filter Sort:"),
+                    )
+                    .child(
+                        DropdownMenu::new(
+                            ElementId::Name("filter-sort-order-dropdown".into()),
+                            current_filter_sort_text,
+                            filter_sort_dropdown_menu,
+                        )
+                        .trigger_size(ButtonSize::Compact)
+                        .trigger_tooltip(Tooltip::text(
+                            "Choose how filter values are sorted in the filter menu",
+                        )),
+                    ),
             );
+
+        let multiline_enabled = self.settings.multiline_cells_enabled;
+        let panel = panel.child({
+            let view = view.clone();
+            Checkbox::new(
+                ElementId::Name("multiline-rows-checkbox".into()),
+                if multiline_enabled {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .label("Display multiline rows")
+            .tooltip(Tooltip::text(
+                "When enabled, row height grows to show all content. \
+                 When disabled, only the first line is visible — hover a cell to see the rest.",
+            ))
+            .on_click(move |_state, _window, cx| {
+                view.update(cx, |this, cx| {
+                    this.settings.multiline_cells_enabled = !this.settings.multiline_cells_enabled;
+                    cx.notify();
+                });
+            })
+        });
 
         #[cfg(feature = "dev-tools")]
         let panel = panel.child(
@@ -120,7 +196,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::VariableList;
-                                        view.settings.multiline_cells_enabled = true;
                                         cx.notify();
                                     })
                                 }
@@ -137,7 +212,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::UniformList;
-                                        view.settings.multiline_cells_enabled = false;
                                         cx.notify();
                                     })
                                 }

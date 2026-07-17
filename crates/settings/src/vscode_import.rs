@@ -206,6 +206,11 @@ impl VsCodeSettings {
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
             proxy: self.read_string("http.proxy"),
+            reduce_motion: self.read_enum("workbench.reduceMotion", |s| match s {
+                "on" => Some(ReduceMotionMode::On),
+                "off" => Some(ReduceMotionMode::Off),
+                _ => None,
+            }),
             remote: RemoteSettingsContent::default(),
             repl: None,
             server_url: None,
@@ -267,6 +272,7 @@ impl VsCodeSettings {
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
             go_to_definition_scroll_strategy: None,
+            lsp_results_location: None,
             gutter: self.gutter_content(),
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
@@ -554,9 +560,15 @@ impl VsCodeSettings {
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
-            format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
-                if b {
-                    FormatOnSave::On
+            // In VS Code, `editor.formatOnSaveMode` only applies when `editor.formatOnSave` is enabled.
+            format_on_save: self.read_bool("editor.formatOnSave").map(|enabled| {
+                if enabled {
+                    self.read_enum("editor.formatOnSaveMode", |s| match s {
+                        "modificationsIfAvailable" => Some(FormatOnSave::ModificationsIfAvailable),
+                        "modifications" => Some(FormatOnSave::Modifications),
+                        _ => None,
+                    })
+                    .unwrap_or(FormatOnSave::On)
                 } else {
                     FormatOnSave::Off
                 }
@@ -899,6 +911,7 @@ impl VsCodeSettings {
                 .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
+            open_links_in_mouse_mode: None,
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
@@ -995,6 +1008,7 @@ impl VsCodeSettings {
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
+            accessible_mode: None,
             text_rendering_mode: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
                 "off" => Some(AutosaveSetting::Off),
@@ -1115,5 +1129,34 @@ fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
         None
     } else {
         Some(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn imported_reduce_motion(content: &str) -> Option<ReduceMotionMode> {
+        VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+            .unwrap()
+            .settings_content()
+            .reduce_motion
+    }
+
+    #[test]
+    fn test_import_reduce_motion() {
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "on" }"#),
+            Some(ReduceMotionMode::On)
+        );
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "off" }"#),
+            Some(ReduceMotionMode::Off)
+        );
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "auto" }"#),
+            None
+        );
+        assert_eq!(imported_reduce_motion("{}"), None);
     }
 }

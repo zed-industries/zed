@@ -758,11 +758,10 @@ impl ActionLog {
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
-                                self.project.update(cx, |project, cx| {
-                                    project.delete_entry(entry_id, false, cx)
-                                })
+                                self.project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                             })
-                            .unwrap_or_else(|| Task::ready(Ok(None)));
+                            .unwrap_or_else(|| Task::ready(Ok(())));
 
                         cx.background_spawn(async move {
                             task.await?;
@@ -1831,14 +1830,14 @@ mod tests {
         action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1_path.clone(), false, cx)
+                project.delete_file(file1_path.clone(), cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2_path.clone(), false, cx)
+                project.delete_file(file2_path.clone(), cx)
             })
             .unwrap()
             .await
@@ -2143,9 +2142,7 @@ mod tests {
             action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| {
-                project.delete_file(file_path.clone(), false, cx)
-            })
+            .update(cx, |project, cx| project.delete_file(file_path.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -3156,7 +3153,7 @@ mod tests {
             child_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| project.delete_file(file_path, false, cx))
+            .update(cx, |project, cx| project.delete_file(file_path, cx))
             .unwrap()
             .await
             .unwrap();

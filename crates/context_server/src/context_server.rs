@@ -21,6 +21,7 @@ use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
 
+use crate::oauth::WwwAuthenticate;
 use crate::transport::HttpTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -104,6 +105,16 @@ impl ContextServer {
 
     pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
         self.client.read().clone()
+    }
+
+    /// The authentication challenge from the last `401 Unauthorized` response
+    /// this server's transport gave up on, if any. See
+    /// [`crate::transport::Transport::auth_challenge`].
+    pub fn auth_challenge(&self) -> Option<WwwAuthenticate> {
+        match &self.configuration {
+            ContextServerTransport::Stdio(..) => None,
+            ContextServerTransport::Custom(transport) => transport.auth_challenge(),
+        }
     }
 
     pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
