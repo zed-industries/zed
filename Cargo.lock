@@ -4583,6 +4583,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "log",
+ "picker",
  "text",
  "ui",
  "workspace",
