@@ -1539,6 +1539,12 @@ impl GitPanel {
             .cloned()
     }
 
+    fn activate_repository(&self, repository_id: RepositoryId, cx: &mut App) {
+        if let Some(repository) = self.repository_for_id(repository_id, cx) {
+            repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        }
+    }
+
     fn repository_for_entry_index(&self, ix: usize, cx: &App) -> Option<Entity<Repository>> {
         self.repository_for_id(self.repository_id_for_entry_index(ix)?, cx)
     }
@@ -2198,9 +2204,7 @@ impl GitPanel {
                 return;
             }
             GitListEntry::RepositoryHeader(entry) => {
-                if let Some(repository) = self.repository_for_id(entry.repository_id, cx) {
-                    repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
-                }
+                self.activate_repository(entry.repository_id, cx);
                 return;
             }
             GitListEntry::Header(entry) => {
@@ -3135,6 +3139,18 @@ impl GitPanel {
         let Some(selected_entry) = self.entries.get(selected_index).cloned() else {
             return;
         };
+
+        match &selected_entry {
+            GitListEntry::ProjectRepositoriesHeader(_) => {
+                self.toggle_project_repositories(window, cx);
+                return;
+            }
+            GitListEntry::RepositoryHeader(entry) => {
+                self.activate_repository(entry.repository_id, cx);
+                return;
+            }
+            _ => {}
+        }
 
         if self.is_resolved_conflict(selected_index, cx) {
             return;
@@ -8202,11 +8218,7 @@ impl GitPanel {
                     activate_panel
                         .update(cx, |this, cx| {
                             this.selected_entry = Some(ix);
-                            if let Some(repository) = this.repository_for_id(repository_id, cx) {
-                                repository.update(cx, |repository, cx| {
-                                    repository.set_as_active_repository(cx)
-                                });
-                            }
+                            this.activate_repository(repository_id, cx);
                             cx.notify();
                         })
                         .ok();
@@ -12740,9 +12752,52 @@ mod tests {
             assert_eq!(panel.active_repository_id, Some(repository_a_id));
         });
 
-        // Enter on a repository row is its keyboard equivalent to clicking the
-        // repository name: it changes the active repository without reordering
-        // the all-repositories list.
+        // Space and Enter on a repository row are keyboard equivalents to
+        // clicking the repository name: they change the active repository
+        // without reordering the all-repositories list.
+        let repository_b_header_index = panel.read_with(&cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        GitListEntry::RepositoryHeader(header)
+                            if header.repository_id == repository_b_id
+                    )
+                })
+                .unwrap()
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(repository_b_header_index);
+            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            project.read_with(&cx, |project, cx| {
+                project
+                    .active_repository(cx)
+                    .map(|repository| repository.read(cx).id)
+            }),
+            Some(repository_b_id)
+        );
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.active_repository_id, Some(repository_b_id));
+            assert!(matches!(
+                panel
+                    .selected_entry
+                    .and_then(|index| panel.entries.get(index)),
+                Some(GitListEntry::RepositoryHeader(header))
+                    if header.repository_id == repository_b_id
+            ));
+        });
+
+        repository_a.update(&mut cx, |repository, cx| {
+            repository.set_as_active_repository(cx)
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        cx.run_until_parked();
         let repository_b_header_index = panel.read_with(&cx, |panel, _| {
             panel
                 .entries
@@ -13227,7 +13282,11 @@ mod tests {
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.toggle_project_repositories(window, cx)
+            panel.selected_entry = panel
+                .entries
+                .iter()
+                .position(|entry| matches!(entry, GitListEntry::ProjectRepositoriesHeader(_)));
+            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
         });
         panel.read_with(&cx, |panel, _| {
             assert_eq!(panel.changes_count, changes_count);
@@ -13280,7 +13339,7 @@ mod tests {
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.toggle_project_repositories(window, cx)
+            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
         });
         panel.read_with(&cx, |panel, _| {
             assert_eq!(panel.visible_entry_indices, expanded_visible_indices);
