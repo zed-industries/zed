@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkStatus};
+use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkStatus, ResolvedLineSelection};
 use collections::HashMap;
 
 use fs::Fs;
@@ -213,7 +213,7 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
         &self,
         stage: bool,
         hunks: Vec<ResolvedDiffHunks>,
-        ranges: Vec<Range<Anchor>>,
+        selections: HashMap<BufferId, Vec<ResolvedLineSelection>>,
         _editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -222,7 +222,7 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
             .update(cx, |splittable, cx| {
                 splittable.rhs_editor.update(cx, |editor, cx| {
                     let delegate = editor.diff_hunk_delegate();
-                    delegate.stage_or_unstage_lines(stage, hunks, ranges, editor, window, cx);
+                    delegate.stage_or_unstage_lines(stage, hunks, selections, editor, window, cx);
                 });
             })
             .log_err();

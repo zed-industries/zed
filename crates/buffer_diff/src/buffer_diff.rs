@@ -368,7 +368,7 @@ impl BufferDiffSnapshot {
                 DiffHunk {
                     range: range.clone(),
                     diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                    buffer_range: buffer_range.clone(),
+                    buffer_range,
                     secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                     base_word_diffs: hunk.base_word_diffs.clone(),
                     buffer_word_diffs: hunk.buffer_word_diffs.clone(),
@@ -1133,38 +1133,26 @@ impl BufferDiffSnapshot {
                             start_anchor..end_anchor,
                         )
                     {
-                        match pending_hunk.sense {
-                            PendingSense::Stage | PendingSense::Unstage => {
-                                staged_added = pending_hunk
-                                    .staged_added
-                                    .iter()
-                                    .map(|anchor_range| {
-                                        buffer_row_span(&anchor_range.to_point(buffer))
-                                    })
-                                    .collect();
-                                staged_deleted = pending_hunk.staged_deleted.clone();
-                                has_pending = true;
-                                secondary_status = if pending_hunk.sense == PendingSense::Stage {
-                                    DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                                } else {
-                                    DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                                };
+                        let pending_secondary_status = match pending_hunk.sense {
+                            PendingSense::Stage => {
+                                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                            }
+                            PendingSense::Unstage => {
+                                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
                             }
                             PendingSense::PartiallyStage => {
-                                staged_added = pending_hunk
-                                    .staged_added
-                                    .iter()
-                                    .map(|anchor_range| {
-                                        buffer_row_span(&anchor_range.to_point(buffer))
-                                    })
-                                    .collect();
-                                staged_deleted = pending_hunk.staged_deleted.clone();
-                                has_pending = true;
-                                secondary_status =
-                                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
+                                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
                             }
                             PendingSense::Suppress => continue,
-                        }
+                        };
+                        staged_added = pending_hunk
+                            .staged_added
+                            .iter()
+                            .map(|anchor_range| buffer_row_span(&anchor_range.to_point(buffer)))
+                            .collect();
+                        staged_deleted = pending_hunk.staged_deleted.clone();
+                        has_pending = true;
+                        secondary_status = pending_secondary_status;
                     }
                 }
 

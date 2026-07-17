@@ -402,7 +402,7 @@ impl DiffHunkDelegate for RestoreOnlyDiffHunkDelegate {
         &self,
         _stage: bool,
         _hunks: Vec<ResolvedDiffHunks>,
-        _ranges: Vec<Range<Anchor>>,
+        _selections: HashMap<BufferId, Vec<ResolvedLineSelection>>,
         _editor: &mut Editor,
         _window: &mut Window,
         _cx: &mut Context<Editor>,
@@ -460,7 +460,7 @@ impl DiffHunkDelegate for RestoreOnlyUnstagedDiffHunkDelegate {
         &self,
         _stage: bool,
         _hunks: Vec<ResolvedDiffHunks>,
-        _ranges: Vec<Range<Anchor>>,
+        _selections: HashMap<BufferId, Vec<ResolvedLineSelection>>,
         _editor: &mut Editor,
         _window: &mut Window,
         _cx: &mut Context<Editor>,
@@ -2011,12 +2011,6 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    // TODO(partial-commit): stage/unstage only the individual lines under the
-    // cursor within their hunk. The line-level index computation was written
-    // against the old whole-index-rebuild staging path; it still needs to be
-    // reimplemented on top of the current optimistic-index model in
-    // `project::git_store`. Until then, toggling selected lines falls back to
-    // toggling the whole hunk(s) the selection covers.
     pub(super) fn toggle_staged_selected_lines(
         &mut self,
         _: &::git::ToggleStagedSelectedLines,
@@ -2115,8 +2109,10 @@ impl Editor {
         if hunks.is_empty() {
             return;
         }
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let (selections, _) = resolve_line_selections(&hunks, &ranges, &snapshot, cx);
         let delegate = self.diff_hunk_delegate();
-        delegate.stage_or_unstage_lines(stage, hunks, ranges, self, window, cx);
+        delegate.stage_or_unstage_lines(stage, hunks, selections, self, window, cx);
     }
 
     pub fn apply_restore(
@@ -3246,7 +3242,7 @@ impl EditorSnapshot {
                         multi_buffer_range,
                         is_created_file,
                         staged_added,
-                        staged_deleted: hunk.staged_deleted.clone(),
+                        staged_deleted: hunk.staged_deleted,
                         deleted_lines,
                         is_expanded,
                     }

@@ -28685,6 +28685,193 @@ async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
     "}));
 }
 
+// Behavior: ToggleStagedSelectedLines over a selection that crosses a collapsed
+// pure-deletion hunk stages (then unstages) that deletion, even though the
+// deleted lines are not visible in the buffer.
+#[gpui::test]
+async fn test_toggle_staged_selected_lines_collapsed_deletion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_head_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    cx.set_index_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    // The worktree deletes `three`; its deletion hunk stays collapsed.
+    cx.set_state(indoc! {"
+        one
+        «two
+        fourˇ»
+        five
+    "});
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        two
+        four
+        five
+    "}));
+
+    // Toggling again over the same selection unstages the deletion.
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        two
+        three
+        four
+        five
+    "}));
+}
+
+// Behavior: ToggleStagedSelectedLines over the visible added lines of a
+// collapsed modified hunk (a 2-line deletion / 3-line addition where only the
+// added lines are visible) stages (then unstages) the whole hunk.
+#[gpui::test]
+async fn test_toggle_staged_selected_lines_collapsed_modification(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_head_text(indoc! { "
+        a
+        bee
+        cee
+        d
+        "
+    });
+    cx.set_index_text(indoc! { "
+        a
+        bee
+        cee
+        d
+        "
+    });
+    // `bee`, `cee` (2 lines) are replaced by `x1`, `x2`, `x3` (3 lines). The
+    // deletion side is collapsed, so only the three added lines are visible.
+    cx.set_state(indoc! {"
+        a
+        «x1
+        x2
+        x3ˇ»
+        d
+    "});
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        a
+        x1
+        x2
+        x3
+        d
+    "}));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        a
+        bee
+        cee
+        d
+    "}));
+}
+
+// Behavior: ToggleStagedSelectedLines over a single added line of a multi-line
+// pure-addition hunk stages only that line, leaving the hunk partially staged.
+#[gpui::test]
+async fn test_toggle_staged_selected_lines_partial_addition(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_head_text(indoc! { "
+        a
+        d
+        "
+    });
+    cx.set_index_text(indoc! { "
+        a
+        d
+        "
+    });
+    // Three lines are added between `a` and `d`; only the middle is selected.
+    cx.set_state(indoc! {"
+        a
+        x1
+        «x2ˇ»
+        x3
+        d
+    "});
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        a
+        x2
+        d
+    "}));
+
+    // The hunk is now partially staged.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
+            .collect::<Vec<_>>();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(
+            hunks[0].status(),
+            DiffHunkStatus {
+                kind: DiffHunkStatusKind::Added,
+                secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+            }
+        );
+    });
+
+    // Toggling the same line again unstages it.
+    cx.set_state(indoc! {"
+        a
+        x1
+        «x2ˇ»
+        x3
+        d
+    "});
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_lines(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        a
+        d
+    "}));
+}
+
 #[gpui::test]
 fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

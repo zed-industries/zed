@@ -3,7 +3,7 @@ use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::{ActionLogTelemetry, LastRejectUndo};
 use agent_settings::AgentSettings;
 use anyhow::Result;
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, ResolvedLineSelection};
 use collections::{HashMap, HashSet};
 use editor::{
     DiffHunkDelegate, Direction, Editor, EditorEvent, EditorSettings, MultiBuffer,
@@ -18,7 +18,7 @@ use gpui::{
     Global, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, prelude::*,
 };
 
-use language::{Buffer, Capability, OffsetRangeExt, Point};
+use language::{Buffer, BufferId, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
@@ -783,7 +783,7 @@ impl DiffHunkDelegate for AgentDiffDelegate {
         &self,
         _stage: bool,
         _hunks: Vec<ResolvedDiffHunks>,
-        _selections: HashMap<BufferId, Vec<(Range<u32>, bool)>>,
+        _selections: HashMap<BufferId, Vec<ResolvedLineSelection>>,
         _editor: &mut Editor,
         _window: &mut Window,
         _cx: &mut Context<Editor>,
