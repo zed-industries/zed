@@ -7952,6 +7952,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "pathfinder_geometry",
+ "proptest",
  "raw-window-handle",
  "semver",
  "smallvec",
