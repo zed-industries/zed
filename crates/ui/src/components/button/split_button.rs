@@ -68,12 +68,12 @@ impl RenderOnce for SplitButton {
             SplitButtonStyle::Filled | SplitButtonStyle::Outlined
         );
 
+        let outline = BoxShadow::new(px(0.), px(0.), cx.theme().colors().border.opacity(0.8))
+            .spread_radius(px(1.))
+            .inset();
+
         h_flex()
-            .when(is_filled_or_outlined, |this| {
-                this.rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border.opacity(0.8))
-            })
+            .when(is_filled_or_outlined, |this| this.relative().rounded_sm())
             .when(self.style == SplitButtonStyle::Transparent, |this| {
                 this.gap_px()
             })
@@ -81,14 +81,19 @@ impl RenderOnce for SplitButton {
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
                 SplitButtonKind::IconButton(icon) => icon.into_any_element(),
             }))
-            .child(Divider::vertical().map(|s| {
-                if self.style == SplitButtonStyle::Filled {
-                    s.h_full().color(crate::DividerColor::Border)
-                } else {
-                    s.h_4()
-                }
+            .child(Divider::vertical().when(is_filled_or_outlined, |s| {
+                s.h_full().color(crate::DividerColor::Border)
             }))
             .child(self.right)
+            .when(is_filled_or_outlined, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded_sm()
+                        .shadow(vec![outline]),
+                )
+            })
             .when(self.style == SplitButtonStyle::Filled, |this| {
                 this.bg(ElevationIndex::Surface.on_elevation_bg(cx))
                     .shadow(vec![BoxShadow::new(
