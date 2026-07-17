@@ -5,10 +5,11 @@ mod path_range;
 mod selection;
 
 use base64::Engine as _;
-use futures::FutureExt as _;
+use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
+use http_client::{AsyncBody, HttpClient};
 use language::LanguageName;
 
 use log::Level;
@@ -22,7 +23,9 @@ use theme_settings::ThemeSettings;
 use util::maybe;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
@@ -40,7 +43,7 @@ use gpui::{
     TextLayout, TextRun, TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point,
     quad,
 };
-use language::{CharClassifier, Language, LanguageRegistry, Rope};
+use language::{CharClassifier, HighlightId, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
@@ -386,8 +389,10 @@ pub struct Markdown {
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
     active_root_block: Option<usize>,
-    parsed_markdown: ParsedMarkdown,
-    images_by_source_offset: HashMap<usize, Arc<Image>>,
+    // `Arc` because `request_layout` clones both every frame; a deep clone of
+    // the parse side-tables and image map per frame is wasted allocation.
+    parsed_markdown: Arc<ParsedMarkdown>,
+    images_by_source_offset: Arc<HashMap<usize, Arc<Image>>>,
     should_reparse: bool,
     pending_parse: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -405,6 +410,26 @@ pub struct Markdown {
     context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
+    /// Bumped on every `copy()`. Guards the async remote-image-inlining
+    /// upgrade in `copy()` from overwriting the clipboard if the user has
+    /// since made a newer copy.
+    copy_generation: usize,
+    /// `request_layout` rebuilds the element tree every frame, and
+    /// `Language::highlight_text` fully re-parses a code block per call —
+    /// far too expensive to repeat per frame, so the runs are cached here
+    /// across frames. Shared with `MarkdownElement` via `Rc` because the
+    /// element only holds an entity handle during layout.
+    highlight_cache: Rc<RefCell<CodeBlockHighlightCache>>,
+}
+
+/// Tree-sitter highlight runs for rendered code blocks, keyed by each
+/// code-block text chunk's source start offset. Entries are cleared when the
+/// document re-parses (offsets shift) and when the syntax theme changes
+/// (`HighlightId`s index the theme-built highlight map).
+#[derive(Default)]
+struct CodeBlockHighlightCache {
+    theme: Option<Arc<SyntaxTheme>>,
+    runs_by_source_offset: HashMap<usize, Rc<[(Range<usize>, HighlightId)]>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -582,8 +607,8 @@ impl Markdown {
             autoscroll_request: None,
             active_root_block: None,
             should_reparse: false,
-            images_by_source_offset: Default::default(),
-            parsed_markdown: ParsedMarkdown::default(),
+            images_by_source_offset: Arc::default(),
+            parsed_markdown: Arc::default(),
             pending_parse: None,
             focus_handle,
             language_registry,
@@ -600,6 +625,8 @@ impl Markdown {
             context_menu_selected_markdown: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
+            copy_generation: 0,
+            highlight_cache: Rc::default(),
         };
         this.parse(cx);
         this
@@ -864,20 +891,130 @@ impl Markdown {
         self.active_search_highlight
     }
 
-    fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy(&mut self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;
         }
-        let plain_text = text.text_for_range(self.selection.start..self.selection.end);
+        let selection = self.selection.start..self.selection.end;
+        let plain_text = text.text_for_range(selection.clone());
+        let code_block_html = self.code_block_html_for_selection(selection.clone());
         let html = selection_html(
             &self.source,
-            self.selection.start..self.selection.end,
-            &text.code_block_html_by_source_offset,
+            selection.clone(),
+            &code_block_html,
+            &HashMap::default(),
         );
 
-        let mut item = ClipboardItem::new_string(plain_text);
+        let mut item = ClipboardItem::new_string(plain_text.clone());
         item.entries.push(ClipboardEntry::Html(html));
         cx.write_to_clipboard(item);
+
+        // Every copy must bump the generation — including image-free ones —
+        // so a pending inlining task from an earlier copy can never overwrite
+        // a newer clipboard write.
+        self.copy_generation += 1;
+
+        // Remote (http/https) images copy as a bare `<img src="...">`, which
+        // Chrome fetches live on paste but rich-text targets like LibreOffice
+        // Writer generally do not. Upgrade the clipboard in the background by
+        // inlining those images as `data:` URIs once fetched; `copy_generation`
+        // guards against clobbering a newer copy the user made in the meantime.
+        let remote_image_urls =
+            remote_image_urls_in_selection(&self.parsed_markdown.events, selection.clone());
+        if remote_image_urls.is_empty() {
+            return;
+        }
+        let generation = self.copy_generation;
+        let http_client = cx.http_client();
+        let source = self.source.clone();
+        cx.spawn(async move |this, cx| {
+            let remote_image_data = fetch_images_as_data_uris(http_client, remote_image_urls).await;
+            if remote_image_data.is_empty() {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                if this.copy_generation != generation {
+                    return;
+                }
+                let html = selection_html(&source, selection, &code_block_html, &remote_image_data);
+                let mut item = ClipboardItem::new_string(plain_text);
+                item.entries.push(ClipboardEntry::Html(html));
+                cx.write_to_clipboard(item);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Builds syntax-highlighted `<pre><code>` HTML fragments for the code
+    /// blocks intersecting `selection`, keyed by each block's source start
+    /// offset, so the copied HTML matches the colors on screen (see
+    /// [`selection_html`]). Highlight runs come from [`Self::highlight_cache`],
+    /// which rendering keeps warm; a cold chunk is re-highlighted here (copy
+    /// is a one-shot operation, so the tree-sitter cost is acceptable).
+    /// Blocks with no resolved language are omitted so `selection_html` falls
+    /// back to pulldown's plain `<pre><code>`, as is everything when nothing
+    /// has rendered yet (no theme to resolve colors against).
+    fn code_block_html_for_selection(&self, selection: Range<usize>) -> HashMap<usize, String> {
+        let mut cache = self.highlight_cache.borrow_mut();
+        let Some(theme) = cache.theme.clone() else {
+            return HashMap::default();
+        };
+        let source = self.parsed_markdown.source.clone();
+        let mut fragments: HashMap<usize, String> = HashMap::default();
+        let mut active_block: Option<(usize, String, Arc<Language>)> = None;
+        for (range, event) in self.parsed_markdown.events.iter() {
+            match event {
+                MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) => {
+                    if range.start >= selection.end || range.end <= selection.start {
+                        continue;
+                    }
+                    let language = match kind {
+                        CodeBlockKind::FencedLang(language) => {
+                            self.parsed_markdown.languages_by_name.get(language).cloned()
+                        }
+                        CodeBlockKind::FencedSrc(path_range) => self
+                            .parsed_markdown
+                            .languages_by_path
+                            .get(&path_range.path)
+                            .cloned(),
+                        _ => None,
+                    };
+                    if let Some(language) = language {
+                        active_block = Some((range.start, String::from("<pre><code>"), language));
+                    }
+                }
+                MarkdownEvent::End(MarkdownTagEnd::CodeBlock) => {
+                    if let Some((start, mut html, _)) = active_block.take() {
+                        html.push_str("</code></pre>");
+                        fragments.insert(start, html);
+                    }
+                }
+                MarkdownEvent::Text => {
+                    let Some((_, body, language)) = active_block.as_mut() else {
+                        continue;
+                    };
+                    let chunk = &source[range.clone()];
+                    let runs = cache
+                        .runs_by_source_offset
+                        .entry(range.start)
+                        .or_insert_with(|| {
+                            language
+                                .highlight_text(&Rope::from(chunk), 0..chunk.len())
+                                .into()
+                        })
+                        .clone();
+                    push_highlighted_html(body, chunk, &runs, &theme);
+                }
+                MarkdownEvent::SubstitutedText(text) => {
+                    if let Some((_, body, _)) = active_block.as_mut() {
+                        escape_html_into(body, text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        fragments
     }
 
     fn select_all(&mut self, text: &RenderedText, window: &mut Window, cx: &mut Context<Self>) {
@@ -959,12 +1096,13 @@ impl Markdown {
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
-            self.parsed_markdown = ParsedMarkdown {
+            self.parsed_markdown = Arc::new(ParsedMarkdown {
                 source: self.source.clone(),
                 ..Default::default()
-            };
+            });
             self.active_root_block = None;
-            self.images_by_source_offset.clear();
+            self.images_by_source_offset = Arc::default();
+            self.highlight_cache.borrow_mut().runs_by_source_offset.clear();
             self.mermaid_state.clear();
             cx.notify();
             cx.refresh_windows();
@@ -1100,8 +1238,11 @@ impl Markdown {
             let (parsed, images_by_source_offset) = parsed.await;
 
             this.update(cx, |this, cx| {
-                this.parsed_markdown = parsed;
-                this.images_by_source_offset = images_by_source_offset;
+                this.parsed_markdown = Arc::new(parsed);
+                this.images_by_source_offset = Arc::new(images_by_source_offset);
+                // Chunk offsets shift with every re-parse, so cached runs
+                // keyed by the old offsets are meaningless now.
+                this.highlight_cache.borrow_mut().runs_by_source_offset.clear();
                 if this.active_root_block.is_some_and(|block_index| {
                     block_index >= this.parsed_markdown.root_block_starts.len()
                 }) {
@@ -1665,7 +1806,7 @@ impl MarkdownElement {
             let mut metadata_block = div().w_full().rounded_md();
             metadata_block.style().refine(&self.style.code_block);
             builder.push_text_style(self.style.code_block.text.to_owned());
-            builder.push_code_block(None, content_range.start);
+            builder.push_code_block(None);
             builder.push_div(metadata_block, content_range, markdown_end);
             builder.push_text(&source[content_range.clone()], content_range.clone());
             builder.trim_trailing_newline();
@@ -2111,11 +2252,6 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(
-            &self.style.container_style,
-            self.style.base_text_style.clone(),
-            self.style.syntax.clone(),
-        );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
             (
@@ -2126,6 +2262,24 @@ impl Element for MarkdownElement {
                 markdown.mermaid_state.clone(),
             )
         };
+        let highlight_cache = self.markdown.read(cx).highlight_cache.clone();
+        {
+            let mut cache = highlight_cache.borrow_mut();
+            if cache
+                .theme
+                .as_ref()
+                .is_none_or(|theme| !Arc::ptr_eq(theme, &self.style.syntax))
+            {
+                cache.runs_by_source_offset.clear();
+                cache.theme = Some(self.style.syntax.clone());
+            }
+        }
+        let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+            highlight_cache,
+        );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -2359,7 +2513,7 @@ impl Element for MarkdownElement {
                                         });
 
                                     builder.push_text_style(self.style.code_block.text.to_owned());
-                                    builder.push_code_block(language, range.start);
+                                    builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
                                 (CodeBlockRenderer::Custom { .. }, _) => {}
@@ -3171,12 +3325,11 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
-    active_code_block_html: Option<CodeBlockHtml>,
-    code_block_html_by_source_offset: HashMap<usize, String>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    highlight_cache: Rc<RefCell<CodeBlockHighlightCache>>,
 }
 
 struct DivStackEntry {
@@ -3199,13 +3352,6 @@ impl DivStackEntry {
     }
 }
 
-/// Accumulates syntax-highlighted HTML for the code block currently being
-/// rendered. Markdown code blocks do not nest, so a single accumulator suffices.
-struct CodeBlockHtml {
-    source_start: usize,
-    body: String,
-}
-
 #[derive(Default)]
 struct PendingLine {
     text: String,
@@ -3222,6 +3368,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        highlight_cache: Rc<RefCell<CodeBlockHighlightCache>>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3239,12 +3386,11 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
-            active_code_block_html: None,
-            code_block_html_by_source_offset: HashMap::default(),
             link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            highlight_cache,
         }
     }
 
@@ -3409,42 +3555,12 @@ impl MarkdownElementBuilder {
         self.list_stack.pop();
     }
 
-    fn push_code_block(&mut self, language: Option<Arc<Language>>, source_start: usize) {
-        // Only accumulate HTML for blocks with a resolved language; unhighlighted
-        // blocks fall back to pulldown's plain `<pre><code>` in `selection_html`.
-        if language.is_some() {
-            self.active_code_block_html = Some(CodeBlockHtml {
-                source_start,
-                body: String::new(),
-            });
-        }
+    fn push_code_block(&mut self, language: Option<Arc<Language>>) {
         self.code_block_stack.push(language);
     }
 
     fn pop_code_block(&mut self) {
         self.code_block_stack.pop();
-        if let Some(code_block) = self.active_code_block_html.take() {
-            let mut html = String::from("<pre><code>");
-            html.push_str(&code_block.body);
-            html.push_str("</code></pre>");
-            self.code_block_html_by_source_offset
-                .insert(code_block.source_start, html);
-        }
-    }
-
-    fn push_code_block_html(&mut self, text: &str, color: Option<Hsla>) {
-        let Some(code_block) = self.active_code_block_html.as_mut() else {
-            return;
-        };
-        match color {
-            Some(color) => {
-                let rgb = u32::from(Rgba::from(color)) >> 8;
-                code_block.body.push_str(&format!("<span style=\"color:#{rgb:06x}\">"));
-                escape_html_into(&mut code_block.body, text);
-                code_block.body.push_str("</span>");
-            }
-            None => escape_html_into(&mut code_block.body, text),
-        }
     }
 
     fn push_link(&mut self, destination_url: SharedString, source_range: Range<usize>) {
@@ -3474,24 +3590,32 @@ impl MarkdownElementBuilder {
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let language = language.clone();
+            let runs = self
+                .highlight_cache
+                .borrow_mut()
+                .runs_by_source_offset
+                .entry(source_range.start)
+                .or_insert_with(|| {
+                    language
+                        .highlight_text(&Rope::from(text), 0..text.len())
+                        .into()
+                })
+                .clone();
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            for (range, highlight_id) in runs.iter() {
                 if range.start > offset {
                     self.pending_line
                         .runs
                         .push(text_style.to_run(range.start - offset));
-                    self.push_code_block_html(&text[offset..range.start], None);
                 }
 
                 let run_len = range.len();
-                if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
+                if let Some(highlight) = self.syntax_theme.get(*highlight_id).cloned() {
                     self.pending_line
                         .runs
                         .push(text_style.clone().highlight(highlight).to_run(run_len));
-                    self.push_code_block_html(&text[range.clone()], highlight.color);
                 } else {
                     self.pending_line.runs.push(text_style.to_run(run_len));
-                    self.push_code_block_html(&text[range.clone()], None);
                 }
                 offset = range.end;
             }
@@ -3500,7 +3624,6 @@ impl MarkdownElementBuilder {
                 self.pending_line
                     .runs
                     .push(text_style.to_run(text.len() - offset));
-                self.push_code_block_html(&text[offset..], None);
             }
         } else {
             self.pending_line.runs.push(text_style.to_run(text.len()));
@@ -3625,7 +3748,6 @@ impl MarkdownElementBuilder {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
-                code_block_html_by_source_offset: self.code_block_html_by_source_offset,
             },
         }
     }
@@ -3825,11 +3947,6 @@ struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
-    // Syntax-highlighted HTML for each rendered code block that had a resolved
-    // language, keyed by the code block's source start offset. Captured here at
-    // render time (where the language + `SyntaxTheme` are available) so `copy`
-    // can emit colored code blocks that match the preview. See `selection_html`.
-    code_block_html_by_source_offset: HashMap<usize, String>,
 }
 
 struct WrappedLineSegment {
@@ -4179,10 +4296,26 @@ impl RenderedText {
 /// (see [`RenderedText::code_block_html_by_source_offset`]); pulldown's own
 /// events for that block are skipped. Blocks without a cached fragment fall back
 /// to pulldown's plain `<pre><code>`.
+///
+/// pulldown only recognizes `<url>` and `[text](url)` link forms; the preview
+/// linkifies bare URLs (e.g. `http://example.com` with no markup) as a
+/// separate `linkify`-based pass over its own event stream (see the
+/// `LinkFinder` pass in `parser.rs`). This function applies the same pass to
+/// its own `Text` events, skipping text inside links, image alt text, and
+/// (uncached) code blocks so URLs there stay literal.
+///
+/// `remote_image_data` maps an image's original `http(s)` `dest_url` to a
+/// `data:` URI; matching `Tag::Image` events are rewritten to reference the
+/// `data:` URI instead. Bare remote image `src`s work when pasted into a
+/// browser (which fetches them live) but not into targets like LibreOffice
+/// Writer that don't fetch remote resources on paste, so the caller fetches
+/// them separately (see `fetch_images_as_data_uris`) and re-renders through
+/// this function once they're available.
 fn selection_html(
     source: &str,
     selection: Range<usize>,
     code_block_html: &HashMap<usize, String>,
+    remote_image_data: &HashMap<String, String>,
 ) -> String {
     use pulldown_cmark::{Event, Tag, TagEnd};
 
@@ -4195,6 +4328,14 @@ fn selection_html(
     // cached highlighted fragment wherever a cached code block starts. Code
     // blocks are top-level siblings, so each flushed segment stays balanced.
     let mut buffer: Vec<Event> = Vec::new();
+    // The preview's own document parser (`parser::within_link`/`LinkFinder` in
+    // parser.rs) linkifies bare URLs as a post-process over pulldown's Text
+    // events; pulldown itself only recognizes `<url>` and `[text](url)` forms.
+    // Since `selection_html` consumes pulldown's raw stream directly, bare
+    // URLs need the same treatment here or they copy as plain text.
+    let mut within_link = false;
+    let mut within_image = false;
+    let mut within_code_block = false;
     while let Some((event, range)) = events.next() {
         if let Event::Start(Tag::CodeBlock(_)) = &event
             && let Some(fragment) = code_block_html.get(&range.start)
@@ -4206,6 +4347,31 @@ fn selection_html(
                     break;
                 }
             }
+            continue;
+        }
+        match &event {
+            Event::Start(Tag::Link { .. }) => within_link = true,
+            Event::End(TagEnd::Link) => within_link = false,
+            Event::Start(Tag::Image { .. }) => within_image = true,
+            Event::End(TagEnd::Image) => within_image = false,
+            Event::Start(Tag::CodeBlock(_)) => within_code_block = true,
+            Event::End(TagEnd::CodeBlock) => within_code_block = false,
+            _ => {}
+        }
+        if let Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) = &event
+            && let Some(data_uri) = remote_image_data.get(dest_url.as_ref())
+        {
+            buffer.push(Event::Start(Tag::Image {
+                link_type: *link_type,
+                dest_url: data_uri.clone().into(),
+                title: title.clone(),
+                id: id.clone(),
+            }));
             continue;
         }
         // pulldown emits `<del>` for strikethrough, which Word imports as a
@@ -4227,7 +4393,12 @@ fn selection_html(
             buffer.push(Event::Text(symbol.into()));
             continue;
         }
-        buffer.push(event);
+        match event {
+            Event::Text(text) if !within_link && !within_image && !within_code_block => {
+                push_text_with_autolinks(&mut buffer, text);
+            }
+            event => buffer.push(event),
+        }
     }
     pulldown_cmark::html::push_html(&mut html, buffer.drain(..));
     // pulldown emits a bare `<table>`; without border attributes Word/TextEdit
@@ -4239,6 +4410,150 @@ fn selection_html(
         "<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\" \
          style=\"border-collapse: collapse;\">",
     )
+}
+
+/// Collects the deduplicated `http(s)` `dest_url`s of images whose source
+/// range intersects `selection`, in document order.
+fn remote_image_urls_in_selection(
+    events: &[(Range<usize>, MarkdownEvent)],
+    selection: Range<usize>,
+) -> Vec<SharedString> {
+    let mut urls: Vec<SharedString> = Vec::new();
+    for (range, event) in events {
+        if range.start >= selection.end || range.end <= selection.start {
+            continue;
+        }
+        if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
+            && (dest_url.starts_with("http://") || dest_url.starts_with("https://"))
+            && !urls.contains(dest_url)
+        {
+            urls.push(dest_url.clone());
+        }
+    }
+    urls
+}
+
+/// Fetches `urls` and returns a map from each successfully-fetched URL to a
+/// `data:` URI containing its bytes, base64-encoded. URLs that fail to fetch
+/// or whose bytes don't sniff as a known raster image format are omitted
+/// (the caller leaves those images referencing their original remote `src`).
+async fn fetch_images_as_data_uris(
+    http_client: Arc<dyn HttpClient>,
+    urls: Vec<SharedString>,
+) -> HashMap<String, String> {
+    let mut data_uris = HashMap::default();
+    for url in urls {
+        let Ok(mut response) = http_client
+            .get(url.as_ref(), AsyncBody::default(), true)
+            .await
+        else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        if response.body_mut().read_to_end(&mut bytes).await.is_err() {
+            continue;
+        }
+        let Some(format) = image::guess_format(&bytes)
+            .ok()
+            .and_then(image_format_from_guess)
+        else {
+            continue;
+        };
+        let encoded = base64::prelude::BASE64_STANDARD.encode(&bytes);
+        data_uris.insert(
+            url.to_string(),
+            format!("data:{};base64,{encoded}", format.mime_type()),
+        );
+    }
+    data_uris
+}
+
+/// Maps the subset of `image::ImageFormat` variants that `gpui::ImageFormat`
+/// (and thus `ImageFormat::mime_type`) also covers. Unsupported/unrecognized
+/// formats (e.g. Avif, Hdr) return `None` rather than guessing a MIME type.
+fn image_format_from_guess(format: image::ImageFormat) -> Option<ImageFormat> {
+    match format {
+        image::ImageFormat::Png => Some(ImageFormat::Png),
+        image::ImageFormat::Jpeg => Some(ImageFormat::Jpeg),
+        image::ImageFormat::WebP => Some(ImageFormat::Webp),
+        image::ImageFormat::Gif => Some(ImageFormat::Gif),
+        image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
+        image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
+        image::ImageFormat::Ico => Some(ImageFormat::Ico),
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => None,
+    }
+}
+
+/// Splits `text` on bare URLs (e.g. `http://example.com` with no `<...>` or
+/// `[...](...)` markup) and pushes the surrounding plain-text segments plus
+/// an `<a href>`-wrapped segment for each match. Text with no bare URLs is
+/// pushed unchanged.
+fn push_text_with_autolinks<'a>(
+    buffer: &mut Vec<pulldown_cmark::Event<'a>>,
+    text: pulldown_cmark::CowStr<'a>,
+) {
+    use pulldown_cmark::Event;
+
+    let mut finder = linkify::LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]);
+    let links: Vec<_> = finder.links(&text).collect();
+    if links.is_empty() {
+        buffer.push(Event::Text(text));
+        return;
+    }
+
+    let mut last_end = 0;
+    for link in &links {
+        if link.start() > last_end {
+            buffer.push(Event::Text(text[last_end..link.start()].to_string().into()));
+        }
+        let mut href = String::from("<a href=\"");
+        escape_html_into(&mut href, link.as_str());
+        href.push_str("\">");
+        buffer.push(Event::InlineHtml(href.into()));
+        buffer.push(Event::Text(link.as_str().to_string().into()));
+        buffer.push(Event::InlineHtml("</a>".into()));
+        last_end = link.end();
+    }
+    if last_end < text.len() {
+        buffer.push(Event::Text(text[last_end..].to_string().into()));
+    }
+}
+
+/// Appends `chunk` to `body` as HTML, wrapping each highlight run in a
+/// `<span style="color:#rrggbb">` resolved against `theme` — the same
+/// resolution the preview's renderer applies, so copied colors match the
+/// screen. Unhighlighted gaps are escaped verbatim.
+fn push_highlighted_html(
+    body: &mut String,
+    chunk: &str,
+    runs: &[(Range<usize>, HighlightId)],
+    theme: &SyntaxTheme,
+) {
+    let mut offset = 0;
+    for (range, highlight_id) in runs {
+        if range.start > offset {
+            escape_html_into(body, &chunk[offset..range.start]);
+        }
+        match theme.get(*highlight_id).and_then(|style| style.color) {
+            Some(color) => {
+                let rgb = u32::from(Rgba::from(color)) >> 8;
+                // Writing to a `String` is infallible.
+                write!(body, "<span style=\"color:#{rgb:06x}\">").ok();
+                escape_html_into(body, &chunk[range.clone()]);
+                body.push_str("</span>");
+            }
+            None => escape_html_into(body, &chunk[range.clone()]),
+        }
+        offset = range.end;
+    }
+    if offset < chunk.len() {
+        escape_html_into(body, &chunk[offset..]);
+    }
 }
 
 fn escape_html_into(out: &mut String, text: &str) {
@@ -4810,13 +5125,13 @@ mod tests {
         assert!(plain_text.contains("First paragraph."));
         assert!(plain_text.contains("two"));
 
-        let html = selection_html(source, 0..end, &HashMap::default());
+        let html = selection_html(source, 0..end, &HashMap::default(), &HashMap::default());
         assert!(html.contains("<h1"), "full-document HTML keeps the heading: {html}");
         assert!(html.contains("<ul>"), "full-document HTML keeps the list: {html}");
     }
 
     #[gpui::test]
-    fn test_selection_html_code_block_uses_rendered_fragment(cx: &mut TestAppContext) {
+    fn test_selection_html_code_block_uses_highlighted_fragment(cx: &mut TestAppContext) {
         let javascript_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
@@ -4831,31 +5146,53 @@ mod tests {
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         language_registry.add(javascript_language);
 
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let source = "```javascript\nlet x = a < b && c;\n```";
-        let rendered =
-            render_markdown_with_language_registry(source, Some(language_registry), cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                source.to_string().into(),
+                Some(language_registry),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        // Rendering warms the highlight cache `code_block_html_for_selection`
+        // reads from (and records the theme it resolves colors against).
+        let (_rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
 
-        // The rendered code block is cached, keyed by its source start offset.
-        let fragment = rendered
-            .code_block_html_by_source_offset
+        // Copy-time HTML generation produces a fragment for the code block,
+        // keyed by its source start offset.
+        let fragments = markdown.update(cx, |markdown, _| {
+            markdown.code_block_html_for_selection(0..source.len())
+        });
+        let fragment = fragments
             .get(&0)
-            .expect("code block html should be cached")
+            .expect("code block html should be generated")
             .clone();
         assert!(fragment.starts_with("<pre><code>"), "fragment: {fragment}");
         assert!(fragment.ends_with("</code></pre>"), "fragment: {fragment}");
-        // Special characters are HTML-escaped in the cached fragment.
+        // Special characters are HTML-escaped in the fragment.
         assert!(
             fragment.contains("a &lt; b &amp;&amp; c;"),
             "escaped: {fragment}"
         );
 
-        // `selection_html` splices the cached fragment in and skips pulldown's
-        // own code block events (no raw fence markers leak, no double `<pre>`).
-        let html = selection_html(
-            source,
-            0..source.len(),
-            &rendered.code_block_html_by_source_offset,
-        );
+        // `selection_html` splices the fragment in and skips pulldown's own
+        // code block events (no raw fence markers leak, no double `<pre>`).
+        let html = selection_html(source, 0..source.len(), &fragments, &HashMap::default());
         assert!(html.contains(&fragment), "spliced fragment: {html}");
         assert_eq!(html.matches("<pre>").count(), 1, "single code block: {html}");
         assert!(!html.contains("```"), "fence markers should not leak: {html}");
@@ -5878,7 +6215,12 @@ mod tests {
     #[test]
     fn test_selection_html_table() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
-        let html = selection_html(source, 0..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            0..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<table "), "expected a table element: {html}");
         assert!(html.contains("<td>1</td>"), "expected table cell: {html}");
         // Cells must have visible separators when pasted into Word/TextEdit.
@@ -5893,7 +6235,12 @@ mod tests {
         // `<s>` rather than pulldown's default `<del>`: Word imports `<del>` as a
         // tracked-change deletion and hides the text.
         let source = "hello ~~struck~~ world";
-        let html = selection_html(source, 0..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            0..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<s>struck</s>"), "expected <s>: {html}");
         assert!(!html.contains("<del>"), "should not emit <del>: {html}");
     }
@@ -5904,7 +6251,12 @@ mod tests {
         // `<input type="checkbox">` which Word/TextEdit drop, leaving a bare
         // bullet and losing the checked/unchecked state.
         let source = "- [x] done\n- [ ] todo\n";
-        let html = selection_html(source, 0..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            0..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(!html.contains("<input"), "should not emit <input>: {html}");
         assert!(html.contains("\u{2611}"), "expected checked box: {html}");
         assert!(html.contains("\u{2610}"), "expected unchecked box: {html}");
@@ -5917,7 +6269,12 @@ mod tests {
         // emits a heading rather than a paragraph because the marker is intact.
         let source = "# Title\n\nbody";
         let start = source.find("Title").unwrap();
-        let html = selection_html(source, start..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            start..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<h1"), "expected a heading element: {html}");
         assert!(html.contains("Title"), "expected heading text: {html}");
     }
@@ -5927,7 +6284,12 @@ mod tests {
         // Selection starts inside the fenced block, after the opening ``` line.
         let source = "```\nlet x = 1;\n```\n";
         let start = source.find("let").unwrap();
-        let html = selection_html(source, start..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            start..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<pre><code>"), "expected a code block: {html}");
         assert!(html.contains("let x = 1;"), "expected code text: {html}");
         assert!(!html.contains("```"), "fence markers should not leak: {html}");
@@ -5939,7 +6301,7 @@ mod tests {
         // resolve because the whole document is parsed.
         let source = "see [the docs][ref] now\n\n[ref]: https://example.com\n";
         let end = source.find("\n\n").unwrap();
-        let html = selection_html(source, 0..end, &HashMap::default());
+        let html = selection_html(source, 0..end, &HashMap::default(), &HashMap::default());
         assert!(
             html.contains("href=\"https://example.com\""),
             "reference link should resolve: {html}"
@@ -5954,17 +6316,27 @@ mod tests {
         // starting mid-emphasis produced a literal underscore; the full parse +
         // intersection filter keeps the emphasis markers intact.
         let italic = "an _emphasized_ word";
-        let html = selection_html(italic, 0..italic.len(), &HashMap::default());
+        let html = selection_html(
+            italic,
+            0..italic.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<em>emphasized</em>"), "italic: {html}");
 
         let bold = "a __strong__ word";
-        let html = selection_html(bold, 0..bold.len(), &HashMap::default());
+        let html = selection_html(bold, 0..bold.len(), &HashMap::default(), &HashMap::default());
         assert!(html.contains("<strong>strong</strong>"), "bold: {html}");
 
         // Intraword underscores are literal in CommonMark (no emphasis); the copy
         // output must match that rather than inventing `<em>`.
         let intraword = "call snake_case_name here";
-        let html = selection_html(intraword, 0..intraword.len(), &HashMap::default());
+        let html = selection_html(
+            intraword,
+            0..intraword.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(
             html.contains("snake_case_name") && !html.contains("<em>"),
             "intraword underscores stay literal: {html}"
@@ -5973,7 +6345,12 @@ mod tests {
         // Selection starting *after* the opening `_` still yields `<em>` because
         // the whole document is parsed and the marker is never sliced away.
         let start = italic.find("emphasized").unwrap();
-        let html = selection_html(italic, start..italic.len(), &HashMap::default());
+        let html = selection_html(
+            italic,
+            start..italic.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(
             html.contains("<em>emphasized</em>"),
             "mid-emphasis selection keeps markers: {html}"
@@ -5981,13 +6358,67 @@ mod tests {
     }
 
     #[test]
+    fn test_selection_html_bare_url_autolink() {
+        // pulldown only recognizes `<url>` and `[text](url)`; a bare URL with
+        // no markup relies on the same `linkify`-based detection the preview
+        // uses, applied to `selection_html`'s own event stream.
+        let source = "see http://www.example.com for more";
+        let html = selection_html(
+            source,
+            0..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
+        assert!(
+            html.contains("<a href=\"http://www.example.com\">http://www.example.com</a>"),
+            "bare url should be linkified: {html}"
+        );
+
+        // A bare URL inside an already-explicit link's text/markup must not be
+        // double-linkified.
+        let markup = "[http://www.example.com](http://www.example.com)";
+        let html = selection_html(
+            markup,
+            0..markup.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
+        assert_eq!(
+            html.matches("<a href=").count(),
+            1,
+            "should not double-linkify inside an existing link: {html}"
+        );
+
+        // A bare URL inside a fenced code block (no cached highlight fragment)
+        // must stay literal text, not become a link.
+        let code = "```\nhttp://www.example.com\n```\n";
+        let html = selection_html(code, 0..code.len(), &HashMap::default(), &HashMap::default());
+        assert!(
+            html.contains("<pre><code>") && !html.contains("<a href="),
+            "bare url inside a code block stays literal: {html}"
+        );
+
+        // A bare URL used as image alt text must not break the `<img>` tag's
+        // alt attribute by injecting nested markup.
+        let alt = "![http://www.example.com](https://example.com/cat.png)";
+        let html = selection_html(alt, 0..alt.len(), &HashMap::default(), &HashMap::default());
+        assert!(
+            html.contains("alt=\"http://www.example.com\""),
+            "bare url in alt text stays literal: {html}"
+        );
+    }
+
+    #[test]
     fn test_selection_html_images_pass_through() {
-        // Absolute http(s) and data-URI images are self-contained already, so
-        // the copy path emits their `src` verbatim and they render in external
-        // paste targets. Resolver/relative/local-file images cannot be embedded
-        // synchronously and remain a known limitation (see the design doc).
+        // With no `remote_image_data` entry, http(s) and data-URI images pass
+        // through verbatim: data-URIs are already self-contained, and http(s)
+        // images work in targets (Chrome) that fetch remote `src`s live on
+        // paste. `copy()` separately fetches and inlines http(s) images as
+        // `data:` URIs for targets that don't (see
+        // `test_selection_html_remote_image_inlined`). Resolver/relative/
+        // local-file images remain a known limitation (see the design doc).
         let http = "![cat](https://example.com/cat.png)";
-        let html = selection_html(http, 0..http.len(), &HashMap::default());
+        let html = selection_html(http, 0..http.len(), &HashMap::default(), &HashMap::default());
         assert!(
             html.contains("src=\"https://example.com/cat.png\""),
             "http image src preserved: {html}"
@@ -5995,7 +6426,7 @@ mod tests {
         assert!(html.contains("alt=\"cat\""), "alt text preserved: {html}");
 
         let data = "![dot](data:image/png;base64,iVBORw0KGgo=)";
-        let html = selection_html(data, 0..data.len(), &HashMap::default());
+        let html = selection_html(data, 0..data.len(), &HashMap::default(), &HashMap::default());
         assert!(
             html.contains("src=\"data:image/png;base64,iVBORw0KGgo=\""),
             "data-uri image is self-contained: {html}"
@@ -6003,10 +6434,189 @@ mod tests {
     }
 
     #[test]
+    fn test_selection_html_remote_image_inlined() {
+        // When `remote_image_data` has an entry for an image's `dest_url`,
+        // its `src` is rewritten to the `data:` URI instead of the original
+        // remote URL, so paste targets that don't fetch remote resources
+        // (e.g. LibreOffice Writer) still get a working image.
+        let source = "![cat](https://example.com/cat.png)";
+        let mut remote_image_data = HashMap::default();
+        remote_image_data.insert(
+            "https://example.com/cat.png".to_string(),
+            "data:image/png;base64,iVBORw0KGgo=".to_string(),
+        );
+        let html = selection_html(source, 0..source.len(), &HashMap::default(), &remote_image_data);
+        assert!(
+            html.contains("src=\"data:image/png;base64,iVBORw0KGgo=\""),
+            "remote image should be inlined as a data uri: {html}"
+        );
+        assert!(
+            !html.contains("src=\"https://example.com/cat.png\""),
+            "original remote src should be replaced: {html}"
+        );
+        assert!(html.contains("alt=\"cat\""), "alt text preserved: {html}");
+    }
+
+    #[test]
+    fn test_remote_image_urls_in_selection() {
+        let source = "![a](https://example.com/a.png) ![b](https://example.com/b.png) \
+                       ![c](relative.png) ![d](data:image/png;base64,iVBORw0KGgo=) \
+                       ![dup](https://example.com/a.png)";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        let urls = remote_image_urls_in_selection(&parsed.events, 0..source.len());
+        assert_eq!(
+            urls,
+            vec![
+                SharedString::from("https://example.com/a.png"),
+                SharedString::from("https://example.com/b.png"),
+            ],
+            "only distinct http(s) urls should be collected, in document order: {urls:?}"
+        );
+
+        // A selection that excludes an image's source range should exclude it.
+        let b_start = source.find("![b]").unwrap();
+        let urls = remote_image_urls_in_selection(&parsed.events, 0..b_start);
+        assert_eq!(
+            urls,
+            vec![SharedString::from("https://example.com/a.png")],
+            "images outside the selection should be excluded: {urls:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_fetch_images_as_data_uris(_cx: &mut TestAppContext) {
+        // PNG magic bytes are enough for `image::guess_format` to sniff the
+        // format; a full valid image body isn't needed for this pipeline.
+        let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let ok_bytes = png_bytes.clone();
+        let http_client = http_client::FakeHttpClient::create(move |request| {
+            let ok_bytes = ok_bytes.clone();
+            async move {
+                if request.uri().to_string().contains("missing") {
+                    return Ok(http_client::Response::builder()
+                        .status(404)
+                        .body(AsyncBody::default())
+                        .unwrap());
+                }
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .header("content-type", "image/png")
+                    .body(AsyncBody::from(ok_bytes))
+                    .unwrap())
+            }
+        });
+
+        let urls = vec![
+            SharedString::from("https://example.com/cat.png"),
+            SharedString::from("https://example.com/missing.png"),
+        ];
+        let data_uris = fetch_images_as_data_uris(http_client, urls).await;
+
+        assert_eq!(
+            data_uris
+                .get("https://example.com/cat.png")
+                .map(String::as_str),
+            Some("data:image/png;base64,iVBORw0KGgo="),
+            "successful fetch should produce a data uri: {data_uris:?}"
+        );
+        assert!(
+            !data_uris.contains_key("https://example.com/missing.png"),
+            "failed fetch should be omitted rather than inserting a bad entry: {data_uris:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_copy_remote_image_inlining_generation_guard(cx: &mut TestAppContext) {
+        let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let http_client = http_client::FakeHttpClient::create(move |_| {
+            let png_bytes = png_bytes.clone();
+            async move {
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(png_bytes))
+                    .unwrap())
+            }
+        });
+        cx.update(|cx| cx.set_http_client(http_client));
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let source = "plain text ![cat](https://example.com/cat.png)";
+        let markdown = cx.new(|cx| Markdown::new(source.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| MarkdownElement::new(markdown.clone(), MarkdownStyle::default()),
+        );
+        let rendered_text = rendered.text;
+
+        fn clipboard_html(cx: &gpui::VisualTestContext) -> String {
+            let item = cx.read_from_clipboard().expect("clipboard should have content");
+            item.entries
+                .iter()
+                .find_map(|entry| match entry {
+                    ClipboardEntry::Html(html) => Some(html.clone()),
+                    _ => None,
+                })
+                .expect("clipboard should have an html entry")
+        }
+
+        let character_selection = |start: usize, end: usize| Selection {
+            start,
+            end,
+            reversed: false,
+            pending: false,
+            mode: SelectMode::Character,
+        };
+
+        // An undisturbed copy gets upgraded in place: once the background
+        // fetch resolves, the clipboard html references the image as a
+        // `data:` URI instead of the remote url.
+        markdown.update_in(cx, |markdown, window, cx| {
+            markdown.selection = character_selection(0, source.len());
+            markdown.copy(&rendered_text, window, cx);
+        });
+        cx.run_until_parked();
+        let html = clipboard_html(cx);
+        assert!(
+            html.contains("src=\"data:image/png;base64,iVBORw0KGgo=\""),
+            "undisturbed copy should be upgraded with the inlined image: {html}"
+        );
+
+        // A newer copy — even one with no remote images, which spawns no
+        // inlining task of its own — must not be overwritten when an earlier
+        // copy's fetch resolves afterwards.
+        markdown.update_in(cx, |markdown, window, cx| {
+            markdown.selection = character_selection(0, source.len());
+            markdown.copy(&rendered_text, window, cx);
+            markdown.selection = character_selection(0, "plain text".len());
+            markdown.copy(&rendered_text, window, cx);
+        });
+        cx.run_until_parked();
+        let item = cx.read_from_clipboard().expect("clipboard should have content");
+        assert_eq!(
+            item.text().as_deref(),
+            Some("plain text"),
+            "stale inlining task should not clobber the newer copy"
+        );
+        let html = clipboard_html(cx);
+        assert!(
+            !html.contains("cat.png") && !html.contains("data:image"),
+            "newer copy's html should not contain the older selection's image: {html}"
+        );
+    }
+
+    #[test]
     fn test_selection_html_balanced_across_list_items() {
         let source = "- one\n- two\n- three\n";
         let start = source.find("two").unwrap();
-        let html = selection_html(source, start..source.len(), &HashMap::default());
+        let html = selection_html(
+            source,
+            start..source.len(),
+            &HashMap::default(),
+            &HashMap::default(),
+        );
         assert!(html.contains("<ul>") && html.contains("</ul>"), "balanced list: {html}");
         assert_eq!(
             html.matches("<li>").count(),

@@ -10682,6 +10682,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "html5ever 0.27.0",
+ "http_client",
  "image",
  "language",
  "languages",
