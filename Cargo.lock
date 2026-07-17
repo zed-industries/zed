@@ -8086,7 +8086,6 @@ dependencies = [
  "rand 0.9.4",
  "raw-window-handle",
  "smallvec",
- "tauri-winrt-notification",
  "uuid",
  "windows 0.61.3",
  "windows-core 0.61.2",

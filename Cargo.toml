@@ -801,7 +801,6 @@ syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.37.0"
 take-until = "0.2.0"
-tauri-winrt-notification = "0.7"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
 time = { version = "0.3", features = [
@@ -884,16 +883,16 @@ yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
 
-
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
+    "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
-
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
+    "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Foundation",
@@ -915,6 +914,7 @@ features = [
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",

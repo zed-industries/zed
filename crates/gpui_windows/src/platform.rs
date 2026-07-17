@@ -47,8 +47,9 @@ pub struct WindowsPlatform {
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
+    has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
-    system_notifications: SystemNotificationState,
+    system_notifications: RefCell<SystemNotificationState>,
 }
 
 struct WindowsPlatformInner {
@@ -199,10 +200,11 @@ impl WindowsPlatform {
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
+            has_package_identity: has_package_identity(),
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             app_identity: RefCell::new(None),
-            system_notifications: SystemNotificationState::new(),
+            system_notifications: RefCell::new(SystemNotificationState::new()),
         })
     }
 
@@ -651,9 +653,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_app_identity(&self, identifier: &str, name: &str) {
-        // Adopting the identifier as the process AppUserModelID makes the
-        // taskbar group windows under it, and lets toast notifications shown
-        // under the same id attribute themselves to this app.
+        // If the process has package identity, it's automatally granted an AUMID by the system.
+        if self.has_package_identity {
+            return;
+        }
+
         let identifier_utf16 = windows::core::HSTRING::from(identifier);
         // SAFETY: `identifier_utf16` outlives the call and is null-terminated.
         if let Err(error) = unsafe {
@@ -668,16 +672,20 @@ impl Platform for WindowsPlatform {
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
         let app_identity = self.app_identity.borrow().clone();
-        self.system_notifications.show(
-            app_identity
-                .as_ref()
-                .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
-            notification,
-        );
+        self.system_notifications
+            .borrow_mut()
+            .show(
+                self.has_package_identity,
+                app_identity
+                    .as_ref()
+                    .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
+                notification,
+            )
+            .log_err();
     }
 
     fn dismiss_system_notification(&self, tag: &str) {
-        self.system_notifications.dismiss(tag);
+        self.system_notifications.borrow_mut().dismiss(tag);
     }
 
     fn on_system_notification_response(
@@ -685,6 +693,7 @@ impl Platform for WindowsPlatform {
         callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
     ) {
         self.system_notifications
+            .borrow_mut()
             .on_response(&self.foreground_executor, callback);
     }
 
@@ -1144,6 +1153,24 @@ struct PlatformWindowCreateContext {
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
+}
+
+fn has_package_identity() -> bool {
+    let mut package_full_name_length = 0;
+    let result = unsafe {
+        windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(
+            &mut package_full_name_length,
+            None,
+        )
+    };
+    if result == ERROR_INSUFFICIENT_BUFFER {
+        true
+    } else if result == APPMODEL_ERROR_NO_PACKAGE {
+        false
+    } else {
+        log::warn!("failed to determine whether the process has package identity: {result:?}");
+        false
+    }
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
