@@ -750,37 +750,35 @@ impl WorktreeStore {
             .detach();
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(async move |this, cx| {
-            match task.await {
-                Ok(worktree) => {
-                    if !is_via_collab {
-                        if let Some((trusted_worktrees, worktree_store)) = this
-                            .update(cx, |_, cx| {
-                                TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
-                            })
-                            .ok()
-                            .flatten()
-                        {
-                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(
-                                    &worktree_store,
-                                    worktree.read(cx).id(),
-                                    cx,
-                                );
-                            });
-                        }
-
-                        this.update(cx, |this, cx| {
-                            if this.scanning_enabled && visible {
-                                this.observe_worktree_scan_completion(&worktree, cx);
-                            }
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(worktree) => {
+                if !is_via_collab {
+                    if let Some((trusted_worktrees, worktree_store)) = this
+                        .update(cx, |_, cx| {
+                            TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
                         })
-                        .ok();
+                        .ok()
+                        .flatten()
+                    {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(
+                                &worktree_store,
+                                worktree.read(cx).id(),
+                                cx,
+                            );
+                        });
                     }
-                    Ok(worktree)
+
+                    this.update(cx, |this, cx| {
+                        if this.scanning_enabled && visible {
+                            this.observe_worktree_scan_completion(&worktree, cx);
+                        }
+                    })
+                    .ok();
                 }
-                Err(err) => Err((*err).cloned()),
+                Ok(worktree)
             }
+            Err(err) => Err((*err).cloned()),
         })
     }
 
