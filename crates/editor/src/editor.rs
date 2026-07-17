@@ -6253,6 +6253,7 @@ impl Editor {
         struct CursorData {
             anchor: Anchor,
             point: Point,
+            char_column: u32,
         }
         let cursor_data: Vec<CursorData> = self
             .selections
@@ -6264,9 +6265,18 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let buffer_snapshot = display_snapshot.buffer_snapshot();
+                let point = anchor.to_point(buffer_snapshot);
+                // `Point` columns are UTF-8 byte offsets, but alignment must count characters
+                // so that a multi-byte character before the cursor occupies a single column.
+                let char_column = buffer_snapshot
+                    .text_for_range(Point::new(point.row, 0)..point)
+                    .flat_map(str::chars)
+                    .count() as u32;
                 CursorData {
-                    anchor: anchor,
-                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                    anchor,
+                    point,
+                    char_column,
                 }
             })
             .collect();
@@ -6294,8 +6304,8 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let adjusted_column = point.column + rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let adjusted_column = cursor.char_column + rows_column_offset[row_idx];
                 if adjusted_column > target_column {
                     target_column = adjusted_column;
                 }
@@ -6311,12 +6321,10 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let spaces_needed = target_column - cursor.char_column - rows_column_offset[row_idx];
                 if spaces_needed > 0 {
-                    let anchor = cursor_data[cursor_index + column_idx]
-                        .anchor
-                        .bias_left(&display_snapshot);
+                    let anchor = cursor.anchor.bias_left(&display_snapshot);
                     edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
                 }
                 rows_column_offset[row_idx] += spaces_needed;

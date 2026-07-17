@@ -42302,6 +42302,31 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_align_selections_multibyte(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Cursors preceded by multi-byte characters (`←` is 3 bytes, `π` is 2 bytes) must be
+    // aligned by character column, not by UTF-8 byte offset. The first `#` starts one
+    // character earlier than the second, so a single space aligns them.
+    let before = indoc!(
+        r#"
+            a ← 1  ˇ# one
+            bc ← π  ˇ# two
+        "#
+    );
+    let after = indoc!(
+        r#"
+            a ← 1   ˇ# one
+            bc ← π  ˇ# two
+        "#
+    );
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
 async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
