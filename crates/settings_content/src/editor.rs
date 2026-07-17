@@ -15,7 +15,7 @@ use crate::{
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
-    /// Default: true
+    /// Default: false
     pub cursor_blink: Option<bool>,
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underline", or "hollow".
@@ -464,6 +464,21 @@ pub struct MinimapContent {
     ///
     /// Default: 80
     pub max_width_columns: Option<num::NonZeroU32>,
+
+    /// Whether to show a code preview when hovering over the minimap.
+    ///
+    /// Default: true
+    pub hover_preview: Option<bool>,
+
+    /// Number of lines to show in the minimap hover preview.
+    ///
+    /// Default: 9
+    pub hover_preview_lines: Option<num::NonZeroU32>,
+
+    /// Width of the minimap hover preview in columns.
+    ///
+    /// Default: 80
+    pub hover_preview_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
