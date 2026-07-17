@@ -170,6 +170,17 @@ pub struct DiffHunk {
     pub staged_deleted: Vec<Range<u32>>,
 }
 
+/// A selected span of lines in a diff, resolved to rows in a single buffer.
+///
+/// When `is_deleted` is false, `rows` are absolute rows in the buffer. When
+/// `is_deleted` is true, `rows` are absolute rows in the diff's base text,
+/// selecting lines of a deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLineSelection {
+    pub rows: Range<u32>,
+    pub is_deleted: bool,
+}
+
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InternalDiffHunk {
@@ -214,7 +225,9 @@ impl PendingHunk {
 pub enum PendingSense {
     /// Override the secondary status of the matched hunk (used by the
     /// uncommitted diff to show a hunk as staging/unstaging in place).
-    SetSecondaryStatus { stage: bool },
+    Stage,
+    Unstage,
+    PartiallyStage,
     /// Suppress the matched hunk entirely (used by the unstaged/staged diffs so
     /// that a hunk disappears the moment it is staged/unstaged).
     Suppress,
@@ -871,7 +884,11 @@ impl BufferDiffSnapshot {
         let index_text = unstaged_diff
             .base_text_exists
             .then(|| unstaged_diff.base_text.as_rope().clone());
-        let sense = PendingSense::SetSecondaryStatus { stage };
+        let sense = if stage {
+            PendingSense::Stage
+        } else {
+            PendingSense::Unstage
+        };
         let version = buffer.version().clone();
 
         // If the file doesn't exist in either HEAD or the index, then the
@@ -1174,7 +1191,7 @@ impl BufferDiffSnapshot {
                         )
                     {
                         match pending_hunk.sense {
-                            PendingSense::SetSecondaryStatus { stage } => {
+                            PendingSense::Stage | PendingSense::Unstage => {
                                 staged_added = pending_hunk
                                     .staged_added
                                     .iter()
@@ -1184,11 +1201,24 @@ impl BufferDiffSnapshot {
                                     .collect();
                                 staged_deleted = pending_hunk.staged_deleted.clone();
                                 has_pending = true;
-                                secondary_status = if stage {
+                                secondary_status = if pending_hunk.sense == PendingSense::Stage {
                                     DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
                                 } else {
                                     DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
                                 };
+                            }
+                            PendingSense::PartiallyStage => {
+                                staged_added = pending_hunk
+                                    .staged_added
+                                    .iter()
+                                    .map(|anchor_range| {
+                                        buffer_row_span(&anchor_range.to_point(buffer))
+                                    })
+                                    .collect();
+                                staged_deleted = pending_hunk.staged_deleted.clone();
+                                has_pending = true;
+                                secondary_status =
+                                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                             }
                             PendingSense::Suppress => continue,
                         }
@@ -1984,7 +2014,11 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let sense = PendingSense::SetSecondaryStatus { stage };
+        let sense = if stage {
+            PendingSense::Stage
+        } else {
+            PendingSense::Unstage
+        };
         let version = buffer.version().clone();
         let hunks = self
             .snapshot(cx)
@@ -3338,7 +3372,7 @@ mod tests {
                     Anchor::min_max_range_for_buffer(buffer.remote_id()),
                     0..base_text.len(),
                     version.clone(),
-                    PendingSense::SetSecondaryStatus { stage: true },
+                    PendingSense::Stage,
                     vec![Anchor::min_max_range_for_buffer(buffer.remote_id())],
                     vec![base_row_span(
                         &base,
