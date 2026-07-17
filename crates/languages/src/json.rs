@@ -39,6 +39,8 @@ use crate::PackageJsonData;
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
+const PACKAGE_SCRIPT_LABEL_PREFIX: &str = "package script";
+const COMPOSER_SCRIPT_LABEL_PREFIX: &str = "composer script";
 
 pub(crate) struct JsonTaskProvider;
 
@@ -81,23 +83,13 @@ impl ContextProvider for JsonTaskProvider {
                     .scripts
                     .into_iter()
                     .map(|(_, key)| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("{PACKAGE_SCRIPT_LABEL_PREFIX}: \"{key}\""),
                         command: command.clone(),
                         args: vec!["run".into(), key],
                         cwd: Some(VariableName::Dirname.template_value()),
-                        ..TaskTemplate::default()
-                    })
-                    .chain([TaskTemplate {
-                        label: "package script $ZED_CUSTOM_script".to_owned(),
-                        command: command.clone(),
-                        args: vec![
-                            "run".into(),
-                            VariableName::Custom("script".into()).template_value(),
-                        ],
-                        cwd: Some(VariableName::Dirname.template_value()),
                         tags: vec!["package-script".into()],
                         ..TaskTemplate::default()
-                    }])
+                    })
                     .collect()
             } else if is_composer_json {
                 serde_json_lenient::Value::from_str(&contents.text)
@@ -106,22 +98,12 @@ impl ContextProvider for JsonTaskProvider {
                     .as_object()?
                     .keys()
                     .map(|key| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("{COMPOSER_SCRIPT_LABEL_PREFIX}: \"{key}\""),
                         command: "composer".to_owned(),
                         args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
-                        ..TaskTemplate::default()
-                    })
-                    .chain([TaskTemplate {
-                        label: "composer script $ZED_CUSTOM_script".to_owned(),
-                        command: "composer".to_owned(),
-                        args: vec![
-                            "-d".into(),
-                            "$ZED_DIRNAME".into(),
-                            VariableName::Custom("script".into()).template_value(),
-                        ],
                         tags: vec!["composer-script".into()],
                         ..TaskTemplate::default()
-                    }])
+                    })
                     .collect()
             } else {
                 vec![]
@@ -423,6 +405,44 @@ mod tests {
     #[test]
     fn test_json_schema_proxy_settings_ignores_missing_proxy() {
         assert_eq!(json_schema_proxy_settings(None), None);
+    }
+
+    #[test]
+    fn test_package_json_task_templates_no_duplicate_templates() {
+        use super::{COMPOSER_SCRIPT_LABEL_PREFIX, PACKAGE_SCRIPT_LABEL_PREFIX, PackageJsonData};
+        use std::collections::HashMap;
+        use task::{TaskTemplate, VariableName};
+
+        let text = r#"{
+            "scripts": {
+                "build": "rsbuild build",
+                "dev": "rsbuild dev"
+            }
+        }"#;
+
+        let package_json: HashMap<String, serde_json_lenient::Value> =
+            serde_json_lenient::from_str(text).unwrap();
+        let path = std::path::PathBuf::from("/test/package.json");
+        let package_json = PackageJsonData::new(path, package_json);
+        let command = package_json.package_manager.unwrap_or("npm").to_owned();
+        let task_templates: Vec<_> = package_json
+            .scripts
+            .into_iter()
+            .map(|(_, key)| TaskTemplate {
+                label: format!("{PACKAGE_SCRIPT_LABEL_PREFIX}: \"{key}\""),
+                command: command.clone(),
+                args: vec!["run".into(), key],
+                cwd: Some(VariableName::Dirname.template_value()),
+                tags: vec!["package-script".into()],
+                ..TaskTemplate::default()
+            })
+            .collect();
+
+        assert_eq!(task_templates.len(), 2);
+        assert_eq!(task_templates[0].label, "package script: \"build\"");
+        assert_eq!(task_templates[0].tags, vec!["package-script"]);
+        assert_eq!(task_templates[1].label, "package script: \"dev\"");
+        assert_eq!(task_templates[1].tags, vec!["package-script"]);
     }
 }
 
