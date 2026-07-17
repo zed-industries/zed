@@ -1,7 +1,7 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
+use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
 use futures::FutureExt;
 use futures::{
@@ -19,7 +19,7 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason, TokenUsage,
 };
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
@@ -415,6 +415,7 @@ impl CodegenAlternative {
     ) -> Result<()> {
         // Clear the model explanation since the user has started a new generation.
         self.description = None;
+        self.failure = None;
 
         if let Some(transformation_transaction_id) = self.transformation_transaction_id.take() {
             self.buffer.update(cx, |buffer, cx| {
@@ -1163,162 +1164,291 @@ impl CodegenAlternative {
             enum ToolUseOutput {
                 Rewrite {
                     text: String,
-                    description: Option<String>,
                 },
-                Failure(String),
+                Failure {
+                    message: String,
+                    is_input_complete: bool,
+                },
             }
 
-            enum ModelUpdate {
-                Description(String),
-                Failure(String),
+            struct RewriteState {
+                tool_use_id: LanguageModelToolUseId,
+                chars_read: usize,
+                is_input_complete: bool,
             }
 
-            let chars_read_by_tool_id: Arc<Mutex<HashMap<LanguageModelToolUseId, usize>>> =
-                Arc::new(Mutex::new(HashMap::default()));
-            let process_tool_use = move |tool_use: LanguageModelToolUse| -> Option<ToolUseOutput> {
-                let mut chars_read_by_tool_id = chars_read_by_tool_id.lock();
-                match tool_use.name.as_ref() {
-                    REWRITE_SECTION_TOOL_NAME => {
-                        let Ok(input) = tool_use.input.parse::<RewriteSectionInput>() else {
-                            return None;
-                        };
-                        let chars_read_so_far =
-                            chars_read_by_tool_id.entry(tool_use.id).or_insert(0);
-                        let Some(text_slice) = input.replacement_text.get(*chars_read_so_far..)
-                        else {
-                            return None;
-                        };
-                        let text = text_slice.to_string();
-                        *chars_read_so_far = input.replacement_text.len();
-                        Some(ToolUseOutput::Rewrite {
-                            text,
-                            description: None,
-                        })
+            let rewrite_state: Arc<Mutex<Option<RewriteState>>> = Arc::new(Mutex::new(None));
+            let process_rewrite_state = rewrite_state.clone();
+            let process_tool_use =
+                move |tool_use: LanguageModelToolUse| -> Result<Option<ToolUseOutput>> {
+                    match tool_use.name.as_ref() {
+                        REWRITE_SECTION_TOOL_NAME => {
+                            let input = match tool_use.input.parse::<RewriteSectionInput>() {
+                                Ok(input) => input,
+                                Err(_) if !tool_use.is_input_complete => return Ok(None),
+                                Err(error) => {
+                                    return Err(error.context(format!(
+                                        "invalid input for `{REWRITE_SECTION_TOOL_NAME}` tool"
+                                    )));
+                                }
+                            };
+                            let mut rewrite_state = process_rewrite_state.lock();
+                            if let Some(state) = rewrite_state.as_ref()
+                                && state.tool_use_id != tool_use.id
+                            {
+                                return Err(anyhow!(
+                                    "Inline assistant called `{REWRITE_SECTION_TOOL_NAME}` \
+                                     multiple times"
+                                ));
+                            }
+                            let state = rewrite_state.get_or_insert_with(|| RewriteState {
+                                tool_use_id: tool_use.id,
+                                chars_read: 0,
+                                is_input_complete: false,
+                            });
+                            let Some(text_slice) = input.replacement_text.get(state.chars_read..)
+                            else {
+                                return Ok(None);
+                            };
+                            let text = text_slice.to_string();
+                            state.chars_read = input.replacement_text.len();
+                            state.is_input_complete |= tool_use.is_input_complete;
+                            Ok(Some(ToolUseOutput::Rewrite { text }))
+                        }
+                        FAILURE_MESSAGE_TOOL_NAME => {
+                            let mut input = match tool_use.input.parse::<FailureMessageInput>() {
+                                Ok(input) => input,
+                                Err(_) if !tool_use.is_input_complete => return Ok(None),
+                                Err(error) => {
+                                    return Err(error.context(format!(
+                                        "invalid input for `{FAILURE_MESSAGE_TOOL_NAME}` tool"
+                                    )));
+                                }
+                            };
+                            Ok(Some(ToolUseOutput::Failure {
+                                message: std::mem::take(&mut input.message),
+                                is_input_complete: tool_use.is_input_complete,
+                            }))
+                        }
+                        _ => Ok(None),
                     }
-                    FAILURE_MESSAGE_TOOL_NAME => {
-                        let Ok(mut input) = tool_use.input.parse::<FailureMessageInput>() else {
-                            return None;
-                        };
-                        Some(ToolUseOutput::Failure(std::mem::take(&mut input.message)))
+                };
+
+            let mut message_id = None;
+            let mut received_failure = false;
+            let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
+
+            let first_text = loop {
+                let Some(event) = completion_events.next().await else {
+                    if received_failure {
+                        finish_with_status(CodegenStatus::Done, cx);
+                    } else {
+                        finish_with_status(
+                            CodegenStatus::Error(anyhow!(
+                                "Inline assistant response ended without completing \
+                                 `{REWRITE_SECTION_TOOL_NAME}` or `{FAILURE_MESSAGE_TOOL_NAME}`"
+                            )),
+                            cx,
+                        );
                     }
-                    _ => None,
+                    return;
+                };
+
+                match event {
+                    Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
+                        message_id = Some(id);
+                    }
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                        let output = match process_tool_use(tool_use) {
+                            Ok(output) => output,
+                            Err(error) => {
+                                finish_with_status(CodegenStatus::Error(error), cx);
+                                return;
+                            }
+                        };
+                        if let Some(output) = output {
+                            match output {
+                                ToolUseOutput::Rewrite { text } => {
+                                    if received_failure {
+                                        finish_with_status(
+                                            CodegenStatus::Error(anyhow!(
+                                                "Inline assistant called \
+                                                 `{REWRITE_SECTION_TOOL_NAME}` after \
+                                                 `{FAILURE_MESSAGE_TOOL_NAME}`"
+                                            )),
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    break text;
+                                }
+                                ToolUseOutput::Failure {
+                                    message,
+                                    is_input_complete,
+                                } => {
+                                    received_failure |= is_input_complete;
+                                    if is_input_complete
+                                        && codegen
+                                            .update(cx, |this, cx| {
+                                                this.failure = Some(message);
+                                                cx.notify();
+                                            })
+                                            .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                        *last_token_usage.lock() = token_usage;
+                    }
+                    Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                        if !received_failure {
+                            finish_with_status(
+                                CodegenStatus::Error(anyhow!(
+                                    "Inline assistant stopped before completing \
+                                     `{REWRITE_SECTION_TOOL_NAME}` or \
+                                     `{FAILURE_MESSAGE_TOOL_NAME}` ({reason:?})"
+                                )),
+                                cx,
+                            );
+                        } else if matches!(reason, StopReason::MaxTokens | StopReason::Refusal) {
+                            finish_with_status(
+                                CodegenStatus::Error(anyhow!(
+                                    "Inline assistant response was interrupted ({reason:?})"
+                                )),
+                                cx,
+                            );
+                        } else {
+                            finish_with_status(CodegenStatus::Done, cx);
+                        }
+                        return;
+                    }
+                    Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                        tool_name,
+                        json_parse_error,
+                        ..
+                    }) => {
+                        finish_with_status(
+                            CodegenStatus::Error(anyhow!(
+                                "Invalid input for inline assistant tool \
+                                 `{tool_name}`: {json_parse_error}"
+                            )),
+                            cx,
+                        );
+                        return;
+                    }
+                    Ok(
+                        LanguageModelCompletionEvent::Queued { .. }
+                        | LanguageModelCompletionEvent::Started
+                        | LanguageModelCompletionEvent::Text(_)
+                        | LanguageModelCompletionEvent::Thinking { .. }
+                        | LanguageModelCompletionEvent::RedactedThinking { .. }
+                        | LanguageModelCompletionEvent::ReasoningDetails(_)
+                        | LanguageModelCompletionEvent::Compaction(_),
+                    ) => {}
+                    Err(error) => {
+                        finish_with_status(CodegenStatus::Error(error.into()), cx);
+                        return;
+                    }
                 }
             };
 
-            let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded::<ModelUpdate>();
+            let move_last_token_usage = last_token_usage.clone();
+            let move_rewrite_state = rewrite_state.clone();
 
-            cx.spawn({
-                let codegen = codegen.clone();
-                async move |cx| {
-                    while let Some(update) = message_rx.next().await {
-                        let _ = codegen.update(cx, |this, _cx| match update {
-                            ModelUpdate::Description(d) => this.description = Some(d),
-                            ModelUpdate::Failure(f) => this.failure = Some(f),
-                        });
-                    }
-                }
-            })
-            .detach();
-
-            let mut message_id = None;
-            let mut first_text = None;
-            let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
-            let total_text = Arc::new(Mutex::new(String::new()));
-
-            loop {
-                if let Some(first_event) = completion_events.next().await {
-                    match first_event {
-                        Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
-                            message_id = Some(id);
-                        }
+            let remaining_text_stream = completion_events.filter_map(move |e| {
+                let process_tool_use = process_tool_use.clone();
+                let last_token_usage = move_last_token_usage.clone();
+                let rewrite_state = move_rewrite_state.clone();
+                async move {
+                    match e {
                         Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
-                            if let Some(output) = process_tool_use(tool_use) {
-                                let (text, update) = match output {
-                                    ToolUseOutput::Rewrite { text, description } => {
-                                        (Some(text), description.map(ModelUpdate::Description))
-                                    }
-                                    ToolUseOutput::Failure(message) => {
-                                        (None, Some(ModelUpdate::Failure(message)))
-                                    }
-                                };
-                                if let Some(update) = update {
-                                    let _ = message_tx.unbounded_send(update);
-                                }
-                                first_text = text;
-                                if first_text.is_some() {
-                                    break;
-                                }
+                            let output = match process_tool_use(tool_use) {
+                                Ok(Some(output)) => output,
+                                Ok(None) => return None,
+                                Err(error) => return Some(Err(error.into())),
+                            };
+                            match output {
+                                ToolUseOutput::Rewrite { text } => Some(Ok(text)),
+                                ToolUseOutput::Failure { .. } => Some(Err(anyhow!(
+                                    "Inline assistant called `{FAILURE_MESSAGE_TOOL_NAME}` \
+                                     after starting `{REWRITE_SECTION_TOOL_NAME}`"
+                                )
+                                .into())),
                             }
                         }
                         Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                             *last_token_usage.lock() = token_usage;
+                            None
                         }
-                        Ok(LanguageModelCompletionEvent::Text(text)) => {
-                            let mut lock = total_text.lock();
-                            lock.push_str(&text);
+                        Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            tool_name,
+                            json_parse_error,
+                            ..
+                        }) => Some(Err(anyhow!(
+                            "Invalid input for inline assistant tool \
+                             `{tool_name}`: {json_parse_error}"
+                        )
+                        .into())),
+                        Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                            let rewrite_complete = rewrite_state
+                                .lock()
+                                .as_ref()
+                                .is_some_and(|state| state.is_input_complete);
+                            if !rewrite_complete {
+                                Some(Err(anyhow!(
+                                    "Inline assistant stopped before completing \
+                                         `{REWRITE_SECTION_TOOL_NAME}` ({reason:?})"
+                                )
+                                .into()))
+                            } else if matches!(reason, StopReason::MaxTokens | StopReason::Refusal)
+                            {
+                                Some(Err(anyhow!(
+                                    "Inline assistant response was interrupted ({reason:?})"
+                                )
+                                .into()))
+                            } else {
+                                None
+                            }
                         }
-                        Ok(e) => {
-                            log::warn!("Unexpected event: {:?}", e);
-                            break;
-                        }
-                        Err(e) => {
-                            finish_with_status(CodegenStatus::Error(e.into()), cx);
-                            break;
-                        }
+                        Ok(
+                            LanguageModelCompletionEvent::Queued { .. }
+                            | LanguageModelCompletionEvent::Started
+                            | LanguageModelCompletionEvent::Text(_)
+                            | LanguageModelCompletionEvent::Thinking { .. }
+                            | LanguageModelCompletionEvent::RedactedThinking { .. }
+                            | LanguageModelCompletionEvent::StartMessage { .. }
+                            | LanguageModelCompletionEvent::ReasoningDetails(_)
+                            | LanguageModelCompletionEvent::Compaction(_),
+                        ) => None,
+                        Err(error) => Some(Err(error)),
                     }
                 }
-            }
-
-            let Some(first_text) = first_text else {
-                finish_with_status(CodegenStatus::Done, cx);
-                return;
-            };
-
-            let move_last_token_usage = last_token_usage.clone();
-
-            let text_stream = Box::pin(futures::stream::once(async { Ok(first_text) }).chain(
-                completion_events.filter_map(move |e| {
-                    let process_tool_use = process_tool_use.clone();
-                    let last_token_usage = move_last_token_usage.clone();
-                    let total_text = total_text.clone();
-                    let mut message_tx = message_tx.clone();
-                    async move {
-                        match e {
-                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
-                                let Some(output) = process_tool_use(tool_use) else {
-                                    return None;
-                                };
-                                let (text, update) = match output {
-                                    ToolUseOutput::Rewrite { text, description } => {
-                                        (Some(text), description.map(ModelUpdate::Description))
-                                    }
-                                    ToolUseOutput::Failure(message) => {
-                                        (None, Some(ModelUpdate::Failure(message)))
-                                    }
-                                };
-                                if let Some(update) = update {
-                                    let _ = message_tx.send(update).await;
-                                }
-                                text.map(Ok)
-                            }
-                            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                                *last_token_usage.lock() = token_usage;
-                                None
-                            }
-                            Ok(LanguageModelCompletionEvent::Text(text)) => {
-                                let mut lock = total_text.lock();
-                                lock.push_str(&text);
-                                None
-                            }
-                            Ok(LanguageModelCompletionEvent::Stop(_reason)) => None,
-                            e => {
-                                log::error!("UNEXPECTED EVENT {:?}", e);
-                                None
-                            }
-                        }
-                    }
-                }),
-            ));
+            });
+            let completion_status = futures::stream::once(async move {
+                if rewrite_state
+                    .lock()
+                    .as_ref()
+                    .is_some_and(|state| state.is_input_complete)
+                {
+                    None
+                } else {
+                    Some(Err(anyhow!(
+                        "Inline assistant response ended before completing \
+                         `{REWRITE_SECTION_TOOL_NAME}`"
+                    )
+                    .into()))
+                }
+            })
+            .filter_map(futures::future::ready);
+            let text_stream = Box::pin(
+                futures::stream::once(async { Ok(first_text) })
+                    .chain(remaining_text_stream)
+                    .chain(completion_status),
+            );
 
             let language_model_text_stream = LanguageModelTextStream {
                 message_id: message_id,
@@ -1870,35 +2000,77 @@ mod tests {
     // than the first would cause an index-out-of-bounds panic because the
     // chars_read_so_far counter was shared across all tool use IDs.
     #[gpui::test]
-    async fn test_separate_tool_uses_have_independent_char_counters(cx: &mut TestAppContext) {
-        init_test(cx);
-        let buffer = cx.new(|cx| Buffer::local("", cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let range = buffer.read_with(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
-            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(0, 0))
-        });
-        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let codegen = cx.new(|cx| {
-            CodegenAlternative::new(
-                buffer.clone(),
-                range.clone(),
-                true,
-                prompt_builder,
-                Uuid::new_v4(),
-                cx,
-            )
-        });
-
+    async fn test_tool_completion_rejects_multiple_rewrite_tool_calls(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
         let events_tx = simulate_tool_based_completion(&codegen, cx);
-        // tool_1 has longer text; tool_2 has shorter text. With the old shared
-        // counter, processing tool_2 would attempt replacement_text[N..] where
-        // N > replacement_text.len(), panicking with index out of bounds.
+
         events_tx
             .unbounded_send(rewrite_tool_use("tool_1", "longer replacement text", true))
             .unwrap();
         events_tx
             .unbounded_send(rewrite_tool_use("tool_2", "short", true))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant called `rewrite_section` multiple times")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_ignores_non_tool_events(cx: &mut TestAppContext) {
+        let (buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Queued { position: 1 })
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Started)
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::StartMessage {
+                message_id: "message_1".into(),
+            })
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::ReasoningDetails(
+                serde_json::json!({ "encrypted_content": "reasoning" }),
+            ))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Text(
+                "I'll update the section.".into(),
+            ))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replace", false))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Thinking {
+                text: "Finishing the rewrite".into(),
+                signature: None,
+            })
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::RedactedThinking {
+                data: "redacted".into(),
+            })
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                output_tokens: 1,
+                ..TokenUsage::default()
+            }))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replacement", true))
             .unwrap();
         events_tx
             .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
@@ -1908,7 +2080,403 @@ mod tests {
 
         assert_eq!(
             buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
-            "longer replacement textshort"
+            "replacement"
+        );
+        assert!(codegen.read_with(cx, |codegen, _cx| matches!(
+            &codegen.status,
+            CodegenStatus::Done
+        )));
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_when_stopped_without_tool_call(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::ReasoningDetails(
+                serde_json::json!([]),
+            ))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Inline assistant stopped before completing `rewrite_section` or \
+                 `failure_message` (EndTurn)"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_on_eof_without_tool_call(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Inline assistant response ended without completing `rewrite_section` or \
+                 `failure_message`"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_accepts_failure_message(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("The selection cannot be rewritten.", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        assert!(codegen.read_with(cx, |codegen, _cx| matches!(
+            &codegen.status,
+            CodegenStatus::Done
+        )));
+        assert_eq!(
+            codegen.read_with(cx, |codegen, _cx| codegen.current_failure()),
+            Some("The selection cannot be rewritten.".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_on_invalid_tool_json(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                id: "tool_1".into(),
+                tool_name: REWRITE_SECTION_TOOL_NAME.into(),
+                raw_input: r#"{"replacement_text":"#.into(),
+                json_parse_error: "EOF while parsing a string".into(),
+            })
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Invalid input for inline assistant tool `rewrite_section`: \
+                 EOF while parsing a string"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_when_incomplete_rewrite_stops(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "partial", false))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Inline assistant stopped before completing `rewrite_section` \
+                 (MaxTokens)"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_when_incomplete_rewrite_reaches_eof(
+        cx: &mut TestAppContext,
+    ) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "partial", false))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant response ended before completing `rewrite_section`")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_when_interrupted_after_complete_rewrite(
+        cx: &mut TestAppContext,
+    ) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replacement", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant response was interrupted (MaxTokens)")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_when_interrupted_after_failure_message(
+        cx: &mut TestAppContext,
+    ) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("The selection cannot be rewritten.", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant response was interrupted (MaxTokens)")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_requires_failure_message_to_complete(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("Partial failure", false))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Inline assistant stopped before completing `rewrite_section` or \
+                 `failure_message` (EndTurn)"
+            )
+        );
+        assert_eq!(
+            codegen.read_with(cx, |codegen, _cx| codegen.current_failure()),
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_rejects_failure_after_rewrite(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replacement", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(failure_tool_use("Cannot rewrite selection", true))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Inline assistant called `failure_message` after starting \
+                 `rewrite_section`"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_rejects_rewrite_after_failure(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("Cannot rewrite selection", true))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replacement", true))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant called `rewrite_section` after `failure_message`")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_propagates_stream_error_before_rewrite(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion_results(&codegen, cx);
+
+        events_tx
+            .unbounded_send(Err(anyhow!("provider stream failed").into()))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(error.as_deref(), Some("provider stream failed"));
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_propagates_stream_error_after_rewrite(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion_results(&codegen, cx);
+
+        events_tx
+            .unbounded_send(Ok(rewrite_tool_use("tool_1", "replacement", true)))
+            .unwrap();
+        events_tx
+            .unbounded_send(Err(anyhow!("provider stream failed").into()))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(error.as_deref(), Some("provider stream failed"));
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_errors_on_invalid_tool_input(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::ToolUse(
+                LanguageModelToolUse {
+                    id: "tool_1".into(),
+                    name: REWRITE_SECTION_TOOL_NAME.into(),
+                    raw_input: r#"{"replacement_text":42}"#.into(),
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::json!({ "replacement_text": 42 }),
+                    ),
+                    is_input_complete: true,
+                    thought_signature: None,
+                },
+            ))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("invalid input for `rewrite_section` tool"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_start_clears_previous_failure(cx: &mut TestAppContext) {
+        let (_buffer, codegen) = new_tool_based_codegen(cx);
+        cx.update(|cx| AgentSettings::register(cx));
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("Cannot rewrite selection", true))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+        assert_eq!(
+            codegen.read_with(cx, |codegen, _cx| codegen.current_failure()),
+            Some("Cannot rewrite selection".into())
+        );
+
+        codegen.update(cx, |codegen, cx| {
+            codegen
+                .start(
+                    "Rewrite the selection".into(),
+                    Task::ready(None).shared(),
+                    Arc::new(FakeLanguageModel::default()),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        assert_eq!(
+            codegen.read_with(cx, |codegen, _cx| codegen.current_failure()),
+            None
         );
     }
 
@@ -1957,6 +2525,30 @@ mod tests {
         cx.set_global(cx.update(SettingsStore::test));
     }
 
+    fn new_tool_based_codegen(
+        cx: &mut TestAppContext,
+    ) -> (Entity<MultiBuffer>, Entity<CodegenAlternative>) {
+        init_test(cx);
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(0, 0))
+        });
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let codegen = cx.new(|cx| {
+            CodegenAlternative::new(
+                buffer.clone(),
+                range,
+                true,
+                prompt_builder,
+                Uuid::new_v4(),
+                cx,
+            )
+        });
+        (buffer, codegen)
+    }
+
     fn simulate_response_stream(
         codegen: &Entity<CodegenAlternative>,
         cx: &mut TestAppContext,
@@ -1978,6 +2570,20 @@ mod tests {
         chunks_tx
     }
 
+    fn simulate_tool_based_completion_results(
+        codegen: &Entity<CodegenAlternative>,
+        cx: &mut TestAppContext,
+    ) -> mpsc::UnboundedSender<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let model = Arc::new(FakeLanguageModel::default());
+        codegen.update(cx, |codegen, cx| {
+            codegen.generation =
+                codegen.handle_completion(model, Task::ready(Ok(events_rx.boxed())), cx);
+        });
+        events_tx
+    }
+
     fn simulate_tool_based_completion(
         codegen: &Entity<CodegenAlternative>,
         cx: &mut TestAppContext,
@@ -1993,6 +2599,22 @@ mod tests {
             codegen.generation = codegen.handle_completion(model, completion_stream, cx);
         });
         events_tx
+    }
+
+    fn failure_tool_use(message: &str, is_input_complete: bool) -> LanguageModelCompletionEvent {
+        let input = FailureMessageInput {
+            message: message.into(),
+        };
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "failure_tool".into(),
+            name: FAILURE_MESSAGE_TOOL_NAME.into(),
+            raw_input: serde_json::to_string(&input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&input).unwrap(),
+            ),
+            is_input_complete,
+            thought_signature: None,
+        })
     }
 
     fn rewrite_tool_use(
