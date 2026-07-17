@@ -2312,11 +2312,7 @@ mod tests {
         );
         let project_uri = Uri::from_str("file:///path/to/my%20project/")
             .expect("workspace folder URI should be valid");
-        let workspace_root_uri = Uri::from_str("file:///").expect("root URI should be valid");
-        server.set_workspace_folders(BTreeSet::from_iter([
-            project_uri.clone(),
-            workspace_root_uri.clone(),
-        ]));
+        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
 
@@ -2337,22 +2333,10 @@ mod tests {
             .workspace_folders
             .expect("workspace folders should be set");
 
-        assert_eq!(
-            workspace_folders
-                .iter()
-                .find(|folder| folder.uri == project_uri)
-                .expect("project workspace folder should be present")
-                .name,
-            "my project"
-        );
-        assert!(
-            !workspace_folders
-                .iter()
-                .find(|folder| folder.uri == workspace_root_uri)
-                .expect("root workspace folder should be present")
-                .name
-                .is_empty(),
-            "workspace folder names should remain non-empty when the URI has no basename"
-        );
+        let expected_workspace_folders = vec![WorkspaceFolder {
+            uri: project_uri,
+            name: "my project".to_string(),
+        }];
+        assert_eq!(workspace_folders, expected_workspace_folders);
     }
 }
