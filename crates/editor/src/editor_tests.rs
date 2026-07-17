@@ -21857,9 +21857,7 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_comment_with_blank_lines_when_comment_on_empty_lines(
-    cx: &mut TestAppContext,
-) {
+async fn test_toggle_comment_with_blank_lines_when_comment_on_empty_lines(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
@@ -21901,9 +21899,7 @@ async fn test_toggle_comment_with_blank_lines_when_comment_on_empty_lines(
 
     let editor = cx.editor.clone();
     let text = cx.update(|_window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.buffer.read(cx).read(cx).text()
-        })
+        editor.update(cx, |editor, cx| editor.buffer.read(cx).read(cx).text())
     });
     assert!(text.contains("    a();"));
     assert!(text.contains("    c();"));

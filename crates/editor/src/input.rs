@@ -1619,7 +1619,8 @@ impl Editor {
                                     (min_column, Arc::from(trimmed_prefix))
                                 } else {
                                     let padding = (min_column - len) as usize;
-                                    let mut s = String::with_capacity(padding + trimmed_prefix.len());
+                                    let mut s =
+                                        String::with_capacity(padding + trimmed_prefix.len());
                                     s.extend(std::iter::repeat(' ').take(padding));
                                     s.push_str(trimmed_prefix);
                                     (len, s.into())
