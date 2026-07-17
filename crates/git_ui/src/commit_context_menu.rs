@@ -16,6 +16,8 @@ actions!(
         CopyCommitTag,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Creates a branch at the selected commit.
+        CreateBranchAtCommit,
     ]
 );
 
@@ -128,6 +130,10 @@ pub(crate) fn commit_context_menu(
                         }),
                     }
                 })
+            })
+            .when(ref_name.is_none(), |menu| {
+                menu.separator()
+                    .action("Create Branch...", CreateBranchAtCommit.boxed_clone())
             })
             .when(source == CommitContextMenuSource::GitPanel, |menu| {
                 menu.entry("Show in Git Graph", None, move |window, cx| {

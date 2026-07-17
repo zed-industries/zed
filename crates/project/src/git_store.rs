@@ -775,6 +775,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
+        client.add_entity_request_handler(Self::handle_create_branch_at);
         client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_create_remote);
         client.add_entity_request_handler(Self::handle_remove_remote);
@@ -3570,6 +3571,25 @@ impl GitStore {
 
         Ok(proto::GetDefaultBranchResponse { branch })
     }
+    async fn handle_create_branch_at(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateBranchAt>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let sha = envelope.payload.sha;
+        let branch_name = envelope.payload.branch_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_branch_at(sha, branch_name)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_create_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateBranch>,
@@ -8564,6 +8584,36 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 branch_name,
                                 base_branch,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn create_branch_at(
+        &mut self,
+        sha: String,
+        name: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(
+            "create_branch_at",
+            Some(format!("git branch {name} {sha}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_branch_at(sha, name).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCreateBranchAt {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                sha,
+                                branch_name: name,
                             })
                             .await?;
 

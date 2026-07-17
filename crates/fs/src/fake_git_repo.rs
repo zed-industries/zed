@@ -924,6 +924,13 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn create_branch_at(&self, _sha: String, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.branches.insert(name);
+            Ok(())
+        })
+    }
+
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if !state.branches.remove(&branch) {
