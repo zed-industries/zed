@@ -1529,7 +1529,8 @@ struct EditorRestorationData {
 #[derive(Default, Debug)]
 pub struct RestorationData {
     pub scroll_position: (BufferRow, gpui::Point<ScrollOffset>),
-    pub folds: Vec<Range<Point>>,
+    /// (start, end, start_fingerprint, end_fingerprint) — same shape as the `file_folds` rows.
+    pub folds: Vec<(usize, usize, String, String)>,
     pub selections: Vec<Range<Point>>,
 }
 
@@ -1561,12 +1562,20 @@ impl ProjectItem for Editor {
                 })
         {
             if !restoration_data.folds.is_empty() {
-                editor.fold_ranges(
-                    clip_ranges(&restoration_data.folds, buffer_snapshot),
-                    false,
-                    window,
-                    cx,
-                );
+                let folds: Vec<_> = crate::fold::reanchor_folds(
+                    restoration_data
+                        .folds
+                        .iter()
+                        .cloned()
+                        .map(|(start, end, sfp, efp)| (start, end, Some(sfp), Some(efp))),
+                    &multibuffer_snapshot,
+                )
+                .into_iter()
+                .map(|fold| fold.range)
+                .collect();
+                if !folds.is_empty() {
+                    editor.fold_ranges(folds, false, window, cx);
+                }
             }
             if !restoration_data.selections.is_empty() {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
