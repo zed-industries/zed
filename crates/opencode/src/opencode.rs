@@ -218,6 +218,7 @@ impl Model {
             // Models available in both Zen and Go
             Self::Glm5_1
             | Self::Glm5_2
+            | Self::Grok4_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
             | Self::MiniMaxM2_7
