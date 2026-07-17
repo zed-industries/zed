@@ -2481,7 +2481,7 @@ impl GitPanel {
         &mut self,
         entry: &GitListEntry,
         intent: StageIntent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(active_repository) = self.active_repository.clone() else {
@@ -2566,7 +2566,7 @@ impl GitPanel {
             self.set_bulk_staging_anchor(anchor, cx);
         }
 
-        self.change_file_stage(stage, repo_paths, cx);
+        self.change_file_stage_with_conflict_warning(stage, repo_paths, window, cx);
     }
 
     fn change_file_stage(
@@ -2610,6 +2610,35 @@ impl GitPanel {
             }
         })
         .detach();
+    }
+
+    fn change_file_stage_with_conflict_warning(
+        &mut self,
+        stage: bool,
+        entries: Vec<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if stage && entries.iter().any(|e| e.status.is_conflicted()) {
+            cx.spawn_in(window, async move |this, cx| {
+                let prompt = cx.prompt(
+                    PromptLevel::Warning,
+                    "Stage file with unresolved conflicts?",
+                    Some("This file still has merge conflicts that have not been resolved."),
+                    &["Stage", "Cancel"],
+                );
+                if prompt.await != Ok(0) {
+                    return;
+                }
+                this.update(cx, |this, cx| {
+                    this.change_file_stage(stage, entries, cx);
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            self.change_file_stage(stage, entries, cx);
+        }
     }
 
     pub fn total_staged_count(&self) -> usize {
@@ -2723,7 +2752,7 @@ impl GitPanel {
         self.stage_bulk(index, stage, cx);
     }
 
-    fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
+    fn stage_selected(&mut self, _: &git::StageFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected_entry) = self.get_selected_entry() else {
             return;
         };
@@ -2731,14 +2760,19 @@ impl GitPanel {
             return;
         };
         if status_entry.staging != StageStatus::Staged {
-            self.change_file_stage(true, vec![status_entry.clone()], cx);
+            self.change_file_stage_with_conflict_warning(
+                true,
+                vec![status_entry.clone()],
+                window,
+                cx,
+            );
         }
     }
 
     fn unstage_selected(
         &mut self,
         _: &git::UnstageFile,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(selected_entry) = self.get_selected_entry() else {
@@ -2748,7 +2782,12 @@ impl GitPanel {
             return;
         };
         if status_entry.staging != StageStatus::Unstaged {
-            self.change_file_stage(false, vec![status_entry.clone()], cx);
+            self.change_file_stage_with_conflict_warning(
+                false,
+                vec![status_entry.clone()],
+                window,
+                cx,
+            );
         }
     }
 
@@ -9875,9 +9914,16 @@ mod tests {
                 .expect("conflict entry should exist")
         });
 
-        panel.update_in(&mut cx, |panel, _window, cx| {
-            panel.change_file_stage(true, vec![conflict_entry.clone()], cx);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.change_file_stage_with_conflict_warning(
+                true,
+                vec![conflict_entry.clone()],
+                window,
+                cx,
+            );
         });
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Stage");
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, _| {
