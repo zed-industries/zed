@@ -739,6 +739,14 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
     fn is_active(&self) -> bool;
+    /// Returns a counter updated synchronously whenever the window loses keyboard focus.
+    fn deactivation_generation(&self) -> Option<u64> {
+        None
+    }
+    /// Returns the modifier state captured synchronously when the window last gained keyboard focus.
+    fn modifiers_at_last_activation(&self) -> Option<Modifiers> {
+        None
+    }
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);

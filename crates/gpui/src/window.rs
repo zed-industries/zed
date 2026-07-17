@@ -1064,6 +1064,7 @@ pub struct Window {
 struct ModifierState {
     modifiers: Modifiers,
     saw_keystroke: bool,
+    deactivation_generation: Option<u64>,
 }
 
 /// Tracks input event timestamps to determine if input is arriving at a high rate.
@@ -1353,6 +1354,7 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new();
         let active = Rc::new(Cell::new(platform_window.is_active()));
+        let deactivation_generation = platform_window.deactivation_generation();
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -1594,6 +1596,24 @@ impl Window {
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
+                        let deactivation_generation =
+                            window.platform_window.deactivation_generation();
+                        if !active
+                            && (deactivation_generation.is_none()
+                                || window.pending_modifier.deactivation_generation
+                                    != deactivation_generation)
+                        {
+                            window.handle_window_deactivation(
+                                window.modifiers,
+                                deactivation_generation,
+                                cx,
+                            );
+                        } else if active && window.modifiers.number_of_modifiers() == 0 {
+                            window.pending_modifier = ModifierState {
+                                deactivation_generation,
+                                ..Default::default()
+                            };
+                        }
                         window
                             .activation_observers
                             .clone()
@@ -1754,7 +1774,10 @@ impl Window {
             focus_enabled: true,
             focus_generation: 0,
             pending_input: None,
-            pending_modifier: ModifierState::default(),
+            pending_modifier: ModifierState {
+                deactivation_generation,
+                ..Default::default()
+            },
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
@@ -4813,39 +4836,68 @@ impl Window {
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            let window_is_active = self.is_window_active();
-            if event.modifiers.number_of_modifiers() == 0
-                && self.pending_modifier.modifiers.number_of_modifiers() == 1
-                && !self.pending_modifier.saw_keystroke
-                && window_is_active
+            let deactivation_generation = self.platform_window.deactivation_generation();
+            let platform_window_is_active = self.platform_window.is_active();
+            if platform_window_is_active
+                && self.pending_modifier.modifiers.number_of_modifiers() > 0
+                && (self.pending_modifier.deactivation_generation != deactivation_generation
+                    || self.pending_modifier.saw_keystroke)
+                && self
+                    .platform_window
+                    .modifiers_at_last_activation()
+                    .is_some_and(|modifiers| modifiers.number_of_modifiers() == 0)
             {
-                let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
-                    _ => None,
+                self.pending_modifier = ModifierState {
+                    deactivation_generation,
+                    ..Default::default()
                 };
-                if let Some(key) = key {
-                    keystroke = Some(Keystroke {
-                        key: key.to_string(),
-                        key_char: None,
-                        modifiers: Modifiers::default(),
-                    });
+            }
+            let deactivated_since_last_modifier = deactivation_generation.is_some()
+                && self.pending_modifier.deactivation_generation != deactivation_generation;
+            // On macOS, the OS can deliver modifier events before the queued active-status
+            // callback updates this window's cached state, so use synchronous platform state.
+            // Don't synthesize modifier-only keystrokes for an inactive window. Keep
+            // tracking held modifiers as ineligible so partial releases after the
+            // window becomes active don't look like a new modifier press.
+            if deactivated_since_last_modifier {
+                let can_arm_fresh_modifier = platform_window_is_active
+                    && self.pending_modifier.modifiers.number_of_modifiers() == 0
+                    && event.modifiers.number_of_modifiers() == 1;
+                self.handle_window_deactivation(event.modifiers, deactivation_generation, cx);
+                if can_arm_fresh_modifier {
+                    self.pending_modifier.saw_keystroke = false;
                 }
-            }
+            } else if !platform_window_is_active {
+                self.handle_window_deactivation(event.modifiers, deactivation_generation, cx);
+            } else {
+                if event.modifiers.number_of_modifiers() == 0
+                    && self.pending_modifier.modifiers.number_of_modifiers() == 1
+                    && !self.pending_modifier.saw_keystroke
+                {
+                    let key = match self.pending_modifier.modifiers {
+                        modifiers if modifiers.shift => Some("shift"),
+                        modifiers if modifiers.control => Some("control"),
+                        modifiers if modifiers.alt => Some("alt"),
+                        modifiers if modifiers.platform => Some("platform"),
+                        modifiers if modifiers.function => Some("function"),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        keystroke = Some(Keystroke {
+                            key: key.to_string(),
+                            key_char: None,
+                            modifiers: Modifiers::default(),
+                        });
+                    }
+                }
 
-            if !window_is_active {
-                // Don't re-arm a modifier-only keystroke that started while another
-                // app's non-activating panel had keyboard focus.
-                self.pending_modifier.saw_keystroke = true;
-            } else if self.pending_modifier.modifiers.number_of_modifiers() == 0
-                && event.modifiers.number_of_modifiers() == 1
-            {
-                self.pending_modifier.saw_keystroke = false
+                if self.pending_modifier.modifiers.number_of_modifiers() == 0
+                    && event.modifiers.number_of_modifiers() == 1
+                {
+                    self.pending_modifier.saw_keystroke = false
+                }
+                self.pending_modifier.modifiers = event.modifiers
             }
-            self.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
@@ -4909,25 +4961,7 @@ impl Window {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
                     cx.update(move |window, cx| {
-                        let Some(currently_pending) = window
-                            .pending_input
-                            .take()
-                            .filter(|pending| pending.focus == window.focus)
-                        else {
-                            return;
-                        };
-
-                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                        let dispatch_path =
-                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-                        let to_replay = window
-                            .rendered_frame
-                            .dispatch_tree
-                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
-
-                        window.pending_input_changed(cx);
-                        window.replay_pending_input(to_replay, cx)
+                        window.flush_pending_input(cx);
                     })
                     .log_err();
                 }));
@@ -5060,6 +5094,56 @@ impl Window {
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         self.pending_input.take();
+    }
+
+    fn handle_window_deactivation(
+        &mut self,
+        modifiers: Modifiers,
+        deactivation_generation: Option<u64>,
+        cx: &mut App,
+    ) {
+        let has_pending_modifier_only_keystrokes =
+            self.pending_input_keystrokes().is_some_and(|keystrokes| {
+                !keystrokes.is_empty()
+                    && keystrokes.iter().all(|keystroke| {
+                        keystroke.modifiers == Modifiers::default()
+                            && keystroke.key_char.is_none()
+                            && matches!(
+                                keystroke.key.as_str(),
+                                "shift" | "control" | "alt" | "platform" | "function"
+                            )
+                    })
+            });
+        if has_pending_modifier_only_keystrokes {
+            self.clear_pending_keystrokes();
+            self.pending_input_changed(cx);
+        } else {
+            self.flush_pending_input(cx);
+        }
+        cx.propagate_event = true;
+        self.pending_modifier.modifiers = modifiers;
+        self.pending_modifier.saw_keystroke = true;
+        self.pending_modifier.deactivation_generation = deactivation_generation;
+    }
+
+    fn flush_pending_input(&mut self, cx: &mut App) {
+        let Some(currently_pending) = self
+            .pending_input
+            .take()
+            .filter(|pending| pending.focus == self.focus)
+        else {
+            return;
+        };
+
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let to_replay = self
+            .rendered_frame
+            .dispatch_tree
+            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+        self.pending_input_changed(cx);
+        self.replay_pending_input(to_replay, cx);
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.

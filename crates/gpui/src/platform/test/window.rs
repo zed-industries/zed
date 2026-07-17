@@ -35,6 +35,9 @@ pub(crate) struct TestWindowState {
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    deactivation_generation: u64,
+    modifiers: crate::Modifiers,
+    modifiers_at_last_activation: Option<crate::Modifiers>,
 }
 
 #[derive(Clone)]
@@ -87,6 +90,9 @@ impl TestWindow {
             moved_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            deactivation_generation: 0,
+            modifiers: crate::Modifiers::default(),
+            modifiers_at_last_activation: None,
         })))
     }
 
@@ -113,8 +119,25 @@ impl TestWindow {
         self.0.lock().active_status_change_callback = Some(callback);
     }
 
+    pub(crate) fn note_deactivation(&self) {
+        let mut state = self.0.lock();
+        state.deactivation_generation = state.deactivation_generation.wrapping_add(1);
+    }
+
+    pub(crate) fn note_activation(&self) {
+        let mut state = self.0.lock();
+        state.modifiers_at_last_activation = Some(state.modifiers);
+    }
+
+    pub(crate) fn set_modifiers(&self, modifiers: crate::Modifiers) {
+        self.0.lock().modifiers = modifiers;
+    }
+
     pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
         let mut lock = self.0.lock();
+        if let PlatformInput::ModifiersChanged(event) = &event {
+            lock.modifiers = event.modifiers;
+        }
         let Some(mut callback) = lock.input_callback.take() else {
             return false;
         };
@@ -164,7 +187,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn modifiers(&self) -> crate::Modifiers {
-        crate::Modifiers::default()
+        self.0.lock().modifiers
     }
 
     fn capslock(&self) -> crate::Capslock {
@@ -197,16 +220,27 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        self.0
-            .lock()
-            .platform
-            .upgrade()
-            .unwrap()
-            .set_active_window(Some(self.clone()))
+        let platform = self.0.lock().platform.upgrade().expect("platform dropped");
+        platform.set_active_window(Some(self.clone()))
     }
 
     fn is_active(&self) -> bool {
-        false
+        let Some(platform) = self.0.lock().platform.upgrade() else {
+            return false;
+        };
+        platform
+            .active_window
+            .borrow()
+            .as_ref()
+            .is_some_and(|window| Rc::ptr_eq(&window.0, &self.0))
+    }
+
+    fn deactivation_generation(&self) -> Option<u64> {
+        Some(self.0.lock().deactivation_generation)
+    }
+
+    fn modifiers_at_last_activation(&self) -> Option<crate::Modifiers> {
+        self.0.lock().modifiers_at_last_activation
     }
 
     fn is_hovered(&self) -> bool {

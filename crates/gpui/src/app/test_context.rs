@@ -903,10 +903,18 @@ impl VisualTestContext {
 
     /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
+        self.deactivate_window_without_waiting();
+        self.background_executor.run_until_parked();
+    }
+
+    pub(crate) fn deactivate_window_without_waiting(&mut self) {
         if Some(self.window) == self.test_platform.active_window() {
             self.test_platform.set_active_window(None)
         }
-        self.background_executor.run_until_parked();
+    }
+
+    pub(crate) fn set_modifiers_without_event(&mut self, modifiers: Modifiers) {
+        self.test_window(self.window).set_modifiers(modifiers);
     }
 
     /// Simulates the user closing the window.

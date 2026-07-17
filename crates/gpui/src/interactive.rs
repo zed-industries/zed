@@ -815,6 +815,7 @@ mod test {
     struct TestView {
         saw_key_down: bool,
         saw_action: bool,
+        saw_modifiers_changed: bool,
         focus_handle: FocusHandle,
     }
 
@@ -832,6 +833,9 @@ mod test {
                     .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
                         this.saw_action = true
                     }))
+                    .on_modifiers_changed(
+                        cx.listener(|this, _, _, _| this.saw_modifiers_changed = true),
+                    )
                     .child(
                         div()
                             .key_context("nested")
@@ -849,6 +853,7 @@ mod test {
                 cx.new(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
+                    saw_modifiers_changed: false,
                     focus_handle: cx.focus_handle(),
                 })
             })
@@ -882,6 +887,7 @@ mod test {
         let (view, cx) = cx.add_window_view(|_, cx| TestView {
             saw_key_down: false,
             saw_action: false,
+            saw_modifiers_changed: false,
             focus_handle: cx.focus_handle(),
         });
 
@@ -912,16 +918,138 @@ mod test {
             view.saw_action = false;
         });
 
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.deactivate_window_without_waiting();
+        cx.simulate_modifiers_change(Modifiers::none());
+        view.update_in(cx, |_, window, _| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "modifier release should use the platform's current inactive state"
+            );
+        });
+
+        view.update_in(cx, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.deactivate_window_without_waiting();
+        view.update_in(cx, |_, window, _| window.activate_window());
+        cx.simulate_modifiers_change(Modifiers::none());
+        view.update_in(cx, |view, window, _| {
+            assert!(
+                !view.saw_action,
+                "modifier presses spanning a queued focus change should not complete a binding"
+            );
+            assert!(
+                !window.has_pending_keystrokes(),
+                "queued focus changes should clear pending modifier-only sequences"
+            );
+        });
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        view.update_in(cx, |_, window, _| {
+            assert!(window.has_pending_keystrokes());
+        });
+
         cx.deactivate_window();
+        cx.simulate_modifiers_change(Modifiers::shift());
+        view.update_in(cx, |_, window, _| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "pending modifier-only sequences should be cleared while the window is inactive"
+            );
+        });
+
         double_shift(cx);
         view.update(cx, |view, _| assert!(!view.saw_action));
 
-        cx.simulate_modifiers_change(Modifiers::shift());
+        // Modifiers held while the window was inactive must stay ignored until
+        // all of them are released after the window becomes active again.
+        cx.simulate_modifiers_change(Modifiers::control_shift());
         view.update_in(cx, |_, window, _| window.activate_window());
         cx.run_until_parked();
+        cx.simulate_modifiers_change(Modifiers::shift());
         cx.simulate_modifiers_change(Modifiers::none());
         cx.simulate_modifiers_change(Modifiers::shift());
         cx.simulate_modifiers_change(Modifiers::none());
-        view.update(cx, |view, _| assert!(!view.saw_action));
+        view.update(cx, |view, _| {
+            assert!(
+                !view.saw_action,
+                "modifiers held while inactive should not count towards the binding after reactivation"
+            );
+        });
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.deactivate_window();
+        cx.set_modifiers_without_event(Modifiers::none());
+        view.update_in(cx, |_, window, _| window.activate_window());
+        double_shift(cx);
+        view.update(cx, |view, _| {
+            assert!(
+                view.saw_action,
+                "fresh modifiers should be eligible after an inactive release"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_inactive_modifier_event_replays_pending_text_input(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| TestView {
+            saw_key_down: false,
+            saw_action: false,
+            saw_modifiers_changed: false,
+            focus_handle: cx.focus_handle(),
+        });
+
+        cx.update(|_, cx| {
+            cx.bind_keys(vec![KeyBinding::new("j k", TestAction, Some("parent"))]);
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            window.activate_window();
+            window.focus(&view.focus_handle, cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(
+                Keystroke {
+                    modifiers: Modifiers::none(),
+                    key: "j".to_string(),
+                    key_char: Some("j".to_string()),
+                },
+                cx,
+            );
+        });
+        view.update_in(cx, |view, window, _| {
+            assert_eq!(
+                window
+                    .pending_input_keystrokes()
+                    .and_then(|keystrokes| keystrokes.first())
+                    .and_then(|keystroke| keystroke.key_char.as_deref()),
+                Some("j")
+            );
+            assert!(!view.saw_key_down);
+        });
+
+        cx.deactivate_window();
+        cx.simulate_modifiers_change(Modifiers::shift());
+        view.update_in(cx, |view, window, _| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "inactive modifier events should flush pending text input"
+            );
+            assert!(
+                view.saw_key_down,
+                "inactive modifier events should replay pending text input"
+            );
+            assert!(
+                view.saw_modifiers_changed,
+                "inactive modifier events should propagate after replaying pending text input"
+            );
+        });
     }
 }

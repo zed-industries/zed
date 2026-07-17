@@ -514,6 +514,8 @@ struct MacWindowState {
     traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
+    deactivation_generation: u64,
+    modifiers_at_last_activation: Option<Modifiers>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
@@ -751,6 +753,20 @@ unsafe impl Send for MacWindowState {}
 
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
+fn current_modifiers() -> Modifiers {
+    unsafe {
+        let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+
+        Modifiers {
+            control: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+            alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+            shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+            platform: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+            function: modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask),
+        }
+    }
+}
+
 impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
@@ -919,6 +935,8 @@ impl MacWindow {
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
+                deactivation_generation: 0,
+                modifiers_at_last_activation: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
                 external_files_dragged: false,
@@ -1336,23 +1354,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn modifiers(&self) -> Modifiers {
-        unsafe {
-            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
-
-            let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-            let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-            let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-            let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-            let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-            Modifiers {
-                control,
-                alt,
-                shift,
-                platform: command,
-                function,
-            }
-        }
+        current_modifiers()
     }
 
     fn capslock(&self) -> Capslock {
@@ -1491,6 +1493,14 @@ impl PlatformWindow for MacWindow {
 
     fn is_active(&self) -> bool {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
+    }
+
+    fn deactivation_generation(&self) -> Option<u64> {
+        Some(self.0.lock().deactivation_generation)
+    }
+
+    fn modifiers_at_last_activation(&self) -> Option<Modifiers> {
+        self.0.lock().modifiers_at_last_activation
     }
 
     // is_hovered is unused on macOS. See Window::is_window_hovered.
@@ -2511,8 +2521,14 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.lock();
+    let mut lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
+
+    if selector == sel!(windowDidResignKey:) {
+        lock.deactivation_generation = lock.deactivation_generation.wrapping_add(1);
+    } else if selector == sel!(windowDidBecomeKey:) && is_active {
+        lock.modifiers_at_last_activation = Some(current_modifiers());
+    }
 
     // AppKit also unhides the cursor on activation changes, so mirror that here.
     lock.cursor_visible.store(true, Ordering::Relaxed);
