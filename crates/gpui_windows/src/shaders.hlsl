@@ -1203,7 +1203,7 @@ SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentIn
 
 struct PolychromeSprite {
     uint order;
-    uint pad;
+    uint premultiplied_alpha;
     uint grayscale;
     float opacity;
     Bounds bounds;
@@ -1247,6 +1247,10 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+
+    if (sprite.premultiplied_alpha != 0 && sample.a > 0.0) {
+        sample.rgb /= sample.a;
+    }
 
     float4 color = sample;
     if (sprite.grayscale != 0u) {

@@ -7,12 +7,17 @@ use crate::{
 };
 use gpui_util::ResultExt;
 
+enum SvgSource {
+    Embedded(SharedString),
+    External(SharedString),
+}
+
 /// An SVG element.
 pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
-    path: Option<SharedString>,
-    external_path: Option<SharedString>,
+    source: Option<SvgSource>,
+    polychrome: bool,
 }
 
 /// Create a new SVG element.
@@ -21,21 +26,29 @@ pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::new(),
         transformation: None,
-        path: None,
-        external_path: None,
+        source: None,
+        polychrome: false,
     }
 }
 
 impl Svg {
     /// Set the path to the SVG file for this element.
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
-        self.path = Some(path.into());
+        self.source = Some(SvgSource::Embedded(path.into()));
         self
     }
 
     /// Set the path to the SVG file for this element.
     pub fn external_path(mut self, path: impl Into<SharedString>) -> Self {
-        self.external_path = Some(path.into());
+        self.source = Some(SvgSource::External(path.into()));
+        self
+    }
+
+    /// Render the SVG using its original colors instead of the text color.
+    ///
+    /// Polychrome SVGs do not support [`Self::with_transformation`].
+    pub fn polychrome(mut self) -> Self {
+        self.polychrome = true;
         self
     }
 
@@ -116,28 +129,31 @@ impl Element for Svg {
             window,
             cx,
             |style, window, cx| {
-                if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    let transformation = self
-                        .transformation
-                        .as_ref()
-                        .map(|transformation| {
-                            transformation.into_matrix(bounds.center(), window.scale_factor())
-                        })
-                        .unwrap_or_default();
+                let Some(source) = self.source.as_ref() else {
+                    return;
+                };
+                let (path, bytes) = match source {
+                    SvgSource::Embedded(path) => (path, None),
+                    SvgSource::External(path) => {
+                        let Some(bytes) = window
+                            .use_asset::<SvgAsset>(path, cx)
+                            .and_then(|asset| asset.log_err())
+                        else {
+                            return;
+                        };
+                        (path, Some(bytes))
+                    }
+                };
 
+                if self.polychrome {
+                    debug_assert!(
+                        self.transformation.is_none(),
+                        "polychrome SVGs do not support transformations"
+                    );
                     window
-                        .paint_svg(bounds, path.clone(), None, transformation, color, cx)
+                        .paint_polychrome_svg(bounds, path.clone(), bytes.as_deref(), cx)
                         .log_err();
-                } else if let Some((path, color)) =
-                    self.external_path.as_ref().zip(style.text.color)
-                {
-                    let Some(bytes) = window
-                        .use_asset::<SvgAsset>(path, cx)
-                        .and_then(|asset| asset.log_err())
-                    else {
-                        return;
-                    };
-
+                } else if let Some(color) = style.text.color {
                     let transformation = self
                         .transformation
                         .as_ref()
@@ -150,7 +166,7 @@ impl Element for Svg {
                         .paint_svg(
                             bounds,
                             path.clone(),
-                            Some(&bytes),
+                            bytes.as_deref(),
                             transformation,
                             color,
                             cx,
