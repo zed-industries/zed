@@ -40,6 +40,7 @@ smallvec.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 windows = { workspace = true, features = [
     "Data_Xml_Dom",
+    "Networking_Connectivity",
     "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
@@ -76,6 +77,9 @@ optional = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 windows-registry.workspace = true
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
 ignored = ["scap"]

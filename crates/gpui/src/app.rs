@@ -49,13 +49,13 @@ use crate::{
     BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase,
     DisplayChanges, DisplayEvent, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
     FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
-    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowingRequest,
+    Menu, MenuItem, MissingGlyph, NetworkAvailability, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -367,6 +367,7 @@ impl Application {
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type NetworkAvailabilityHandler = Box<dyn FnMut(NetworkAvailability, &mut App) -> bool + 'static>;
 type AppLifecycleHandler = Box<dyn FnMut(AppLifecyclePhase, &mut App) -> bool + 'static>;
 type DisplayHandler = Box<dyn FnMut(DisplayEvent, &mut App) -> bool + 'static>;
 
@@ -880,6 +881,7 @@ pub struct App {
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) network_availability_observers: SubscriberSet<(), NetworkAvailabilityHandler>,
     pub(crate) display_observers: SubscriberSet<(), DisplayHandler>,
     /// The connected displays, as of the platform's last display change
     /// notification.
@@ -1023,6 +1025,7 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                network_availability_observers: SubscriberSet::new(),
                 display_observers: SubscriberSet::new(),
                 displays: read_displays(platform.as_ref()),
                 system_sleep_observers: SubscriberSet::new(),
@@ -1981,6 +1984,46 @@ impl App {
                     callback(response, &mut app.borrow_mut());
                 }
             }));
+    }
+
+    /// The last network availability reported by the OS.
+    ///
+    /// Returns [`NetworkAvailability::Unknown`] until the platform's monitor
+    /// has delivered its first report; monitoring starts lazily on the first
+    /// call to this method or to [`App::on_network_availability_change`].
+    pub fn network_availability(&self) -> NetworkAvailability {
+        self.platform.network_availability()
+    }
+
+    /// Invokes a handler when network availability changes.
+    pub fn on_network_availability_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(NetworkAvailability, &mut App),
+    {
+        let was_empty = self.network_availability_observers.is_empty();
+        let (subscription, activate) = self.network_availability_observers.insert(
+            (),
+            Box::new(move |availability, cx| {
+                callback(availability, cx);
+                true
+            }),
+        );
+        activate();
+
+        if was_empty {
+            let app = self.this.clone();
+            self.platform
+                .on_network_availability_change(Box::new(move |availability| {
+                    if let Some(app) = app.upgrade() {
+                        let cx = &mut app.borrow_mut();
+                        cx.network_availability_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(availability, cx));
+                    }
+                }));
+        }
+
+        subscription
     }
 
     /// Returns the full pathname of the current app bundle.

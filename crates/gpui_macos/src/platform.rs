@@ -194,6 +194,7 @@ pub(crate) struct MacPlatformState {
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
     system_notifications: crate::system_notifications::SystemNotificationState,
+    network_monitor: crate::network_monitor::NetworkMonitorState,
 }
 
 /// The activation policy that stands for a windowing mode: an app is headless while it has no
@@ -262,6 +263,7 @@ impl MacPlatform {
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
             system_notifications: crate::system_notifications::SystemNotificationState::new(),
+            network_monitor: crate::network_monitor::NetworkMonitorState::new(),
         });
         Self(state, marker)
     }
@@ -1103,6 +1105,18 @@ impl Platform for MacPlatform {
         let mut state = self.0.lock();
         let executor = state.foreground_executor.clone();
         state.system_notifications.on_response(&executor, callback);
+    }
+
+    fn network_availability(&self) -> gpui::NetworkAvailability {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.network_monitor.availability(&executor)
+    }
+
+    fn on_network_availability_change(&self, callback: Box<dyn FnMut(gpui::NetworkAvailability)>) {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.network_monitor.on_change(&executor, callback);
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

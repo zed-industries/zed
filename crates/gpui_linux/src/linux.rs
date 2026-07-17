@@ -2,6 +2,7 @@ mod dispatcher;
 mod display_connection;
 mod headless;
 mod keyboard;
+mod network_monitor;
 mod platform;
 mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
