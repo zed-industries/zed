@@ -2222,14 +2222,7 @@ impl GitPanel {
                 let Some(repository_id) = self.repository_id_for_entry_index(selected_index) else {
                     return;
                 };
-                let intent = self.stage_intent_for_entry_index(selected_index);
-                self.toggle_staged_for_entry_in_repository(
-                    &GitListEntry::Header(entry),
-                    repository_id,
-                    intent,
-                    window,
-                    cx,
-                );
+                self.toggle_section(repository_id, entry.header, window, cx);
                 return;
             }
             GitListEntry::Directory(entry) => {
@@ -8363,8 +8356,9 @@ impl GitPanel {
         let repository_id = repo.id;
         let selected = self.selected_entry == Some(ix);
         let visual_depth = self.project_repository_depth(repository_id) + 1;
-        let weak = cx.weak_entity();
+        let stage_weak = cx.weak_entity();
         let collapse_weak = cx.weak_entity();
+        let row_weak = cx.weak_entity();
         let stage_intent = StageIntent::for_section(section);
         let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header, repo));
 
@@ -8395,7 +8389,7 @@ impl GitPanel {
             .pr_1()
             .gap_2()
             .justify_between()
-            .when(!section_is_empty && !all_conflicts_resolved, |this| {
+            .when(!section_is_empty, |this| {
                 this.cursor_pointer()
                     .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             })
@@ -8459,7 +8453,26 @@ impl GitPanel {
                 let checkbox = Checkbox::new(checkbox_id, toggle_state)
                     .disabled(!has_write_access || all_conflicts_resolved)
                     .fill()
-                    .elevation(ElevationIndex::Surface);
+                    .elevation(ElevationIndex::Surface)
+                    .on_click(move |_, window, cx| {
+                        stage_weak
+                            .update(cx, |this, cx| {
+                                this.selected_entry = Some(ix);
+                                if !has_write_access || all_conflicts_resolved {
+                                    cx.notify();
+                                    return;
+                                }
+                                this.toggle_staged_for_entry_in_repository(
+                                    &GitListEntry::Header(GitHeaderEntry { header: section }),
+                                    repository_id,
+                                    stage_intent,
+                                    window,
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            })
+                            .ok();
+                    });
                 let tooltip_label = if all_conflicts_resolved {
                     Some("All conflicts marked as resolved")
                 } else {
@@ -8478,22 +8491,17 @@ impl GitPanel {
                 }
             })
             .on_click(move |_, window, cx| {
-                weak.update(cx, |this, cx| {
-                    this.selected_entry = Some(ix);
-                    if !has_write_access || section_is_empty || all_conflicts_resolved {
-                        cx.notify();
-                        return;
-                    }
-                    this.toggle_staged_for_entry_in_repository(
-                        &GitListEntry::Header(GitHeaderEntry { header: section }),
-                        repository_id,
-                        stage_intent,
-                        window,
-                        cx,
-                    );
-                    cx.stop_propagation();
-                })
-                .ok();
+                row_weak
+                    .update(cx, |this, cx| {
+                        this.selected_entry = Some(ix);
+                        if section_is_empty {
+                            cx.notify();
+                            return;
+                        }
+                        this.toggle_section(repository_id, section, window, cx);
+                        cx.stop_propagation();
+                    })
+                    .ok();
             })
             .into_any_element()
     }
@@ -12725,6 +12733,62 @@ mod tests {
             assert!(!state.index_contents.contains_key(&untracked_path));
         })
         .unwrap();
+
+        // Enter/Confirm treats a section header like the other disclosure
+        // rows. Space remains the explicit staging shortcut tested above.
+        let (repository_b_tracked_header_index, repository_b_entry_index) =
+            panel.read_with(&cx, |panel, _| {
+                let header_index = panel
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .position(|(index, entry)| {
+                        panel.repository_id_for_entry_index(index) == Some(repository_b_id)
+                            && matches!(
+                                entry,
+                                GitListEntry::Header(header)
+                                    if header.header == Section::Tracked
+                            )
+                    })
+                    .unwrap();
+                let entry_index = panel
+                    .entry_by_change_key(&ChangeKey {
+                        repository_id: repository_b_id,
+                        repo_path: path.clone(),
+                    })
+                    .unwrap();
+                (header_index, entry_index)
+            });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(repository_b_tracked_header_index);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert!(
+                panel
+                    .collapsed_sections
+                    .contains(&(repository_b_id, Section::Tracked))
+            );
+            assert!(!panel.is_entry_visible(repository_b_entry_index));
+        });
+        fs.with_git_state(Path::new(path!("/root/project-b/.git")), false, |state| {
+            assert_eq!(
+                state.index_contents.get(&path),
+                state.head_contents.get(&path)
+            );
+        })
+        .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert!(
+                !panel
+                    .collapsed_sections
+                    .contains(&(repository_b_id, Section::Tracked))
+            );
+            assert!(panel.is_entry_visible(repository_b_entry_index));
+        });
 
         let repository_b_entry_index = panel.read_with(&cx, |panel, _| {
             panel
