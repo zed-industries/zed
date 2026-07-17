@@ -2,13 +2,12 @@ mod llm_token;
 mod websocket;
 
 use std::sync::Arc;
+#[cfg(target_family = "wasm")]
+use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
-use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER_NAME};
+use anyhow::{Result, anyhow};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
-use gpui::{App, Task};
-use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{
     AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
@@ -16,11 +15,11 @@ use http_client::{
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
-use yawc::WebSocket;
-
-use crate::websocket::Connection;
 
 pub use llm_token::LlmApiToken;
+
+#[cfg(target_family = "wasm")]
+const WEBSOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Credentials {
     user_id: u32,
@@ -115,7 +114,14 @@ impl CloudApiClient {
             .await
     }
 
-    pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
+    #[cfg(not(target_family = "wasm"))]
+    pub fn connect(
+        self: &Arc<Self>,
+        cx: &gpui::App,
+    ) -> Result<gpui::Task<Result<crate::websocket::Connection>>> {
+        use anyhow::Context as _;
+        use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER_NAME};
+
         let mut connect_url = self
             .http_client
             .build_zed_cloud_url("/client/users/connect")?;
@@ -131,8 +137,8 @@ impl CloudApiClient {
         let credentials = credentials.as_ref().context("no credentials provided")?;
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
-        Ok(Tokio::spawn_result(cx, async move {
-            let ws = WebSocket::connect(connect_url)
+        Ok(gpui_tokio::Tokio::spawn_result(cx, async move {
+            let websocket = yawc::WebSocket::connect(connect_url)
                 .with_request(
                     request::Builder::new()
                         .header("Authorization", authorization_header)
@@ -140,8 +146,46 @@ impl CloudApiClient {
                 )
                 .await?;
 
-            Ok(Connection::new(ws))
+            Ok(websocket::Connection::new(websocket))
         }))
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn connect(
+        self: &Arc<Self>,
+        cx: &gpui::App,
+    ) -> Result<gpui::Task<Result<crate::websocket::Connection>>> {
+        use cloud_api_types::websocket_protocol::PROTOCOL_VERSION;
+        use futures::FutureExt as _;
+
+        let client = self.clone();
+        let executor = cx.background_executor().clone();
+        Ok(cx.spawn(async move |_cx| {
+                let request_builder = Request::builder().method(Method::POST).uri(
+                    client
+                        .http_client
+                        .build_zed_cloud_url("/client/users/websocket_connection")?
+                        .as_ref(),
+                );
+                let CreateWebSocketConnectionResponse { url } = client
+                    .send_authenticated_json_request(
+                        request_builder,
+                        Json(CreateWebSocketConnectionBody {
+                            protocol_version: PROTOCOL_VERSION,
+                        }),
+                    )
+                    .await?;
+
+                let connect = yawc::WebSocket::connect(url).fuse();
+                let timeout = executor.timer(WEBSOCKET_CONNECT_TIMEOUT).fuse();
+                futures::pin_mut!(connect, timeout);
+                let websocket = futures::select_biased! {
+                    result = connect => result.map_err(|error| anyhow!("failed to connect to Cloud WebSocket: {error}"))?,
+                    _ = timeout => return Err(anyhow!("timed out connecting to Cloud WebSocket")),
+                };
+
+                Ok(websocket::Connection::new(websocket))
+            }))
     }
 
     async fn create_llm_token(

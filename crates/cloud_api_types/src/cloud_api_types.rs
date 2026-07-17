@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 pub use crate::extension::*;
 pub use crate::known_or_unknown::*;
@@ -18,6 +19,18 @@ pub use crate::plan::*;
 pub use crate::timestamp::Timestamp;
 
 pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
+
+/// Requests a pre-authorized Cloud WebSocket connection.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct CreateWebSocketConnectionBody {
+    pub protocol_version: u32,
+}
+
+/// Describes a pre-authorized Cloud WebSocket connection.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct CreateWebSocketConnectionResponse {
+    pub url: Url,
+}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct GetAuthenticatedUserResponse {
