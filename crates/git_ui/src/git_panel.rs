@@ -1815,6 +1815,17 @@ impl GitPanel {
         } else if self.focus_handle.contains_focused(window, cx) {
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
+            if self.selected_entry.is_some_and(|index| {
+                matches!(
+                    self.entries.get(index),
+                    Some(
+                        GitListEntry::RepositoryHeader(_)
+                            | GitListEntry::ProjectRepositoriesHeader(_)
+                    )
+                )
+            }) {
+                dispatch_context.add("GitRepositoryRow");
+            }
         }
 
         dispatch_context
@@ -3139,18 +3150,6 @@ impl GitPanel {
         let Some(selected_entry) = self.entries.get(selected_index).cloned() else {
             return;
         };
-
-        match &selected_entry {
-            GitListEntry::ProjectRepositoriesHeader(_) => {
-                self.toggle_project_repositories(window, cx);
-                return;
-            }
-            GitListEntry::RepositoryHeader(entry) => {
-                self.activate_repository(entry.repository_id, cx);
-                return;
-            }
-            _ => {}
-        }
 
         if self.is_resolved_conflict(selected_index, cx) {
             return;
@@ -12443,6 +12442,22 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
+        cx.update(|cx| {
+            cx.bind_keys(
+                settings::KeymapFile::load_asset_allow_partial_failure(
+                    settings::DEFAULT_KEYMAP_PATH,
+                    cx,
+                )
+                .expect("failed to load default keymap"),
+            );
+            cx.bind_keys(
+                settings::KeymapFile::load_asset_allow_partial_failure(
+                    settings::VIM_KEYMAP_PATH,
+                    cx,
+                )
+                .expect("failed to load Vim keymap"),
+            );
+        });
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/root",
@@ -12521,6 +12536,10 @@ mod tests {
 
         cx.run_until_parked();
         let panel = workspace.update_in(&mut cx, GitPanel::new);
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx)
+        });
         await_git_panel_entries(&panel, &mut cx).await;
 
         let path = repo_path("src/main.rs");
@@ -12752,9 +12771,9 @@ mod tests {
             assert_eq!(panel.active_repository_id, Some(repository_a_id));
         });
 
-        // Space and Enter on a repository row are keyboard equivalents to
-        // clicking the repository name: they change the active repository
-        // without reordering the all-repositories list.
+        // Repository rows advertise a distinct key context so Space can map to
+        // the same Confirm action as Enter. Confirm changes the active
+        // repository without reordering the all-repositories list.
         let repository_b_header_index = panel.read_with(&cx, |panel, _| {
             panel
                 .entries
@@ -12770,7 +12789,44 @@ mod tests {
         });
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.selected_entry = Some(repository_b_header_index);
-            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
+            panel.focus_handle.focus(window, cx);
+            assert!(
+                panel
+                    .dispatch_context(window, cx)
+                    .contains("GitRepositoryRow")
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        panel.update_in(&mut cx, |panel, window, _cx| {
+            let keys_for = |action: &dyn Action| {
+                window
+                    .bindings_for_action_in(action, &panel.focus_handle)
+                    .into_iter()
+                    .map(|binding| {
+                        binding
+                            .keystrokes()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let confirm_keys = keys_for(&menu::Confirm);
+            let toggle_staged_keys = keys_for(&git::ToggleStaged);
+            assert!(
+                confirm_keys.contains(&"space".to_string()),
+                "Confirm bindings: {confirm_keys:?}; ToggleStaged bindings: {toggle_staged_keys:?}"
+            );
+            assert!(!toggle_staged_keys.contains(&"space".to_string()));
+        });
+        cx.simulate_keystrokes("space");
+        cx.update(|window, _cx| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "Space should activate repository rows immediately instead of waiting for a Vim chord"
+            );
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         cx.run_until_parked();
@@ -12811,10 +12867,12 @@ mod tests {
                 })
                 .unwrap()
         });
-        panel.update_in(&mut cx, |panel, window, cx| {
+        panel.update_in(&mut cx, |panel, _window, cx| {
             panel.selected_entry = Some(repository_b_header_index);
-            panel.open_diff(&menu::Confirm, window, cx);
+            cx.notify();
         });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         cx.run_until_parked();
         assert_eq!(
@@ -13286,7 +13344,7 @@ mod tests {
                 .entries
                 .iter()
                 .position(|entry| matches!(entry, GitListEntry::ProjectRepositoriesHeader(_)));
-            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
+            panel.open_diff(&menu::Confirm, window, cx);
         });
         panel.read_with(&cx, |panel, _| {
             assert_eq!(panel.changes_count, changes_count);
@@ -13339,7 +13397,7 @@ mod tests {
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.toggle_staged_for_selected(&git::ToggleStaged, window, cx);
+            panel.open_diff(&menu::Confirm, window, cx);
         });
         panel.read_with(&cx, |panel, _| {
             assert_eq!(panel.visible_entry_indices, expanded_visible_indices);

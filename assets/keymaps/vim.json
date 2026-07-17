@@ -962,6 +962,11 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
+    },
+  },
+  {
+    "context": "!Editor && !Terminal && !ChangesList",
+    "bindings": {
       "space f": "file_finder::Toggle",
       "space /": "pane::DeploySearch",
       "space shift-s": "project_symbols::Toggle",
