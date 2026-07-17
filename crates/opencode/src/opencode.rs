@@ -155,6 +155,8 @@ pub enum Model {
     KimiK2_6,
     #[serde(rename = "kimi-k2.7-code")]
     KimiK2_7Code,
+    #[serde(rename = "kimi-k3")]
+    KimiK3,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
     #[serde(rename = "minimax-m3")]
@@ -225,9 +227,11 @@ impl Model {
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::Qwen3_7Plus | Self::Qwen3_7Max => {
-                &[OpenCodeSubscription::Go]
-            }
+            Self::KimiK3
+            | Self::MimoV2_5Pro
+            | Self::MimoV2_5
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_7Max => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -295,6 +299,7 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::KimiK2_7Code => "kimi-k2.7-code",
+            Self::KimiK3 => "kimi-k3",
             Self::MiniMaxM2_7 => "minimax-m2.7",
             Self::MiniMaxM3 => "minimax-m3",
             Self::MimoV2_5Pro => "mimo-v2.5-pro",
@@ -360,6 +365,7 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::KimiK2_7Code => "Kimi K2.7 Code",
+            Self::KimiK3 => "Kimi K3",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
             Self::MiniMaxM3 => "MiniMax M3",
             Self::MimoV2_5Pro => "MiMo V2.5 Pro",
@@ -436,6 +442,7 @@ impl Model {
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
@@ -454,6 +461,7 @@ impl Model {
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MimoV2_5
             | Self::MimoV2_5Pro
             | Self::Glm5
@@ -523,6 +531,7 @@ impl Model {
             }
             Self::Glm5_2 => 1_000_000,
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
+            Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
             Self::Grok4_5 => 500_000,
             Self::MimoV2_5Pro => 1_048_576,
@@ -609,6 +618,7 @@ impl Model {
             Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::KimiK2_7Code => Some(262_144),
+            Self::KimiK3 => Some(131_072),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Grok4_5 => Some(500_000),
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
@@ -672,6 +682,7 @@ impl Model {
 
             // OpenAI-compatible models with image support
             Self::KimiK2_6
+            | Self::KimiK3
             | Self::KimiK2_7Code
             | Self::KimiK2_5
             | Self::GrokBuild0_1
@@ -808,6 +819,9 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
+
+            // Moonshot AI models
+            Self::KimiK3 => Some(vec![ReasoningEffort::Max]),
 
             // MiniMax models
             Self::MiniMaxM3 => Some(vec![ReasoningEffort::None]),
