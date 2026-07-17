@@ -2,7 +2,7 @@ pub mod cursor_position;
 
 use cursor_position::UserCaretPosition;
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    Anchor, Editor, RowHighlightOptions, SelectionEffects, ToPoint,
     actions::Tab,
     scroll::{Autoscroll, ScrollOffset},
 };
@@ -24,6 +24,7 @@ pub fn init(cx: &mut App) {
 pub struct GoToLine {
     line_editor: Entity<Editor>,
     active_editor: Entity<Editor>,
+    active_buffer: Entity<Buffer>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
     current_line: u32,
@@ -62,7 +63,7 @@ impl GoToLine {
                     return;
                 };
                 let editor = editor_handle.read(cx);
-                let Some((_, buffer, _)) = editor.active_excerpt(cx) else {
+                let Some(buffer) = editor.active_buffer(cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -92,9 +93,9 @@ impl GoToLine {
             let last_line = editor
                 .buffer()
                 .read(cx)
-                .excerpts_for_buffer(snapshot.remote_id(), cx)
-                .into_iter()
-                .map(move |(_, range)| text::ToPoint::to_point(&range.context.end, &snapshot).row)
+                .snapshot(cx)
+                .excerpts_for_buffer(snapshot.remote_id())
+                .map(move |range| text::ToPoint::to_point(&range.context.end, &snapshot).row)
                 .max()
                 .unwrap_or(0);
 
@@ -142,6 +143,7 @@ impl GoToLine {
         Self {
             line_editor,
             active_editor,
+            active_buffer,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
             current_line: line,
@@ -181,7 +183,7 @@ impl GoToLine {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
+            let Some(start) = self.anchor_from_query(editor, cx) else {
                 return;
             };
             let mut start_point = start.to_point(&snapshot);
@@ -195,7 +197,7 @@ impl GoToLine {
             let end = snapshot.anchor_after(end_point);
             editor.highlight_rows::<GoToLineRowHighlights>(
                 start..end,
-                cx.theme().colors().editor_highlighted_line_background,
+                |cx| cx.theme().colors().editor_highlighted_line_background,
                 RowHighlightOptions {
                     autoscroll: true,
                     ..Default::default()
@@ -207,11 +209,7 @@ impl GoToLine {
         cx.notify();
     }
 
-    fn anchor_from_query(
-        &self,
-        snapshot: &MultiBufferSnapshot,
-        cx: &Context<Editor>,
-    ) -> Option<Anchor> {
+    fn anchor_from_query(&self, editor: &Editor, cx: &Context<Editor>) -> Option<Anchor> {
         let (query_row, query_char) = if let Some(offset) = self.relative_line_from_query(cx) {
             let target = if offset >= 0 {
                 self.current_line.saturating_add(offset as u32)
@@ -225,32 +223,16 @@ impl GoToLine {
 
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
+        let target_point = {
+            let buffer_snapshot = self.active_buffer.read(cx).snapshot();
+            let row = row.min(buffer_snapshot.max_point().row);
+            buffer_snapshot.point_from_external_input(row, character)
+        };
 
-        let start_offset = Point::new(row, 0).to_offset(snapshot);
-        const MAX_BYTES_IN_UTF_8: u32 = 4;
-        let max_end_offset = snapshot
-            .clip_point(
-                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
-                Bias::Right,
-            )
-            .to_offset(snapshot);
-
-        let mut chars_to_iterate = character;
-        let mut end_offset = start_offset;
-        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
-            let mut offset_increment = 0;
-            for c in text_chunk.chars() {
-                if chars_to_iterate == 0 {
-                    end_offset += offset_increment;
-                    break 'outer;
-                } else {
-                    chars_to_iterate -= 1;
-                    offset_increment += c.len_utf8();
-                }
-            }
-            end_offset += offset_increment;
-        }
-        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
+        editor
+            .buffer()
+            .read(cx)
+            .buffer_point_to_anchor(&self.active_buffer, target_point, cx)
     }
 
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
@@ -305,8 +287,7 @@ impl GoToLine {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.active_editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
+            let Some(start) = self.anchor_from_query(editor, cx) else {
                 return;
             };
             editor.change_selections(
@@ -374,6 +355,8 @@ mod tests {
     use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
+    use language::Capability;
+    use multi_buffer::{MultiBuffer, PathKey};
     use project::{FakeFs, Project};
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
@@ -489,6 +472,53 @@ mod tests {
         );
         // On confirm, should place the caret on the highlighted row.
         assert_single_caret_at_row(&editor, expected_highlighted_row, cx);
+    }
+
+    #[gpui::test]
+    async fn test_go_to_line_uses_buffer_rows_in_multibuffers(cx: &mut TestAppContext) {
+        init_test(cx);
+        let cx = cx.add_empty_window();
+        let file_content = (1..=60)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let buffer = cx.new(|cx| Buffer::local(file_content, cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                [
+                    Point::new(10, 0)..Point::new(13, 0),
+                    Point::new(50, 0)..Point::new(53, 0),
+                ],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multibuffer.clone(), None, window, cx)
+        });
+        let go_to_line_view = cx.new_window_entity(|window, cx| {
+            GoToLine::new(editor.clone(), buffer.clone(), window, cx)
+        });
+
+        go_to_line_view.update_in(cx, |go_to_line_view, window, cx| {
+            go_to_line_view.line_editor.update(cx, |line_editor, cx| {
+                line_editor.set_text("52", window, cx);
+            });
+            go_to_line_view.confirm(&menu::Confirm, window, cx);
+        });
+        assert_single_caret_at_buffer_row(&editor, 51, cx);
+
+        go_to_line_view.update_in(cx, |go_to_line_view, window, cx| {
+            go_to_line_view.line_editor.update(cx, |line_editor, cx| {
+                line_editor.set_text("30", window, cx);
+            });
+            go_to_line_view.confirm(&menu::Confirm, window, cx);
+        });
+        assert_single_caret_at_buffer_row(&editor, 50, cx);
     }
 
     #[gpui::test]
@@ -805,6 +835,31 @@ mod tests {
         buffer_row: u32,
         cx: &mut VisualTestContext,
     ) {
+        let selection = single_caret_selection(editor, cx);
+        assert_eq!(selection.start.row, buffer_row);
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_buffer_row(
+        editor: &Entity<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selection = single_caret_selection(editor, cx);
+        let buffer_point = editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot
+                .point_to_buffer_point(selection.start)
+                .map(|(_, buffer_point)| buffer_point)
+        });
+
+        assert_eq!(buffer_point.map(|point| point.row), Some(buffer_row));
+    }
+
+    fn single_caret_selection(
+        editor: &Entity<Editor>,
+        cx: &mut VisualTestContext,
+    ) -> std::ops::Range<rope::Point> {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
@@ -817,12 +872,15 @@ mod tests {
             selections.len() == 1,
             "Expected one caret selection but got: {selections:?}"
         );
-        let selection = &selections[0];
+        let selection = selections
+            .into_iter()
+            .next()
+            .expect("checked selection count");
         assert!(
             selection.start == selection.end,
             "Expected a single caret selection, but got: {selection:?}"
         );
-        assert_eq!(selection.start.row, buffer_row);
+        selection
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

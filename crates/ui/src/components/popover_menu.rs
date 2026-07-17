@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
+    Anchor, AnyElement, AnyView, App, Bounds, DismissEvent, DispatchPhase, Element, ElementId,
     Entity, Focusable as _, GlobalElementId, HitboxBehavior, HitboxId, InteractiveElement,
     IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point,
     Style, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, size,
@@ -137,8 +137,8 @@ pub struct PopoverMenu<M: ManagedView> {
         >,
     >,
     menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static>>,
-    anchor: Corner,
-    attach: Option<Corner>,
+    anchor: Anchor,
+    attach: Option<Anchor>,
     offset: Option<Point<Pixels>>,
     trigger_handle: Option<PopoverMenuHandle<M>>,
     on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
@@ -152,7 +152,7 @@ impl<M: ManagedView> PopoverMenu<M> {
             id: id.into(),
             child_builder: None,
             menu_builder: None,
-            anchor: Corner::TopLeft,
+            anchor: Anchor::TopLeft,
             attach: None,
             offset: None,
             trigger_handle: None,
@@ -219,13 +219,13 @@ impl<M: ManagedView> PopoverMenu<M> {
 
     /// Defines which corner of the menu to anchor to the attachment point.
     /// By default, it uses the cursor position. Also see the `attach` method.
-    pub fn anchor(mut self, anchor: Corner) -> Self {
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = anchor;
         self
     }
 
     /// Defines which corner of the handle to attach the menu's anchor to.
-    pub fn attach(mut self, attach: Corner) -> Self {
+    pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
     }
@@ -242,13 +242,18 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
-    fn resolved_attach(&self) -> Corner {
-        self.attach.unwrap_or(match self.anchor {
-            Corner::TopLeft => Corner::BottomLeft,
-            Corner::TopRight => Corner::BottomRight,
-            Corner::BottomLeft => Corner::TopLeft,
-            Corner::BottomRight => Corner::TopRight,
-        })
+    fn resolved_attach(&self) -> Anchor {
+        self.attach
+            .unwrap_or(self.attach.unwrap_or(match self.anchor {
+                Anchor::TopLeft => Anchor::BottomLeft,
+                Anchor::TopCenter => Anchor::BottomCenter,
+                Anchor::TopRight => Anchor::BottomRight,
+                Anchor::BottomLeft => Anchor::TopLeft,
+                Anchor::BottomCenter => Anchor::TopCenter,
+                Anchor::BottomRight => Anchor::TopRight,
+                Anchor::LeftCenter => Anchor::LeftCenter,
+                Anchor::RightCenter => Anchor::RightCenter,
+            }))
     }
 
     fn resolved_offset(&self, window: &mut Window) -> Point<Pixels> {
@@ -256,8 +261,11 @@ impl<M: ManagedView> PopoverMenu<M> {
             // Default offset = 4px padding + 1px border
             let offset = rems_from_px(5.) * window.rem_size();
             match self.anchor {
-                Corner::TopRight | Corner::BottomRight => point(offset, px(0.)),
-                Corner::TopLeft | Corner::BottomLeft => point(-offset, px(0.)),
+                Anchor::TopRight | Anchor::BottomRight | Anchor::RightCenter => {
+                    point(offset, px(0.))
+                }
+                Anchor::TopLeft | Anchor::BottomLeft | Anchor::LeftCenter => point(-offset, px(0.)),
+                Anchor::TopCenter | Anchor::BottomCenter => point(px(0.), px(0.)),
             }
         })
     }

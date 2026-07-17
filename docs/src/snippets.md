@@ -7,7 +7,7 @@ description: Create and use code snippets in Zed with tab stops, placeholders, v
 
 Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
 
-The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
+The snippets are located in `~/.config/zed/snippets` directory to which you can navigate with the {#action snippets::OpenFolder} action.
 
 ## Example configuration
 
@@ -42,24 +42,4 @@ To create JSX snippets you have to use `javascript.json` snippets file, instead 
 ## Known Limitations
 
 - Only the first prefix is used when a list of prefixes is passed in.
-- Currently only the `json` snippet file format is supported, even though the `simple-completion-language-server` supports both `json` and `toml` file formats.
-
-## See also
-
-The `feature_paths` option in `simple-completion-language-server` is disabled by default.
-
-If you want to enable it you can add the following to your `settings.json`:
-
-```json [settings]
-{
-  "lsp": {
-    "snippet-completion-server": {
-      "settings": {
-        "feature_paths": true
-      }
-    }
-  }
-}
-```
-
-For more configuration information, see the [`simple-completion-language-server` instructions](https://github.com/zed-industries/simple-completion-language-server/tree/main).
+- Currently only the `json` snippet file format is supported.

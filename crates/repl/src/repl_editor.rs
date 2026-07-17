@@ -87,6 +87,7 @@ pub fn install_ipykernel_and_assign(
 
     let python_path = env_spec.path.clone();
     let env_name = env_spec.name.clone();
+    let is_uv = env_spec.is_uv();
     let env_spec = env_spec.clone();
 
     struct IpykernelInstall;
@@ -109,11 +110,25 @@ pub fn install_ipykernel_and_assign(
     let window_handle = window.window_handle();
 
     let install_task = cx.background_spawn(async move {
-        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
-            .args(&["-m", "pip", "install", "ipykernel"])
-            .output()
-            .await
-            .context("failed to run pip install ipykernel")?;
+        let output = if is_uv {
+            util::command::new_command("uv")
+                .args(&[
+                    "pip",
+                    "install",
+                    "ipykernel",
+                    "--python",
+                    &python_path.to_string_lossy(),
+                ])
+                .output()
+                .await
+                .context("failed to run uv pip install ipykernel")?
+        } else {
+            util::command::new_command(python_path.to_string_lossy().as_ref())
+                .args(&["-m", "pip", "install", "ipykernel"])
+                .output()
+                .await
+                .context("failed to run pip install ipykernel")?
+        };
 
         if output.status.success() {
             anyhow::Ok(())
@@ -146,6 +161,11 @@ pub fn install_ipykernel_and_assign(
 
                 window_handle
                     .update(cx, |_, window, cx| {
+                        let store = ReplStore::global(cx);
+                        store.update(cx, |store, cx| {
+                            store.mark_ipykernel_installed(cx, &env_spec);
+                        });
+
                         let updated_spec =
                             KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
                                 has_ipykernel: true,
@@ -191,6 +211,7 @@ pub fn run(
     if !store.read(cx).is_enabled() {
         return Ok(());
     }
+    store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor
@@ -636,12 +657,9 @@ fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
     let store = ReplStore::global(cx);
     let store_read = store.read(cx);
 
-    // Since we're just checking for general language support, we only need to look at
-    // the pure Jupyter kernels - these are all the globally available ones
-    store_read.pure_jupyter_kernel_specifications().any(|spec| {
-        // Convert to lowercase for case-insensitive comparison since kernels might report "python" while our language is "Python"
-        spec.language().as_ref().to_lowercase() == language.name().as_ref().to_lowercase()
-    })
+    store_read
+        .pure_jupyter_kernel_specifications()
+        .any(|spec| language.matches_kernel_language(spec.language().as_ref()))
 }
 
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {

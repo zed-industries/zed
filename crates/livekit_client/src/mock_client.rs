@@ -15,7 +15,7 @@ pub type LocalTrackPublication = publication::LocalTrackPublication;
 pub type LocalParticipant = participant::LocalParticipant;
 
 pub type Room = test::Room;
-pub use test::{ConnectionState, ParticipantIdentity, TrackSid};
+pub use test::{ConnectionState, ParticipantIdentity, RtcStats, SessionStats, TrackSid};
 
 pub struct AudioStream {}
 

@@ -22,5 +22,7 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 text.workspace = true
+zed_credentials_provider.workspace = true
+zeta_prompt.workspace = true
 
 [dev-dependencies]

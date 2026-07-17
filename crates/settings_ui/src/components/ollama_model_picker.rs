@@ -62,6 +62,10 @@ impl OllamaModelPickerDelegate {
 impl PickerDelegate for OllamaModelPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "ollama model picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_models.len()
     }
@@ -156,6 +160,8 @@ pub fn render_ollama_model_picker(
     field: SettingField<settings::OllamaModelName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -164,15 +170,20 @@ pub fn render_ollama_model_picker(
         .map(|m| m.0.clone().into())
         .unwrap_or_else(|| "".into());
 
+    let trigger_value: SharedString = if current_value.is_empty() {
+        "Select a model…".into()
+    } else {
+        current_value.clone()
+    };
+
     PopoverMenu::new("ollama-model-picker")
-        .trigger(render_picker_trigger_button(
-            "ollama_model_picker_trigger".into(),
-            if current_value.is_empty() {
-                "Select a model…".into()
-            } else {
-                current_value.clone()
-            },
-        ))
+        .trigger(
+            render_picker_trigger_button("ollama_model_picker_trigger".into(), trigger_value)
+                .aria_label(title)
+                .when(!description.is_empty(), |this| {
+                    this.aria_description(description)
+                }),
+        )
         .menu(move |window, cx| {
             Some(cx.new(|cx| {
                 let file = file.clone();
@@ -185,10 +196,11 @@ pub fn render_ollama_model_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::OllamaModelName(model_name.to_string())),
+                                    app,
                                 );
                             },
                         )
@@ -199,11 +211,12 @@ pub fn render_ollama_model_picker(
 
                 Picker::uniform_list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems_from_px(210.))
-                    .max_height(Some(rems(18.).into()))
+                    .initial_width(rems_from_px(210.))
+                    .max_height(rems(18.))
+                    .popover()
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

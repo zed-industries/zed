@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
 use collections::{BTreeMap, IndexSet};
-use fs::Fs;
+
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -62,7 +62,6 @@ impl ToolchainStore {
         worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         manifest_tree: Entity<ManifestTree>,
-        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         let entity = cx.new(|_| LocalToolchainStore {
@@ -71,7 +70,6 @@ impl ToolchainStore {
             project_environment,
             active_toolchains: Default::default(),
             manifest_tree,
-            fs,
         });
         let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
@@ -265,9 +263,9 @@ impl ToolchainStore {
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let path = if let Some(path) = envelope.payload.path {
-                RelPath::from_proto(&path)?
+                RelPath::from_unix_str(&path)?.into()
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             Ok(this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx))
         })?
@@ -279,7 +277,7 @@ impl ToolchainStore {
         envelope: TypedEnvelope<proto::ActiveToolchain>,
         mut cx: AsyncApp,
     ) -> Result<proto::ActiveToolchainResponse> {
-        let path = RelPath::unix(envelope.payload.path.as_deref().unwrap_or(""))?;
+        let path = RelPath::from_unix_str(envelope.payload.path.as_deref().unwrap_or(""))?;
         let toolchain = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
@@ -316,7 +314,8 @@ impl ToolchainStore {
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-                let path = RelPath::from_proto(envelope.payload.path.as_deref().unwrap_or(""))?;
+                let path =
+                    RelPath::from_unix_str(envelope.payload.path.as_deref().unwrap_or(""))?.into();
                 anyhow::Ok(this.list_toolchains(
                     ProjectPath { worktree_id, path },
                     language_name,
@@ -366,7 +365,7 @@ impl ToolchainStore {
             has_values,
             toolchains,
             groups,
-            relative_worktree_path: Some(relative_path.to_proto()),
+            relative_worktree_path: Some(relative_path.as_unix_str().to_owned()),
         })
     }
 
@@ -418,7 +417,6 @@ pub struct LocalToolchainStore {
     project_environment: Entity<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
     manifest_tree: Entity<ManifestTree>,
-    fs: Arc<dyn Fs>,
 }
 
 #[async_trait(?Send)]
@@ -507,7 +505,6 @@ impl LocalToolchainStore {
         let registry = self.languages.clone();
 
         let manifest_tree = self.manifest_tree.downgrade();
-        let fs = self.fs.clone();
 
         let environment = self.project_environment.clone();
         cx.spawn(async move |this, cx| {
@@ -554,12 +551,7 @@ impl LocalToolchainStore {
             cx.background_spawn(async move {
                 Some((
                     toolchains
-                        .list(
-                            worktree_root,
-                            relative_path.path.clone(),
-                            project_env,
-                            fs.as_ref(),
-                        )
+                        .list(worktree_root, relative_path.path.clone(), project_env)
                         .await,
                     relative_path.path,
                 ))
@@ -593,7 +585,6 @@ impl LocalToolchainStore {
     ) -> Task<Result<Toolchain>> {
         let registry = self.languages.clone();
         let environment = self.project_environment.clone();
-        let fs = self.fs.clone();
         cx.spawn(async move |_, cx| {
             let language = cx
                 .background_spawn(registry.language_for_name(&language_name.0))
@@ -612,12 +603,8 @@ impl LocalToolchainStore {
                     )
                 })
                 .await;
-            cx.background_spawn(async move {
-                toolchain_lister
-                    .resolve(path, project_env, fs.as_ref())
-                    .await
-            })
-            .await
+            cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })
+                .await
         })
     }
 }
@@ -651,7 +638,7 @@ impl RemoteToolchainStore {
                                 path: path.to_string_lossy().into_owned(),
                                 raw_json: toolchain.as_json.to_string(),
                             }),
-                            path: Some(project_path.path.to_proto()),
+                            path: Some(project_path.path.as_unix_str().to_owned()),
                         })
                         .await
                         .log_err()?;
@@ -681,7 +668,7 @@ impl RemoteToolchainStore {
                     project_id,
                     worktree_id: path.worktree_id.to_proto(),
                     language_name: language_name.clone().into(),
-                    path: Some(path.path.to_proto()),
+                    path: Some(path.path.as_unix_str().to_owned()),
                 })
                 .await
                 .log_err()?;
@@ -707,7 +694,7 @@ impl RemoteToolchainStore {
                     Some((usize::try_from(group.start_index).ok()?, group.name.into()))
                 })
                 .collect();
-            let relative_path = RelPath::from_proto(
+            let relative_path = RelPath::from_unix_str(
                 response
                     .relative_worktree_path
                     .as_deref()
@@ -720,7 +707,7 @@ impl RemoteToolchainStore {
                     default: None,
                     groups,
                 },
-                relative_path,
+                relative_path.into(),
             ))
         })
     }
@@ -738,7 +725,7 @@ impl RemoteToolchainStore {
                     project_id,
                     worktree_id: path.worktree_id.to_proto(),
                     language_name: language_name.clone().into(),
-                    path: Some(path.path.to_proto()),
+                    path: Some(path.path.as_unix_str().to_owned()),
                 })
                 .await
                 .log_err()?;

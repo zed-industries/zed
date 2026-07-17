@@ -42,7 +42,7 @@ use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
-use wasmtime_wasi::p2::{self as wasi, IoView as _};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wit::Extension;
 
 pub struct WasmHost {
@@ -93,7 +93,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Command> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let command = extension
                     .call_language_server_command(
                         store,
@@ -119,7 +119,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let options = extension
                     .call_language_server_initialization_options(
                         store,
@@ -143,7 +143,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let options = extension
                     .call_language_server_workspace_configuration(
                         store,
@@ -159,6 +159,48 @@ impl extension::Extension for WasmExtension {
         .await?
     }
 
+    async fn language_server_initialization_options_schema(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table.push(worktree)?;
+                extension
+                    .call_language_server_initialization_options_schema(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn language_server_workspace_configuration_schema(
+        &self,
+        language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table.push(worktree)?;
+                extension
+                    .call_language_server_workspace_configuration_schema(
+                        store,
+                        &language_server_id,
+                        resource,
+                    )
+                    .await
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     async fn language_server_additional_initialization_options(
         &self,
         language_server_id: LanguageServerName,
@@ -167,7 +209,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let options = extension
                     .call_language_server_additional_initialization_options(
                         store,
@@ -192,7 +234,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<String>> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let options = extension
                     .call_language_server_additional_workspace_configuration(
                         store,
@@ -289,7 +331,7 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let resource = if let Some(delegate) = delegate {
-                    Some(store.data_mut().table().push(delegate)?)
+                    Some(store.data_mut().table.push(delegate)?)
                 } else {
                     None
                 };
@@ -313,7 +355,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Command> {
         self.call(|extension, store| {
             async move {
-                let project_resource = store.data_mut().table().push(project)?;
+                let project_resource = store.data_mut().table.push(project)?;
                 let command = extension
                     .call_context_server_command(store, context_server_id.clone(), project_resource)
                     .await?
@@ -332,7 +374,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<Option<ContextServerConfiguration>> {
         self.call(|extension, store| {
             async move {
-                let project_resource = store.data_mut().table().push(project)?;
+                let project_resource = store.data_mut().table.push(project)?;
                 let Some(configuration) = extension
                     .call_context_server_configuration(
                         store,
@@ -375,7 +417,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<()> {
         self.call(|extension, store| {
             async move {
-                let kv_store_resource = store.data_mut().table().push(kv_store)?;
+                let kv_store_resource = store.data_mut().table.push(kv_store)?;
                 extension
                     .call_index_docs(
                         store,
@@ -402,7 +444,7 @@ impl extension::Extension for WasmExtension {
     ) -> Result<DebugAdapterBinary> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
+                let resource = store.data_mut().table.push(worktree)?;
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
@@ -490,7 +532,7 @@ impl extension::Extension for WasmExtension {
 pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
     pub table: ResourceTable,
-    ctx: wasi::WasiCtx,
+    ctx: WasiCtx,
     pub host: Arc<WasmHost>,
     pub(crate) capability_granter: CapabilityGranter,
 }
@@ -684,7 +726,7 @@ impl WasmHost {
         })
     }
 
-    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
+    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<WasiCtx> {
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
         self.fs
             .create_dir(&extension_work_dir)
@@ -697,7 +739,7 @@ impl WasmHost {
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
 
-        let mut ctx = wasi::WasiCtxBuilder::new();
+        let mut ctx = WasiCtxBuilder::new();
         ctx.inherit_stdio()
             .env("PWD", &path)
             .env("RUST_BACKTRACE", "full");
@@ -905,15 +947,16 @@ impl WasmState {
     }
 }
 
-impl wasi::IoView for WasmState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
+impl wasmtime::component::HasData for WasmState {
+    type Data<'a> = &'a mut WasmState;
 }
 
-impl wasi::WasiView for WasmState {
-    fn ctx(&mut self) -> &mut wasi::WasiCtx {
-        &mut self.ctx
+impl WasiView for WasmState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.ctx,
+            table: &mut self.table,
+        }
     }
 }
 

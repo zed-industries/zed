@@ -629,57 +629,29 @@ mod tests {
     use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
-        Action, ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler,
-        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription,
-        TestAppContext, UTF16Selection, Window,
+        ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
+        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
+        UTF16Selection, Unbind, Window,
     };
 
-    #[derive(PartialEq, Eq)]
-    struct TestAction;
+    actions!(dispatch_test, [TestAction, SecondaryTestAction]);
 
-    impl Action for TestAction {
-        fn name(&self) -> &'static str {
-            "test::TestAction"
-        }
+    fn test_dispatch_tree(bindings: Vec<KeyBinding>) -> DispatchTree {
+        let registry = ActionRegistry::default();
 
-        fn name_for_type() -> &'static str
-        where
-            Self: ::std::marker::Sized,
-        {
-            "test::TestAction"
-        }
-
-        fn partial_eq(&self, action: &dyn Action) -> bool {
-            action.as_any().downcast_ref::<Self>() == Some(self)
-        }
-
-        fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
-            Box::new(TestAction)
-        }
-
-        fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
-        where
-            Self: Sized,
-        {
-            Ok(Box::new(TestAction))
-        }
+        DispatchTree::new(
+            Rc::new(RefCell::new(Keymap::new(bindings))),
+            Rc::new(registry),
+        )
     }
 
     #[test]
     fn test_keybinding_for_action_bounds() {
-        let keymap = Keymap::new(vec![KeyBinding::new(
+        let tree = test_dispatch_tree(vec![KeyBinding::new(
             "cmd-n",
             TestAction,
             Some("ProjectPanel"),
         )]);
-
-        let mut registry = ActionRegistry::default();
-
-        registry.load_action::<TestAction>();
-
-        let keymap = Rc::new(RefCell::new(keymap));
-
-        let tree = DispatchTree::new(keymap, Rc::new(registry));
 
         let contexts = vec![
             KeyContext::parse("Workspace").unwrap(),
@@ -692,16 +664,134 @@ mod tests {
     }
 
     #[test]
+    fn test_bindings_for_action_hides_targeted_unbind_in_active_context() {
+        let tree = test_dispatch_tree(vec![
+            KeyBinding::new("tab", TestAction, Some("Editor")),
+            KeyBinding::new(
+                "tab",
+                Unbind("dispatch_test::TestAction".into()),
+                Some("Editor && edit_prediction"),
+            ),
+            KeyBinding::new(
+                "tab",
+                SecondaryTestAction,
+                Some("Editor && showing_completions"),
+            ),
+        ]);
+
+        let contexts = vec![
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("Editor showing_completions edit_prediction").unwrap(),
+        ];
+
+        let bindings = tree.bindings_for_action(&TestAction, &contexts);
+        assert!(bindings.is_empty());
+
+        let highest = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(highest.is_none());
+
+        let fallback_bindings = tree.bindings_for_action(&SecondaryTestAction, &contexts);
+        assert_eq!(fallback_bindings.len(), 1);
+        assert!(fallback_bindings[0].action.partial_eq(&SecondaryTestAction));
+    }
+
+    #[test]
+    fn test_bindings_for_action_keeps_targeted_binding_outside_unbind_context() {
+        let tree = test_dispatch_tree(vec![
+            KeyBinding::new("tab", TestAction, Some("Editor")),
+            KeyBinding::new(
+                "tab",
+                Unbind("dispatch_test::TestAction".into()),
+                Some("Editor && edit_prediction"),
+            ),
+            KeyBinding::new(
+                "tab",
+                SecondaryTestAction,
+                Some("Editor && showing_completions"),
+            ),
+        ]);
+
+        let contexts = vec![
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("Editor").unwrap(),
+        ];
+
+        let bindings = tree.bindings_for_action(&TestAction, &contexts);
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].action.partial_eq(&TestAction));
+
+        let highest = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(highest.is_some_and(|binding| binding.action.partial_eq(&TestAction)));
+    }
+
+    /// Models the picker preview footer scenario: a picker action is bound in
+    /// `Picker > Editor`, but a base keymap binds the same chord to an editor
+    /// action in `Editor`. `Picker > Editor` and `Editor` resolve at the same
+    /// context depth, so at equal depth precedence is decided purely by load
+    /// order (later wins). Because base keymaps load after the default keymap,
+    /// the picker binding is shadowed unless it is (re)bound by an overlay that
+    /// loads after the base keymap - which is exactly what
+    /// `keymaps/specific-overrides*.json` does.
+    #[test]
+    fn test_overlay_after_base_restores_shadowed_picker_binding() {
+        // SecondaryTestAction stands in for the editor/base action (e.g.
+        // editor::AddSelectionBelow), TestAction for the picker action.
+        let contexts = vec![
+            KeyContext::parse("Picker").unwrap(),
+            KeyContext::parse("Editor").unwrap(),
+        ];
+
+        // Default keymap (picker binding) followed by a base keymap that binds
+        // the same chord to an editor action: the base binding wins and the
+        // picker action is shadowed, so its footer tooltip renders no shortcut.
+        let shadowed = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+        ]);
+        let highest = shadowed.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_none(),
+            "picker binding should be shadowed by the base editor binding"
+        );
+
+        // Re-binding the picker action in an overlay loaded after the base keymap
+        // restores it as the resolved binding.
+        let fixed = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+            // overlay loaded last:
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+        ]);
+        let highest = fixed.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_some_and(|binding| binding.action.partial_eq(&TestAction)),
+            "overlay loaded after base should restore the picker binding"
+        );
+
+        // Conversely, putting the override in the default keymap (i.e. before the
+        // base keymap) does NOT help: the later base binding still wins at equal
+        // depth. This is why the overlay must be loaded after the base keymap.
+        let override_before_base = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+        ]);
+        let highest =
+            override_before_base.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_none(),
+            "an override loaded before the base binding cannot win the equal-depth tie"
+        );
+    }
+
+    #[test]
     fn test_pending_has_binding_state() {
         let bindings = vec![
             KeyBinding::new("ctrl-b h", TestAction, None),
             KeyBinding::new("space", TestAction, Some("ContextA")),
             KeyBinding::new("space f g", TestAction, Some("ContextB")),
         ];
-        let keymap = Rc::new(RefCell::new(Keymap::new(bindings)));
-        let mut registry = ActionRegistry::default();
-        registry.load_action::<TestAction>();
-        let mut tree = DispatchTree::new(keymap, Rc::new(registry));
+        let mut tree = test_dispatch_tree(bindings);
 
         type DispatchPath = SmallVec<[super::DispatchNodeId; 32]>;
         fn dispatch(

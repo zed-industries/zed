@@ -9,15 +9,14 @@ use std::{
     ffi::OsString,
     fs::File,
     io::Read as _,
-    os::fd::{AsFd, FromRawFd, IntoRawFd},
+    os::fd::{AsFd, AsRawFd},
     time::Duration,
 };
 
 use anyhow::{Context as _, anyhow};
-use calloop::LoopSignal;
+use calloop::{LoopSignal, channel::Sender};
 use futures::channel::oneshot;
-use util::ResultExt as _;
-use util::command::{new_command, new_std_command};
+use gpui_util::{ResultExt as _, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -26,7 +25,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -55,12 +55,12 @@ pub(crate) trait LinuxClient {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
 
-    #[allow(dead_code)]
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        false
+        true
     }
 
-    #[allow(dead_code)]
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
@@ -79,6 +79,10 @@ pub(crate) trait LinuxClient {
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn hide_cursor_until_mouse_moves(&self) {}
+    fn is_cursor_visible(&self) -> bool {
+        true
+    }
     fn open_uri(&self, uri: &str);
     fn reveal_path(&self, path: PathBuf);
     fn write_to_primary(&self, item: ClipboardItem);
@@ -106,6 +110,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) system_wake: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -114,14 +119,30 @@ pub(crate) struct LinuxCommon {
     pub(crate) text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
+    pub(crate) button_layout: WindowButtonLayout,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    app_name: Option<String>,
+    system_notifications: crate::linux::system_notifications::SystemNotificationState,
+    #[cfg_attr(
+        not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
+        allow(dead_code)
+    )]
+    wake_sender: Sender<()>,
+    wake_listener_started: bool,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+    pub fn new(
+        signal: LoopSignal,
+    ) -> (
+        Self,
+        PriorityQueueCalloopReceiver<RunnableVariant>,
+        calloop::channel::Channel<()>,
+    ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+        let (wake_sender, wake_receiver) = calloop::channel::channel();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -140,13 +161,67 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
+            button_layout: WindowButtonLayout::linux_default(),
             callbacks,
             signal,
             menus: Vec::new(),
+            app_name: None,
+            system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
+            ),
+            wake_sender,
+            wake_listener_started: false,
         };
 
-        (common, main_receiver)
+        (common, main_receiver, wake_receiver)
     }
+
+    pub(crate) fn start_wake_listener(&mut self) {
+        if !self.wake_listener_started {
+            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            smol::spawn({
+                let wake_sender = self.wake_sender.clone();
+                async move {
+                    if let Err(error) = listen_for_system_wake(wake_sender).await {
+                        log::debug!("failed to listen for system wake events: {error:?}");
+                    }
+                }
+            })
+            .detach();
+
+            self.wake_listener_started = true;
+        }
+    }
+
+    pub(crate) fn handle_system_wake(&mut self) {
+        if let Some(mut callback) = self.callbacks.system_wake.take() {
+            callback();
+            self.callbacks.system_wake = Some(callback);
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+
+    let connection = ashpd::zbus::Connection::system().await?;
+    let proxy = ashpd::zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
+    let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
+
+    while let Some(message) = sleep_events.next().await {
+        let sleeping = message.body().deserialize::<bool>()?;
+        if !sleeping {
+            wake_sender.send(()).ok();
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) struct LinuxPlatform<P> {
@@ -229,17 +304,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        let script = format!(
-            r#"
-            while kill -0 {pid} 2>/dev/null; do
+        // Pass dynamic values as positional parameters to avoid shell interpolation issues.
+        let script = r#"
+            while kill -0 "$0" 2>/dev/null; do
                 sleep 0.1
             done
 
-            {app_path}
-            "#,
-            pid = app_pid,
-            app_path = app_path.display()
-        );
+            "$1"
+            "#;
 
         #[allow(
             clippy::disallowed_methods,
@@ -249,6 +321,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .arg("bash")
             .arg("-c")
             .arg(script)
+            .arg(&app_pid)
+            .arg(&app_path)
             .process_group(0)
             .spawn();
 
@@ -455,15 +529,15 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = new_command("xdg-open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("xdg-open")
                     .arg(path)
-                    .spawn()
-                    .context("invoking xdg-open")
-                    .log_err()?
                     .status()
-                    .await
-                    .log_err()?;
-                Some(())
+                    .context("invoking xdg-open")
+                    .log_err();
             })
             .detach();
     }
@@ -477,6 +551,41 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.inner.with_common(|common| {
             common.callbacks.reopen = Some(callback);
+        });
+    }
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_wake = Some(callback);
+            common.start_wake_listener();
+        });
+    }
+
+    fn set_app_identity(&self, _identifier: &str, name: &str) {
+        self.inner
+            .with_common(|common| common.app_name = Some(name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        self.inner.with_common(|common| {
+            common
+                .system_notifications
+                .show(common.app_name.as_deref(), notification)
+        });
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.inner
+            .with_common(|common| common.system_notifications.dismiss(tag));
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        self.inner.with_common(|common| {
+            let executor = common.foreground_executor.clone();
+            common.system_notifications.on_response(&executor, callback)
         });
     }
 
@@ -526,6 +635,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         self.inner.set_cursor_style(style)
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        self.inner.hide_cursor_until_mouse_moves()
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.inner.is_cursor_visible()
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -602,6 +719,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| common.appearance)
     }
 
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        Some(self.inner.with_common(|common| common.button_layout))
+    }
+
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
@@ -634,28 +755,42 @@ pub(super) fn open_uri_internal(
     if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
-                match ashpd::desktop::open_uri::OpenFileRequest::default()
-                    .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
-                    .send_uri(&uri)
-                    .await
-                    .and_then(|e| e.response())
-                {
-                    Ok(()) => return,
-                    Err(e) => log::error!("Failed to open with dbus: {}", e),
-                }
-
+                let mut xdg_open_failed = false;
                 for mut command in open::commands(uri.to_string()) {
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
                     let program = format!("{:?}", command.get_program());
                     match smol::process::Command::from(command).spawn() {
-                        Ok(mut cmd) => {
-                            cmd.status().await.log_err();
-                            return;
-                        }
+                        Ok(mut cmd) => match cmd.status().await {
+                            Ok(status) if status.success() => return,
+                            Ok(status) => {
+                                log::error!("Command {} exited with status: {}", program, status);
+                                xdg_open_failed = true;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to get status from {}: {}", program, e);
+                                xdg_open_failed = true;
+                            }
+                        },
                         Err(e) => {
-                            log::error!("Failed to open with {}: {}", program, e)
+                            log::error!("Failed to open with {}: {}", program, e);
+                            xdg_open_failed = true;
+                        }
+                    }
+                }
+
+                if xdg_open_failed {
+                    match ashpd::desktop::open_uri::OpenFileRequest::default()
+                        .activation_token(activation_token.map(ashpd::ActivationToken::from))
+                        .send_uri(&uri)
+                        .await
+                        .and_then(|e| e.response())
+                    {
+                        Ok(()) => {}
+                        Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => {}
+                        Err(e) => {
+                            log::error!("Failed to open with dbus: {}", e);
                         }
                     }
                 }
@@ -720,11 +855,43 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) unsafe fn read_fd(fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = unsafe { File::from_raw_fd(fd.into_raw_fd()) };
+pub(super) const PIPE_READ_TIMEOUT: Duration = Duration::from_secs(4);
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn read_fd_with_timeout(
+    mut fd: filedescriptor::FileDescriptor,
+    timeout: Duration,
+) -> Result<Vec<u8>> {
+    fd.set_non_blocking(true)?;
     let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    Ok(buffer)
+    let mut chunk = [0u8; 8192];
+    loop {
+        let mut poll_fds = [filedescriptor::pollfd {
+            fd: fd.as_raw_fd(),
+            events: filedescriptor::POLLIN,
+            revents: 0,
+        }];
+        let ready = match filedescriptor::poll(&mut poll_fds, Some(timeout)) {
+            Ok(ready) => ready,
+            Err(filedescriptor::Error::Poll(err))
+                if err.kind() == std::io::ErrorKind::Interrupted =>
+            {
+                continue;
+            }
+            Err(err) => return Err(err.into()),
+        };
+        if ready == 0 {
+            anyhow::bail!("timed out waiting for data on pipe after {timeout:?}");
+        }
+        match fd.read(&mut chunk) {
+            Ok(0) => return Ok(buffer),
+            Ok(len) => buffer.extend_from_slice(&chunk[..len]),
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -756,12 +923,6 @@ pub(super) fn cursor_style_to_icon_names(style: CursorStyle) -> &'static [&'stat
         CursorStyle::DragLink => &["alias"],
         CursorStyle::DragCopy => &["copy"],
         CursorStyle::ContextualMenu => &["context-menu"],
-        CursorStyle::None => {
-            #[cfg(debug_assertions)]
-            panic!("CursorStyle::None should be handled separately in the client");
-            #[cfg(not(debug_assertions))]
-            &[DEFAULT_CURSOR_ICON_NAME]
-        }
     }
 }
 
@@ -1038,6 +1199,46 @@ pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
     gpui::Capslock { on }
 }
 
+/// Resolve a Linux `dev_t` to PCI vendor/device IDs via sysfs, returning a
+/// [`CompositorGpuHint`] that the GPU adapter selection code can use to
+/// prioritize the compositor's rendering device.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::CompositorGpuHint> {
+    fn dev_major(dev: u64) -> u32 {
+        ((dev >> 8) & 0xfff) as u32 | (((dev >> 32) & !0xfff) as u32)
+    }
+
+    fn dev_minor(dev: u64) -> u32 {
+        (dev & 0xff) as u32 | (((dev >> 12) & !0xff) as u32)
+    }
+
+    fn read_sysfs_hex_id(path: &str) -> Option<u32> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let trimmed = content.trim().strip_prefix("0x").unwrap_or(content.trim());
+        u32::from_str_radix(trimmed, 16).ok()
+    }
+
+    let major = dev_major(dev);
+    let minor = dev_minor(dev);
+
+    let vendor_path = format!("/sys/dev/char/{major}:{minor}/device/vendor");
+    let device_path = format!("/sys/dev/char/{major}:{minor}/device/device");
+
+    let vendor_id = read_sysfs_hex_id(&vendor_path)?;
+    let device_id = read_sysfs_hex_id(&device_path)?;
+
+    log::info!(
+        "Compositor GPU hint: vendor={:#06x}, device={:#06x} (from dev {major}:{minor})",
+        vendor_id,
+        device_id,
+    );
+
+    Some(gpui_wgpu::CompositorGpuHint {
+        vendor_id,
+        device_id,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1059,5 +1260,101 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    mod read_fd_with_timeout {
+        use super::super::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
+        use std::io::Write as _;
+        use std::time::{Duration, Instant};
+
+        #[test]
+        fn reads_data_written_before_close() {
+            let mut pipe = filedescriptor::Pipe::new().unwrap();
+            pipe.write.write_all(b"hello clipboard").unwrap();
+            drop(pipe.write);
+
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            assert_eq!(bytes, b"hello clipboard");
+        }
+
+        #[test]
+        fn returns_empty_when_writer_closes_without_writing() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            drop(pipe.write);
+
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            assert!(bytes.is_empty());
+        }
+
+        #[test]
+        fn times_out_when_writer_never_writes() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            let _open_writer = pipe.write;
+
+            let timeout = Duration::from_millis(50);
+            let started = Instant::now();
+            let result = read_fd_with_timeout(pipe.read, timeout);
+            let elapsed = started.elapsed();
+
+            let err = result.unwrap_err();
+            assert!(
+                err.to_string().contains("timed out"),
+                "unexpected error: {err}"
+            );
+            assert!(elapsed >= timeout, "returned before the timeout elapsed");
+        }
+
+        #[test]
+        fn times_out_when_writer_stalls_after_partial_write() {
+            let mut pipe = filedescriptor::Pipe::new().unwrap();
+            pipe.write.write_all(b"partial").unwrap();
+            let _open_writer = pipe.write;
+
+            let err = read_fd_with_timeout(pipe.read, Duration::from_millis(50)).unwrap_err();
+            assert!(
+                err.to_string().contains("timed out"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn slow_writer_resets_deadline_between_chunks() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            let chunks = 12;
+            let gap = Duration::from_millis(40);
+            let timeout = Duration::from_millis(400);
+
+            let writer = std::thread::spawn({
+                let mut write = pipe.write;
+                move || {
+                    for _ in 0..chunks {
+                        std::thread::sleep(gap);
+                        write.write_all(&[b'x'; 1000]).unwrap();
+                    }
+                }
+            });
+            // The total transfer (~480ms) exceeds the timeout; this only
+            // passes because the timeout is re-armed per chunk.
+            let bytes = read_fd_with_timeout(pipe.read, timeout).unwrap();
+            writer.join().unwrap();
+            assert_eq!(bytes, vec![b'x'; 1000 * chunks]);
+        }
+
+        #[test]
+        fn reads_payload_larger_than_pipe_capacity() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            // Exceeds the 64 KiB pipe capacity, forcing the writer to block.
+            let payload = vec![b'z'; 1024 * 1024];
+
+            let writer = std::thread::spawn({
+                let mut write = pipe.write;
+                let payload = payload.clone();
+                move || write.write_all(&payload).unwrap()
+            });
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            writer.join().unwrap();
+            assert_eq!(bytes, payload);
+        }
     }
 }

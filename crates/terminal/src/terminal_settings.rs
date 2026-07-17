@@ -1,6 +1,3 @@
-use alacritty_terminal::vte::ansi::{
-    CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
-};
 use collections::HashMap;
 use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
@@ -9,12 +6,12 @@ use serde::{Deserialize, Serialize};
 pub use settings::AlternateScroll;
 
 use settings::{
-    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBell, TerminalBlink,
     TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
     merge_from::MergeFrom,
 };
 use task::Shell;
-use theme::FontFamilyName;
+use theme_settings::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -38,8 +35,10 @@ pub struct TerminalSettings {
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub keep_selection_on_copy: bool,
+    pub open_links_in_mouse_mode: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
+    pub flexible: bool,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
@@ -50,6 +49,8 @@ pub struct TerminalSettings {
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
+    pub show_count_badge: bool,
+    pub bell: TerminalBell,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -105,10 +106,12 @@ impl settings::Settings for TerminalSettings {
             option_as_meta: user_content.option_as_meta.unwrap(),
             copy_on_select: user_content.copy_on_select.unwrap(),
             keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
+            open_links_in_mouse_mode: user_content.open_links_in_mouse_mode.unwrap(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
+            flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
@@ -129,6 +132,8 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            show_count_badge: user_content.show_count_badge.unwrap(),
+            bell: user_content.bell.unwrap(),
         }
     }
 }
@@ -154,26 +159,6 @@ impl From<settings::CursorShapeContent> for CursorShape {
             settings::CursorShapeContent::Underline => CursorShape::Underline,
             settings::CursorShapeContent::Bar => CursorShape::Bar,
             settings::CursorShapeContent::Hollow => CursorShape::Hollow,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorShape {
-    fn from(value: CursorShape) -> Self {
-        match value {
-            CursorShape::Block => AlacCursorShape::Block,
-            CursorShape::Underline => AlacCursorShape::Underline,
-            CursorShape::Bar => AlacCursorShape::Beam,
-            CursorShape::Hollow => AlacCursorShape::HollowBlock,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorStyle {
-    fn from(value: CursorShape) -> Self {
-        AlacCursorStyle {
-            shape: value.into(),
-            blinking: false,
         }
     }
 }

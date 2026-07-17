@@ -3,8 +3,7 @@ use std::{fs, path::Path, sync::Arc};
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
-    StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
-    radians, size,
+    StyleRefinement, Styled, TransformationMatrix, Window, point, px, radians, size,
 };
 use gpui_util::ResultExt;
 
@@ -254,7 +253,7 @@ impl Transformation {
             .translate(center.scale(scale_factor) + self.translate.scale(scale_factor))
             .rotate(self.rotate)
             .scale(self.scale)
-            .translate(center.scale(scale_factor).negate())
+            .translate(center.scale(-scale_factor))
     }
 }
 

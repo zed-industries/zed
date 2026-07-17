@@ -1,6 +1,6 @@
 pub mod responses;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::TaskExt;
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::HttpRequestExt;
@@ -16,9 +17,10 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
-use settings::watch_config_dir;
-
+// The Copilot language server unofficially supports both token env vars:
+// https://github.com/github/copilot-language-server-release/issues/3#issuecomment-2699433055
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+pub const GITHUB_COPILOT_OAUTH_ENV_VAR: &str = "GITHUB_COPILOT_TOKEN";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -52,6 +54,10 @@ impl CopilotChatConfiguration {
         format!("{}/responses", api_endpoint)
     }
 
+    pub fn messages_url(&self, api_endpoint: &str) -> String {
+        format!("{}/v1/messages", api_endpoint)
+    }
+
     pub fn models_url(&self, api_endpoint: &str) -> String {
         format!("{}/models", api_endpoint)
     }
@@ -75,6 +81,30 @@ pub enum Role {
     User,
     Assistant,
     System,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ChatLocation {
+    #[default]
+    Panel,
+    Editor,
+    EditingSession,
+    Terminal,
+    Agent,
+    Other,
+}
+
+impl ChatLocation {
+    pub fn to_intent_string(self) -> &'static str {
+        match self {
+            ChatLocation::Panel => "conversation-panel",
+            ChatLocation::Editor => "conversation-inline",
+            ChatLocation::EditingSession => "conversation-edits",
+            ChatLocation::Terminal => "conversation-terminal",
+            ChatLocation::Agent => "conversation-agent",
+            ChatLocation::Other => "conversation-other",
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -179,6 +209,16 @@ struct ModelSupportedFeatures {
     parallel_tool_calls: bool,
     #[serde(default)]
     vision: bool,
+    #[serde(default)]
+    thinking: bool,
+    #[serde(default)]
+    adaptive_thinking: bool,
+    #[serde(default)]
+    max_thinking_budget: Option<u32>,
+    #[serde(default)]
+    min_thinking_budget: Option<u32>,
+    #[serde(default)]
+    reasoning_effort: Vec<String>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -226,6 +266,10 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
+    pub fn max_output_tokens(&self) -> usize {
+        self.capabilities.limits.max_output_tokens
+    }
+
     pub fn supports_tools(&self) -> bool {
         self.capabilities.supports.tool_calls
     }
@@ -247,13 +291,44 @@ impl Model {
     }
 
     pub fn supports_response(&self) -> bool {
-        self.supported_endpoints.len() > 0
-            && !self
-                .supported_endpoints
-                .contains(&ModelSupportedEndpoint::ChatCompletions)
-            && self
-                .supported_endpoints
-                .contains(&ModelSupportedEndpoint::Responses)
+        self.supported_endpoints
+            .contains(&ModelSupportedEndpoint::Responses)
+    }
+
+    pub fn supports_messages(&self) -> bool {
+        self.supported_endpoints
+            .contains(&ModelSupportedEndpoint::Messages)
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.supports.thinking
+    }
+
+    pub fn supports_adaptive_thinking(&self) -> bool {
+        self.capabilities.supports.adaptive_thinking
+    }
+
+    pub fn can_think(&self) -> bool {
+        self.supports_thinking()
+            || self.supports_adaptive_thinking()
+            || self.max_thinking_budget().is_some()
+            || !self.reasoning_effort_levels().is_empty()
+    }
+
+    pub fn max_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.max_thinking_budget
+    }
+
+    pub fn min_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.min_thinking_budget
+    }
+
+    pub fn reasoning_effort_levels(&self) -> &[String] {
+        &self.capabilities.supports.reasoning_effort
+    }
+
+    pub fn family(&self) -> &str {
+        &self.capabilities.family
     }
 
     pub fn multiplier(&self) -> f64 {
@@ -263,7 +338,6 @@ impl Model {
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {
-    pub intent: bool,
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
@@ -273,6 +347,8 @@ pub struct Request {
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -292,7 +368,7 @@ pub enum Tool {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    Any,
+    Required,
     None,
 }
 
@@ -426,6 +502,7 @@ pub struct CopilotChat {
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
 }
 
 pub fn init(
@@ -454,9 +531,17 @@ pub fn copilot_chat_config_dir() -> &'static PathBuf {
     })
 }
 
+/// Legacy JSON token-storage paths used by older Copilot SDK builds.
+/// TODO(copilot): once Copilot SDK supports `auth.db`, remove these paths.
 fn copilot_chat_config_paths() -> [PathBuf; 2] {
     let base_dir = copilot_chat_config_dir();
     [base_dir.join("hosts.json"), base_dir.join("apps.json")]
+}
+
+fn oauth_token_from_env() -> Option<String> {
+    std::env::var(COPILOT_OAUTH_ENV_VAR)
+        .ok()
+        .or_else(|| std::env::var(GITHUB_COPILOT_OAUTH_ENV_VAR).ok())
 }
 
 impl CopilotChat {
@@ -471,40 +556,42 @@ impl CopilotChat {
         configuration: CopilotChatConfiguration,
         cx: &mut Context<Self>,
     ) -> Self {
-        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
-        let dir_path = copilot_chat_config_dir();
-
-        cx.spawn(async move |this, cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
+        // Initial async scan of token sources. Live reload is driven by the
+        // Copilot LSP's auth status notifications instead of watching files,
+        // because SQLite WAL writes can make directory watchers racy.
+        cx.spawn({
+            let fs = fs.clone();
+            async move |this, cx| {
                 let oauth_domain =
                     this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain);
+                let config_paths: HashSet<PathBuf> =
+                    copilot_chat_config_paths().into_iter().collect();
+                let auth_db_path = copilot_chat_config_dir().join("auth.db");
 
-                this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
-                    cx.notify();
-                })?;
+                let oauth_token =
+                    read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path, cx).await;
 
                 if oauth_token.is_some() {
+                    this.update(cx, |this, cx| {
+                        this.oauth_token = oauth_token;
+                        cx.notify();
+                    })?;
                     Self::update_models(&this, cx).await?;
                 }
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
+        // Initial state uses env var because it's cheap. The others do IO, so
+        // are on the background.
         let this = Self {
-            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+            oauth_token: oauth_token_from_env(),
             api_endpoint: None,
             models: None,
             configuration,
             client,
+            fs,
         };
 
         if this.oauth_token.is_some() {
@@ -550,6 +637,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
@@ -563,12 +651,14 @@ impl CopilotChat {
             api_url.into(),
             request,
             is_user_initiated,
+            location,
         )
         .await
     }
 
     pub async fn stream_response(
         request: responses::Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
@@ -582,6 +672,30 @@ impl CopilotChat {
             api_url,
             request,
             is_user_initiated,
+            location,
+        )
+        .await
+    }
+
+    pub async fn stream_messages(
+        body: String,
+        location: ChatLocation,
+        is_user_initiated: bool,
+        anthropic_beta: Option<String>,
+        mut cx: AsyncApp,
+    ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+        let (client, oauth_token, api_endpoint, configuration) =
+            Self::get_auth_details(&mut cx).await?;
+
+        let api_url = configuration.messages_url(&api_endpoint);
+        stream_messages(
+            client.clone(),
+            oauth_token,
+            api_url,
+            body,
+            is_user_initiated,
+            location,
+            anthropic_beta,
         )
         .await
     }
@@ -661,6 +775,39 @@ impl CopilotChat {
             })
             .detach();
         }
+    }
+
+    pub fn reload_auth(&mut self, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let oauth_domain = self.configuration.oauth_domain();
+        cx.spawn(async move |this, cx| {
+            let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
+            let auth_db_path = copilot_chat_config_dir().join("auth.db");
+
+            let new_token =
+                read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path, cx).await;
+
+            let token_present = this.update(cx, |this, cx| {
+                let changed = this.oauth_token != new_token;
+                if changed {
+                    this.oauth_token = new_token.clone();
+                    if new_token.is_none() {
+                        // Sign-out: drop derived state so a future sign-in
+                        // re-discovers the endpoint and re-fetches models.
+                        this.api_endpoint = None;
+                        this.models = None;
+                    }
+                    cx.notify();
+                }
+                new_token.is_some()
+            })?;
+
+            if token_present {
+                Self::update_models(&this, cx).await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -755,6 +902,7 @@ pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
     oauth_token: &str,
     is_user_initiated: Option<bool>,
+    location: Option<ChatLocation>,
 ) -> http_client::Builder {
     builder
         .header("Authorization", format!("Bearer {}", oauth_token))
@@ -766,11 +914,18 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
+        .header("X-GitHub-Api-Version", "2025-10-01")
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
                 if is_user_initiated { "user" } else { "agent" },
             )
+        })
+        .when_some(location, |builder, loc| {
+            let interaction_type = loc.to_intent_string();
+            builder
+                .header("X-Interaction-Type", interaction_type)
+                .header("OpenAI-Intent", interaction_type)
         })
 }
 
@@ -785,8 +940,8 @@ async fn request_models(
             .uri(models_url.as_ref()),
         &oauth_token,
         None,
-    )
-    .header("x-github-api-version", "2025-05-01");
+        None,
+    );
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -807,6 +962,40 @@ async fn request_models(
     Ok(models)
 }
 
+async fn read_oauth_token(
+    fs: &Arc<dyn Fs>,
+    config_paths: &HashSet<PathBuf>,
+    oauth_domain: &str,
+    auth_db_path: &std::path::Path,
+    cx: &AsyncApp,
+) -> Option<String> {
+    if let Some(token) = oauth_token_from_env() {
+        return Some(token);
+    }
+
+    let token_from_db = cx
+        .background_spawn({
+            let auth_db_path = auth_db_path.to_path_buf();
+            let oauth_domain = oauth_domain.to_string();
+            async move { extract_oauth_token_from_db(&auth_db_path, &oauth_domain) }
+        })
+        .await;
+
+    if let Some(token) = token_from_db {
+        return Some(token);
+    }
+
+    for file_path in config_paths {
+        if let Ok(contents) = fs.load(file_path).await {
+            if let Some(token) = extract_oauth_token(contents, oauth_domain) {
+                return Some(token);
+            }
+        }
+    }
+
+    None
+}
+
 fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
@@ -824,12 +1013,43 @@ fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
         .flatten()
 }
 
+fn extract_oauth_token_from_db(db_path: &Path, auth_authority: &str) -> Option<String> {
+    if !db_path.exists() {
+        return None;
+    }
+
+    let db = sqlez::connection::Connection::open_file(db_path.to_str()?);
+
+    let token_bytes: Option<Vec<u8>> = db
+        .select_row_bound::<&str, Vec<u8>>(
+            "SELECT token_ciphertext FROM oauth_tokens WHERE auth_authority = ? ORDER BY last_used_at DESC, token_id DESC LIMIT 1",
+        )
+        .ok()
+        .and_then(|mut select| select(auth_authority).ok().flatten());
+
+    let token = token_bytes.and_then(|bytes| String::from_utf8(bytes).ok())?;
+
+    if token.starts_with("ghu_")
+        && token.len() >= 36
+        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        log::debug!("Copilot OAuth token loaded from auth.db");
+        Some(token)
+    } else {
+        log::warn!(
+            "Copilot auth.db: token does not match expected GitHub OAuth format (ghu_<alphanumeric>)"
+        );
+        None
+    }
+}
+
 async fn stream_completion(
     client: Arc<dyn HttpClient>,
     oauth_token: String,
     completion_url: Arc<str>,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
         ChatMessage::User { content }
@@ -846,6 +1066,7 @@ async fn stream_completion(
             .uri(completion_url.as_ref()),
         &oauth_token,
         Some(is_user_initiated),
+        Some(location),
     )
     .when(is_vision_request, |builder| {
         builder.header("Copilot-Vision-Request", is_vision_request.to_string())
@@ -903,6 +1124,65 @@ async fn stream_completion(
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
+}
+
+async fn stream_messages(
+    client: Arc<dyn HttpClient>,
+    oauth_token: String,
+    api_url: String,
+    body: String,
+    is_user_initiated: bool,
+    location: ChatLocation,
+    anthropic_beta: Option<String>,
+) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+    let mut request_builder = copilot_request_headers(
+        HttpRequest::builder().method(Method::POST).uri(&api_url),
+        &oauth_token,
+        Some(is_user_initiated),
+        Some(location),
+    );
+
+    if let Some(beta) = &anthropic_beta {
+        request_builder = request_builder.header("anthropic-beta", beta.as_str());
+    }
+
+    let request = request_builder.body(AsyncBody::from(body))?;
+    let mut response = client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        anyhow::bail!("Failed to connect to API: {} {}", response.status(), body);
+    }
+
+    let reader = BufReader::new(response.into_body());
+    Ok(reader
+        .lines()
+        .filter_map(|line| async move {
+            match line {
+                Ok(line) => {
+                    let line = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))?;
+                    if line.starts_with("[DONE]") || line.is_empty() {
+                        return None;
+                    }
+                    match serde_json::from_str(line) {
+                        Ok(event) => Some(Ok(event)),
+                        Err(error) => {
+                            log::error!(
+                                "Failed to parse Copilot messages stream event: `{}`\nResponse: `{}`",
+                                error,
+                                line,
+                            );
+                            Some(Err(anthropic::AnthropicError::DeserializeResponse(error)))
+                        }
+                    }
+                }
+                Err(error) => Some(Err(anthropic::AnthropicError::ReadResponse(error))),
+            }
+        })
+        .boxed())
 }
 
 #[cfg(test)]
@@ -1513,6 +1793,11 @@ mod tests {
                     tool_calls: true,
                     parallel_tool_calls: false,
                     vision: false,
+                    thinking: false,
+                    adaptive_thinking: false,
+                    max_thinking_budget: None,
+                    min_thinking_budget: None,
+                    reasoning_effort: vec![],
                 },
                 model_type: "chat".to_string(),
                 tokenizer: None,
@@ -1552,9 +1837,84 @@ mod tests {
         assert!(!model_with_chat_completions.supports_response());
 
         // Both endpoints (has /chat/completions) -> supports_response = false
-        assert!(!model_with_both.supports_response());
+        assert!(model_with_both.supports_response());
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
+    }
+
+    #[test]
+    fn test_tool_choice_required_serializes_as_required() {
+        // Regression test: ToolChoice::Required must serialize as "required" (not "any")
+        // for OpenAI-compatible APIs. Reverting the rename would break this.
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Required).unwrap(),
+            "\"required\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            "\"none\""
+        );
+    }
+
+    #[test]
+    fn test_extract_oauth_token_from_db_matches_auth_authority_and_recency() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("auth.db");
+        let older_github_token = "ghu_oldergithubtokenvalue000000000000";
+        let newer_github_token = "ghu_newergithubtokenvalue000000000000";
+        let enterprise_token = "ghu_enterprisetokenvalue0000000000000";
+
+        let connection = sqlez::connection::Connection::open_file(db_path.to_str().unwrap());
+        connection
+            .exec(
+                "CREATE TABLE oauth_tokens (
+                    token_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    auth_authority TEXT NOT NULL,
+                    token_ciphertext BLOB NOT NULL,
+                    last_used_at INTEGER NOT NULL
+                );",
+            )
+            .unwrap()()
+        .unwrap();
+
+        {
+            let mut insert_token = connection
+                .exec_bound::<(&str, Vec<u8>, i64)>(
+                    "INSERT INTO oauth_tokens (auth_authority, token_ciphertext, last_used_at) VALUES (?, ?, ?);",
+                )
+                .unwrap();
+            insert_token(("github.com", older_github_token.as_bytes().to_vec(), 10)).unwrap();
+            insert_token((
+                "github.enterprise.test",
+                enterprise_token.as_bytes().to_vec(),
+                30,
+            ))
+            .unwrap();
+            insert_token(("github.com", newer_github_token.as_bytes().to_vec(), 20)).unwrap();
+        }
+        drop(connection);
+
+        assert_eq!(
+            extract_oauth_token_from_db(&db_path, "github.com").as_deref(),
+            Some(newer_github_token)
+        );
+        assert_eq!(
+            extract_oauth_token_from_db(&db_path, "github.enterprise.test").as_deref(),
+            Some(enterprise_token)
+        );
+    }
+
+    #[test]
+    fn test_extract_oauth_token_from_db_missing_db_does_not_create_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("auth.db");
+
+        assert_eq!(extract_oauth_token_from_db(&db_path, "github.com"), None);
+        assert!(!db_path.exists());
     }
 }

@@ -10,9 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ::util::ResultExt;
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot::{self, Receiver};
+use gpui_util::ResultExt;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
@@ -20,12 +20,15 @@ use windows::{
         Foundation::*,
         Graphics::Dwm::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{
+            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
+        },
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
 };
 
+use crate::direct_manipulation::DirectManipulationHandler;
 use crate::*;
 use gpui::*;
 
@@ -52,15 +55,25 @@ pub struct WindowsWindowState {
 
     pub callbacks: Callbacks,
     pub input_handler: Cell<Option<PlatformInputHandler>>,
+    pub ime_enabled: Cell<bool>,
     pub pending_surrogate: Cell<Option<u16>>,
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
     pub hovered: Cell<bool>,
+    pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
+    /// Set after a GPU device-lost recovery so the next `draw_window` call is
+    /// treated as a forced render. This guarantees the next frame both
+    /// re-enables drawing (via `mark_drawable`) and bypasses the GPUI view
+    /// cache, which would otherwise replay stale atlas tile references from
+    /// the previous frame and panic in `DirectXAtlasState::texture`.
+    pub force_render_after_recovery: Cell<bool>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
+    /// Shared with [`WindowsPlatformState::cursor_visible`].
+    pub cursor_visible: Arc<AtomicBool>,
     pub nc_button_pressed: Cell<Option<u32>>,
 
     pub display: Cell<WindowsDisplay>,
@@ -70,6 +83,7 @@ pub struct WindowsWindowState {
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
+    pub(crate) a11y: RefCell<Option<A11yState>>,
 }
 
 pub(crate) struct WindowsWindowInner {
@@ -80,6 +94,8 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
+    pub(crate) is_resizable: bool,
+    pub(crate) is_minimizable: bool,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -93,6 +109,7 @@ impl WindowsWindowState {
         directx_devices: &DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
+        cursor_visible: Arc<AtomicBool>,
         display: WindowsDisplay,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
@@ -130,6 +147,9 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
+        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
+            .context("initializing Direct Manipulation")?;
+
         Ok(Self {
             origin: Cell::new(origin),
             logical_size: Cell::new(logical_size),
@@ -142,19 +162,24 @@ impl WindowsWindowState {
             min_size,
             callbacks,
             input_handler: Cell::new(input_handler),
+            ime_enabled: Cell::new(true),
             pending_surrogate: Cell::new(pending_surrogate),
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
             hovered: Cell::new(hovered),
             renderer: RefCell::new(renderer),
+            force_render_after_recovery: Cell::new(false),
             click_state,
             current_cursor: Cell::new(current_cursor),
+            cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
             hwnd,
             invalidate_devices,
+            direct_manipulation,
+            a11y: RefCell::new(None),
         })
     }
 
@@ -224,6 +249,7 @@ impl WindowsWindowInner {
             &context.directx_devices,
             cs,
             context.current_cursor,
+            context.cursor_visible.clone(),
             context.display,
             context.min_size,
             context.appearance,
@@ -238,6 +264,8 @@ impl WindowsWindowInner {
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
+            is_resizable: context.is_resizable,
+            is_minimizable: context.is_minimizable,
             executor: context.executor.clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
@@ -360,9 +388,12 @@ struct WindowCreateContext {
     hide_title_bar: bool,
     display: WindowsDisplay,
     is_movable: bool,
+    is_resizable: bool,
+    is_minimizable: bool,
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
+    cursor_visible: Arc<AtomicBool>,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -380,10 +411,17 @@ impl WindowsWindow {
         params: WindowParams,
         creation_info: WindowCreationInfo,
     ) -> Result<Self> {
+        // Native popups are not implemented on Windows yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(popup::PopupNotSupportedError.into());
+        }
+
         let WindowCreationInfo {
             icon,
             executor,
             current_cursor,
+            cursor_visible,
             drop_target_helper,
             validation_number,
             main_receiver,
@@ -448,11 +486,12 @@ impl WindowsWindow {
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
-            // if we obtain a display_id, then this ID must be valid.
-            WindowsDisplay::new(display_id).unwrap()
+            WindowsDisplay::new(display_id)
         } else {
-            WindowsDisplay::primary_monitor().unwrap()
-        };
+            None
+        }
+        .or_else(WindowsDisplay::primary_monitor)
+        .context("failed to find any monitor")?;
         let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
@@ -460,9 +499,12 @@ impl WindowsWindow {
             hide_title_bar,
             display,
             is_movable: params.is_movable,
+            is_resizable: params.is_resizable,
+            is_minimizable: params.is_minimizable,
             min_size: params.window_min_size,
             executor,
             current_cursor,
+            cursor_visible,
             drop_target_helper,
             validation_number,
             main_receiver,
@@ -530,10 +572,9 @@ impl rwh::HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo(windows)
 impl rwh::HasDisplayHandle for WindowsWindow {
     fn display_handle(&self) -> std::result::Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        Ok(rwh::DisplayHandle::windows())
     }
 }
 
@@ -779,6 +820,27 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        let hwnd = self.0.hwnd;
+        self.0
+            .executor
+            .spawn(async move {
+                let info = FLASHWINFO {
+                    cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                    hwnd,
+                    dwFlags: FLASHW_ALL | FLASHW_TIMERNOFG,
+                    uCount: 0,
+                    dwTimeout: 0,
+                };
+                unsafe { FlashWindowEx(&info).ok().log_err() };
+            })
+            .detach();
+    }
+
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
@@ -941,6 +1003,74 @@ impl PlatformWindow for WindowsWindow {
         };
 
         self.0.update_ime_position(self.0.hwnd, caret_position);
+    }
+
+    fn play_system_bell(&self) {
+        // MB_OK: The sound specified as the Windows Default Beep sound.
+        let _ = unsafe { MessageBeep(MB_OK) };
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let action_handler = A11yActionHandler(callbacks.action);
+        let is_focused = unsafe { GetForegroundWindow() } == self.0.hwnd;
+
+        let adapter = accesskit_windows::Adapter::new(
+            accesskit_windows::HWND(self.0.hwnd.0),
+            is_focused,
+            action_handler,
+        );
+
+        let activation_handler = A11yActivationHandler {
+            callback: callbacks.activation,
+        };
+
+        *self.state.a11y.borrow_mut() = Some(A11yState {
+            adapter,
+            activation_handler,
+        });
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let events = {
+            let mut a11y = self.state.a11y.borrow_mut();
+            a11y.as_mut()
+                .and_then(|a11y| a11y.adapter.update_if_active(|| tree_update))
+        };
+        // The borrow must be dropped before raising events, because
+        // `events.raise()` calls `UiaRaiseAutomationPropertyChangedEvent`
+        // which may send a nested `WM_GETOBJECT` back into this window
+        // procedure, re-entering `handle_wm_getobject` which also borrows
+        // `self.state.a11y`.
+        if let Some(events) = events {
+            events.raise();
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        // Windows UIA handles window bounds tracking automatically.
+    }
+}
+
+pub(crate) struct A11yState {
+    pub(crate) adapter: accesskit_windows::Adapter,
+    pub(crate) activation_handler: A11yActivationHandler,
+}
+
+pub(crate) struct A11yActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+}
+
+impl accesskit::ActivationHandler for A11yActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        (self.callback)()
+    }
+}
+
+struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for A11yActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
     }
 }
 
@@ -1436,8 +1566,12 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             .log_err()
         {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
+            let Some(raw_set_window_composition_attribute) = GetProcAddress(user32, func_name)
+            else {
+                return;
+            };
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32, func_name));
+                std::mem::transmute(raw_set_window_composition_attribute);
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {

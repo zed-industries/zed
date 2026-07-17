@@ -1,6 +1,5 @@
 use gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
-    ThreadTaskTimings,
 };
 use std::sync::Arc;
 use std::sync::atomic::AtomicI32;
@@ -8,8 +7,10 @@ use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_time::Instant;
 
+#[cfg(feature = "multithreaded")]
 const MIN_BACKGROUND_THREADS: usize = 2;
 
+#[cfg(feature = "multithreaded")]
 fn shared_memory_supported() -> bool {
     let global = js_sys::global();
     let has_shared_array_buffer =
@@ -126,6 +127,7 @@ pub struct WebDispatcher {
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_mailbox: Arc<MainThreadMailbox>,
     supports_threads: bool,
+    #[cfg(feature = "multithreaded")]
     _background_threads: Vec<wasm_thread::JoinHandle<()>>,
 }
 
@@ -135,11 +137,18 @@ unsafe impl Send for WebDispatcher {}
 unsafe impl Sync for WebDispatcher {}
 
 impl WebDispatcher {
-    pub fn new(browser_window: web_sys::Window) -> Self {
+    pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
+        #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
+        #[cfg(not(feature = "multithreaded"))]
+        let (background_sender, _) = PriorityQueueReceiver::new();
 
         let main_thread_mailbox = Arc::new(MainThreadMailbox::new());
-        let supports_threads = shared_memory_supported();
+
+        #[cfg(feature = "multithreaded")]
+        let supports_threads = allow_threads && shared_memory_supported();
+        #[cfg(not(feature = "multithreaded"))]
+        let supports_threads = false;
 
         if supports_threads {
             main_thread_mailbox.run_waker_loop(browser_window.clone());
@@ -149,6 +158,7 @@ impl WebDispatcher {
             );
         }
 
+        #[cfg(feature = "multithreaded")]
         let background_threads = if supports_threads {
             let thread_count = browser_window
                 .navigator()
@@ -173,10 +183,6 @@ impl WebDispatcher {
                                     }
                                 };
 
-                                if runnable.metadata().is_closed() {
-                                    continue;
-                                }
-
                                 runnable.run();
                             }
                         })
@@ -193,6 +199,7 @@ impl WebDispatcher {
             background_sender,
             main_thread_mailbox,
             supports_threads,
+            #[cfg(feature = "multithreaded")]
             _background_threads: background_threads,
         }
     }
@@ -203,20 +210,6 @@ impl WebDispatcher {
 }
 
 impl PlatformDispatcher for WebDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-        // TODO-Wasm: should we panic here?
-        Vec::new()
-    }
-
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-        ThreadTaskTimings {
-            thread_name: None,
-            thread_id: std::thread::current().id(),
-            timings: Vec::new(),
-            total_pushed: 0,
-        }
-    }
-
     fn is_main_thread(&self) -> bool {
         self.on_main_thread()
     }
@@ -251,9 +244,7 @@ impl PlatformDispatcher for WebDispatcher {
         let millis = duration.as_millis().min(i32::MAX as u128) as i32;
         if self.on_main_thread() {
             let callback = Closure::once_into_js(move || {
-                if !runnable.metadata().is_closed() {
-                    runnable.run();
-                }
+                runnable.run();
             });
             self.browser_window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -288,15 +279,11 @@ impl PlatformDispatcher for WebDispatcher {
 fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     match item {
         MainThreadItem::Runnable(runnable) => {
-            if !runnable.metadata().is_closed() {
-                runnable.run();
-            }
+            runnable.run();
         }
         MainThreadItem::Delayed { runnable, millis } => {
             let callback = Closure::once_into_js(move || {
-                if !runnable.metadata().is_closed() {
-                    runnable.run();
-                }
+                runnable.run();
             });
             window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -313,9 +300,7 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
 
 fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priority: Priority) {
     let callback = Closure::once_into_js(move || {
-        if !runnable.metadata().is_closed() {
-            runnable.run();
-        }
+        runnable.run();
     });
     let callback: &js_sys::Function = callback.unchecked_ref();
 

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -eu
+
+usage() {
+  echo "Usage: $0 [target]"
+  echo ""
+  echo "Triggers the bump_zed_version workflow to perform a minor release version bump "
+  echo "and update the stable and preview versions."
+  echo ""
+  echo "Arguments:"
+  echo "  target      Which channels to bump: all (default), main, preview, or stable"
+  exit 1
+}
+
+target="${1:-all}"
+
+if [[ "$target" != "all" && "$target" != "main" && "$target" != "preview" && "$target" != "stable" ]]; then
+  echo "error: invalid target '$target'" >&2
+  echo "Valid targets: all, main, preview, stable" >&2
+  exit 1
+fi
+
+day_of_week=$(date +%u)
+if [[ $day_of_week -ne 3 ]]; then
+  day_name=$(date +%A)
+  echo "Warning: Today is $day_name. Release version bumps are typically only done on Zednesdays."
+  read -r -p "Continue anyway? (y/N) " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+fi
+
+which gh > /dev/null 2>&1 || {
+  echo "error: GitHub CLI (gh) is required but not installed." >&2
+  echo "Install it with: brew install gh" >&2
+  exit 1
+}
+
+echo "Triggering bump_zed_version workflow:"
+echo "  target:    $target"
+echo ""
+
+gh workflow run bump_zed_version.yml \
+  -f target="$target"
+
+echo ""
+echo "Workflow triggered. Monitor progress at:"
+echo "  https://github.com/zed-industries/zed/actions/workflows/bump_zed_version.yml"

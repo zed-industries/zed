@@ -1,7 +1,7 @@
 use crate::{TestClient, TestServer};
 use async_trait::async_trait;
 use collab::{
-    db::{self, NewUserParams, UserId},
+    db::{self, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
 };
 use futures::StreamExt;
@@ -181,14 +181,21 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 
     for (client, cx) in clients {
         cx.update(|cx| {
+            for window in cx.windows() {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
+            }
+        });
+        cx.update(|cx| {
             let settings = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
             cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             drop(client);
         });
+        executor.run_until_parked();
     }
-    executor.run_until_parked();
 
     if let Some(path) = plan_save_path() {
         eprintln!("saved test plan to path {:?}", path);
@@ -217,15 +224,7 @@ impl<T: RandomizedTest> TestPlan<T> {
             let user_id = server
                 .app_state
                 .db
-                .create_user(
-                    &format!("{username}@example.com"),
-                    None,
-                    false,
-                    NewUserParams {
-                        github_login: username.clone(),
-                        github_user_id: ix as i32,
-                    },
-                )
+                .create_user(false)
                 .await
                 .unwrap()
                 .user_id;
@@ -556,6 +555,13 @@ impl<T: RandomizedTest> TestPlan<T> {
 
                 log::info!("{} removed", client.username);
                 plan.lock().user(removed_user_id).online = false;
+                client_cx.update(|cx| {
+                    for window in cx.windows() {
+                        window
+                            .update(cx, |_, window, _| window.remove_window())
+                            .ok();
+                    }
+                });
                 client_cx.update(|cx| {
                     cx.clear_globals();
                     drop(client);

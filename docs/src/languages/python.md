@@ -89,8 +89,8 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   "languages": {
     "Python": {
       "language_servers": [
-        // Disable basedpyright and enable ty, and otherwise
-        // use the default configuration.
+        // Enable ty, disable basedpyright, and enable all
+        // other registered language servers (ruff, pylsp, pyright).
         "ty",
         "!basedpyright",
         "..."
@@ -106,7 +106,7 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 [basedpyright](https://docs.basedpyright.com/latest/) is the primary Python language server in Zed beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
 
-Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on more for more details about how to configure basedpyright.
+Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on for more details about how to configure basedpyright.
 
 #### Basedpyright Configuration
 
@@ -398,6 +398,37 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
+#### Debug a Django App
+
+For projects using Django with a structure similar to the following:
+
+```
+my_django_project/
+  manage.py
+  …
+  my_django_app/
+    migrations/
+    templates/
+    models.py
+    urls.py
+    …
+```
+
+…the following configuration can be used:
+
+```json [debug]
+[
+  {
+    "label": "Python: Django",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "manage.py",
+    "args": ["runserver"],
+    "django": true
+  }
+]
+```
+
 ## Troubleshooting
 
 Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.
@@ -413,4 +444,4 @@ If a language server isn't responding or features like diagnostics or autocomple
 - Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
 - Restart Zed to reinitialize language server connections, or try restarting the language server using the {#action editor::RestartLanguageServer}
 
-If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.
+If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use the "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.

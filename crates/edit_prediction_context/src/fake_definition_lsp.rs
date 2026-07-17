@@ -174,7 +174,7 @@ pub fn register_fake_definition_server(
 struct DefinitionIndex {
     language: Arc<Language>,
     definitions: HashMap<String, Vec<lsp::Location>>,
-    type_annotations: HashMap<String, String>,
+    type_annotations_by_file: HashMap<Uri, HashMap<String, String>>,
     files: HashMap<Uri, FileEntry>,
 }
 
@@ -189,7 +189,7 @@ impl DefinitionIndex {
         Self {
             language,
             definitions: HashMap::default(),
-            type_annotations: HashMap::default(),
+            type_annotations_by_file: HashMap::default(),
             files: HashMap::default(),
         }
     }
@@ -199,6 +199,7 @@ impl DefinitionIndex {
             locations.retain(|loc| &loc.uri != uri);
             !locations.is_empty()
         });
+        self.type_annotations_by_file.remove(uri);
         self.files.remove(uri);
     }
 
@@ -242,12 +243,18 @@ impl DefinitionIndex {
                 .or_insert_with(Vec::new)
                 .push(location);
         }
-
-        for (identifier_name, type_name) in extract_type_annotations(content) {
-            self.type_annotations
-                .entry(identifier_name)
-                .or_insert(type_name);
+        for (name, location) in extract_extra_definition_locations(content) {
+            self.definitions
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(location);
         }
+
+        let type_annotations = extract_type_annotations(content)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        self.type_annotations_by_file
+            .insert(uri.clone(), type_annotations);
 
         self.files.insert(
             uri,
@@ -279,7 +286,11 @@ impl DefinitionIndex {
         let entry = self.files.get(&uri)?;
         let name = word_at_position(&entry.contents, position)?;
 
-        if let Some(type_name) = self.type_annotations.get(name) {
+        if let Some(type_name) = self
+            .type_annotations_by_file
+            .get(&uri)
+            .and_then(|annotations| annotations.get(name))
+        {
             if let Some(locations) = self.definitions.get(type_name) {
                 return Some(lsp::GotoDefinitionResponse::Array(locations.clone()));
             }
@@ -296,6 +307,34 @@ impl DefinitionIndex {
 
         None
     }
+}
+
+fn extract_extra_definition_locations(content: &str) -> Vec<(String, lsp::Location)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line
+                .trim()
+                .strip_prefix("// fake-definition-lsp-extra ")?
+                .split_whitespace();
+            let name = parts.next()?.to_string();
+            let path = PathBuf::from(parts.next()?);
+            let start_row = parts.next()?.parse().ok()?;
+            let start_column = parts.next()?.parse().ok()?;
+            let end_row = parts.next()?.parse().ok()?;
+            let end_column = parts.next()?.parse().ok()?;
+            Some((
+                name,
+                lsp::Location::new(
+                    Uri::from_file_path(path).ok()?,
+                    lsp::Range::new(
+                        lsp::Position::new(start_row, start_column),
+                        lsp::Position::new(end_row, end_column),
+                    ),
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// Extracts `identifier_name -> type_name` mappings from field declarations
@@ -365,6 +404,20 @@ fn extract_base_type_name(type_str: &str) -> String {
             return extract_base_type_name(inner);
         }
         return outer.to_string();
+    }
+
+    if let Some(call_start) = trimmed.find("::") {
+        let outer = &trimmed[..call_start];
+        if matches!(outer, "Arc" | "Box" | "Rc" | "Option" | "Vec" | "Cow") {
+            let rest = trimmed[call_start + 2..].trim_start();
+            if let Some(paren_start) = rest.find('(') {
+                let inner = &rest[paren_start + 1..];
+                let inner = inner.trim();
+                if !inner.is_empty() {
+                    return extract_base_type_name(inner);
+                }
+            }
+        }
     }
 
     trimmed

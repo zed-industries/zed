@@ -88,33 +88,27 @@ in-depth examples and explanations.
 
 ## ETW Profiling on Windows
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
+Zed supports performance profiling with Event Tracing for Windows (ETW) to capture detailed performance data, including CPU, GPU, memory, disk, and file I/O activity. Data is saved to an `.etl` file, which can be opened in standard profiling tools for analysis.
 
-Zed supports Event Tracing for Windows (ETW) to capture detailed performance data. You can record CPU, GPU, disk I/O, and file I/O activity, with optional heap allocation tracking.
+ETW recordings may contain personally identifiable or security-sensitive information, such as paths to files and registry keys accessed, as well as process names. Please keep this in mind when sharing traces with others.
 
 ### Recording a trace
 
-Open the command palette and run:
+Open the command palette and run one of the following:
 
-- **`etw_tracing: Record Etw Trace`** — Records CPU, GPU, and I/O activity
-- **`etw_tracing: Record Etw Trace With Heap Tracing`** — Includes heap allocation data for the Zed process
+- `zed: record etw trace`: records CPU, GPU, memory, and I/O activity
+- `zed: record etw trace with heap tracing`: includes heap allocation data for the Zed process
 
-Zed prompts you to choose a save location for the `.etl` trace file.
+Zed will prompt you to choose a save location for the `.etl` file, then request administrator permission. Once granted, recording will begin.
 
 ### Saving or canceling
 
-While recording:
+While a trace is recording, open the command palette and run one of the following:
 
-- **`etw_tracing: Save Etw Trace`** — Stops recording and saves the trace to disk
-- **`etw_tracing: Cancel Etw Trace`** — Stops recording without saving
+- `zed: save etw trace`: stops recording and saves the trace to disk
+- `zed: cancel etw trace`: stops recording without saving
 
-Zed buffers trace data in memory. Recordings automatically save after 60 seconds if you don't manually stop them.
-
-### Analyzing traces
-
-Open `.etl` files with [Windows Performance Analyzer](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/windows-performance-analyzer) to inspect CPU stacks, GPU usage, disk I/O patterns, and heap allocations.
-
-**Note for existing keybindings**: The `etw_tracing::StopEtwTrace` action was renamed to `etw_tracing::SaveEtwTrace`. Update any custom keybindings.
+Recordings automatically save after 60 seconds if not stopped manually.
 
 ## Contributor links
 

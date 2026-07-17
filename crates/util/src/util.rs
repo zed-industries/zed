@@ -1,12 +1,12 @@
 pub mod archive;
 pub mod command;
+pub mod disambiguate;
 pub mod fs;
 pub mod markdown;
 pub mod path_list;
 pub mod paths;
 pub mod process;
 pub mod redact;
-pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
@@ -20,7 +20,7 @@ pub mod time;
 use anyhow::Result;
 use itertools::Either;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::{
     borrow::Cow,
@@ -30,6 +30,9 @@ use std::{
 use unicase::UniCase;
 
 pub use gpui_util::*;
+pub use path::PathExt;
+pub use path::normalize_path;
+pub use path::rel_path;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -50,6 +53,29 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
+}
+
+/// Parses the contents of an `os-release` file (as found at `/etc/os-release`
+/// and described by the systemd spec) into a human-readable string such as
+/// `"ubuntu 24.04"`, combining the `ID` and `VERSION_ID` fields.
+///
+/// Returns `None` if no `ID` field is present. When `VERSION_ID` is absent
+/// (e.g. on rolling releases), only the `ID` is returned.
+pub fn parse_os_release(content: &str) -> Option<String> {
+    let mut id = None;
+    let mut version_id = None;
+    for line in content.lines() {
+        match line.split_once('=') {
+            Some(("ID", value)) => id = Some(value.trim_matches('"')),
+            Some(("VERSION_ID", value)) => version_id = Some(value.trim_matches('"')),
+            _ => {}
+        }
+    }
+    let id = id?;
+    Some(match version_id {
+        Some(version) => format!("{id} {version}"),
+        None => id.to_string(),
+    })
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
@@ -686,28 +712,6 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
     }
 }
 
-/// Capitalizes the first character of a string.
-///
-/// This function takes a string slice as input and returns a new `String` with the first character
-/// capitalized.
-///
-/// # Examples
-///
-/// ```
-/// use util::capitalize;
-///
-/// assert_eq!(capitalize("hello"), "Hello");
-/// assert_eq!(capitalize("WORLD"), "WORLD");
-/// assert_eq!(capitalize(""), "");
-/// ```
-pub fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
 fn emoji_regex() -> &'static Regex {
     static EMOJI_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap());
@@ -779,39 +783,26 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     }
 }
 
-/// Normalizes a path by resolving `.` and `..` components without
-/// requiring the path to exist on disk (unlike `canonicalize`).
-pub fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_os_release() {
+        let os_release =
+            "NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n";
+        assert_eq!(
+            parse_os_release(os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // VERSION_ID may be absent (e.g. rolling releases like Arch).
+        assert_eq!(parse_os_release("ID=arch\n"), Some("arch".to_string()));
+
+        // Without an ID there is nothing usable to report.
+        assert_eq!(parse_os_release("VERSION_ID=1\n"), None);
+        assert_eq!(parse_os_release(""), None);
+    }
 
     #[test]
     fn test_extend_sorted() {

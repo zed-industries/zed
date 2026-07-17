@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
-use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
+use gpui::{Action, App, DispatchPhase, EntityInputHandler, TaskExt, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use schemars::JsonSchema;
@@ -299,7 +299,7 @@ pub fn init(cx: &mut App) {
                                     return;
                                 }
                                 maybe!({
-                                    let (buffer, position, _) = editor
+                                    let (buffer, position) = editor
                                         .update(cx, |editor, cx| {
                                             let cursor_point: language::Point = editor
                                                 .selections

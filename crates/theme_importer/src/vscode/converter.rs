@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::IndexMap;
 use strum::IntoEnumIterator;
-use theme::{
+use theme_settings::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
     ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };

@@ -8,6 +8,24 @@ pub enum EditPredictionDiscardReason {
     Rejected,
     Ignored,
 }
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionRequestTrigger {
+    DiagnosticNavigation,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
+    #[default]
+    Other,
+}
+
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
@@ -168,6 +186,10 @@ pub trait EditPredictionDelegate: 'static + Sized {
         None
     }
 
+    fn can_toggle_data_collection(&self, _cx: &App) -> bool {
+        true
+    }
+
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
@@ -181,6 +203,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
@@ -209,6 +232,7 @@ pub trait EditPredictionDelegateHandle {
     fn icons(&self, cx: &App) -> EditPredictionIconSet;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
+    fn can_toggle_data_collection(&self, cx: &App) -> bool;
     fn toggle_data_collection(&self, cx: &mut App);
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -216,6 +240,7 @@ pub trait EditPredictionDelegateHandle {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
@@ -265,6 +290,10 @@ where
         self.read(cx).usage(cx)
     }
 
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        self.read(cx).can_toggle_data_collection(cx)
+    }
+
     fn toggle_data_collection(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.toggle_data_collection(cx))
     }
@@ -287,10 +316,11 @@ where
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, debounce, trigger, cx)
         })
     }
 
@@ -367,5 +397,5 @@ pub fn interpolate_edits(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() { None } else { Some(edits) }
+    Some(edits)
 }

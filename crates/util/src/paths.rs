@@ -2,7 +2,6 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -15,8 +14,10 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::rel_path::RelPath;
-use crate::rel_path::RelPathBuf;
+use path::rel_path::RelPath;
+use path::rel_path::RelPathBuf;
+
+pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -195,6 +196,19 @@ pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
     strip_path_suffix(base, suffix).is_some()
 }
 
+/// Case-insensitive ASCII comparison of a path component to a literal
+/// folder name. macOS and Windows use case-insensitive filesystems by
+/// default, so a path like `.ZED/settings.json` resolves to the same
+/// inode as the lowercase form. A case-sensitive `==` check would miss
+/// those and let a malicious settings author bypass classifiers with
+/// unusual casing. Callers should restrict `name` to ASCII; for ASCII
+/// inputs `eq_ignore_ascii_case` is safe and stable across platforms.
+pub fn component_matches_ignore_ascii_case(component: &OsStr, name: &str) -> bool {
+    component
+        .to_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case(name))
+}
+
 pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
     if let Some(remainder) = base
         .as_os_str()
@@ -336,137 +350,6 @@ impl AsRef<Path> for SanitizedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PathStyle {
-    Posix,
-    Windows,
-}
-
-impl PathStyle {
-    #[cfg(target_os = "windows")]
-    pub const fn local() -> Self {
-        PathStyle::Windows
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub const fn local() -> Self {
-        PathStyle::Posix
-    }
-
-    #[inline]
-    pub fn primary_separator(&self) -> &'static str {
-        match self {
-            PathStyle::Posix => "/",
-            PathStyle::Windows => "\\",
-        }
-    }
-
-    pub fn separators(&self) -> &'static [&'static str] {
-        match self {
-            PathStyle::Posix => &["/"],
-            PathStyle::Windows => &["\\", "/"],
-        }
-    }
-
-    pub fn separators_ch(&self) -> &'static [char] {
-        match self {
-            PathStyle::Posix => &['/'],
-            PathStyle::Windows => &['\\', '/'],
-        }
-    }
-
-    pub fn is_absolute(&self, path_like: &str) -> bool {
-        path_like.starts_with('/')
-            || *self == PathStyle::Windows
-                && (path_like.starts_with('\\')
-                    || path_like
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic())
-                        && path_like[1..]
-                            .strip_prefix(':')
-                            .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
-    }
-
-    pub fn is_windows(&self) -> bool {
-        *self == PathStyle::Windows
-    }
-
-    pub fn is_posix(&self) -> bool {
-        *self == PathStyle::Posix
-    }
-
-    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
-        let right = right.as_ref().to_str()?;
-        if is_absolute(right, self) {
-            return None;
-        }
-        let left = left.as_ref().to_str()?;
-        if left.is_empty() {
-            Some(right.into())
-        } else {
-            Some(format!(
-                "{left}{}{right}",
-                if left.ends_with(self.primary_separator()) {
-                    ""
-                } else {
-                    self.primary_separator()
-                }
-            ))
-        }
-    }
-
-    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.primary_separator()) else {
-            return (None, path_like);
-        };
-        let filename_start = pos + self.primary_separator().len();
-        (
-            Some(&path_like[..filename_start]),
-            &path_like[filename_start..],
-        )
-    }
-
-    pub fn strip_prefix<'a>(
-        &self,
-        child: &'a Path,
-        parent: &'a Path,
-    ) -> Option<std::borrow::Cow<'a, RelPath>> {
-        let parent = parent.to_str()?;
-        if parent.is_empty() {
-            return RelPath::new(child, *self).ok();
-        }
-        let parent = self
-            .separators()
-            .iter()
-            .find_map(|sep| parent.strip_suffix(sep))
-            .unwrap_or(parent);
-        let child = child.to_str()?;
-
-        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
-        let stripped = if self.is_windows()
-            && child.as_bytes().get(1) == Some(&b':')
-            && parent.as_bytes().get(1) == Some(&b':')
-            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
-        {
-            child[2..].strip_prefix(&parent[2..])?
-        } else {
-            child.strip_prefix(parent)?
-        };
-        if let Some(relative) = self
-            .separators()
-            .iter()
-            .find_map(|sep| stripped.strip_prefix(sep))
-        {
-            RelPath::new(relative.as_ref(), *self).ok()
-        } else if stripped.is_empty() {
-            Some(Cow::Borrowed(RelPath::empty()))
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RemotePathBuf {
     style: PathStyle,
@@ -586,6 +469,29 @@ pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
     Ok(lexical)
 }
 
+/// Insert `path` into a set of "subtree" grants, keeping the set minimal.
+///
+/// A subtree grant covers a path and all of its descendants. Insertion is a
+/// no-op when `path` is already covered by an existing (equal-or-broader)
+/// entry; otherwise `path` is added and any now-subsumed descendant entries
+/// are pruned. Containment is purely lexical (component-wise `starts_with`),
+/// so callers should normalize paths (e.g. via [`normalize_lexically`]) before
+/// inserting, otherwise `..` components can defeat the containment checks.
+pub fn insert_subtree(subtrees: &mut Vec<PathBuf>, path: PathBuf) {
+    if subtrees.iter().any(|existing| path.starts_with(existing)) {
+        return;
+    }
+    subtrees.retain(|existing| !existing.starts_with(&path));
+    subtrees.push(path);
+}
+
+/// Whether `path` sits under (or exactly equals) any of the given subtree
+/// grants. As with [`insert_subtree`], containment is purely lexical, so
+/// callers should pass normalized paths.
+pub fn path_within_subtree<'a>(path: &Path, mut subtrees: impl Iterator<Item = &'a Path>) -> bool {
+    subtrees.any(|granted| path.starts_with(granted))
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -601,6 +507,7 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         |
         \((\d+)\)()     # filename(row)
     )
+    \:*$
     |
     (.+?)(?:
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
@@ -1108,67 +1015,95 @@ fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
     }
 }
 
+/// Controls the lexicographic sorting of file and folder names.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Case-insensitive natural sort with lowercase preferred in ties.
+    /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
+    #[default]
+    Default,
+    /// Uppercase names are grouped before lowercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Upper,
+    /// Lowercase names are grouped before uppercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Lower,
+    /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
+    /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
+    Unicode,
+}
+
+/// Controls how files and directories are ordered relative to each other.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SortMode {
+    /// Directories are listed before files at each level.
+    #[default]
+    DirectoriesFirst,
+    /// Files and directories are interleaved alphabetically.
+    Mixed,
+    /// Files are listed before directories at each level.
+    FilesFirst,
+}
+
+fn case_group_key(name: &str, order: SortOrder) -> u8 {
+    let first = match name.chars().next() {
+        Some(c) => c,
+        None => return 0,
+    };
+    match order {
+        SortOrder::Upper => {
+            if first.is_lowercase() {
+                1
+            } else {
+                0
+            }
+        }
+        SortOrder::Lower => {
+            if first.is_uppercase() {
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn compare_strings(a: &str, b: &str, order: SortOrder) -> Ordering {
+    match order {
+        SortOrder::Unicode => a.cmp(b),
+        _ => natural_sort(a, b),
+    }
+}
+
+fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
+    match order {
+        SortOrder::Unicode => a.cmp(b),
+        _ => natural_sort_no_tiebreak(a, b),
+    }
+}
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
 ) -> Ordering {
-    let mut components_a = path_a.components();
-    let mut components_b = path_b.components();
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_is_file = a_is_file && components_a.rest().is_empty();
-                let b_is_file = b_is_file && components_b.rest().is_empty();
-
-                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let (a_stem, a_extension) = a_is_file
-                        .then(|| stem_and_extension(component_a))
-                        .unwrap_or_default();
-                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
-
-                    let (b_stem, b_extension) = b_is_file
-                        .then(|| stem_and_extension(component_b))
-                        .unwrap_or_default();
-                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
-
-                    let compare_components = match (path_string_a, path_string_b) {
-                        (Some(a), Some(b)) => natural_sort(&a, &b),
-                        (Some(_), None) => Ordering::Greater,
-                        (None, Some(_)) => Ordering::Less,
-                        (None, None) => Ordering::Equal,
-                    };
-
-                    compare_components.then_with(|| {
-                        if a_is_file && b_is_file {
-                            let ext_a = a_extension.unwrap_or_default();
-                            let ext_b = b_extension.unwrap_or_default();
-                            ext_a.cmp(ext_b)
-                        } else {
-                            Ordering::Equal
-                        }
-                    })
-                });
-
-                if !ordering.is_eq() {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => break Ordering::Greater,
-            (None, Some(_)) => break Ordering::Less,
-            (None, None) => break Ordering::Equal,
-        }
-    }
+    compare_rel_paths_by(
+        (path_a, a_is_file),
+        (path_b, b_is_file),
+        SortMode::DirectoriesFirst,
+        SortOrder::Default,
+    )
 }
 
-/// Compare two relative paths with mixed files and directories using
-/// case-insensitive natural sorting. For example, "Apple", "aardvark.txt",
-/// and "Zebra" would be sorted as: aardvark.txt, Apple, Zebra
-/// (case-insensitive alphabetical).
-pub fn compare_rel_paths_mixed(
+pub fn compare_rel_paths_by(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
+    mode: SortMode,
+    order: SortOrder,
 ) -> Ordering {
-    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
+    let needs_final_tiebreak =
+        mode != SortMode::DirectoriesFirst && !(std::ptr::eq(path_a, path_b) || path_a == path_b);
+
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
 
@@ -1178,79 +1113,15 @@ pub fn compare_rel_paths_mixed(
                 let a_leaf_file = a_is_file && components_a.rest().is_empty();
                 let b_leaf_file = b_is_file && components_b.rest().is_empty();
 
-                let (a_stem, a_ext) = a_leaf_file
-                    .then(|| stem_and_extension(component_a))
-                    .unwrap_or_default();
-                let (b_stem, b_ext) = b_leaf_file
-                    .then(|| stem_and_extension(component_b))
-                    .unwrap_or_default();
-                let a_key = if a_leaf_file {
-                    a_stem
-                } else {
-                    Some(component_a)
-                };
-                let b_key = if b_leaf_file {
-                    b_stem
-                } else {
-                    Some(component_b)
+                let file_dir_ordering = match mode {
+                    SortMode::DirectoriesFirst => a_leaf_file.cmp(&b_leaf_file),
+                    SortMode::FilesFirst => b_leaf_file.cmp(&a_leaf_file),
+                    SortMode::Mixed => Ordering::Equal,
                 };
 
-                let ordering = match (a_key, b_key) {
-                    (Some(a), Some(b)) => natural_sort_no_tiebreak(a, b)
-                        .then_with(|| match (a_leaf_file, b_leaf_file) {
-                            (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
-                            (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
-                            _ => Ordering::Equal,
-                        })
-                        .then_with(|| {
-                            if a_leaf_file && b_leaf_file {
-                                let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
-                                let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
-                                b_ext_str.cmp(&a_ext_str)
-                            } else {
-                                Ordering::Equal
-                            }
-                        }),
-                    (Some(_), None) => Ordering::Greater,
-                    (None, Some(_)) => Ordering::Less,
-                    (None, None) => Ordering::Equal,
-                };
-
-                if !ordering.is_eq() {
-                    return ordering;
+                if !file_dir_ordering.is_eq() {
+                    return file_dir_ordering;
                 }
-            }
-            (Some(_), None) => return Ordering::Greater,
-            (None, Some(_)) => return Ordering::Less,
-            (None, None) => {
-                // Deterministic tie-break: use natural sort to prefer lowercase when paths
-                // are otherwise equal but still differ in casing.
-                if !original_paths_equal {
-                    return natural_sort(path_a.as_unix_str(), path_b.as_unix_str());
-                }
-                return Ordering::Equal;
-            }
-        }
-    }
-}
-
-/// Compare two relative paths with files before directories using
-/// case-insensitive natural sorting. At each directory level, all files
-/// are sorted before all directories, with case-insensitive alphabetical
-/// ordering within each group.
-pub fn compare_rel_paths_files_first(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
-    let mut components_a = path_a.components();
-    let mut components_b = path_b.components();
-
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_leaf_file = a_is_file && components_a.rest().is_empty();
-                let b_leaf_file = b_is_file && components_b.rest().is_empty();
 
                 let (a_stem, a_ext) = a_leaf_file
                     .then(|| stem_and_extension(component_a))
@@ -1271,21 +1142,39 @@ pub fn compare_rel_paths_files_first(
 
                 let ordering = match (a_key, b_key) {
                     (Some(a), Some(b)) => {
-                        if a_leaf_file && !b_leaf_file {
-                            Ordering::Less
-                        } else if !a_leaf_file && b_leaf_file {
-                            Ordering::Greater
-                        } else {
-                            natural_sort_no_tiebreak(a, b).then_with(|| {
-                                if a_leaf_file && b_leaf_file {
-                                    let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
-                                    let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
-                                    a_ext_str.cmp(&b_ext_str)
-                                } else {
-                                    Ordering::Equal
-                                }
+                        let name_cmp = case_group_key(a, order)
+                            .cmp(&case_group_key(b, order))
+                            .then_with(|| match mode {
+                                SortMode::DirectoriesFirst => compare_strings(a, b, order),
+                                _ => compare_strings_no_tiebreak(a, b, order),
+                            });
+
+                        let name_cmp = if mode == SortMode::Mixed {
+                            name_cmp.then_with(|| match (a_leaf_file, b_leaf_file) {
+                                (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
+                                (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
+                                _ => Ordering::Equal,
                             })
-                        }
+                        } else {
+                            name_cmp
+                        };
+
+                        name_cmp.then_with(|| {
+                            if a_leaf_file && b_leaf_file {
+                                match order {
+                                    SortOrder::Unicode => {
+                                        a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
+                                    }
+                                    _ => {
+                                        let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
+                                        let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
+                                        a_ext_str.cmp(&b_ext_str)
+                                    }
+                                }
+                            } else {
+                                Ordering::Equal
+                            }
+                        })
                     }
                     (Some(_), None) => Ordering::Greater,
                     (None, Some(_)) => Ordering::Less,
@@ -1299,10 +1188,8 @@ pub fn compare_rel_paths_files_first(
             (Some(_), None) => return Ordering::Greater,
             (None, Some(_)) => return Ordering::Less,
             (None, None) => {
-                // Deterministic tie-break: use natural sort to prefer lowercase when paths
-                // are otherwise equal but still differ in casing.
-                if !original_paths_equal {
-                    return natural_sort(path_a.as_unix_str(), path_b.as_unix_str());
+                if needs_final_tiebreak {
+                    return compare_strings(path_a.as_unix_str(), path_b.as_unix_str(), order);
                 }
                 return Ordering::Equal;
             }
@@ -1459,7 +1346,7 @@ impl UrlExt for url::Url {
                 str_len.saturating_sub(self.scheme().len() + 3)
             };
             return match source_path_style {
-                PathStyle::Posix => {
+                PathStyle::Unix => {
                     file_url_segments_to_pathbuf_posix(estimated_capacity, host, segments)
                 }
                 PathStyle::Windows => {
@@ -1497,7 +1384,7 @@ impl UrlExt for url::Url {
 
             let path = String::from_utf8(bytes).map_err(|_| ())?;
             debug_assert!(
-                PathStyle::Posix.is_absolute(&path),
+                PathStyle::Unix.is_absolute(&path),
                 "to_file_path() failed to produce an absolute Path"
             );
 
@@ -1580,10 +1467,61 @@ impl UrlExt for url::Url {
 
 #[cfg(test)]
 mod tests {
-    use crate::rel_path::rel_path;
+    use path::rel_path::rel_path;
 
     use super::*;
     use util_macros::perf;
+
+    #[test]
+    fn test_parse_str_treats_paren_suffix_as_position() {
+        // This documents the behavior that causes the folder-drop bug: a name ending in
+        // `(N)` is parsed as `name ` + row N. The fix lives in `derive_paths_with_position`,
+        // which restores the original path when it exists on disk (file or directory).
+        let parsed = PathWithPosition::parse_str("/root/Test (3)");
+        assert_eq!(parsed.path, PathBuf::from("/root/Test "));
+        assert_eq!(parsed.row, Some(3));
+    }
+
+    #[test]
+    fn test_join_path_uses_path_style_separator() {
+        let posix_path = PathStyle::Unix
+            .join_path(Path::new("/home/user/dev"), "worktrees")
+            .unwrap();
+        let windows_path = PathStyle::Windows
+            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
+            .unwrap();
+
+        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
+        assert_eq!(
+            windows_path.to_string_lossy(),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_normalize_uses_path_style_separator() {
+        assert_eq!(
+            PathStyle::Unix.normalize("/home/user/dev/../worktrees/./zed"),
+            "/home/user/worktrees/zed"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
+        (RelPath::from_unix_str(path).unwrap(), is_file)
+    }
+
+    fn sorted_rel_paths(
+        mut paths: Vec<(&'static RelPath, bool)>,
+        mode: SortMode,
+        order: SortOrder,
+    ) -> Vec<(&'static RelPath, bool)> {
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, mode, order));
+        paths
+    }
 
     #[perf]
     fn compare_paths_with_dots() {
@@ -1708,22 +1646,22 @@ mod tests {
     fn compare_rel_paths_mixed_case_insensitive() {
         // Test that mixed mode is case-insensitive
         let mut paths = vec![
-            (RelPath::unix("zebra.txt").unwrap(), true),
-            (RelPath::unix("Apple").unwrap(), false),
-            (RelPath::unix("banana.rs").unwrap(), true),
-            (RelPath::unix("Carrot").unwrap(), false),
-            (RelPath::unix("aardvark.txt").unwrap(), true),
+            (RelPath::from_unix_str("zebra.txt").unwrap(), true),
+            (RelPath::from_unix_str("Apple").unwrap(), false),
+            (RelPath::from_unix_str("banana.rs").unwrap(), true),
+            (RelPath::from_unix_str("Carrot").unwrap(), false),
+            (RelPath::from_unix_str("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // Case-insensitive: aardvark < Apple < banana < Carrot < zebra
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("aardvark.txt").unwrap(), true),
-                (RelPath::unix("Apple").unwrap(), false),
-                (RelPath::unix("banana.rs").unwrap(), true),
-                (RelPath::unix("Carrot").unwrap(), false),
-                (RelPath::unix("zebra.txt").unwrap(), true),
+                (RelPath::from_unix_str("aardvark.txt").unwrap(), true),
+                (RelPath::from_unix_str("Apple").unwrap(), false),
+                (RelPath::from_unix_str("banana.rs").unwrap(), true),
+                (RelPath::from_unix_str("Carrot").unwrap(), false),
+                (RelPath::from_unix_str("zebra.txt").unwrap(), true),
             ]
         );
     }
@@ -1732,22 +1670,23 @@ mod tests {
     fn compare_rel_paths_files_first_basic() {
         // Test that files come before directories
         let mut paths = vec![
-            (RelPath::unix("zebra.txt").unwrap(), true),
-            (RelPath::unix("Apple").unwrap(), false),
-            (RelPath::unix("banana.rs").unwrap(), true),
-            (RelPath::unix("Carrot").unwrap(), false),
-            (RelPath::unix("aardvark.txt").unwrap(), true),
+            (RelPath::from_unix_str("zebra.txt").unwrap(), true),
+            (RelPath::from_unix_str("Apple").unwrap(), false),
+            (RelPath::from_unix_str("banana.rs").unwrap(), true),
+            (RelPath::from_unix_str("Carrot").unwrap(), false),
+            (RelPath::from_unix_str("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         // Files first (case-insensitive), then directories (case-insensitive)
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("aardvark.txt").unwrap(), true),
-                (RelPath::unix("banana.rs").unwrap(), true),
-                (RelPath::unix("zebra.txt").unwrap(), true),
-                (RelPath::unix("Apple").unwrap(), false),
-                (RelPath::unix("Carrot").unwrap(), false),
+                (RelPath::from_unix_str("aardvark.txt").unwrap(), true),
+                (RelPath::from_unix_str("banana.rs").unwrap(), true),
+                (RelPath::from_unix_str("zebra.txt").unwrap(), true),
+                (RelPath::from_unix_str("Apple").unwrap(), false),
+                (RelPath::from_unix_str("Carrot").unwrap(), false),
             ]
         );
     }
@@ -1756,21 +1695,22 @@ mod tests {
     fn compare_rel_paths_files_first_case_insensitive() {
         // Test case-insensitive sorting within files and directories
         let mut paths = vec![
-            (RelPath::unix("Zebra.txt").unwrap(), true),
-            (RelPath::unix("apple").unwrap(), false),
-            (RelPath::unix("Banana.rs").unwrap(), true),
-            (RelPath::unix("carrot").unwrap(), false),
-            (RelPath::unix("Aardvark.txt").unwrap(), true),
+            (RelPath::from_unix_str("Zebra.txt").unwrap(), true),
+            (RelPath::from_unix_str("apple").unwrap(), false),
+            (RelPath::from_unix_str("Banana.rs").unwrap(), true),
+            (RelPath::from_unix_str("carrot").unwrap(), false),
+            (RelPath::from_unix_str("Aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("Aardvark.txt").unwrap(), true),
-                (RelPath::unix("Banana.rs").unwrap(), true),
-                (RelPath::unix("Zebra.txt").unwrap(), true),
-                (RelPath::unix("apple").unwrap(), false),
-                (RelPath::unix("carrot").unwrap(), false),
+                (RelPath::from_unix_str("Aardvark.txt").unwrap(), true),
+                (RelPath::from_unix_str("Banana.rs").unwrap(), true),
+                (RelPath::from_unix_str("Zebra.txt").unwrap(), true),
+                (RelPath::from_unix_str("apple").unwrap(), false),
+                (RelPath::from_unix_str("carrot").unwrap(), false),
             ]
         );
     }
@@ -1779,21 +1719,22 @@ mod tests {
     fn compare_rel_paths_files_first_numeric() {
         // Test natural number sorting with files first
         let mut paths = vec![
-            (RelPath::unix("file10.txt").unwrap(), true),
-            (RelPath::unix("dir2").unwrap(), false),
-            (RelPath::unix("file2.txt").unwrap(), true),
-            (RelPath::unix("dir10").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
+            (RelPath::from_unix_str("file10.txt").unwrap(), true),
+            (RelPath::from_unix_str("dir2").unwrap(), false),
+            (RelPath::from_unix_str("file2.txt").unwrap(), true),
+            (RelPath::from_unix_str("dir10").unwrap(), false),
+            (RelPath::from_unix_str("file1.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("file2.txt").unwrap(), true),
-                (RelPath::unix("file10.txt").unwrap(), true),
-                (RelPath::unix("dir2").unwrap(), false),
-                (RelPath::unix("dir10").unwrap(), false),
+                (RelPath::from_unix_str("file1.txt").unwrap(), true),
+                (RelPath::from_unix_str("file2.txt").unwrap(), true),
+                (RelPath::from_unix_str("file10.txt").unwrap(), true),
+                (RelPath::from_unix_str("dir2").unwrap(), false),
+                (RelPath::from_unix_str("dir10").unwrap(), false),
             ]
         );
     }
@@ -1802,18 +1743,18 @@ mod tests {
     fn compare_rel_paths_mixed_case() {
         // Test case-insensitive sorting with varied capitalization
         let mut paths = vec![
-            (RelPath::unix("README.md").unwrap(), true),
-            (RelPath::unix("readme.txt").unwrap(), true),
-            (RelPath::unix("ReadMe.rs").unwrap(), true),
+            (RelPath::from_unix_str("README.md").unwrap(), true),
+            (RelPath::from_unix_str("readme.txt").unwrap(), true),
+            (RelPath::from_unix_str("ReadMe.rs").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // All "readme" variants should group together, sorted by extension
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("readme.txt").unwrap(), true),
-                (RelPath::unix("ReadMe.rs").unwrap(), true),
-                (RelPath::unix("README.md").unwrap(), true),
+                (RelPath::from_unix_str("README.md").unwrap(), true),
+                (RelPath::from_unix_str("ReadMe.rs").unwrap(), true),
+                (RelPath::from_unix_str("readme.txt").unwrap(), true),
             ]
         );
     }
@@ -1822,20 +1763,20 @@ mod tests {
     fn compare_rel_paths_mixed_files_and_dirs() {
         // Verify directories and files are still mixed
         let mut paths = vec![
-            (RelPath::unix("file2.txt").unwrap(), true),
-            (RelPath::unix("Dir1").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("dir2").unwrap(), false),
+            (RelPath::from_unix_str("file2.txt").unwrap(), true),
+            (RelPath::from_unix_str("Dir1").unwrap(), false),
+            (RelPath::from_unix_str("file1.txt").unwrap(), true),
+            (RelPath::from_unix_str("dir2").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // Case-insensitive: dir1, dir2, file1, file2 (all mixed)
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("Dir1").unwrap(), false),
-                (RelPath::unix("dir2").unwrap(), false),
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("file2.txt").unwrap(), true),
+                (RelPath::from_unix_str("Dir1").unwrap(), false),
+                (RelPath::from_unix_str("dir2").unwrap(), false),
+                (RelPath::from_unix_str("file1.txt").unwrap(), true),
+                (RelPath::from_unix_str("file2.txt").unwrap(), true),
             ]
         );
     }
@@ -1843,28 +1784,28 @@ mod tests {
     #[perf]
     fn compare_rel_paths_mixed_same_name_different_case_file_and_dir() {
         let mut paths = vec![
-            (RelPath::unix("Hello.txt").unwrap(), true),
-            (RelPath::unix("hello").unwrap(), false),
+            (RelPath::from_unix_str("Hello.txt").unwrap(), true),
+            (RelPath::from_unix_str("hello").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("hello").unwrap(), false),
-                (RelPath::unix("Hello.txt").unwrap(), true),
+                (RelPath::from_unix_str("hello").unwrap(), false),
+                (RelPath::from_unix_str("Hello.txt").unwrap(), true),
             ]
         );
 
         let mut paths = vec![
-            (RelPath::unix("hello").unwrap(), false),
-            (RelPath::unix("Hello.txt").unwrap(), true),
+            (RelPath::from_unix_str("hello").unwrap(), false),
+            (RelPath::from_unix_str("Hello.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("hello").unwrap(), false),
-                (RelPath::unix("Hello.txt").unwrap(), true),
+                (RelPath::from_unix_str("hello").unwrap(), false),
+                (RelPath::from_unix_str("Hello.txt").unwrap(), true),
             ]
         );
     }
@@ -1873,19 +1814,19 @@ mod tests {
     fn compare_rel_paths_mixed_with_nested_paths() {
         // Test that nested paths still work correctly
         let mut paths = vec![
-            (RelPath::unix("src/main.rs").unwrap(), true),
-            (RelPath::unix("Cargo.toml").unwrap(), true),
-            (RelPath::unix("src").unwrap(), false),
-            (RelPath::unix("target").unwrap(), false),
+            (RelPath::from_unix_str("src/main.rs").unwrap(), true),
+            (RelPath::from_unix_str("Cargo.toml").unwrap(), true),
+            (RelPath::from_unix_str("src").unwrap(), false),
+            (RelPath::from_unix_str("target").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("Cargo.toml").unwrap(), true),
-                (RelPath::unix("src").unwrap(), false),
-                (RelPath::unix("src/main.rs").unwrap(), true),
-                (RelPath::unix("target").unwrap(), false),
+                (RelPath::from_unix_str("Cargo.toml").unwrap(), true),
+                (RelPath::from_unix_str("src").unwrap(), false),
+                (RelPath::from_unix_str("src/main.rs").unwrap(), true),
+                (RelPath::from_unix_str("target").unwrap(), false),
             ]
         );
     }
@@ -1894,19 +1835,20 @@ mod tests {
     fn compare_rel_paths_files_first_with_nested() {
         // Files come before directories, even with nested paths
         let mut paths = vec![
-            (RelPath::unix("src/lib.rs").unwrap(), true),
-            (RelPath::unix("README.md").unwrap(), true),
-            (RelPath::unix("src").unwrap(), false),
-            (RelPath::unix("tests").unwrap(), false),
+            (RelPath::from_unix_str("src/lib.rs").unwrap(), true),
+            (RelPath::from_unix_str("README.md").unwrap(), true),
+            (RelPath::from_unix_str("src").unwrap(), false),
+            (RelPath::from_unix_str("tests").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("README.md").unwrap(), true),
-                (RelPath::unix("src").unwrap(), false),
-                (RelPath::unix("src/lib.rs").unwrap(), true),
-                (RelPath::unix("tests").unwrap(), false),
+                (RelPath::from_unix_str("README.md").unwrap(), true),
+                (RelPath::from_unix_str("src").unwrap(), false),
+                (RelPath::from_unix_str("src/lib.rs").unwrap(), true),
+                (RelPath::from_unix_str("tests").unwrap(), false),
             ]
         );
     }
@@ -1915,19 +1857,19 @@ mod tests {
     fn compare_rel_paths_mixed_dotfiles() {
         // Test that dotfiles are handled correctly in mixed mode
         let mut paths = vec![
-            (RelPath::unix(".gitignore").unwrap(), true),
-            (RelPath::unix("README.md").unwrap(), true),
-            (RelPath::unix(".github").unwrap(), false),
-            (RelPath::unix("src").unwrap(), false),
+            (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str("README.md").unwrap(), true),
+            (RelPath::from_unix_str(".github").unwrap(), false),
+            (RelPath::from_unix_str("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix(".github").unwrap(), false),
-                (RelPath::unix(".gitignore").unwrap(), true),
-                (RelPath::unix("README.md").unwrap(), true),
-                (RelPath::unix("src").unwrap(), false),
+                (RelPath::from_unix_str(".github").unwrap(), false),
+                (RelPath::from_unix_str(".gitignore").unwrap(), true),
+                (RelPath::from_unix_str("README.md").unwrap(), true),
+                (RelPath::from_unix_str("src").unwrap(), false),
             ]
         );
     }
@@ -1936,19 +1878,20 @@ mod tests {
     fn compare_rel_paths_files_first_dotfiles() {
         // Test that dotfiles come first when they're files
         let mut paths = vec![
-            (RelPath::unix(".gitignore").unwrap(), true),
-            (RelPath::unix("README.md").unwrap(), true),
-            (RelPath::unix(".github").unwrap(), false),
-            (RelPath::unix("src").unwrap(), false),
+            (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str("README.md").unwrap(), true),
+            (RelPath::from_unix_str(".github").unwrap(), false),
+            (RelPath::from_unix_str("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix(".gitignore").unwrap(), true),
-                (RelPath::unix("README.md").unwrap(), true),
-                (RelPath::unix(".github").unwrap(), false),
-                (RelPath::unix("src").unwrap(), false),
+                (RelPath::from_unix_str(".gitignore").unwrap(), true),
+                (RelPath::from_unix_str("README.md").unwrap(), true),
+                (RelPath::from_unix_str(".github").unwrap(), false),
+                (RelPath::from_unix_str("src").unwrap(), false),
             ]
         );
     }
@@ -1957,17 +1900,17 @@ mod tests {
     fn compare_rel_paths_mixed_same_stem_different_extension() {
         // Files with same stem but different extensions should sort by extension
         let mut paths = vec![
-            (RelPath::unix("file.rs").unwrap(), true),
-            (RelPath::unix("file.md").unwrap(), true),
-            (RelPath::unix("file.txt").unwrap(), true),
+            (RelPath::from_unix_str("file.rs").unwrap(), true),
+            (RelPath::from_unix_str("file.md").unwrap(), true),
+            (RelPath::from_unix_str("file.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("file.txt").unwrap(), true),
-                (RelPath::unix("file.rs").unwrap(), true),
-                (RelPath::unix("file.md").unwrap(), true),
+                (RelPath::from_unix_str("file.md").unwrap(), true),
+                (RelPath::from_unix_str("file.rs").unwrap(), true),
+                (RelPath::from_unix_str("file.txt").unwrap(), true),
             ]
         );
     }
@@ -1976,17 +1919,18 @@ mod tests {
     fn compare_rel_paths_files_first_same_stem() {
         // Same stem files should still sort by extension with files_first
         let mut paths = vec![
-            (RelPath::unix("main.rs").unwrap(), true),
-            (RelPath::unix("main.c").unwrap(), true),
-            (RelPath::unix("main").unwrap(), false),
+            (RelPath::from_unix_str("main.rs").unwrap(), true),
+            (RelPath::from_unix_str("main.c").unwrap(), true),
+            (RelPath::from_unix_str("main").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("main.c").unwrap(), true),
-                (RelPath::unix("main.rs").unwrap(), true),
-                (RelPath::unix("main").unwrap(), false),
+                (RelPath::from_unix_str("main.c").unwrap(), true),
+                (RelPath::from_unix_str("main.rs").unwrap(), true),
+                (RelPath::from_unix_str("main").unwrap(), false),
             ]
         );
     }
@@ -1995,19 +1939,346 @@ mod tests {
     fn compare_rel_paths_mixed_deep_nesting() {
         // Test sorting with deeply nested paths
         let mut paths = vec![
-            (RelPath::unix("a/b/c.txt").unwrap(), true),
-            (RelPath::unix("A/B.txt").unwrap(), true),
-            (RelPath::unix("a.txt").unwrap(), true),
-            (RelPath::unix("A.txt").unwrap(), true),
+            (RelPath::from_unix_str("a/b/c.txt").unwrap(), true),
+            (RelPath::from_unix_str("A/B.txt").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("A.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("a/b/c.txt").unwrap(), true),
-                (RelPath::unix("A/B.txt").unwrap(), true),
-                (RelPath::unix("a.txt").unwrap(), true),
-                (RelPath::unix("A.txt").unwrap(), true),
+                (RelPath::from_unix_str("a/b/c.txt").unwrap(), true),
+                (RelPath::from_unix_str("A/B.txt").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+                (RelPath::from_unix_str("A.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_upper() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                directories_only_paths,
+                SortMode::DirectoriesFirst,
+                SortOrder::Upper,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
+            ]
+        );
+
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrder::Upper,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrder::Upper,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrder::Upper,
+            ),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+            ]
+        );
+
+        let natural_sort_paths = vec![
+            rel_path_entry("file10.txt", true),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("file20.txt", true),
+            rel_path_entry("file2.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(natural_sort_paths, SortMode::Mixed, SortOrder::Upper,),
+            vec![
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("file2.txt", true),
+                rel_path_entry("file10.txt", true),
+                rel_path_entry("file20.txt", true),
+            ]
+        );
+
+        let accented_paths = vec![
+            rel_path_entry("\u{00C9}something.txt", true),
+            rel_path_entry("zebra.txt", true),
+            rel_path_entry("Apple.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(accented_paths, SortMode::Mixed, SortOrder::Upper),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("\u{00C9}something.txt", true),
+                rel_path_entry("zebra.txt", true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_lower() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                directories_only_paths,
+                SortMode::DirectoriesFirst,
+                SortOrder::Lower,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+            ]
+        );
+
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrder::Lower,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrder::Lower,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrder::Lower,
+            ),
+            vec![
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("ALLCAPS", false),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_unicode() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                directories_only_paths,
+                SortMode::DirectoriesFirst,
+                SortOrder::Unicode,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
+            ]
+        );
+
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrder::Unicode,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrder::Unicode,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrder::Unicode,
+            ),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+            ]
+        );
+
+        let numeric_paths = vec![
+            rel_path_entry("file10.txt", true),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("file2.txt", true),
+            rel_path_entry("file20.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(numeric_paths, SortMode::Mixed, SortOrder::Unicode,),
+            vec![
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("file10.txt", true),
+                rel_path_entry("file2.txt", true),
+                rel_path_entry("file20.txt", true),
+            ]
+        );
+
+        let accented_paths = vec![
+            rel_path_entry("\u{00C9}something.txt", true),
+            rel_path_entry("zebra.txt", true),
+            rel_path_entry("Apple.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(accented_paths, SortMode::Mixed, SortOrder::Unicode),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("zebra.txt", true),
+                rel_path_entry("\u{00C9}something.txt", true),
             ]
         );
     }
@@ -2097,6 +2368,15 @@ mod tests {
                 column: Some(9),
             }
         );
+
+        assert_eq!(
+            PathWithPosition::parse_str("main (1).log"),
+            PathWithPosition {
+                path: PathBuf::from("main (1).log"),
+                row: None,
+                column: None
+            }
+        );
     }
 
     #[perf]
@@ -2171,6 +2451,15 @@ mod tests {
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs"),
             PathWithPosition {
                 path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\main (1).log"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\main (1).log"),
                 row: None,
                 column: None
             }
@@ -2332,7 +2621,7 @@ mod tests {
     // fn edge_of_glob() {
     //     let path = Path::new("/work/node_modules");
     //     let path_matcher =
-    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Unix).unwrap();
     //     assert!(
     //         path_matcher.is_match(path),
     //         "Path matcher should match {path:?}"
@@ -2342,7 +2631,7 @@ mod tests {
     // #[perf]
     // fn file_in_dirs() {
     //     let path = Path::new("/work/.env");
-    //     let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+    //     let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Unix).unwrap();
     //     assert!(
     //         path_matcher.is_match(path),
     //         "Path matcher should match {path:?}"
@@ -2358,7 +2647,7 @@ mod tests {
     // fn project_search() {
     //     let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
     //     let path_matcher =
-    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Unix).unwrap();
     //     assert!(
     //         path_matcher.is_match(path),
     //         "Path matcher should match {path:?}"
@@ -2783,28 +3072,28 @@ mod tests {
     fn test_strip_prefix() {
         let expected = [
             (
-                PathStyle::Posix,
+                PathStyle::Unix,
                 "/a/b/c",
                 "/a/b",
                 Some(rel_path("c").into_arc()),
             ),
             (
-                PathStyle::Posix,
+                PathStyle::Unix,
                 "/a/b/c",
                 "/a/b/",
                 Some(rel_path("c").into_arc()),
             ),
             (
-                PathStyle::Posix,
+                PathStyle::Unix,
                 "/a/b/c",
                 "/",
                 Some(rel_path("a/b/c").into_arc()),
             ),
-            (PathStyle::Posix, "/a/b/c", "", None),
-            (PathStyle::Posix, "/a/b//c", "/a/b/", None),
-            (PathStyle::Posix, "/a/bc", "/a/b", None),
+            (PathStyle::Unix, "/a/b/c", "", None),
+            (PathStyle::Unix, "/a/b//c", "/a/b/", None),
+            (PathStyle::Unix, "/a/bc", "/a/b", None),
             (
-                PathStyle::Posix,
+                PathStyle::Unix,
                 "/a/b/c",
                 "/a/b/c",
                 Some(rel_path("").into_arc()),
@@ -2909,19 +3198,19 @@ mod tests {
 
         let url = url::Url::parse("file:///home/user/file.txt").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/home/user/file.txt"))
         );
 
         let url = url::Url::parse("file:///").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/"))
         );
 
         let url = url::Url::parse("file:///a/b/c/d/e").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/a/b/c/d/e"))
         );
     }
@@ -2932,19 +3221,19 @@ mod tests {
 
         let url = url::Url::parse("file:///home/user/file%20with%20spaces.txt").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/home/user/file with spaces.txt"))
         );
 
         let url = url::Url::parse("file:///path%2Fwith%2Fencoded%2Fslashes").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/path/with/encoded/slashes"))
         );
 
         let url = url::Url::parse("file:///special%23chars%3F.txt").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/special#chars?.txt"))
         );
     }
@@ -2955,7 +3244,7 @@ mod tests {
 
         let url = url::Url::parse("file://localhost/home/user/file.txt").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/home/user/file.txt"))
         );
     }
@@ -2965,7 +3254,7 @@ mod tests {
         use super::UrlExt;
 
         let url = url::Url::parse("file://somehost/home/user/file.txt").unwrap();
-        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Unix), Err(()));
     }
 
     #[test]
@@ -2974,13 +3263,13 @@ mod tests {
 
         let url = url::Url::parse("file:///C:").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/C:/"))
         );
 
         let url = url::Url::parse("file:///D|").unwrap();
         assert_eq!(
-            url.to_file_path_ext(PathStyle::Posix),
+            url.to_file_path_ext(PathStyle::Unix),
             Ok(PathBuf::from("/D|/"))
         );
     }
@@ -3093,11 +3382,11 @@ mod tests {
         use super::UrlExt;
 
         let url = url::Url::parse("http://example.com/path").unwrap();
-        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Unix), Err(()));
         assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
 
         let url = url::Url::parse("https://example.com/path").unwrap();
-        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Unix), Err(()));
         assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
     }
 

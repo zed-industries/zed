@@ -24,7 +24,7 @@ pub struct WslPickerDismissed;
 pub(crate) struct WslPickerDelegate {
     selected_index: usize,
     distro_list: Option<Vec<String>>,
-    matches: Vec<fuzzy::StringMatch>,
+    matches: Vec<fuzzy_nucleo::StringMatch>,
 }
 
 impl WslPickerDelegate {
@@ -39,7 +39,7 @@ impl WslPickerDelegate {
     pub fn selected_distro(&self) -> Option<String> {
         self.matches
             .get(self.selected_index)
-            .map(|m| m.string.clone())
+            .map(|m| m.string.to_string())
     }
 }
 
@@ -75,6 +75,10 @@ impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
 impl picker::PickerDelegate for WslPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "WSL-distor-picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -101,9 +105,9 @@ impl picker::PickerDelegate for WslPickerDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        use fuzzy::StringMatchCandidate;
+        use fuzzy_nucleo::StringMatchCandidate;
 
         let needs_fetch = self.distro_list.is_none();
         if needs_fetch {
@@ -121,16 +125,14 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .collect::<Vec<_>>();
 
             let query = query.trim_start();
-            let smart_case = query.chars().any(|c| c.is_uppercase());
-            self.matches = smol::block_on(fuzzy::match_strings(
-                candidates.as_slice(),
+            let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
+            self.matches = fuzzy_nucleo::match_strings(
+                &candidates,
                 query,
-                smart_case,
-                true,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
                 100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
+            );
             self.matches.sort_unstable_by_key(|m| m.candidate_id);
 
             self.selected_index = self
@@ -150,7 +152,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
         if let Some(distro) = self.matches.get(self.selected_index) {
             cx.emit(WslDistroSelected {
                 secondary,
-                distro: distro.string.clone(),
+                distro: distro.string.to_string(),
             });
         }
     }
@@ -174,7 +176,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .spacing(ui::ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .flex_grow_1()
                         .gap_3()
                         .child(Icon::new(IconName::Linux))
                         .child(v_flex().child(HighlightedLabel::new(
@@ -201,7 +203,7 @@ impl WslOpenModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let delegate = WslPickerDelegate::new();
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         let selected = cx.subscribe_in(
             &picker,
@@ -235,9 +237,6 @@ impl WslOpenModal {
         cx: &mut Context<Self>,
     ) {
         let app_state = workspace::AppState::global(cx);
-        let Some(app_state) = app_state.upgrade() else {
-            return;
-        };
 
         let connection_options = RemoteConnectionOptions::Wsl(WslConnectionOptions {
             distro_name: distro.to_string(),
@@ -248,14 +247,16 @@ impl WslOpenModal {
             true => secondary,
             false => !secondary,
         };
-        let replace_window = match replace_current_window {
-            true => window.window_handle().downcast::<MultiWorkspace>(),
-            false => None,
+        let open_mode = if replace_current_window {
+            workspace::OpenMode::Activate
+        } else {
+            workspace::OpenMode::NewWindow
         };
 
         let paths = self.paths.clone();
         let open_options = workspace::OpenOptions {
-            replace_window,
+            requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
+            open_mode,
             ..Default::default()
         };
 

@@ -6,10 +6,10 @@ pub use lsp_types::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::{
-    AsyncRead, AsyncWrite, Future, FutureExt,
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot::{self, Canceled},
     future::{self, Either},
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     select,
 };
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -19,12 +19,9 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-};
 use util::command::{Child, Stdio};
 
+use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
 use std::{
     any::TypeId,
@@ -42,7 +39,7 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
+use util::{ConnectionResult, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -99,8 +96,8 @@ struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
-    notification_tx: channel::Sender<NotificationSerializer>,
+    outbound_tx: async_channel::Sender<String>,
+    notification_tx: async_channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     version: Option<SharedString>,
     process_name: Arc<str>,
@@ -198,7 +195,7 @@ impl PartialEq<str> for LanguageServerName {
 pub enum Subscription {
     Notification {
         method: &'static str,
-        notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
+        notification_handlers: Option<Weak<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
         id: i32,
@@ -483,7 +480,7 @@ impl LanguageServer {
         Stderr: AsyncRead + Unpin + Send + 'static,
         F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
@@ -563,7 +560,8 @@ impl LanguageServer {
         }
         .into();
 
-        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        let (notification_tx, notification_rx) =
+            async_channel::unbounded::<NotificationSerializer>();
         cx.background_spawn({
             let outbound_tx = outbound_tx.clone();
             async move {
@@ -623,9 +621,8 @@ impl LanguageServer {
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
-        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
-        let _clear_response_handlers = util::defer({
+        let _clear_response_handlers = gpui_util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
@@ -667,7 +664,7 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
         input_handler.loop_handle.await
     }
@@ -703,13 +700,13 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
     }
 
     async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -934,7 +931,7 @@ impl LanguageServer {
                         dynamic_registration: Some(true),
                     }),
                     semantic_tokens: Some(SemanticTokensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: None,
                             full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
@@ -999,6 +996,10 @@ impl LanguageServer {
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
                         dynamic_registration: Some(true),
+                    }),
+                    document_link: Some(DocumentLinkClientCapabilities {
+                        dynamic_registration: Some(true),
+                        tooltip_support: Some(true),
                     }),
                     folding_range: Some(FoldingRangeClientCapabilities {
                         dynamic_registration: Some(true),
@@ -1213,7 +1214,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1292,7 +1293,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1304,6 +1305,29 @@ impl LanguageServer {
     /// Get the version of the running language server.
     pub fn version(&self) -> Option<SharedString> {
         self.version.clone()
+    }
+
+    /// Get the readable version of the running language server.
+    pub fn readable_version(&self) -> Option<SharedString> {
+        match self.name().as_ref() {
+            "gopls" => {
+                // Gopls returns a detailed JSON object as its version string; we must parse it to extract the semantic version.
+                // Example: `{"GoVersion":"go1.26.0","Path":"golang.org/x/tools/gopls","Main":{},"Deps":[],"Settings":[],"Version":"v0.21.1"}`
+                self.version
+                    .as_ref()
+                    .and_then(|obj| {
+                        #[derive(Deserialize)]
+                        struct GoplsVersion<'a> {
+                            #[serde(rename = "Version")]
+                            version: &'a str,
+                        }
+                        let parsed: GoplsVersion = serde_json::from_str(obj.as_str()).ok()?;
+                        Some(parsed.version.trim_start_matches("v").to_owned().into())
+                    })
+                    .or_else(|| self.version.clone())
+            }
+            _ => self.version.clone(),
+        }
     }
 
     /// Get the process name of the running language server.
@@ -1399,8 +1423,8 @@ impl LanguageServer {
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1462,7 +1486,7 @@ impl LanguageServer {
                 return ConnectionResult::Result(Err(e));
             }
 
-            let cancel_on_drop = util::defer(move || {
+            let cancel_on_drop = gpui_util::defer(move || {
                 if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &notification_serializers,
@@ -1509,8 +1533,8 @@ impl LanguageServer {
     fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         request_timeout: Duration,
         params: T::Params,
@@ -1561,7 +1585,7 @@ impl LanguageServer {
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<NotificationSerializer>,
         params: T::Params,
     ) -> Result<()> {
         let serializer = NotificationSerializer(Box::new(move || {
@@ -1776,7 +1800,7 @@ impl Drop for Subscription {
                 method,
                 notification_handlers,
             } => {
-                if let Some(handlers) = notification_handlers {
+                if let Some(handlers) = notification_handlers.as_ref().and_then(|h| h.upgrade()) {
                     handlers.lock().remove(method);
                 }
             }
@@ -1795,7 +1819,7 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
-    notifications_rx: channel::Receiver<(String, String)>,
+    notifications_rx: async_channel::Receiver<(String, String)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1810,7 +1834,7 @@ impl FakeLanguageServer {
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        let (notifications_tx, notifications_rx) = channel::unbounded();
+        let (notifications_tx, notifications_rx) = async_channel::unbounded();
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
@@ -1970,10 +1994,14 @@ impl FakeLanguageServer {
                 let responded_tx = responded_tx.clone();
                 let executor = cx.background_executor().clone();
                 async move {
+                    let _guard = gpui_util::defer({
+                        let responded_tx = responded_tx.clone();
+                        move || {
+                            responded_tx.unbounded_send(()).ok();
+                        }
+                    });
                     executor.simulate_random_delay().await;
-                    let result = result.await;
-                    responded_tx.unbounded_send(()).ok();
-                    result
+                    result.await
                 }
             })
             .detach();
@@ -2052,7 +2080,7 @@ mod tests {
     use gpui::TestAppContext;
     use std::str::FromStr;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -2074,8 +2102,8 @@ mod tests {
             &mut cx.to_async(),
         );
 
-        let (message_tx, message_rx) = channel::unbounded();
-        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
         server
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()
@@ -2141,6 +2169,75 @@ mod tests {
         drop(server);
         cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_subscription_leaks_handlers_after_server_drop(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        let detached_payload = Arc::new(());
+        let detached_payload_handle = Arc::downgrade(&detached_payload);
+        server
+            .on_notification::<notification::ShowMessage, _>(move |_, _| {
+                let _payload = &detached_payload;
+            })
+            .detach();
+
+        let retained_payload = Arc::new(());
+        let retained_payload_handle = Arc::downgrade(&retained_payload);
+        let subscription =
+            server.on_notification::<notification::PublishDiagnostics, _>(move |_, _| {
+                let _payload = &retained_payload;
+            });
+
+        let server = cx
+            .update(|cx| {
+                let params = server.default_initialize_params(false, false, cx);
+                let configuration = DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        drop(server);
+        cx.run_until_parked();
+        fake.receive_notification::<notification::Exit>().await;
+        drop(fake);
+        cx.run_until_parked();
+
+        assert!(
+            detached_payload_handle.upgrade().is_none(),
+            "detached handler was kept alive after the server was dropped, \
+            because an unrelated retained subscription pins the whole handler map"
+        );
+        assert!(
+            retained_payload_handle.upgrade().is_none(),
+            "handler with a retained subscription was kept alive after the server was dropped"
+        );
+
+        drop(subscription);
+        assert!(detached_payload_handle.upgrade().is_none());
+        assert!(retained_payload_handle.upgrade().is_none());
     }
 
     #[gpui::test]

@@ -8,16 +8,17 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::WgpuContext;
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+use wasm_bindgen::prelude::*;
 
 static BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
@@ -39,6 +40,9 @@ pub struct WebPlatform {
     active_display: Rc<dyn PlatformDisplay>,
     callbacks: RefCell<WebPlatformCallbacks>,
     wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
+    cursor_visible: Rc<Cell<bool>>,
+    last_cursor_css: Rc<Cell<&'static str>>,
+    _cursor_restore_listeners: Vec<EventListenerHandle>,
 }
 
 #[derive(Default)]
@@ -54,10 +58,13 @@ struct WebPlatformCallbacks {
 }
 
 impl WebPlatform {
-    pub fn new() -> Self {
+    pub fn new(allow_multi_threading: bool) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
-        let dispatcher = Arc::new(WebDispatcher::new(browser_window.clone()));
+        let dispatcher = Arc::new(WebDispatcher::new(
+            browser_window.clone(),
+            allow_multi_threading,
+        ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
@@ -74,6 +81,14 @@ impl WebPlatform {
         let active_display: Rc<dyn PlatformDisplay> =
             Rc::new(WebDisplay::new(browser_window.clone()));
 
+        let cursor_visible = Rc::new(Cell::new(true));
+        let last_cursor_css = Rc::new(Cell::new("default"));
+        let cursor_restore_listeners = cursor_restore_listeners(
+            &browser_window,
+            cursor_visible.clone(),
+            last_cursor_css.clone(),
+        );
+
         Self {
             browser_window,
             background_executor,
@@ -83,6 +98,9 @@ impl WebPlatform {
             active_display,
             callbacks: RefCell::new(WebPlatformCallbacks::default()),
             wgpu_context: Rc::new(RefCell::new(None)),
+            cursor_visible,
+            last_cursor_css,
+            _cursor_restore_listeners: cursor_restore_listeners,
         }
     }
 }
@@ -148,6 +166,12 @@ impl Platform for WebPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        // Native popups are not implemented on the web yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
         let context_ref = self.wgpu_context.borrow();
         let context = context_ref.as_ref().ok_or_else(|| {
             anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")
@@ -228,6 +252,8 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
@@ -289,16 +315,23 @@ impl Platform for WebPlatform {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
-            CursorStyle::None => "none",
         };
 
-        if let Some(document) = self.browser_window.document() {
-            if let Some(body) = document.body() {
-                if let Err(error) = body.style().set_property("cursor", css_cursor) {
-                    log::warn!("Failed to set cursor style: {error:?}");
-                }
-            }
+        self.last_cursor_css.set(css_cursor);
+        if self.cursor_visible.get() {
+            set_body_cursor(&self.browser_window, css_cursor);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        if !self.cursor_visible.replace(false) {
+            return;
+        }
+        set_body_cursor(&self.browser_window, "none");
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.cursor_visible.get()
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -309,7 +342,15 @@ impl Platform for WebPlatform {
         None
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        if let Some(text) = item.text()
+            && let Some(window) = web_sys::window()
+        {
+            // Fire-and-forget; called synchronously inside the user's input
+            // event, which satisfies the browser's user-activation requirement.
+            drop(window.navigator().clipboard().write_text(&text));
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
@@ -337,5 +378,74 @@ impl Platform for WebPlatform {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().keyboard_layout_change = Some(callback);
+    }
+}
+
+struct EventListenerHandle {
+    target: web_sys::EventTarget,
+    event_name: &'static str,
+    closure: Closure<dyn FnMut(JsValue)>,
+}
+
+impl Drop for EventListenerHandle {
+    fn drop(&mut self) {
+        self.target
+            .remove_event_listener_with_callback(
+                self.event_name,
+                self.closure.as_ref().unchecked_ref(),
+            )
+            .ok();
+    }
+}
+
+fn cursor_restore_listeners(
+    browser_window: &web_sys::Window,
+    cursor_visible: Rc<Cell<bool>>,
+    last_cursor_css: Rc<Cell<&'static str>>,
+) -> Vec<EventListenerHandle> {
+    let mut handles = Vec::new();
+    let Some(document) = browser_window.document() else {
+        return handles;
+    };
+
+    let make_restore_handler = |browser_window: web_sys::Window| {
+        let cursor_visible = cursor_visible.clone();
+        let last_cursor_css = last_cursor_css.clone();
+        Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
+            if !cursor_visible.replace(true) {
+                set_body_cursor(&browser_window, last_cursor_css.get());
+            }
+        })
+    };
+
+    let mut add_listener = |target: &web_sys::EventTarget, event_name: &'static str| {
+        let closure = make_restore_handler(browser_window.clone());
+        target
+            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
+            .ok();
+        handles.push(EventListenerHandle {
+            target: target.clone(),
+            event_name,
+            closure,
+        });
+    };
+
+    let document_target: &web_sys::EventTarget = document.as_ref();
+    let window_target: &web_sys::EventTarget = browser_window.as_ref();
+
+    add_listener(document_target, "mousemove");
+    add_listener(document_target, "mouseenter");
+    add_listener(window_target, "blur");
+    add_listener(document_target, "visibilitychange");
+
+    handles
+}
+
+fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
+    if let Some(document) = browser_window.document()
+        && let Some(body) = document.body()
+        && let Err(error) = body.style().set_property("cursor", css_cursor)
+    {
+        log::warn!("Failed to set cursor style: {error:?}");
     }
 }

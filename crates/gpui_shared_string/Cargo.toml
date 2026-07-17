@@ -1,0 +1,16 @@
+[package]
+name = "gpui_shared_string"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lib]
+path = "gpui_shared_string.rs"
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+smol_str = "0.3.6"
+
+[lints]
+workspace = true

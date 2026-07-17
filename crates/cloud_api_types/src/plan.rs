@@ -9,6 +9,8 @@ pub enum Plan {
     ZedFree,
     ZedPro,
     ZedProTrial,
+    ZedBusiness,
+    ZedVip,
     ZedStudent,
 }
 

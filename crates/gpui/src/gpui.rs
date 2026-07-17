@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
@@ -24,6 +24,7 @@ mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
+mod gestures;
 mod global;
 mod input;
 mod inspector;
@@ -33,13 +34,18 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-/// Profiling utilities for task timing and thread performance tracking.
+/// Profiling utilities for task, frame, and thread performance tracking.
 pub mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "bench"
+))]
 #[expect(missing_docs)]
 pub mod queue;
 mod scene;
-mod shared_string;
 mod shared_uri;
 mod style;
 mod styled;
@@ -54,6 +60,11 @@ mod util;
 mod view;
 mod window;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use proptest;
+
+#[cfg(doc)]
+pub mod _accessibility;
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
@@ -73,6 +84,9 @@ mod seal {
     pub trait Sealed {}
 }
 
+pub use accesskit;
+pub use accesskit::Action as AccessibleAction;
+pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
@@ -85,10 +99,37 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
+pub use gestures::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
+};
+
+/// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
+///
+/// This mirrors `criterion::criterion_group!` so GPUI benchmark files can keep the
+/// same shape as ordinary Criterion benchmarks.
+///
+/// [`gpui::bench`]: crate::bench
+#[macro_export]
+macro_rules! bench_group {
+    ($($tokens:tt)*) => {
+        criterion::criterion_group!($($tokens)*);
+    };
+}
+
+/// Defines the entry point for GPUI Criterion benchmark groups.
+///
+/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
+/// same shape as ordinary Criterion benchmarks.
+#[macro_export]
+macro_rules! bench_main {
+    ($($tokens:tt)*) => {
+        criterion::criterion_main!($($tokens)*);
+    };
+}
+pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
-#[cfg(not(target_family = "wasm"))]
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
@@ -102,7 +143,6 @@ pub use profiler::*;
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
-pub use shared_string::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};
 pub use style::*;
@@ -118,6 +158,8 @@ pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
+
+pub use pollster::block_on;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
@@ -165,6 +207,16 @@ pub trait AppContext {
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T;
+
+    /// Run `f` against the entity's *current* window — the most recently
+    /// rendered window that referenced the entity. Returns `None` if the
+    /// entity has no current window or that window is unavailable. See
+    /// [`App::with_window`] for the underlying lookup.
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R>;
 
     /// Read a window off of the application context.
     fn read_window<T, R>(

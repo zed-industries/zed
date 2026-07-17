@@ -1,11 +1,9 @@
 use std::rc::Rc;
-use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
-use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
-use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
+use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
 use crate::ui::ModelSelectorTooltip;
 use crate::{ModelSelector, model_selector::acp_model_selector};
@@ -18,17 +16,14 @@ pub struct ModelSelectorPopover {
 impl ModelSelectorPopover {
     pub(crate) fn new(
         selector: Rc<dyn AgentModelSelector>,
-        agent_server: Rc<dyn agent_servers::AgentServer>,
-        fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<ModelSelector>,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            selector: cx.new(move |cx| {
-                acp_model_selector(selector, agent_server, fs, focus_handle.clone(), window, cx)
-            }),
+            selector: cx
+                .new(move |cx| acp_model_selector(selector, focus_handle.clone(), window, cx)),
             menu_handle,
         }
     }
@@ -77,10 +72,11 @@ impl Render for ModelSelectorPopover {
 
         PickerPopoverMenu::new(
             self.selector.clone(),
-            ButtonLike::new("active-model")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(color)
                 .when_some(model_icon, |this, icon| {
-                    this.child(
+                    this.start_icon(
                         match icon {
                             AgentModelIcon::Path(path) => Icon::from_external_svg(path),
                             AgentModelIcon::Named(icon_name) => Icon::new(icon_name),
@@ -89,15 +85,9 @@ impl Render for ModelSelectorPopover {
                         .size(IconSize::XSmall),
                     )
                 })
-                .child(
-                    Label::new(model_name)
-                        .color(color)
-                        .size(LabelSize::Small)
-                        .ml_0p5(),
-                )
-                .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
+                .end_icon(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
             tooltip,
-            gpui::Corner::BottomRight,
+            gpui::Anchor::BottomRight,
             cx,
         )
         .with_handle(self.menu_handle.clone())

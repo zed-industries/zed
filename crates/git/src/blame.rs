@@ -1,37 +1,33 @@
 use crate::Oid;
-use crate::commit::get_messages;
-use crate::repository::RepoPath;
+use crate::commit::{get_messages, get_tag_names};
+use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use futures::AsyncWriteExt;
+use futures::{AsyncWriteExt, TryFutureExt, try_join};
 use serde::{Deserialize, Serialize};
-use std::{ops::Range, path::Path};
+use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use std::ops::Range;
 use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
 use util::command::Stdio;
 
-pub use git2 as libgit;
-
 #[derive(Debug, Clone, Default)]
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
+    pub tag_names: HashMap<Oid, Vec<String>>,
 }
 
 impl Blame {
-    pub async fn for_path(
-        git_binary: &Path,
-        working_directory: &Path,
+    pub(crate) async fn for_path(
+        git: &GitBinary,
         path: &RepoPath,
         content: &Rope,
         line_ending: LineEnding,
     ) -> Result<Self> {
-        let output =
-            run_git_blame(git_binary, working_directory, path, content, line_ending).await?;
-        let mut entries = parse_git_blame(&output)?;
-        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+        let mut entries = run_git_blame(git, path, content, line_ending).await?;
 
         let mut unique_shas = HashSet::default();
 
@@ -40,66 +36,131 @@ impl Blame {
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
-        let messages = get_messages(working_directory, &shas)
-            .await
-            .context("failed to get commit messages")?;
+        let (messages, tag_names) = try_join!(
+            get_messages(git, &shas)
+                .map_err(|error| error.context("failed to get commit messages")),
+            async {
+                match get_tag_names(git, &shas).await {
+                    Ok(tag_names) => Ok(tag_names),
+                    Err(error) => {
+                        log::warn!("failed to get commit tag names: {error:#}");
+                        Ok(HashMap::default())
+                    }
+                }
+            },
+        )?;
 
-        Ok(Self { entries, messages })
+        entries.sort_unstable_by_key(|entry| entry.range.start);
+        Ok(Self {
+            entries,
+            messages,
+            tag_names,
+        })
     }
 }
 
 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
+const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 
 async fn run_git_blame(
-    git_binary: &Path,
-    working_directory: &Path,
+    git: &GitBinary,
     path: &RepoPath,
     contents: &Rope,
     line_ending: LineEnding,
-) -> Result<String> {
+) -> Result<Vec<BlameEntry>> {
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
-        util::command::new_command(git_binary)
-            .current_dir(working_directory)
-            .arg("blame")
-            .arg("--incremental")
-            .arg("--contents")
-            .arg("-")
+        git.build_command(&["blame", "--incremental", "--contents", "-", "--"])
             .arg(path.as_unix_str())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .context("starting git blame process")?
     };
 
-    let stdin = child
+    let mut stdin = child
         .stdin
-        .as_mut()
+        .take()
         .context("failed to get pipe to stdin of git blame command")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to get stdout from git blame command")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to get stderr from git blame command")?;
 
-    for chunk in text::chunks_with_line_ending(contents, line_ending) {
-        stdin.write_all(chunk.as_bytes()).await?;
-    }
-    stdin.flush().await?;
+    let write_stdin = async move {
+        for chunk in text::chunks_with_line_ending(contents, line_ending) {
+            stdin.write_all(chunk.as_bytes()).await?;
+        }
+        stdin.flush().await.map_err(Into::into)
+    };
 
-    let output = child.output().await.context("reading git blame output")?;
+    let read_stdout = async move {
+        let mut parser = GitBlameParser::new();
+        let mut reader = BufReader::new(stdout);
+        let mut line_buffer = String::new();
+        let mut lines_read = 0;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        loop {
+            line_buffer.clear();
+            let bytes_read = reader
+                .read_line(&mut line_buffer)
+                .await
+                .context("reading git blame stdout")?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let line = line_buffer.trim_end_matches(&['\r', '\n'][..]);
+            parser.push_line(line)?;
+            lines_read += 1;
+
+            if lines_read % BLAME_PARSE_YIELD_INTERVAL == 0 {
+                smol::future::yield_now().await;
+            }
+        }
+
+        Ok(parser.entries)
+    };
+
+    let read_stderr = async move {
+        let mut stderr_output = String::new();
+        BufReader::new(stderr)
+            .read_to_string(&mut stderr_output)
+            .await
+            .context("reading git blame stderr")?;
+        Result::<String>::Ok(stderr_output)
+    };
+
+    let wait_for_status = async {
+        child
+            .status()
+            .await
+            .context("waiting for git blame process")
+    };
+
+    let ((), entries, stderr, status) =
+        try_join!(write_stdin, read_stdout, read_stderr, wait_for_status)?;
+
+    if !status.success() {
         let trimmed = stderr.trim();
         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
-            return Ok(String::new());
+            return Ok(Vec::new());
         }
         anyhow::bail!("git blame process failed: {stderr}");
     }
 
-    Ok(String::from_utf8(output.stdout)?)
+    Ok(entries)
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
 
@@ -158,7 +219,17 @@ impl BlameEntry {
             sha,
             range,
             original_line_number,
-            ..Default::default()
+            author: None,
+            author_mail: None,
+            author_time: None,
+            author_tz: None,
+            committer_name: None,
+            committer_email: None,
+            committer_time: None,
+            committer_tz: None,
+            summary: None,
+            previous: None,
+            filename: String::new(),
         })
     }
 
@@ -176,7 +247,7 @@ impl BlameEntry {
     }
 }
 
-// parse_git_blame parses the output of `git blame --incremental`, which returns
+// GitBlameParser parses the output of `git blame --incremental`, which returns
 // all the blame-entries for a given path incrementally, as it finds them.
 //
 // Each entry *always* starts with:
@@ -212,22 +283,32 @@ impl BlameEntry {
 //    filename index.js
 //
 // More about `--incremental` output: https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-blame.html
-fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
-    let mut entries: Vec<BlameEntry> = Vec::new();
-    let mut index: HashMap<Oid, usize> = HashMap::default();
+struct GitBlameParser {
+    entries: Vec<BlameEntry>,
+    index: HashMap<Oid, usize>,
+    current_entry: Option<BlameEntry>,
+}
 
-    let mut current_entry: Option<BlameEntry> = None;
+impl GitBlameParser {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            index: HashMap::default(),
+            current_entry: None,
+        }
+    }
 
-    for line in output.lines() {
+    fn push_line(&mut self, line: &str) -> Result<()> {
         let mut done = false;
 
-        match &mut current_entry {
+        match &mut self.current_entry {
             None => {
                 let mut new_entry = BlameEntry::new_from_blame_line(line)?;
 
-                if let Some(existing_entry) = index
+                if let Some(existing_entry) = self
+                    .index
                     .get(&new_entry.sha)
-                    .and_then(|slot| entries.get(*slot))
+                    .and_then(|slot| self.entries.get(*slot))
                 {
                     new_entry.author.clone_from(&existing_entry.author);
                     new_entry
@@ -248,11 +329,11 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     new_entry.summary.clone_from(&existing_entry.summary);
                 }
 
-                current_entry.replace(new_entry);
+                self.current_entry.replace(new_entry);
             }
             Some(entry) => {
                 let Some((key, value)) = line.split_once(' ') else {
-                    continue;
+                    return Ok(());
                 };
                 let is_committed = !entry.sha.is_zero();
                 match key {
@@ -281,25 +362,44 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
             }
         };
 
-        if done && let Some(entry) = current_entry.take() {
-            index.insert(entry.sha, entries.len());
-
-            // We only want annotations that have a commit.
-            if !entry.sha.is_zero() {
-                entries.push(entry);
-            }
+        if done {
+            self.push_current_entry();
         }
+
+        Ok(())
     }
 
-    Ok(entries)
+    fn push_current_entry(&mut self) {
+        let Some(entry) = self.current_entry.take() else {
+            return;
+        };
+
+        self.index.insert(entry.sha, self.entries.len());
+
+        // We only want annotations that have a commit.
+        if !entry.sha.is_zero() {
+            self.entries.push(entry);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use crate::blame::GitBlameParser;
+
     use super::BlameEntry;
-    use super::parse_git_blame;
+
+    fn parse_git_blame(output: &str) -> anyhow::Result<Vec<BlameEntry>> {
+        let mut parser = GitBlameParser::new();
+
+        for line in output.lines() {
+            parser.push_line(line)?;
+        }
+
+        Ok(parser.entries)
+    }
 
     fn read_test_data(filename: &str) -> String {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

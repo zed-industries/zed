@@ -2,7 +2,10 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named},
+    steps::{
+        self, CommonPermissionSets, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity,
+        named,
+    },
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -13,6 +16,7 @@ pub fn cherry_pick() -> Workflow {
     let pr_number = WorkflowInput::string("pr_number", None);
     let cherry_pick = run_cherry_pick(&branch, &commit, &channel);
     named::workflow()
+        .with_minimal_permissions()
         .run_name(format!("cherry_pick to {channel} #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
@@ -35,19 +39,28 @@ fn run_cherry_pick(
         channel: &WorkflowInput,
         token: &StepOutput,
     ) -> Step<Run> {
-        named::bash(&format!("./script/cherry-pick {branch} {commit} {channel}"))
-            .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-            .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+        named::bash(r#"./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL""#)
+            .add_env(("BRANCH", branch.to_string()))
+            .add_env(("COMMIT", commit.to_string()))
+            .add_env(("CHANNEL", channel.to_string()))
+            .with_zippy_git_identity()
             .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+            (TokenPermissions::PullRequests, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo())
             .add_step(authenticate)
+            .add_step(steps::checkout_repo().with_token(&token))
             .add_step(cherry_pick(branch, commit, channel, &token)),
     )
 }

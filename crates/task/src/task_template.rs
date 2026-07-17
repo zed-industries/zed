@@ -72,6 +72,12 @@ pub struct TaskTemplate {
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
+    /// Which edited buffers to save before running the task.
+    #[serde(default)]
+    pub save: SaveStrategy,
+    /// Hooks that this task runs when emitted.
+    #[serde(default)]
+    pub hooks: HashSet<TaskHook>,
 }
 
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
@@ -81,6 +87,14 @@ pub enum DebugArgsRequest {
     Launch,
     /// Attach
     Attach(AttachRequest),
+}
+
+/// What to do with the terminal pane and tab, after the command was started.
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskHook {
+    #[serde(alias = "create_git_worktree")]
+    CreateWorktree,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -109,11 +123,25 @@ pub enum HideStrategy {
     OnSuccess,
 }
 
+/// Which edited buffers to save before running a task.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveStrategy {
+    /// Save all edited buffers.
+    All,
+    /// Save the current buffer.
+    Current,
+    #[default]
+    /// Don't save any buffers.
+    None,
+}
+
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskTemplates(pub Vec<TaskTemplate>);
 
 impl TaskTemplates {
+    pub const FILE_NAME: &str = "tasks.json";
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json::Value {
         let schema = schemars::generate::SchemaSettings::draft2019_09()
@@ -270,6 +298,7 @@ impl TaskTemplate {
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
+                save: self.save,
             },
         })
     }
@@ -482,7 +511,10 @@ fn substitute_all_template_variables_in_map(
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, path::Path};
+    use std::{
+        borrow::Cow,
+        path::{Path, PathBuf},
+    };
 
     use crate::{TaskVariables, VariableName};
 
@@ -1071,7 +1103,52 @@ mod tests {
             command,
             ..TaskTemplate::default()
         };
-
         assert!(task.unknown_variables().is_empty());
+    }
+
+    #[test]
+    fn test_git_variables_resolution() {
+        let task = TaskTemplate {
+            label: "Show $ZED_GIT_SHA_SHORT in $ZED_GIT_REPOSITORY_NAME".to_string(),
+            command: "git".to_string(),
+            args: vec!["show".to_string(), "$ZED_GIT_SHA".to_string()],
+            cwd: Some("$ZED_GIT_REPOSITORY_PATH".to_string()),
+            env: HashMap::from_iter([("COMMIT".to_string(), "$ZED_GIT_SHA".to_string())]),
+            ..TaskTemplate::default()
+        };
+        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+        let sha_short = "0123456".to_string();
+        let repo_name = "zed".to_string();
+        let repo_path = format!("/Users/example/{repo_name}");
+
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([
+                (VariableName::GitSha, sha.clone()),
+                (VariableName::GitShaShort, sha_short.clone()),
+                (VariableName::GitRepositoryName, repo_name.clone()),
+                (VariableName::GitRepositoryPath, repo_path.clone()),
+            ]),
+            ..TaskContext::default()
+        };
+
+        let task = task.resolve_task(TEST_ID_BASE, &context).unwrap();
+        assert_eq!(
+            task.resolved_label,
+            format!("Show {sha_short} in {repo_name}")
+        );
+        assert_eq!(task.resolved.command, Some("git".to_string()));
+        assert_eq!(task.resolved.args, vec!["show".to_string(), sha.clone()]);
+        assert_eq!(task.resolved.cwd, Some(PathBuf::from(repo_path)));
+        assert_eq!(task.resolved.env.get("COMMIT"), Some(&sha));
+
+        assert_substituted_variables(
+            &task,
+            vec![
+                VariableName::GitSha,
+                VariableName::GitShaShort,
+                VariableName::GitRepositoryName,
+                VariableName::GitRepositoryPath,
+            ],
+        );
     }
 }

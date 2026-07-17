@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use gpui::{App, EntityId, EventEmitter, Subscription};
 use ui::{IconButtonShape, Tooltip, prelude::*};
 use workspace::item::{ItemBufferKind, ItemEvent, ItemHandle};
@@ -35,10 +35,10 @@ impl MultibufferHint {
 }
 
 impl MultibufferHint {
-    fn counter() -> &'static AtomicUsize {
+    fn counter(cx: &App) -> &'static AtomicUsize {
         static SHOWN_COUNT: OnceLock<AtomicUsize> = OnceLock::new();
         SHOWN_COUNT.get_or_init(|| {
-            let value: usize = KEY_VALUE_STORE
+            let value: usize = KeyValueStore::global(cx)
                 .read_kvp(SHOWN_COUNT_KEY)
                 .ok()
                 .flatten()
@@ -49,19 +49,21 @@ impl MultibufferHint {
         })
     }
 
-    fn shown_count() -> usize {
-        Self::counter().load(Ordering::Relaxed)
+    fn shown_count(cx: &App) -> usize {
+        Self::counter(cx).load(Ordering::Relaxed)
     }
 
     fn increment_count(cx: &mut App) {
-        Self::set_count(Self::shown_count() + 1, cx)
+        Self::set_count(Self::shown_count(cx) + 1, cx)
     }
 
     pub(crate) fn set_count(count: usize, cx: &mut App) {
-        Self::counter().store(count, Ordering::Relaxed);
+        Self::counter(cx).store(count, Ordering::Relaxed);
 
-        db::write_and_log(cx, move || {
-            KEY_VALUE_STORE.write_kvp(SHOWN_COUNT_KEY.to_string(), format!("{}", count))
+        let kvp = KeyValueStore::global(cx);
+        db::write_and_log(cx, move || async move {
+            kvp.write_kvp(SHOWN_COUNT_KEY.to_string(), format!("{}", count))
+                .await
         });
     }
 
@@ -71,7 +73,7 @@ impl MultibufferHint {
 
     /// Determines the toolbar location for this [`MultibufferHint`].
     fn determine_toolbar_location(&mut self, cx: &mut Context<Self>) -> ToolbarItemLocation {
-        if Self::shown_count() >= NUMBER_OF_HINTS {
+        if Self::shown_count(cx) >= NUMBER_OF_HINTS {
             return ToolbarItemLocation::Hidden;
         }
 
@@ -158,10 +160,11 @@ impl Render for MultibufferHint {
                     )
                     .child(
                         Button::new("open_docs", "Learn More")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::End)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(move |_event, _, cx| {
                                 cx.open_url("https://zed.dev/docs/multibuffers")
                             }),

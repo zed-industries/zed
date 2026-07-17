@@ -10,7 +10,6 @@ path = "src/agent.rs"
 
 [features]
 test-support = ["db/test-support"]
-eval = []
 unit-eval = []
 e2e = []
 
@@ -20,9 +19,11 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 action_log.workspace = true
+async-channel.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -31,7 +32,6 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 db.workspace = true
-derive_more.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -41,31 +41,33 @@ handlebars = { workspace = true, features = ["rust-embed"] }
 heck.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+http_proxy.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
-open.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+quick-xml.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shell_command_parser.workspace = true
 smallvec.workspace = true
-smol.workspace = true
 sqlez.workspace = true
 streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
 telemetry.workspace = true
+tempfile.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
@@ -77,7 +79,14 @@ web_search.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
 
+# Used only on Windows to resolve the running release channel/version so the WSL
+# sandbox helper can fetch a matching Linux `zed`.
+[target.'cfg(target_os = "windows")'.dependencies]
+release_channel.workspace = true
+
 [dev-dependencies]
+assets.workspace = true
+async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
@@ -96,13 +105,14 @@ language_model = { workspace = true, "features" = ["test-support"] }
 lsp = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
+proptest.workspace = true
 rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
-tempfile.workspace = true
-terminal = { workspace = true, "features" = ["test-support"] }
+
 theme = { workspace = true, "features" = ["test-support"] }
-tree-sitter-rust.workspace = true
+theme_settings.workspace = true
+
 unindent = { workspace = true }
-worktree = { workspace = true, "features" = ["test-support"] }
+
 zlog.workspace = true

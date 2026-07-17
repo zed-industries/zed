@@ -35,7 +35,7 @@ jobs:
 
       - if: steps.is-post-close-comment.outputs.result == 'true'
         id: get-app-token
-        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
@@ -63,13 +63,18 @@ jobs:
             }
 
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          echo "::notice::Skipping issue #${{ github.event.issue.number }} - commenter is staff member"
+          echo "::notice::Skipping issue #$ISSUE_NUMBER - commenter is staff member"
 
       # github-script outputs are JSON strings, so we compare against 'false' (string)
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'false'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_USER_LOGIN: ${{ github.event.comment.user.login }}
         run: |
-          echo "::notice::Adding issue #${{ github.event.issue.number }} to project (comment by ${{ github.event.comment.user.login }})"
+          echo "::notice::Adding issue #$ISSUE_NUMBER to project (comment by $COMMENT_USER_LOGIN)"
 
       - if: steps.is-post-close-comment.outputs.result == 'true' && steps.check-staff.outputs.result == 'false'
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2

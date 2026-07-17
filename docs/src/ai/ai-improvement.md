@@ -1,88 +1,108 @@
 ---
-title: AI Improvement and Data Collection - Zed
-description: Zed's opt-in approach to AI data collection for improving the agent panel and edit predictions.
+title: Feedback and Training Data - Zed
+description: Understand opt-in AI feedback ratings, Edit Prediction training data, and when Zed may retain AI data.
 ---
 
-# Zed AI Improvement
+# Feedback and Training Data
 
-## Agent Panel
+Normal AI requests are not retained by Zed. For
+[Zed-hosted models](../account/zed-hosted-models.md), provider agreements
+prohibit training on your prompts or code context and require zero data
+retention, except for
+[provider-designated models with safety retention](./privacy-and-security.md#provider-safety-retention),
+such as Anthropic's Covered Models.
+This page covers the cases where Zed may retain AI data because you explicitly
+shared it or opted in.
 
-### Opt-In
+AI features in Zed include:
 
-When you use the Agent Panel through any of these means:
+- [Agent Panel](./agent-panel.md)
+- [Edit Prediction](./edit-prediction.md)
+- [Inline Assistant](./inline-assistant.md)
+- [Git commit generation](../git.md#ai-support-in-git)
 
-- [Zed's hosted models](./subscription.md)
-- [connecting a non-Zed AI service via API key](./llm-providers.md)
-- using an [external agent](./external-agents.md)
+For the broader request path and provider data boundaries, see
+[AI Privacy](./privacy-and-security.md).
 
-Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
+## Zed-Hosted Model Commitments {#data-retention-and-training}
 
-> Note that rating responses will send your data related to that response to Zed's servers.
-> **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
+Zed-hosted model zero-data-retention and no-training commitments, including the
+exception for provider-designated models with safety retention (such as
+Anthropic's Covered Models), are documented
+on [AI Privacy](./privacy-and-security.md#data-retention-and-training).
 
-When using upstream services through Zed's hosted models, we require assurances from our service providers that your user content won't be used for training models.
+## Response Ratings and Feedback {#ai-feedback-with-ratings}
 
-| Provider  | No Training Guarantee                                   | Zero-Data Retention (ZDR)                                                                                                                     |
-| --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
-| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 17 and 19h                                                    |
-| OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
+You can rate AI responses or submit feedback to help improve Zed's system prompt,
+tools, and AI product experience. Each share is opt-in, and sharing once does not
+grant permission for future collection.
 
-When you use your own API keys or external agents, **Zed does not have control over how your data is used by that service provider.**
-You should reference your agreement with each service provider to understand what terms and conditions apply.
+> **Warning:** Rating an AI response sends the conversation thread to Zed. The
+> conversation thread includes your messages, AI responses, and thread metadata.
+> If you do not want the thread persisted by Zed, do not rate the response.
 
-### Data we collect
+### Data Collected from Feedback {#data-collected-ai-feedback}
 
-For prompts you have explicitly shared with us, Zed may store copies of those prompts and other data about the specific use of the Agent Panel.
+For conversation threads you explicitly share through ratings or feedback, Zed
+may store:
 
-This data includes:
+- your messages and AI responses in the conversation thread
+- any commentary you include with your rating or feedback
+- thread metadata, such as model used, token counts, and timestamps
+- metadata about your Zed installation
 
-- The prompt given to the Agent
-- Any commentary you include
-- Product telemetry about the agentic thread
-- Metadata about your Zed installation
+If you do not rate responses or submit feedback, Zed does not store Customer Data
+related to your AI feature usage for improvement.
 
-### Data Handling
+Telemetry related to Zed's AI features is collected separately. This includes
+metadata such as the AI feature being used and high-level interactions with the
+feature to understand performance, such as agent response time or edit acceptance
+and rejection. See [Telemetry](../telemetry.md) for details.
 
-Collected data is stored in Snowflake, a private database. We periodically review this data to refine the agent's system prompt and tool use. All data is anonymized and stripped of sensitive information (access tokens, user IDs, email addresses).
+Collected feedback data is stored in Snowflake. Zed periodically reviews this
+data to refine prompts, tools, and product behavior. Stored feedback data is
+anonymized and stripped of sensitive information such as access tokens, user IDs,
+and email addresses.
 
-## Edit Predictions
+## Edit Prediction Training Data {#edit-predictions}
 
-By default, when using Zed Edit Predictions, Zed does not persistently store user content or use user content for training of its models.
+Zed does not collect training data for the Edit Prediction model unless all of
+these conditions are met:
 
-### Opt-in
+1. You opt in by toggling **Training Data Collection** under the **Privacy**
+   section of the Edit Prediction status bar menu.
+2. The project is open source, detected by the presence of a license file. See
+   the [license detection logic](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
+3. The file is not excluded by `edit_predictions.disabled_globs`.
 
-Users who are working on open source licensed projects may optionally opt-in to providing model improvement feedback. This opt-in occurs on a per-project basis. If you work on multiple open source projects and wish to provide model improvement feedback you will have to opt-in for each individual project.
+Edit Prediction setup and provider configuration live on the
+[Edit Prediction](./edit-prediction.md) page. This page only covers training data
+collection and retention.
 
-When working on other projects where you haven't opted-in, Zed will not persistently store user content or use user content for training of its models.
+### File Exclusions {#file-exclusions}
 
-You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
-
-### Exclusions
-
-Zed will intentionally exclude certain files from Predictive Edits entirely, even when you have opted-in to model improvement feedback.
-
-You can inspect this exclusion list by opening `zed: open default settings` from the command palette:
+Certain files are always excluded from Edit Prediction training data collection,
+regardless of opt-in status:
 
 ```json [settings]
 {
   "edit_predictions": {
-    // A list of globs representing files that edit predictions should be disabled for.
-    // There's a sensible default list of globs already included.
-    // Any addition to this list will be merged with the default list.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
       "**/*.key",
       "**/*.cert",
       "**/*.crt",
+      "**/.dev.vars",
       "**/secrets.yml"
     ]
   }
 }
 ```
 
-Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions) in their Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
+You can explicitly exclude additional paths or file extensions by adding them to
+[`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions)
+in your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -92,27 +112,39 @@ Users may explicitly exclude additional paths and/or file extensions by adding t
 }
 ```
 
-### Data we collect
+### Data Collected from Edit Prediction Training {#data-collected-edit-prediction-training}
 
-For open source projects where you have opted-in, Zed may store copies of requests and responses to the Zed AI Prediction service.
+For open source projects where you opted in, Zed may collect:
 
-This data includes:
+- code excerpts around your cursor
+- recent edit diffs
+- the generated prediction
+- repository URL and git revision
+- buffer outline and diagnostics
 
-- sampled edit prediction examples (cursor context + recent diffs/edits) for offline evaluation
-- the edit prediction
-- a portion of the buffer content around the cursor
-- a few recent edits
-- the current buffer outline
-- diagnostics (errors, warnings, etc) from language servers
+Collected data is stored in Snowflake. Zed periodically reviews this data to
+select training samples for inclusion in the model training dataset. Included
+data is anonymized and stripped of sensitive information such as access tokens,
+user IDs, and email addresses.
 
-### Data Handling
+The training dataset is publicly available at
+[huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
 
-Collected data is stored in Snowflake, a private database. We periodically select training samples from this data. All data is anonymized and stripped of sensitive information (access tokens, user IDs, email addresses). The training dataset is publicly available at [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
+### Training Dataset and Model Output {#training-dataset-and-model-output}
 
-### Model Output
+Zed uses this training dataset to fine-tune
+[Qwen2.5-Coder-7B](https://huggingface.co/Qwen/Qwen2.5-Coder-7B) and makes the
+resulting model available at
+[huggingface.co/zed-industries/zeta](https://huggingface.co/zed-industries/zeta).
 
-We then use this training dataset to fine-tune [Qwen2.5-Coder-7B](https://huggingface.co/Qwen/Qwen2.5-Coder-7B) and make the resulting model available at [huggingface.co/zed-industries/zeta](https://huggingface.co/zed-industries/zeta).
+## Business Controls {#business-controls}
 
-## Applicable terms
+On Zed Business, data sharing is off by default and controlled by organization
+administrators. Administrators can prevent members from submitting agent thread
+feedback or opting into Edit Prediction training data collection. See
+[Privacy for Business](../business/privacy.md) and
+[Admin Controls](../business/admin-controls.md#data-sharing).
 
-Please see the [Zed Terms of Service](https://zed.dev/terms-of-service) for more.
+## Applicable Terms {#applicable-terms}
+
+See the [Zed Terms of Service](https://zed.dev/terms) for more.

@@ -2,10 +2,11 @@ use call::Room;
 use client::ChannelId;
 use gpui::{Entity, TestAppContext};
 
-mod agent_sharing_tests;
+mod auto_watch_tests;
 mod channel_buffer_tests;
 mod channel_guest_tests;
 mod channel_tests;
+mod collab_panel_tests;
 mod db_tests;
 mod editor_tests;
 mod following_tests;
@@ -34,12 +35,12 @@ fn room_participants(room: &Entity<Room>, cx: &mut TestAppContext) -> RoomPartic
         let mut remote = room
             .remote_participants()
             .values()
-            .map(|participant| participant.user.github_login.clone().to_string())
+            .map(|participant| participant.user.username.clone().to_string())
             .collect::<Vec<_>>();
         let mut pending = room
             .pending_participants()
             .iter()
-            .map(|user| user.github_login.clone().to_string())
+            .map(|user| user.username.clone().to_string())
             .collect::<Vec<_>>();
         remote.sort();
         pending.sort();

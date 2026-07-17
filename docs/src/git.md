@@ -99,11 +99,11 @@ You can switch between modes at any time. Your preference applies to [Project Di
 
 File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
 
-To open File History:
+To view File History:
 
-- Right-click on a file in the Project Panel and select "Open File History"
-- Right-click on a file in the Git Panel and select "Open File History"
-- Right-click on an editor tab and select "Open File History"
+- Right-click on a file in the Project Panel and select "View File History"
+- Right-click on a file in the Git Panel and select "View File History"
+- Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
 ## Fetch, Push, and Pull
@@ -142,6 +142,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
+
 <!-- Add media -->
 
 ## Committing
@@ -168,11 +170,48 @@ Find more information about setting the `preferred-line-length` in the [Configur
 
 Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
 
+When you are working in a [Git worktree](#git-worktrees), use the branch picker after switching to the worktree to create or check out the branch you want to use there.
+
 ### Deleting Branches
 
 To delete a branch, open the branch switcher with {#action git::Switch}, find the branch you want to delete, and use the delete option. Zed will confirm before deleting to prevent accidental data loss.
 
 > **Note:** You cannot delete the branch you currently have checked out. Switch to a different branch first.
+
+## Git Worktrees
+
+Git worktrees let you keep multiple checkouts of the same repository on disk at the same time.
+This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
+
+Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+From the picker, you can:
+
+- Create a new linked worktree either from the current branch or default branch
+- Type a name to create a named worktree or let Zed automatically pick one for you
+- Switch the current workspace to an existing worktree
+- Open an existing worktree in a new window
+- Delete linked worktrees that are not currently open in the project
+
+### Worktree Management
+
+New worktrees are created in detached HEAD state.
+After switching to the new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing, unused branch.
+This keeps Zed from accidentally checking out the same branch in multiple worktrees.
+
+The directory used for new worktrees is controlled by the `git.worktree_directory` setting.
+By default, Zed creates worktrees under `../worktrees` relative to the repository's working directory.
+
+See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
+
+### Init Setup
+
+To run setup steps after Zed creates a linked worktree, use the [`create_worktree` task hook](./tasks.md#hooks).
+For agent-specific workflows, see [Worktree Isolation](./ai/parallel-agents.md#worktree-isolation).
+
+### Multi-root Workspaces
+
+If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
+Non-Git folders in the same project are included in the new workspace as-is.
 
 ## Merge Conflicts
 
@@ -235,12 +274,12 @@ To view a stash's contents, select it in the stash picker and press {#kb stash_p
 ## AI Support in Git
 
 Zed currently supports LLM-powered commit message generation.
-You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} ({#kb git::GenerateCommitMessage}) keybinding.
+You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage}, or through the {#kb git::GenerateCommitMessage} keybinding.
 
 > Note that you need to have an LLM provider configured either via your own API keys or through Zed's hosted AI models.
-> Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
+> Visit [AI Quick Start](./ai/quick-start.md) to learn how to configure AI.
 
-You can specify your preferred model to use by providing a `commit_message_model` agent setting.
+You can specify your preferred model for this task by adding a `commit_message_model` field to your agent settings.
 See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
 ```json [settings]
@@ -248,18 +287,28 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
   "agent": {
     "commit_message_model": {
       "provider": "anthropic",
-      "model": "claude-3-5-haiku"
+      "model": "claude-4-5-haiku"
     }
   }
 }
 ```
 
-To customize the format of generated commit messages, run {#action agent::OpenRulesLibrary} and select the "Commit message" rule on the left side.
-From there, you can modify the prompt to match your desired format.
+To add custom commit instructions for the model, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
-<!-- Add media -->
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
-Any specific instructions for commit messages added to [Rules files](./ai/rules.md) are also picked up by the model tasked with writing your commit message.
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+
+> Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
+> See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.
 
 ## Git Integrations
 
@@ -299,7 +348,7 @@ You can configure multiple custom providers if you work with several self-hosted
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
-by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
+by creating [custom key bindings](./key-bindings.md#custom-key-bindings) for the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
@@ -337,6 +386,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Branch}                     | {#kb git::Branch}                     |
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |

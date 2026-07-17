@@ -20,7 +20,6 @@
       "ctrl-shift-l": "agent::AddSelectionToThread", // In cursor uses "Ask" mode
       "ctrl-l": "agent::AddSelectionToThread", // In cursor uses "Agent" mode
       "ctrl-k": "assistant::InlineAssist",
-      "ctrl-shift-k": "assistant::InsertIntoEditor",
     },
   },
   {
@@ -34,7 +33,7 @@
     },
   },
   {
-    "context": "AgentPanel || ContextEditor || (MessageEditor > Editor)",
+    "context": "AgentPanel || (MessageEditor > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-i": "workspace::ToggleRightDock",
@@ -47,7 +46,6 @@
       "ctrl-shift-backspace": "editor::Cancel",
       "ctrl-r": "agent::NewThread",
       "ctrl-shift-v": "editor::Paste",
-      "ctrl-shift-k": "assistant::InsertIntoEditor",
       // "escape": "agent::ToggleFocus"
       ///// Enable when Zed supports multiple thread tabs
       // "ctrl-t": // new thread tab

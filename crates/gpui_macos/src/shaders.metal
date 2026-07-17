@@ -468,14 +468,18 @@ vertex ShadowVertexOutput shadow_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
-  float margin = 3. * shadow.blur_radius;
-  // Set the bounds of the shadow and adjust its size based on the shadow's
-  // spread radius to achieve the spreading effect
-  Bounds_ScaledPixels bounds = shadow.bounds;
-  bounds.origin.x -= margin;
-  bounds.origin.y -= margin;
-  bounds.size.width += 2. * margin;
-  bounds.size.height += 2. * margin;
+  Bounds_ScaledPixels bounds;
+  if (shadow.inset != 0u) {
+    bounds = shadow.element_bounds;
+  } else {
+    // Leave room for the gaussian tail outside the shadow rect.
+    float margin = 3. * shadow.blur_radius;
+    bounds = shadow.bounds;
+    bounds.origin.x -= margin;
+    bounds.origin.y -= margin;
+    bounds.size.width += 2. * margin;
+    bounds.size.height += 2. * margin;
+  }
 
   float4 device_position =
       to_device_position(unit_vertex, bounds, viewport_size);
@@ -536,6 +540,15 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                gaussian(y, shadow.blur_radius) * step;
       y += step;
     }
+  }
+
+  if (shadow.inset != 0u) {
+    // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+    // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+    alpha = 1. - alpha;
+    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                      shadow.element_corner_radii);
+    alpha *= saturate(0.5 - element_distance);
   }
 
   return input.color * float4(1., 1., 1., alpha);
@@ -1215,6 +1228,20 @@ float4 fill_color(Background background,
           break;
         }
       }
+
+      // Dither to reduce banding in gradients (especially dark/alpha).
+      // Triangular-distributed noise breaks up 8-bit quantization steps.
+      // ±2/255 for RGB (enough for dark-on-dark compositing),
+      // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
+      {
+        float2 seed = position * 0.6180339887; // golden ratio spread
+        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
+        float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
+        color.rgb += tri * 2.0 / 255.0;
+        color.a   += tri * 3.0 / 255.0;
+      }
+
       break;
     }
     case 2: {
@@ -1237,14 +1264,14 @@ float4 fill_color(Background background,
         // checkerboard
         float size = background.gradient_angle_or_pattern_height;
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
-        
+
         float x_index = floor(relative_position.x / size);
         float y_index = floor(relative_position.y / size);
         float should_be_colored = fmod(x_index + y_index, 2.0);
-        
+
         color = solid_color;
         color.a *= saturate(should_be_colored);
-        break; 
+        break;
     }
   }
 

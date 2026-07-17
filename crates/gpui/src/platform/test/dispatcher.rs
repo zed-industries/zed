@@ -30,11 +30,12 @@ impl TestDispatcher {
                 .map_or(false, |var| var == "1" || var == "true"),
             timeout_ticks: 0..=1000,
         }));
+        Self::from_scheduler(scheduler)
+    }
 
-        let session_id = scheduler.allocate_session_id();
-
+    pub fn from_scheduler(scheduler: Arc<TestScheduler>) -> Self {
         TestDispatcher {
-            session_id,
+            session_id: scheduler.allocate_session_id(),
             scheduler,
             num_cpus_override: Arc::new(AtomicUsize::new(0)),
         }
@@ -46,6 +47,10 @@ impl TestDispatcher {
 
     pub fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    pub fn drain_tasks(&self) {
+        self.scheduler.drain_tasks();
     }
 
     pub fn advance_clock(&self, by: Duration) {
@@ -70,6 +75,14 @@ impl TestDispatcher {
 
     pub fn run_until_parked(&self) {
         while self.tick(false) {}
+    }
+
+    pub fn allow_parking(&self) {
+        self.scheduler.allow_parking();
+    }
+
+    pub fn forbid_parking(&self) {
+        self.scheduler.forbid_parking();
     }
 
     /// Override the value returned by `BackgroundExecutor::num_cpus()` in tests.
@@ -99,19 +112,6 @@ impl Clone for TestDispatcher {
 }
 
 impl PlatformDispatcher for TestDispatcher {
-    fn get_all_timings(&self) -> Vec<crate::ThreadTaskTimings> {
-        Vec::new()
-    }
-
-    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
-        crate::ThreadTaskTimings {
-            thread_name: None,
-            thread_id: std::thread::current().id(),
-            timings: Vec::new(),
-            total_pushed: 0,
-        }
-    }
-
     fn is_main_thread(&self) -> bool {
         self.scheduler.is_main_thread()
     }
@@ -126,8 +126,7 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        self.scheduler
-            .schedule_foreground(self.session_id, runnable);
+        self.scheduler.schedule_local(self.session_id, runnable);
     }
 
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {

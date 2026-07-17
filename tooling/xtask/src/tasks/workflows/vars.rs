@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, ops::Not};
 
 use gh_workflow::{
     Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowCallSecret,
@@ -19,10 +19,6 @@ macro_rules! var {
     };
 }
 
-secret!(ANTHROPIC_API_KEY);
-secret!(OPENAI_API_KEY);
-secret!(GOOGLE_AI_API_KEY);
-secret!(GOOGLE_CLOUD_PROJECT);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
@@ -41,16 +37,19 @@ secret!(SENTRY_AUTH_TOKEN);
 secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
-secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
 secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
-secret!(VERCEL_TOKEN);
+secret!(ZED_DEV_REVALIDATE_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 secret!(R2_ACCOUNT_ID);
 secret!(R2_ACCESS_KEY_ID);
 secret!(R2_SECRET_ACCESS_KEY);
+secret!(CLOUDFLARE_API_TOKEN);
+secret!(CLOUDFLARE_ACCOUNT_ID);
+secret!(DOCS_AMPLITUDE_API_KEY);
+secret!(DOCS_CONSENT_IO_INSTANCE);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -100,12 +99,6 @@ pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Co
         .cancel_in_progress(true)
 }
 
-pub(crate) fn allow_concurrent_runs() -> Concurrency {
-    Concurrency::default()
-        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}")
-        .cancel_in_progress(true)
-}
-
 // Represents a pattern to check for changed files and corresponding output variable
 pub struct PathCondition {
     pub name: &'static str,
@@ -130,21 +123,50 @@ impl PathCondition {
             set_by_step: Default::default(),
         }
     }
-    pub fn guard(&self, job: NamedJob) -> NamedJob {
+
+    pub fn and_always<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: true,
+        }
+    }
+
+    pub fn and_not_in_merge_queue<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: false,
+        }
+    }
+}
+
+pub struct PathContextCondition<'a> {
+    condition: &'a PathCondition,
+    run_in_merge_queue: bool,
+}
+
+impl<'a> PathContextCondition<'a> {
+    pub fn then(&'a self, job: NamedJob) -> NamedJob {
         let set_by_step = self
+            .condition
             .set_by_step
             .borrow()
             .clone()
-            .unwrap_or_else(|| panic!("condition {},is never set", self.name));
+            .unwrap_or_else(|| panic!("condition {},is never set", self.condition.name));
         NamedJob {
             name: job.name,
-            job: job
-                .job
-                .add_need(set_by_step.clone())
-                .cond(Expression::new(format!(
-                    "needs.{}.outputs.{} == 'true'",
-                    &set_by_step, self.name
-                ))),
+            job: job.job.add_need(set_by_step.clone()).cond(Expression::new(
+                format!(
+                    "needs.{}.outputs.{} == 'true' {merge_queue_condition}",
+                    &set_by_step,
+                    self.condition.name,
+                    merge_queue_condition = self
+                        .run_in_merge_queue
+                        .not()
+                        .then_some("&& github.event_name != 'merge_group'")
+                        .unwrap_or_default()
+                )
+                .trim(),
+            )),
         }
     }
 }
@@ -156,14 +178,31 @@ pub(crate) struct StepOutput {
 
 impl StepOutput {
     pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
-        Self {
-            name,
-            step_id: step
-                .value
-                .id
-                .clone()
-                .expect("Steps that produce outputs must have an ID"),
-        }
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        assert!(
+            step.value
+                .run
+                .as_ref()
+                .is_none_or(|run_command| run_command.contains(name)),
+            "Step output with name '{name}' must occur at least once in run command with ID {step_id}!"
+        );
+
+        Self { name, step_id }
+    }
+
+    pub fn new_unchecked<T>(step: &Step<T>, name: &'static str) -> Self {
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        Self { name, step_id }
     }
 
     pub fn expr(&self) -> String {
@@ -335,6 +374,8 @@ pub mod assets {
     pub const MAC_X86_64: &str = "Zed-x86_64.dmg";
     pub const LINUX_AARCH64: &str = "zed-linux-aarch64.tar.gz";
     pub const LINUX_X86_64: &str = "zed-linux-x86_64.tar.gz";
+    pub const BWRAP_LINUX_AARCH64: &str = "bwrap-linux-aarch64.gz";
+    pub const BWRAP_LINUX_X86_64: &str = "bwrap-linux-x86_64.gz";
     pub const WINDOWS_X86_64: &str = "Zed-x86_64.exe";
     pub const WINDOWS_AARCH64: &str = "Zed-aarch64.exe";
 
@@ -351,6 +392,8 @@ pub mod assets {
             MAC_X86_64,
             LINUX_AARCH64,
             LINUX_X86_64,
+            BWRAP_LINUX_AARCH64,
+            BWRAP_LINUX_X86_64,
             WINDOWS_X86_64,
             WINDOWS_AARCH64,
             REMOTE_SERVER_MAC_AARCH64,

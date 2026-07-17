@@ -71,12 +71,22 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "agent_ui_font_size": 15,
   // Controls the font size for the agent panel's message editor, user message,
   // and any other snippet of code.
-  "agent_buffer_font_size": 12
+  "agent_buffer_font_size": 12,
+
+  // Controls the font size for the markdown preview.
+  // If not specified, it falls back to the editor font size.
+  "markdown_preview_font_size": null,
+  // Controls the font family for the markdown preview.
+  // If not specified, it falls back to the UI font family.
+  "markdown_preview_font_family": null,
+  // Controls the font family for code blocks in the markdown preview.
+  // If not specified, it falls back to the editor font family.
+  "markdown_preview_code_font_family": null
 ```
 
 ### Font ligatures
 
-By default Zed enable font ligatures which will visually combines certain adjacent characters.
+By default Zed enables font ligatures which will visually combine certain adjacent characters.
 
 For example `=>` will be displayed as `→` and `!=` will be `≠`.
 This is purely cosmetic and the individual characters remain unchanged.
@@ -105,7 +115,7 @@ To disable this behavior use:
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
   // "git_panel": {"button": false },
-  // "notification_panel": {"button": false },
+
   // "agent": {"button": false },
   // "debugger": {"button": false },
   // "diagnostics": {"button": false },
@@ -118,7 +128,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
+    "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
@@ -183,8 +193,8 @@ TBD: Centered layout related settings
   // Highlight the current line in the editor: none, gutter, line, all
   "current_line_highlight": "all",
 
-  // When does the mouse cursor hide: never, on_typing, on_typing_and_movement
-  "hide_mouse": "on_typing_and_movement",
+  // When does the mouse cursor hide: never, on_typing, on_typing_and_action
+  "hide_mouse": "on_typing_and_action",
 
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
@@ -237,7 +247,8 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay_ms": 0,                  // Show after delay (ms)
+      "delay_ms": 0,               // Show after delay (ms)
+      "location": "inline",        // inline, status_bar
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -281,7 +292,7 @@ TBD: Centered layout related settings
   // Minimap related settings
   "minimap": {
     "show": "never",                // When to show (auto, always, never)
-    "display_in": "active_editor",  // Where to show (active_editor, all_editor)
+    "display_in": "active_editor",  // Where to show (active_editor, all_editors)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
@@ -382,8 +393,15 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // Whether to query and display LSP document links in the editor.
+  "lsp_document_links": true,
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
+
+  // How to display the LSP item kind (function, method, variable, etc.)
+  // of each entry in the completions menu. "symbol" shows a syntax-colored
+  // single-letter badge.
+  "completion_menu_item_kind": "off", // off, symbol
   // Turn on colorization of brackets in editors (configurable per language)
   "colorize_brackets": true,
 ```
@@ -392,8 +410,7 @@ TBD: Centered layout related settings
 
 ```json [settings]
   "edit_predictions": {
-    "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
-    "enabled_in_text_threads": true // Show/hide predictions in agent text threads
+    "mode": "eager"                  // Automatically show (eager) or hold-alt (subtle)
   },
   "show_edit_predictions": true     // Show/hide predictions in editor
 ```
@@ -471,6 +488,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Sort order for entries (directories_first, mixed, files_first)
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively.
+    // "default": Case-insensitive natural sort, lowercase preferred in ties.
+    // "upper":   Uppercase names grouped before lowercase, natural sort within.
+    // "lower":   Lowercase names grouped before uppercase, natural sort within.
+    // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    "sort_order": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.
     "hide_root": false,
@@ -547,7 +570,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left",               // Where to dock: left, right
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
-    "sort_by_path": false,        // Sort by path (false) or status (true)
+    "sort_by": "path",            // path, name
+    "group_by": "status",         // none, status, staging
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }
@@ -589,16 +613,6 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left", // Where to dock: left, right
     "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true, // Shown call status in the OS status bar.
-
-  // Notification Panel
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380
-  }
+  "show_call_status_icon": true // Shown call status in the OS status bar.
 }
 ```

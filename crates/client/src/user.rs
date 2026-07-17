@@ -3,8 +3,10 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{
-    GetAuthenticatedUserResponse, Organization, OrganizationId, Plan, PlanInfo,
+    GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
+    UpdateSystemSettingsBody,
 };
+use cloud_api_types::OrganizationConfiguration;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
@@ -13,7 +15,8 @@ use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
+    TaskExt, WeakEntity,
 };
 use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
@@ -25,7 +28,7 @@ use std::{
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
 
-pub type UserId = u64;
+pub type LegacyUserId = u64;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -52,8 +55,8 @@ pub struct ParticipantIndex(pub u32);
 
 #[derive(Default, Debug)]
 pub struct User {
-    pub id: UserId,
-    pub github_login: SharedString,
+    pub legacy_id: LegacyUserId,
+    pub username: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -62,7 +65,7 @@ pub struct User {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
-    pub user_id: UserId,
+    pub user_id: LegacyUserId,
     pub is_host: bool,
     pub committer_name: Option<String>,
     pub committer_email: Option<String>,
@@ -76,13 +79,13 @@ impl PartialOrd for User {
 
 impl Ord for User {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.github_login.cmp(&other.github_login)
+        self.username.cmp(&other.username)
     }
 }
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.github_login == other.github_login
+        self.legacy_id == other.legacy_id && self.username == other.username
     }
 }
 
@@ -105,7 +108,6 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     edit_prediction_usage: Option<EditPredictionUsage>,
@@ -114,6 +116,7 @@ pub struct UserStore {
     current_organization: Option<Arc<Organization>>,
     organizations: Vec<Arc<Organization>>,
     plans_by_organization: HashMap<OrganizationId, Plan>,
+    configuration_by_organization: HashMap<OrganizationId, OrganizationConfiguration>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -140,6 +143,7 @@ pub enum Event {
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
     PlanUpdated,
+    OrganizationChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -184,11 +188,11 @@ impl UserStore {
 
         Self {
             users: Default::default(),
-            by_github_login: Default::default(),
             current_user: current_user_rx,
             current_organization: None,
             organizations: Vec::new(),
             plans_by_organization: HashMap::default(),
+            configuration_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -213,7 +217,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
@@ -222,16 +226,18 @@ impl UserStore {
                         | Status::Reauthenticated
                         | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
+                                let system_id =
+                                    client.telemetry().system_id().map(|id| id.to_string());
                                 let response = client
                                     .cloud_client()
-                                    .get_authenticated_user()
+                                    .get_authenticated_user(system_id)
                                     .await
                                     .log_err();
 
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
-                                        id: user_id,
-                                        github_login: response.user.github_login.clone().into(),
+                                        legacy_id: user_id,
+                                        username: response.user.username.clone().into(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
                                     });
@@ -252,8 +258,6 @@ impl UserStore {
                                 cx.update(|cx| {
                                     if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
-                                            this.by_github_login
-                                                .insert(user.github_login.clone(), user_id);
                                             this.users.insert(user_id, user);
                                             this.update_authenticated_user(response, cx)
                                         })
@@ -309,7 +313,6 @@ impl UserStore {
     #[cfg(feature = "test-support")]
     pub fn clear_cache(&mut self) {
         self.users.clear();
-        self.by_github_login.clear();
     }
 
     async fn handle_show_contacts(
@@ -394,13 +397,14 @@ impl UserStore {
                     this.update(cx, |this, cx| {
                         // Remove contacts
                         this.contacts
-                            .retain(|contact| !removed_contacts.contains(&contact.user.id));
+                            .retain(|contact| !removed_contacts.contains(&contact.user.legacy_id));
                         // Update existing contacts and insert new ones
                         for updated_contact in updated_contacts {
-                            match this.contacts.binary_search_by_key(
-                                &&updated_contact.user.github_login,
-                                |contact| &contact.user.github_login,
-                            ) {
+                            match this
+                                .contacts
+                                .binary_search_by_key(&&updated_contact.user.username, |contact| {
+                                    &contact.user.username
+                                }) {
                                 Ok(ix) => this.contacts[ix] = updated_contact,
                                 Err(ix) => this.contacts.insert(ix, updated_contact),
                             }
@@ -408,7 +412,7 @@ impl UserStore {
 
                         // Remove incoming contact requests
                         this.incoming_contact_requests.retain(|user| {
-                            if removed_incoming_requests.contains(&user.id) {
+                            if removed_incoming_requests.contains(&user.legacy_id) {
                                 cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Cancelled,
@@ -422,9 +426,8 @@ impl UserStore {
                         for user in incoming_requests {
                             match this
                                 .incoming_contact_requests
-                                .binary_search_by_key(&&user.github_login, |contact| {
-                                    &contact.github_login
-                                }) {
+                                .binary_search_by_key(&&user.username, |contact| &contact.username)
+                            {
                                 Ok(ix) => this.incoming_contact_requests[ix] = user,
                                 Err(ix) => this.incoming_contact_requests.insert(ix, user),
                             }
@@ -432,13 +435,13 @@ impl UserStore {
 
                         // Remove outgoing contact requests
                         this.outgoing_contact_requests
-                            .retain(|user| !removed_outgoing_requests.contains(&user.id));
+                            .retain(|user| !removed_outgoing_requests.contains(&user.legacy_id));
                         // Update existing incoming requests and insert new ones
                         for request in outgoing_requests {
                             match this
                                 .outgoing_contact_requests
-                                .binary_search_by_key(&&request.github_login, |contact| {
-                                    &contact.github_login
+                                .binary_search_by_key(&&request.username, |contact| {
+                                    &contact.username
                                 }) {
                                 Ok(ix) => this.outgoing_contact_requests[ix] = request,
                                 Err(ix) => this.outgoing_contact_requests.insert(ix, request),
@@ -460,7 +463,7 @@ impl UserStore {
 
     pub fn has_contact(&self, user: &Arc<User>) -> bool {
         self.contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
     }
 
@@ -473,25 +476,25 @@ impl UserStore {
     }
 
     pub fn is_contact_request_pending(&self, user: &User) -> bool {
-        self.pending_contact_requests.contains_key(&user.id)
+        self.pending_contact_requests.contains_key(&user.legacy_id)
     }
 
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
         if self
             .contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestAccepted
         } else if self
             .outgoing_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestSent
         } else if self
             .incoming_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestReceived
@@ -515,7 +518,7 @@ impl UserStore {
     pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
         self.incoming_contact_requests
             .iter()
-            .any(|user| user.id == user_id)
+            .any(|user| user.legacy_id == user_id)
     }
 
     pub fn respond_to_contact_request(
@@ -680,12 +683,6 @@ impl UserStore {
         })
     }
 
-    pub fn cached_user_by_github_login(&self, github_login: &str) -> Option<Arc<User>> {
-        self.by_github_login
-            .get(github_login)
-            .and_then(|id| self.users.get(id).cloned())
-    }
-
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
     }
@@ -694,8 +691,45 @@ impl UserStore {
         self.current_organization.clone()
     }
 
-    pub fn set_current_organization(&mut self, organization: Arc<Organization>) {
+    pub fn set_current_organization(
+        &mut self,
+        organization: Arc<Organization>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let is_same_organization = self
+            .current_organization
+            .as_ref()
+            .is_some_and(|current| current.id == organization.id);
+
+        if is_same_organization {
+            return Task::ready(Ok(()));
+        }
+
+        let organization_id = organization.id.clone();
         self.current_organization.replace(organization);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
+
+        let Some(client) = self.client.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+        let Some(system_id) = client.telemetry().system_id().map(|id| id.to_string()) else {
+            // Without a system ID we have no addressable target row on the
+            // server, so the selection stays purely session-local.
+            return Task::ready(Ok(()));
+        };
+        let cloud_client = client.cloud_client();
+
+        cx.background_spawn(async move {
+            let body = UpdateSystemSettingsBody {
+                selected_organization_id: Some(organization_id),
+            };
+            cloud_client
+                .update_system_settings(system_id, body)
+                .await
+                .context("failed to persist selected organization")?;
+            Ok(())
+        })
     }
 
     pub fn organizations(&self) -> &Vec<Arc<Organization>> {
@@ -704,6 +738,28 @@ impl UserStore {
 
     pub fn plan_for_organization(&self, organization_id: &OrganizationId) -> Option<Plan> {
         self.plans_by_organization.get(organization_id).copied()
+    }
+
+    pub fn current_organization_configuration(&self) -> Option<&OrganizationConfiguration> {
+        let current_organization = self.current_organization.as_ref()?;
+
+        self.configuration_by_organization
+            .get(&current_organization.id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_configuration_for_test(
+        &mut self,
+        organization: Arc<Organization>,
+        configuration: OrganizationConfiguration,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_organization = Some(organization.clone());
+        self.organizations = vec![organization.clone()];
+        self.configuration_by_organization
+            .insert(organization.id.clone(), configuration);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
     }
 
     pub fn plan(&self) -> Option<Plan> {
@@ -721,10 +777,8 @@ impl UserStore {
             };
         }
 
-        if let Some(organization) = &self.current_organization
-            && let Some(plan) = self.plan_for_organization(&organization.id)
-        {
-            return Some(plan);
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -750,7 +804,16 @@ impl UserStore {
     }
 
     /// Returns whether the user's account is too new to use the service.
+    ///
+    /// This only applies when operating under the user's personal organization,
+    /// not a business organization.
     pub fn account_too_young(&self) -> bool {
+        if let Some(org) = &self.current_organization {
+            if !org.is_personal {
+                return false;
+            }
+        }
+
         self.plan_info
             .as_ref()
             .map(|plan| plan.is_account_too_young)
@@ -802,7 +865,33 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        self.current_organization = self.organizations.first().cloned();
+
+        self.current_organization = response
+            .default_organization_id
+            .and_then(|default_organization_id| {
+                self.organizations
+                    .iter()
+                    .find(|organization| organization.id == default_organization_id)
+                    .cloned()
+            })
+            .or_else(|| self.organizations.first().cloned());
+        self.plans_by_organization = response
+            .plans_by_organization
+            .into_iter()
+            .map(|(organization_id, plan)| {
+                let plan = match plan {
+                    KnownOrUnknown::Known(plan) => plan,
+                    KnownOrUnknown::Unknown(_) => {
+                        // If we get a plan that we don't recognize, fall back to the Free plan.
+                        Plan::ZedFree
+                    }
+                };
+
+                (organization_id, plan)
+            })
+            .collect();
+        self.configuration_by_organization =
+            response.configuration_by_organization.into_iter().collect();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
@@ -816,15 +905,19 @@ impl UserStore {
         cx.spawn(async move |cx| {
             match message {
                 MessageToClient::UserUpdated => {
-                    let cloud_client = cx
+                    let (cloud_client, system_id) = cx
                         .update(|cx| {
                             this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| client.cloud_client())
+                                this.client.upgrade().map(|client| {
+                                    let system_id =
+                                        client.telemetry().system_id().map(|id| id.to_string());
+                                    (client.cloud_client(), system_id)
+                                })
                             })
                         })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
-                    let response = cloud_client.get_authenticated_user().await?;
+                    let response = cloud_client.get_authenticated_user(system_id).await?;
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);
@@ -864,13 +957,7 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone())
-                && old.github_login != user.github_login
-            {
-                self.by_github_login.remove(&old.github_login);
-            }
-            self.by_github_login
-                .insert(user.github_login.clone(), user.id);
+            self.users.insert(user.legacy_id, user.clone());
             ret.push(user)
         }
         ret
@@ -899,8 +986,8 @@ impl UserStore {
         let mut ret = HashMap::default();
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
-            if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login);
+            if let Some(username) = self.get_cached_user(id).map(|u| u.username.clone()) {
+                ret.insert(id, username);
             } else {
                 missing_user_ids.push(id)
             }
@@ -920,8 +1007,8 @@ impl UserStore {
 impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
-            id: message.id,
-            github_login: message.github_login.into(),
+            legacy_id: message.id,
+            username: message.username.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })
@@ -952,7 +1039,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
             replica_id: ReplicaId::new(message.replica_id as u16),
-            user_id: message.user_id as UserId,
+            user_id: message.user_id as LegacyUserId,
             is_host: message.is_host,
             committer_name: message.committer_name,
             committer_email: message.committer_email,

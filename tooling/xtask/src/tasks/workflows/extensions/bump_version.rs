@@ -5,17 +5,18 @@ use gh_workflow::{
 use indoc::indoc;
 
 use crate::tasks::workflows::{
+    GenerateWorkflowArgs, GitSha,
     extensions::WithAppSecrets,
     runners,
     steps::{CommonJobConditions, NamedJob, named},
     vars::{JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
-pub(crate) fn bump_version() -> Workflow {
+pub(crate) fn bump_version(args: &GenerateWorkflowArgs) -> Workflow {
     let (determine_bump_type, bump_type) = determine_bump_type();
     let bump_type = bump_type.as_job_output(&determine_bump_type);
 
-    let call_bump_version = call_bump_version(&determine_bump_type, bump_type);
+    let call_bump_version = call_bump_version(args.sha.as_ref(), &determine_bump_type, bump_type);
 
     named::workflow()
         .on(Event::default()
@@ -26,12 +27,14 @@ pub(crate) fn bump_version() -> Workflow {
             )
             .pull_request(PullRequest::default().add_type(PullRequestType::Labeled))
             .workflow_dispatch(WorkflowDispatch::default()))
+        .permissions(Permissions::default())
         .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)
 }
 
 pub(crate) fn call_bump_version(
+    target_ref: Option<&GitSha>,
     depending_job: &NamedJob,
     bump_type: JobOutput,
 ) -> NamedJob<UsesJob> {
@@ -51,7 +54,7 @@ pub(crate) fn call_bump_version(
             "zed-industries",
             "zed",
             ".github/workflows/extension_bump.yml",
-            "main",
+            target_ref.map_or("main", AsRef::as_ref),
         )
         .add_need(depending_job.name.clone())
         .with(

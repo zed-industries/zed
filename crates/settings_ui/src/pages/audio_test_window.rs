@@ -88,7 +88,7 @@ fn start_test_playback(
                     }
                 };
 
-                let Ok(output) = audio::open_output_stream(output_device_id) else {
+                let Ok(output) = audio::open_test_output(output_device_id) else {
                     log::error!("Could not open output device for audio test");
                     return;
                 };
@@ -171,6 +171,8 @@ impl Render for AudioTestWindow {
                     )
                     .log_err();
                 },
+                None,
+                None,
                 window,
                 cx,
             )
@@ -200,6 +202,8 @@ impl Render for AudioTestWindow {
                 )
                 .log_err();
             },
+            None,
+            None,
             window,
             cx,
         );

@@ -27,7 +27,7 @@ wayland = [
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
     "filedescriptor",
-    "xkbcommon",
+    "xkbcommon/wayland",
     "open",
     "gpui/wayland",
 ]
@@ -37,7 +37,7 @@ x11 = [
 
     "as-raw-xcb-connection",
     "x11rb",
-    "xkbcommon",
+    "xkbcommon/x11",
     "xim",
     "x11-clipboard",
     "filedescriptor",
@@ -51,11 +51,15 @@ screen-capture = [
 
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+accesskit.workspace = true
+accesskit_unix.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
 collections.workspace = true
+image.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 http_client.workspace = true
 itertools.workspace = true
@@ -69,7 +73,6 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 url.workspace = true
-util.workspace = true
 uuid.workspace = true
 
 # Always used
@@ -78,7 +81,8 @@ oo7 = { version = "0.6", default-features = false, features = [
     "native_crypto",
 ] }
 calloop = "0.14.3"
-raw-window-handle = "0.6"
+notify-rust.workspace = true
+raw-window-handle.workspace = true
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
@@ -86,14 +90,14 @@ swash = { version = "0.2.6" }
 bitflags = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
-xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
+xkbcommon = { version = "0.8.0", default-features = false, optional = true }
 
 # Screen capture
 scap = { workspace = true, optional = true }
 
 # Wayland
 calloop-wayland-source = { version = "0.4.1", optional = true }
-wayland-backend = { version = "0.3.3", features = [
+wayland-backend = { version = "0.3.15", features = [
     "client_system",
     "dlopen",
 ], optional = true }
@@ -121,6 +125,7 @@ x11rb = { version = "0.13.1", features = [
     "cursor",
     "resource_manager",
     "sync",
+    "dri3",
 ], optional = true }
 # WARNING: If you change this, you must also publish a new version of zed-xim to crates.io
 xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8", features = [
