@@ -42,9 +42,9 @@ use crate::{
     RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
     SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
-use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
+use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -2368,16 +2368,20 @@ pub struct Image {
 pub(crate) fn decode_static_image(
     bytes: &[u8],
     format: image::ImageFormat,
-) -> image::ImageResult<Frame> {
-    let decoder = image::ImageReader::with_format(Cursor::new(bytes), format).into_decoder()?;
+) -> Result<SmallVec<[Frame; 1]>> {
+    let decoder = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_decoder()
+        .context("creating image decoder")?;
     decode_static_image_from_decoder(decoder)
 }
 
 pub(crate) fn decode_static_image_from_decoder(
     mut decoder: impl image::ImageDecoder,
-) -> image::ImageResult<Frame> {
-    let orientation = decoder.orientation()?;
-    let mut image = DynamicImage::from_decoder(decoder)?;
+) -> Result<SmallVec<[Frame; 1]>> {
+    let orientation = decoder
+        .orientation()
+        .context("reading decoder's orientation")?;
+    let mut image = DynamicImage::from_decoder(decoder).context("decoding image")?;
     image.apply_orientation(orientation);
 
     let mut data = image.into_rgba8();
@@ -2385,7 +2389,7 @@ pub(crate) fn decode_static_image_from_decoder(
         pixel.swap(0, 2);
     }
 
-    Ok(Frame::new(data))
+    Ok(SmallVec::from_elem(Frame::new(data), 1))
 }
 
 impl Hash for Image {
@@ -2443,13 +2447,6 @@ impl Image {
 
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
-        fn frames_for_image(
-            bytes: &[u8],
-            format: image::ImageFormat,
-        ) -> Result<SmallVec<[Frame; 1]>> {
-            Ok(SmallVec::from_elem(decode_static_image(bytes, format)?, 1))
-        }
-
         let frames = match self.format {
             ImageFormat::Gif => {
                 let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
@@ -2476,18 +2473,18 @@ impl Image {
 
                 frames
             }
-            ImageFormat::Png => frames_for_image(&self.bytes, image::ImageFormat::Png)?,
-            ImageFormat::Jpeg => frames_for_image(&self.bytes, image::ImageFormat::Jpeg)?,
-            ImageFormat::Webp => frames_for_image(&self.bytes, image::ImageFormat::WebP)?,
-            ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
-            ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
-            ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
+            ImageFormat::Png => decode_static_image(&self.bytes, image::ImageFormat::Png)?,
+            ImageFormat::Jpeg => decode_static_image(&self.bytes, image::ImageFormat::Jpeg)?,
+            ImageFormat::Webp => decode_static_image(&self.bytes, image::ImageFormat::WebP)?,
+            ImageFormat::Bmp => decode_static_image(&self.bytes, image::ImageFormat::Bmp)?,
+            ImageFormat::Tiff => decode_static_image(&self.bytes, image::ImageFormat::Tiff)?,
+            ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
                     .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
-            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
+            ImageFormat::Pnm => decode_static_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))
@@ -2576,7 +2573,7 @@ mod image_tests {
     fn test_image_to_image_data_applies_exif_orientation() {
         let image = Image::from_bytes(
             ImageFormat::Jpeg,
-            include_bytes!("fixtures/exif-orientation-rotate-180.jpg").to_vec(),
+            include_bytes!("../examples/image/exif-orientation-rotate-180.jpg").to_vec(),
         );
 
         let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();

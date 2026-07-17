@@ -717,10 +717,10 @@ impl Asset for ImageAssetLoader {
 
                             frames
                         } else {
-                            SmallVec::from_elem(decode_static_image_from_decoder(decoder)?, 1)
+                            decode_static_image_from_decoder(decoder)?
                         }
                     }
-                    _ => SmallVec::from_elem(decode_static_image(&bytes, format)?, 1),
+                    _ => decode_static_image(&bytes, format)?,
                 };
 
                 Ok(Arc::new(RenderImage::new(data)))
