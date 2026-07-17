@@ -1571,6 +1571,102 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     assert_eq!(server.server_id(), LanguageServerId(1));
 }
 
+// Regression test for issue #60472: toolchain discovery (e.g. Python's `pet` interpreter
+// scan) is expensive and blocks a background thread. UI such as the status-bar toolchain item
+// re-requests it on every buffer/tab change, so without memoization the uncached scans pile up
+// and exhaust the background thread pool. Discovery must run at most once per subproject root.
+#[gpui::test]
+async fn test_toolchain_discovery_is_memoized(cx: &mut gpui::TestAppContext) {
+    struct PyprojectTomlManifestProvider;
+    impl ManifestProvider for PyprojectTomlManifestProvider {
+        fn name(&self) -> ManifestName {
+            SharedString::new_static("pyproject.toml").into()
+        }
+
+        fn search(
+            &self,
+            ManifestQuery {
+                path,
+                depth,
+                delegate,
+            }: ManifestQuery,
+        ) -> Option<Arc<RelPath>> {
+            path.ancestors().take(depth).find_map(|path| {
+                delegate
+                    .exists(&path.join(rel_path("pyproject.toml")), Some(false))
+                    .then(|| Arc::from(path))
+            })
+        }
+    }
+
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "project-a": {
+                ".venv": {},
+                "file.py": "",
+                "pyproject.toml": ""
+            },
+            "project-b": {
+                ".venv": {},
+                "source_file.py": "",
+                "another_file.py": "",
+                "pyproject.toml": ""
+            }
+        }),
+    )
+    .await;
+    cx.update(|cx| {
+        ManifestProvidersStore::global(cx).register(Arc::new(PyprojectTomlManifestProvider))
+    });
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let (python_language, list_count) = python_lang_with_list_counter(fs.clone());
+    language_registry.add(python_language);
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let list_toolchains = |file: &'static str, cx: &mut gpui::TestAppContext| {
+        project.update(cx, |project, cx| {
+            project.available_toolchains(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path(file).into(),
+                },
+                LanguageName::new_static("Python"),
+                cx,
+            )
+        })
+    };
+
+    // Fire several concurrent requests for the same file before awaiting any of them; they
+    // must coalesce onto a single discovery run.
+    let concurrent = (0..5)
+        .map(|_| list_toolchains("project-b/source_file.py", cx))
+        .collect::<Vec<_>>();
+    for task in concurrent {
+        assert_eq!(task.await.unwrap().toolchains.toolchains().len(), 1);
+    }
+    cx.run_until_parked();
+    assert_eq!(list_count.load(atomic::Ordering::SeqCst), 1);
+
+    // A sequential request for a different file under the same subproject root resolves to the
+    // same manifest root, so it hits the cache without re-running discovery.
+    list_toolchains("project-b/another_file.py", cx).await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(list_count.load(atomic::Ordering::SeqCst), 1);
+
+    // A request under a different subproject root is a distinct cache key and runs discovery
+    // exactly once more.
+    list_toolchains("project-a/file.py", cx).await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(list_count.load(atomic::Ordering::SeqCst), 2);
+}
+
 #[gpui::test]
 async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -15184,7 +15280,18 @@ fn js_lang() -> Arc<Language> {
 }
 
 fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
-    struct PythonMootToolchainLister(Arc<FakeFs>);
+    python_lang_with_list_counter(fs).0
+}
+
+/// Like [`python_lang`], but also returns a counter that is incremented every time the
+/// toolchain lister actually performs discovery. Used to assert that toolchain discovery is
+/// memoized rather than re-run on every request (see issue #60472).
+fn python_lang_with_list_counter(fs: Arc<FakeFs>) -> (Arc<Language>, Arc<atomic::AtomicUsize>) {
+    let list_count = Arc::new(atomic::AtomicUsize::new(0));
+    struct PythonMootToolchainLister {
+        fs: Arc<FakeFs>,
+        list_count: Arc<atomic::AtomicUsize>,
+    }
     #[async_trait]
     impl ToolchainLister for PythonMootToolchainLister {
         async fn list(
@@ -15193,12 +15300,13 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             subroot_relative_path: Arc<RelPath>,
             _: Option<HashMap<String, String>>,
         ) -> ToolchainList {
+            self.list_count.fetch_add(1, atomic::Ordering::SeqCst);
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
                 let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
-                if self.0.is_dir(&venv_path).await {
+                if self.fs.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
                         name: SharedString::new_static("Python Venv"),
                         path: venv_path.to_string_lossy().into_owned().into(),
@@ -15237,7 +15345,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             Box::pin(async { vec![] })
         }
     }
-    Arc::new(
+    let language = Arc::new(
         Language::new(
             LanguageConfig {
                 name: "Python".into(),
@@ -15252,8 +15360,12 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         .with_manifest(Some(ManifestName::from(SharedString::new_static(
             "pyproject.toml",
         ))))
-        .with_toolchain_lister(Some(Arc::new(PythonMootToolchainLister(fs)))),
-    )
+        .with_toolchain_lister(Some(Arc::new(PythonMootToolchainLister {
+            fs,
+            list_count: list_count.clone(),
+        }))),
+    );
+    (language, list_count)
 }
 
 fn typescript_lang() -> Arc<Language> {
