@@ -121,6 +121,9 @@ pub struct Minimap {
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
     pub max_width_columns: num::NonZeroU32,
+    pub hover_preview: bool,
+    pub hover_preview_lines: num::NonZeroU32,
+    pub hover_preview_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
@@ -259,6 +262,9 @@ impl Settings for EditorSettings {
                 thumb_border: minimap.thumb_border.unwrap(),
                 current_line_highlight: minimap.current_line_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
+                hover_preview: minimap.hover_preview.unwrap(),
+                hover_preview_lines: minimap.hover_preview_lines.unwrap(),
+                hover_preview_width_columns: minimap.hover_preview_width_columns.unwrap(),
             },
             gutter: Gutter {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),

@@ -664,6 +664,12 @@
     "current_line_highlight": null,
     // Maximum number of columns to display in the minimap.
     "max_width_columns": 80,
+    // Whether to show a code preview when hovering over the minimap.
+    "hover_preview": false,
+    // Number of lines to show in the minimap hover preview.
+    "hover_preview_lines": 9,
+    // Width of the minimap hover preview in columns.
+    "hover_preview_width_columns": 80,
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
