@@ -745,6 +745,7 @@ quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
+raw-window-handle = "0.6"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [

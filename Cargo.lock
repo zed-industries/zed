@@ -12614,6 +12614,7 @@ dependencies = [
  "lsp",
  "menu",
  "picker",
+ "picker_preview",
  "project",
  "rope",
  "serde_json",
@@ -18328,9 +18329,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73afc801dd6bd47529eaa7c7e90557f107527d1b7c9c7ed7d7803c7b8d0c357f"
+checksum = "340a09581f29809fc0df82a3955501dc7f2a21f887e5d1c13dbe288fe1c0bef4"
 dependencies = [
  "arrayvec",
  "grid",
