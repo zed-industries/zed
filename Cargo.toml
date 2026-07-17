@@ -572,7 +572,7 @@ cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
 convert_case = "0.11.0"
-core-foundation = "=0.10.0"
+core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
