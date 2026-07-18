@@ -18221,6 +18221,7 @@ dependencies = [
  "util",
  "util_macros",
  "vte",
+ "which 6.0.3",
  "windows 0.62.2",
 ]
 

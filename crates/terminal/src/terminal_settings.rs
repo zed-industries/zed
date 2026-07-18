@@ -1,7 +1,9 @@
-use collections::HashMap;
-use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
+use collections::{HashMap, IndexMap};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use util::shell_detection::DetectedShell;
 
 pub use settings::AlternateScroll;
 
@@ -94,6 +96,132 @@ pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     }
 }
 
+/// A view over the configured-vs-detected shell entries used by the P3 "+"
+/// menu. Configured profiles shadow detected shells with the same resolved
+/// program path (D2/D8 in the plan); order is configured-first (preserving
+/// IndexMap insertion order), then detected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergedShellEntry {
+    /// User-configured profile from `terminal.profiles`.
+    Configured {
+        name: String,
+        profile: TerminalProfile,
+    },
+    /// Detected shell that is not shadowed by a configured profile.
+    Detected(DetectedShell),
+}
+
+/// Combine configured profiles with detected shells, dropping any detected
+/// entry whose program path collides with a configured profile's program
+/// (configured wins the slot, per the plan's dedup rule).
+///
+/// Comparison is by the profile's program string resolved against the
+/// detected entry's `program` both ways:
+/// * exact string match (covers the common "configured `/bin/zsh`,
+///   detected `/bin/zsh`" case), and
+/// * file-stem match where one side is a bare basename and the other an
+///   absolute path (covers "configured `zsh`, detected `/bin/zsh`").
+pub fn merge_with_configured_profiles(
+    detected: Vec<DetectedShell>,
+    profiles: &IndexMap<String, TerminalProfile>,
+) -> Vec<MergedShellEntry> {
+    let configured_paths: std::collections::HashSet<String> = profiles
+        .values()
+        .map(|p| p.program.clone())
+        .collect();
+    let configured_stems: std::collections::HashSet<String> = profiles
+        .values()
+        .filter_map(|p| Path::new(&p.program).file_name().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+
+    let mut entries: Vec<MergedShellEntry> = profiles
+        .iter()
+        .map(|(name, profile)| MergedShellEntry::Configured {
+            name: name.clone(),
+            profile: profile.clone(),
+        })
+        .collect();
+
+    for shell in detected {
+        let program_string = shell.program.to_string_lossy().into_owned();
+        let stem = shell
+            .program
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned());
+        let shadowed = configured_paths.contains(&program_string)
+            || stem.as_ref().is_some_and(|s| configured_stems.contains(s));
+        if !shadowed {
+            entries.push(MergedShellEntry::Detected(shell));
+        }
+    }
+
+    entries
+}
+
+/// A non-blocking warning about a configured profile whose `program` is
+/// neither an existing absolute path nor resolvable on `PATH`. Returned by
+/// [`validate_configured_profiles`]; the caller decides how to surface the
+/// warning (log line, toast, settings diagnostic).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileWarning {
+    pub profile_name: String,
+    pub program: String,
+    pub reason: String,
+}
+
+/// Test-friendly inner validator. The `is_file` and `resolve_on_path`
+/// callbacks abstract `Path::is_file()` and `which::which()` so unit tests
+/// can run without touching the real filesystem.
+fn validate_configured_profiles_with(
+    profiles: &IndexMap<String, TerminalProfile>,
+    is_file: &dyn Fn(&Path) -> bool,
+    resolve_on_path: &dyn Fn(&str) -> Option<std::path::PathBuf>,
+) -> Vec<ProfileWarning> {
+    let mut warnings = Vec::new();
+    for (name, profile) in profiles {
+        let program = profile.program.as_str();
+        if program.is_empty() {
+            warnings.push(ProfileWarning {
+                profile_name: name.clone(),
+                program: program.to_string(),
+                reason: "profile program is empty".to_string(),
+            });
+            continue;
+        }
+        let path = Path::new(program);
+        let absolute_exists = path.is_absolute() && is_file(path);
+        let on_path = !path.is_absolute() && resolve_on_path(program).is_some();
+        if !absolute_exists && !on_path {
+            warnings.push(ProfileWarning {
+                profile_name: name.clone(),
+                program: program.to_string(),
+                reason: format!(
+                    "profile program '{program}' is not an existing file and is not found on PATH"
+                ),
+            });
+        }
+    }
+    warnings
+}
+
+/// Validate the configured terminal profiles, returning one
+/// [`ProfileWarning`] per profile whose `program` is neither an existing
+/// absolute path nor resolvable on `PATH`.
+///
+/// Never blocks terminal spawn — the existing `TerminalError` notification
+/// path handles actual spawn failures. This is purely advisory, matching
+/// the P2-QA-1 contract: invalid programs surface a warning, selection
+/// still routes through the regular spawn-error path.
+pub fn validate_configured_profiles(
+    profiles: &IndexMap<String, TerminalProfile>,
+) -> Vec<ProfileWarning> {
+    validate_configured_profiles_with(
+        profiles,
+        &|p| p.is_file(),
+        &|program| which::which(program).ok(),
+    )
+}
+
 impl settings::Settings for TerminalSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let user_content = content.terminal.clone().unwrap();
@@ -102,6 +230,17 @@ impl settings::Settings for TerminalSettings {
         project_content.merge_from_option(content.project.terminal.as_ref());
         let profiles = project_content.profiles.clone().unwrap_or_default();
         let default_profile = project_content.default_profile.clone();
+        // P2 validation: surface a warning per profile whose `program` is
+        // neither an existing absolute path nor resolvable on `PATH`. This
+        // is advisory only — spawn still goes through the normal
+        // `TerminalError` path if the program is genuinely missing.
+        for warning in validate_configured_profiles(&profiles) {
+            log::warn!(
+                "terminal.profiles.{}: {}",
+                warning.profile_name,
+                warning.reason
+            );
+        }
         // D3 precedence: default_profile (if it resolves) > terminal.shell > System.
         // Unknown default_profile name falls through to terminal.shell with a warning,
         // never silently to System.
@@ -257,5 +396,180 @@ mod tests {
             Shell::WithArguments { args, .. } => assert!(args.is_empty()),
             other => panic!("expected WithArguments, got {other:?}"),
         }
+    }
+
+    fn detected(label: &str, program: &str) -> DetectedShell {
+        use util::shell_detection::ShellSource;
+        DetectedShell {
+            label: label.to_string(),
+            program: std::path::PathBuf::from(program),
+            args: Vec::new(),
+            source: ShellSource::EtcShells,
+        }
+    }
+
+    fn profile_map(
+        entries: &[(&str, &str)],
+    ) -> collections::IndexMap<String, TerminalProfile> {
+        entries
+            .iter()
+            .map(|(name, program)| {
+                (
+                    name.to_string(),
+                    TerminalProfile {
+                        program: program.to_string(),
+                        args: None,
+                        title_override: None,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merge_places_configured_first_then_detected() {
+        let profiles = profile_map(&[("Zsh", "/bin/zsh"), ("Fish", "/usr/bin/fish")]);
+        let detected = vec![
+            detected("bash", "/bin/bash"),
+            detected("python", "/usr/bin/python"),
+        ];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        let mut labels = merged.iter().map(|entry| match entry {
+            MergedShellEntry::Configured { name, .. } => name.clone(),
+            MergedShellEntry::Detected(shell) => shell.label.clone(),
+        });
+        assert_eq!(labels.next().as_deref(), Some("Zsh"));
+        assert_eq!(labels.next().as_deref(), Some("Fish"));
+        assert_eq!(labels.next().as_deref(), Some("bash"));
+        assert_eq!(labels.next().as_deref(), Some("python"));
+        assert_eq!(labels.next(), None);
+    }
+
+    #[test]
+    fn merge_shadows_detected_when_program_path_matches_exactly() {
+        let profiles = profile_map(&[("Zsh", "/bin/zsh")]);
+        let detected = vec![
+            detected("zsh", "/bin/zsh"),
+            detected("bash", "/bin/bash"),
+        ];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        let labels: Vec<String> = merged
+            .iter()
+            .map(|entry| match entry {
+                MergedShellEntry::Configured { name, .. } => name.clone(),
+                MergedShellEntry::Detected(shell) => shell.label.clone(),
+            })
+            .collect();
+        // Configured Zsh wins; detected zsh is dropped; detected bash survives.
+        assert_eq!(labels, vec!["Zsh".to_string(), "bash".to_string()]);
+    }
+
+    #[test]
+    fn merge_shadows_detected_when_configured_is_basename_match() {
+        // Configured profile uses bare "zsh"; detected shell is at
+        // "/bin/zsh". The basename match should shadow the detected entry.
+        let profiles = profile_map(&[("MyZsh", "zsh")]);
+        let detected = vec![detected("zsh", "/bin/zsh")];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        assert_eq!(merged.len(), 1);
+        match &merged[0] {
+            MergedShellEntry::Configured { name, .. } => assert_eq!(name, "MyZsh"),
+            MergedShellEntry::Detected(_) => panic!("basename match should shadow detected"),
+        }
+    }
+
+    #[test]
+    fn merge_keeps_detected_when_program_differs() {
+        let profiles = profile_map(&[("Zsh", "/bin/zsh")]);
+        let detected = vec![
+            detected("bash", "/bin/bash"),
+            detected("fish", "/usr/bin/fish"),
+        ];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        // 1 configured + 2 detected = 3 entries.
+        assert_eq!(merged.len(), 3);
+    }
+
+    #[test]
+    fn validate_returns_no_warnings_when_all_programs_resolve() {
+        let profiles = profile_map(&[
+            ("Zsh", "/bin/zsh"),
+            ("Bash", "bash"),
+            ("Fish", "/usr/bin/fish"),
+        ]);
+        let warnings = validate_configured_profiles_with(
+            &profiles,
+            &|p| matches!(p.to_string_lossy().as_ref(), "/bin/zsh" | "/usr/bin/fish"),
+            &|program| match program {
+                "bash" => Some(std::path::PathBuf::from("/usr/bin/bash")),
+                _ => None,
+            },
+        );
+        assert!(
+            warnings.is_empty(),
+            "all programs resolvable -> no warnings, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn validate_warns_when_absolute_program_does_not_exist() {
+        let profiles = profile_map(&[("Broken", "/definitely/not/a/real/shell")]);
+        let warnings = validate_configured_profiles_with(
+            &profiles,
+            &|_| false,
+            &|_| None,
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].profile_name, "Broken");
+        assert!(warnings[0].reason.contains("not an existing file"));
+    }
+
+    #[test]
+    fn validate_warns_when_relative_program_not_on_path() {
+        let profiles = profile_map(&[("Nope", "definitely-not-a-real-shell-xyz")]);
+        let warnings =
+            validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].profile_name, "Nope");
+        assert!(warnings[0].reason.contains("not found on PATH"));
+    }
+
+    #[test]
+    fn validate_warns_on_empty_program() {
+        let profiles = profile_map(&[("Empty", "")]);
+        let warnings =
+            validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].profile_name, "Empty");
+        assert!(warnings[0].reason.contains("empty"));
+    }
+
+    #[test]
+    fn validate_does_not_block_on_partial_failure() {
+        // Multiple profiles, only one broken — should still return only the
+        // one warning, never panic.
+        let profiles = profile_map(&[
+            ("Good", "/bin/zsh"),
+            ("Bad", "totally-bogus-program"),
+            ("AlsoGood", "bash"),
+        ]);
+        let warnings = validate_configured_profiles_with(
+            &profiles,
+            &|p| p.to_string_lossy() == "/bin/zsh",
+            &|program| match program {
+                "bash" => Some(std::path::PathBuf::from("/usr/bin/bash")),
+                _ => None,
+            },
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].profile_name, "Bad");
+    }
+
+    #[test]
+    fn validate_handles_empty_profile_map() {
+        let profiles: collections::IndexMap<String, TerminalProfile> =
+            collections::IndexMap::default();
+        let warnings = validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
+        assert!(warnings.is_empty());
     }
 }
