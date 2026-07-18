@@ -3215,7 +3215,7 @@ impl ThreadView {
                                     .size(IconSize::Small)
                             });
 
-                        let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+                        let file_stats = DiffStats::single_file(diff.read(cx));
 
                         let buttons = self.render_edited_files_buttons(
                             index,
