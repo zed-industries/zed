@@ -279,6 +279,9 @@ impl Render for ConfigOptionsView {
         }
 
         h_flex()
+            .min_w_0()
+            .flex_1()
+            .flex_wrap()
             .gap_1()
             .children(self.selectors.iter().cloned())
             .into_any_element()
@@ -571,6 +574,7 @@ impl Render for ConfigOptionSelector {
                     .id(ElementId::Name(
                         format!("config-option-{}", option_id.0).into(),
                     ))
+                    .debug_selector(|| format!("config-option-{}", option_id.0))
                     .pr_1()
                     .tooltip(tooltip)
                     .child(
@@ -1098,10 +1102,64 @@ mod tests {
     use super::*;
     use acp_thread::AgentConnection;
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, point, px, size};
     use parking_lot::Mutex;
     use project::{AgentId, Project};
     use std::{any::Any, cell::RefCell};
+
+    #[gpui::test]
+    fn config_options_wrap_inside_narrow_containers(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::boolean("web_search", "Web Search", false),
+            acp::SessionConfigOption::boolean("suggested_changes", "Suggested Changes", false),
+            acp::SessionConfigOption::boolean(
+                "follow_up_suggestions",
+                "Follow-up Suggestions",
+                false,
+            ),
+        ]));
+        let agent_server = Rc::new(TestAgentServer::default());
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let view = cx.update(move |window, cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options;
+            let agent_server: Rc<dyn AgentServer> = agent_server;
+            cx.new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx))
+        });
+
+        cx.draw(point(px(0.), px(0.)), size(px(220.), px(100.)), |_, _| {
+            div()
+                .debug_selector(|| "config-options-host".into())
+                .w_full()
+                .child(view)
+        });
+
+        let host_bounds = cx
+            .debug_bounds("config-options-host")
+            .expect("config options host should be rendered");
+        let selector_bounds = [
+            "config-option-web_search",
+            "config-option-suggested_changes",
+            "config-option-follow_up_suggestions",
+        ]
+        .map(|selector| {
+            cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} should be rendered"))
+        });
+
+        for bounds in &selector_bounds {
+            assert!(bounds.left() >= host_bounds.left());
+            assert!(bounds.right() <= host_bounds.right());
+        }
+        assert!(
+            selector_bounds
+                .iter()
+                .any(|bounds| bounds.top() > selector_bounds[0].top()),
+            "at least one selector should wrap onto a later row"
+        );
+    }
 
     #[gpui::test]
     fn cycling_config_option_saves_selected_value_as_default(cx: &mut TestAppContext) {
