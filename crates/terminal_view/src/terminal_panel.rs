@@ -746,14 +746,17 @@ impl TerminalPanel {
             .active_item()
             .is_some_and(|item| item.downcast::<TerminalView>().is_some());
 
+        let (shell_override, profile_name) =
+            resolve_profile_override(action.profile.as_deref(), workspace, cx);
+
         if center_pane_has_focus && active_center_item_is_terminal {
             let working_directory = default_working_directory(workspace, cx);
             let local = action.local;
             Self::add_center_terminal(workspace, window, cx, move |project, cx| {
                 if local {
-                    project.create_local_terminal(cx)
+                    project.create_local_terminal_with(shell_override, cx)
                 } else {
-                    project.create_terminal_shell(working_directory, cx)
+                    project.create_terminal_shell_with(working_directory, shell_override, cx)
                 }
             })
             .detach_and_log_err(cx);
@@ -766,9 +769,11 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal_shell(
+                this.add_terminal_shell_with(
                     action.local,
                     default_working_directory(workspace, cx),
+                    shell_override,
+                    profile_name,
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -937,6 +942,22 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_with(force_local, cwd, None, None, reveal_strategy, window, cx)
+    }
+
+    /// Same as [`add_terminal_shell`](Self::add_terminal_shell) but supplies a
+    /// profile-derived shell override and the profile name (used to tag the
+    /// resulting `TerminalView` for persistence).
+    fn add_terminal_shell_with(
+        &mut self,
+        force_local: bool,
+        cwd: Option<PathBuf>,
+        shell_override: Option<Shell>,
+        profile_name: Option<String>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         self.spawn_pending_terminal(window, cx, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -945,11 +966,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal_with(shell_override, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell_with(cwd, shell_override, cx)
+                    })
                     .await
             };
 
@@ -958,14 +983,19 @@ impl TerminalPanel {
             match terminal {
                 Ok(terminal) => workspace.update_in(cx, |workspace, window, cx| {
                     let terminal_view = Box::new(cx.new(|cx| {
-                        TerminalView::new(
+                        let mut view = TerminalView::new(
                             terminal.clone(),
                             workspace.weak_handle(),
                             workspace.database_id(),
                             workspace.project().downgrade(),
                             window,
                             cx,
-                        )
+                        );
+                        if profile_name.is_some() {
+                            view.profile_name = profile_name;
+                            view.needs_serialize = true;
+                        }
+                        view
                     }));
 
                     let take_focus = reveal_strategy == RevealStrategy::Always
@@ -1000,7 +1030,6 @@ impl TerminalPanel {
             }
         })
     }
-
     fn spawn_pending_terminal(
         &mut self,
         window: &mut Window,
@@ -1302,6 +1331,52 @@ pub fn prepare_task_for_spawn(
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
+}
+
+/// Resolve an optional profile name from a `NewTerminal` action into a
+/// `(shell_override, profile_name)` pair.
+///
+/// - When `requested_profile` is `None`, returns `(None, None)` — caller
+///   uses the default shell resolution.
+/// - When the name resolves against `TerminalSettings.profiles`, returns
+///   the converted `task::Shell` (with D6 title promotion) and the name
+///   (the latter so the spawned `TerminalView` can be tagged for
+///   persistence).
+/// - When the name does not resolve, emits a user-visible toast and
+///   returns `(None, None)` so the caller falls back to the default shell
+///   (D3: never silently to the system shell).
+fn resolve_profile_override(
+    requested_profile: Option<&str>,
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) -> (Option<Shell>, Option<String>) {
+    let Some(name) = requested_profile else {
+        return (None, None);
+    };
+    let settings = TerminalSettings::get_global(cx);
+    match settings.profiles.get(name) {
+        Some(profile) => {
+            let shell = terminal::terminal_settings::profile_to_task_shell(name, profile);
+            (Some(shell), Some(name.to_string()))
+        }
+        None => {
+            let message = format!(
+                "Unknown terminal profile '{name}'; falling back to the default shell."
+            );
+            log::warn!("{message}");
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<
+                        crate::TerminalProfileWarning,
+                    >(),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+            (None, None)
+        }
+    }
 }
 
 pub fn new_terminal_pane(
@@ -3226,7 +3301,10 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     TerminalPanel::new_terminal(
                         workspace,
-                        &workspace::NewTerminal { local: true },
+                        &workspace::NewTerminal {
+                            local: true,
+                            profile: None,
+                        },
                         window,
                         cx,
                     );
@@ -3355,6 +3433,122 @@ mod tests {
             store.update_user_settings(cx, |settings| {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
             });
+        });
+    }
+
+    fn configure_zsh_profile(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    terminal.project.profiles = Some(collections::IndexMap::from_iter([
+                        (
+                            "Zsh".to_string(),
+                            settings::TerminalProfile {
+                                program: "/bin/zsh".to_string(),
+                                args: Some(vec!["-l".to_string()]),
+                                title_override: None,
+                            },
+                        ),
+                    ]));
+                });
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_with_known_profile_applies_override(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        configure_zsh_profile(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(
+                        workspace,
+                        &workspace::NewTerminal {
+                            local: false,
+                            profile: Some("Zsh".to_string()),
+                        },
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewTerminal with profile=Zsh");
+        cx.run_until_parked();
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| {
+                panel.active_pane.read(cx).active_item()
+            });
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(
+                view.profile_name,
+                Some("Zsh".to_string()),
+                "TerminalView should be tagged with the profile name for persistence"
+            );
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Zsh",
+                "tab title should be promoted to the profile name (D6)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_with_unknown_profile_falls_back(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        configure_zsh_profile(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(
+                        workspace,
+                        &workspace::NewTerminal {
+                            local: false,
+                            profile: Some("DefinitelyNotAProfile".to_string()),
+                        },
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch NewTerminal with unknown profile");
+        cx.run_until_parked();
+
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after,
+            panel_items_before + 1,
+            "Unknown profile should still spawn a terminal (default-shell fallback, D3)"
+        );
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| {
+                panel.active_pane.read(cx).active_item()
+            });
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, _cx| {
+            assert!(
+                view.profile_name.is_none(),
+                "Unknown-profile fallback should not tag the view with a profile name"
+            );
         });
     }
 

@@ -450,6 +450,9 @@ impl Domain for TerminalDb {
         sql! (
             ALTER TABLE terminals ADD COLUMN custom_title TEXT;
         ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN profile_name TEXT;
+        ),
     ];
 }
 
@@ -540,5 +543,122 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
+    }
+
+    pub async fn save_profile_name(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        profile_name: Option<String>,
+    ) -> Result<()> {
+        log::debug!(
+            "Saving profile name {:?} for item {} in workspace {:?}",
+            profile_name,
+            item_id,
+            workspace_id
+        );
+        self.write(move |conn| {
+            let query = "INSERT INTO terminals (item_id, workspace_id, profile_name)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                    profile_name = excluded.profile_name";
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&profile_name, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_profile_name(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT profile_name
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use workspace::WorkspaceDb;
+
+    // The terminals table has a FK on workspace_id referencing the workspaces
+    // table, so we insert a workspace row via `WorkspaceDb::next_id` before
+    // exercising the terminals table writes.
+    //
+    // Both rounds share a single #[gpui::test] because the global test DB is
+    // a shared LazyLock and parallel writes against it lock.
+
+    #[gpui::test]
+    async fn test_profile_name_round_trip(cx: &mut gpui::TestAppContext) {
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let workspace_id = cx
+            .update(|cx| WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .expect("inserted workspace row");
+
+        let item_id: ItemId = 42;
+        let read_profile = || {
+            db.get_profile_name(item_id, workspace_id)
+                .ok()
+                .flatten()
+                .filter(|name| !name.trim().is_empty())
+        };
+
+        assert_eq!(
+            read_profile(),
+            None,
+            "profile_name should default to NULL/empty"
+        );
+
+        db.save_profile_name(item_id, workspace_id, Some("Zsh".to_string()))
+            .await
+            .expect("save_profile_name ok");
+        assert_eq!(
+            read_profile().as_deref(),
+            Some("Zsh"),
+            "profile_name should round-trip through SQLite"
+        );
+
+        // Re-saving with None clears the slot (some binding paths encode None
+        // as the empty string; the read filter normalises both to None).
+        db.save_profile_name(item_id, workspace_id, None)
+            .await
+            .expect("save_profile_name None ok");
+        assert_eq!(
+            read_profile(),
+            None,
+            "profile_name should clear back to NULL/empty"
+        );
+
+        // Other terminal persistence columns must coexist on the same row.
+        db.save_working_directory(item_id, workspace_id, PathBuf::from("/tmp"))
+            .await
+            .expect("save_working_directory ok");
+        db.save_custom_title(item_id, workspace_id, Some("custom".to_string()))
+            .await
+            .expect("save_custom_title ok");
+        db.save_profile_name(item_id, workspace_id, Some("Fish".to_string()))
+            .await
+            .expect("save_profile_name ok");
+
+        assert_eq!(
+            db.get_working_directory(item_id, workspace_id)
+                .ok()
+                .flatten(),
+            Some(PathBuf::from("/tmp"))
+        );
+        assert_eq!(
+            db.get_custom_title(item_id, workspace_id)
+                .ok()
+                .flatten()
+                .as_deref(),
+            Some("custom")
+        );
+        assert_eq!(read_profile().as_deref(), Some("Fish"));
     }
 }

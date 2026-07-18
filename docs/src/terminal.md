@@ -59,6 +59,73 @@ To pass arguments to your shell:
 }
 ```
 
+## Profiles {#profiles}
+
+Profiles let you define named shell configurations and pick one when opening a terminal. A profile specifies the program to launch, optional arguments, and an optional title override:
+
+```json [settings]
+{
+  "terminal": {
+    "profiles": {
+      "Zsh": {
+        "program": "/bin/zsh",
+        "args": ["-l"]
+      },
+      "Fish": {
+        "program": "/usr/bin/fish"
+      },
+      "PowerShell": {
+        "program": "pwsh",
+        "title_override": "PS"
+      }
+    }
+  }
+}
+```
+
+Each profile entry has the following fields:
+
+| Field            | Type              | Description                                                                    |
+| ---------------- | ----------------- | ------------------------------------------------------------------------------ |
+| `program`        | string            | Program to launch (e.g. `/bin/zsh`, `pwsh`, `wsl.exe`).                        |
+| `args`           | array of strings  | Arguments passed to `program`. Omit to launch with no arguments.               |
+| `title_override` | string (optional) | Tab title for this profile. If unset, the profile's name is used (e.g. `Zsh`). |
+
+When you spawn a terminal from a profile, Zed promotes the profile name to the tab title unless the profile sets `title_override`. Environment variables are always inherited from your login shell (`$SHELL`), regardless of profile — Zed does not route environment through the profile, so venv detection and other `$SHELL`-dependent behavior continue to work.
+
+### Setting a Default Profile
+
+`terminal.default_profile` selects which profile is used when you open a terminal without specifying one (for example, via the default open-terminal keybinding):
+
+```json [settings]
+{
+  "terminal": {
+    "default_profile": "Zsh"
+  }
+}
+```
+
+If `default_profile` names a profile that does not exist in `profiles`, Zed emits a warning and falls back to `terminal.shell` (not the system shell). When `default_profile` is unset, `terminal.shell` is used.
+
+### Spawning a Profile via Keymap
+
+Use the {#action workspace::NewTerminal} action with a `profile` argument to spawn a specific profile from the keyboard:
+
+```json [keymap]
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-alt-z": ["workspace::NewTerminal", { "profile": "Zsh" }]
+    }
+  }
+]
+```
+
+If the named profile does not exist, Zed emits a warning and opens a terminal with the default shell instead.
+
+> **Note:** Profiles are honored only for local terminals. In SSH remote projects the profile is ignored (the shell comes from the remote server) and a warning is logged. Use `NewTerminal` with `"local": true` to spawn a local terminal that does honor the profile.
+
 ## Working Directory
 
 Control where new terminals start:
