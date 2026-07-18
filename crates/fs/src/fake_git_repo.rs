@@ -1257,6 +1257,78 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn diff_stat_untracked(
+        &self,
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
+        fn count_lines(content: &str) -> u32 {
+            if content.is_empty() {
+                0
+            } else {
+                content.lines().count() as u32
+            }
+        }
+
+        fn matches_prefixes(path: &RepoPath, prefixes: &[RepoPath]) -> bool {
+            if prefixes.is_empty() {
+                return true;
+            }
+            prefixes.iter().any(|prefix| {
+                let prefix_str = prefix.as_unix_str();
+                if prefix_str == "." {
+                    return true;
+                }
+                path == prefix || path.starts_with(prefix)
+            })
+        }
+
+        let path_prefixes = path_prefixes.to_vec();
+        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+        let worktree_files: HashMap<RepoPath, String> = self
+            .fs
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path = path.strip_prefix(&workdir_path).ok()?;
+                if repo_path.starts_with(".git") {
+                    return None;
+                }
+                let content = self
+                    .fs
+                    .read_file_sync(path)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
+                Some((RepoPath::from_rel_path(&repo_path), content))
+            })
+            .collect();
+
+        self.with_state_async(false, move |state| {
+            let mut entries = Vec::new();
+            for (path, content) in &worktree_files {
+                if state.head_contents.contains_key(path) || state.index_contents.contains_key(path)
+                {
+                    continue;
+                }
+                if !matches_prefixes(path, &path_prefixes) {
+                    continue;
+                }
+                entries.push((
+                    path.clone(),
+                    git::status::DiffStat {
+                        added: count_lines(content),
+                        deleted: 0,
+                    },
+                ));
+            }
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            Ok(git::status::GitDiffStat {
+                entries: entries.into(),
+            })
+        })
+        .boxed()
+    }
+
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
         let executor = self.executor.clone();
         let fs = self.fs.clone();

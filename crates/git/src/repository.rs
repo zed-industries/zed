@@ -1112,6 +1112,11 @@ pub trait GitRepository: Send + Sync {
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
+    fn diff_stat_untracked(
+        &self,
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
+
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
 
@@ -2357,6 +2362,66 @@ impl GitRepository for RealGitRepository {
                 }
                 let output = git_binary.run(&args).await?;
                 Ok(crate::status::parse_numstat(&output))
+            })
+            .boxed()
+    }
+
+    fn diff_stat_untracked(
+        &self,
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
+        let path_prefixes = path_prefixes.to_vec();
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                let mut args: Vec<String> = vec![
+                    "ls-files".into(),
+                    "--others".into(),
+                    "--exclude-standard".into(),
+                    "-z".into(),
+                ];
+                if !path_prefixes.is_empty() {
+                    args.push("--".into());
+                    args.extend(
+                        path_prefixes
+                            .iter()
+                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
+                    );
+                }
+                let output = git_binary.run(&args).await?;
+                let working_directory = git_binary.working_directory.clone();
+                let mut entries = Vec::new();
+
+                for path_str in output.split('\0') {
+                    if path_str.is_empty() {
+                        continue;
+                    }
+                    let path = RepoPath::new(path_str)?;
+                    let full_path = working_directory.join(path.as_std_path());
+                    let Some(line_count) = crate::status::count_text_file_lines(&full_path)
+                        .await
+                        .log_err()
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    entries.push((
+                        path,
+                        crate::status::DiffStat {
+                            added: line_count,
+                            deleted: 0,
+                        },
+                    ));
+                }
+
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                entries.dedup_by(|(a, _), (b, _)| a == b);
+
+                Ok(crate::status::GitDiffStat {
+                    entries: entries.into(),
+                })
             })
             .boxed()
     }
@@ -6058,5 +6123,73 @@ mod tests {
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_stat_untracked(cx: &mut TestAppContext) {
+        use crate::status::DiffStat;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("tracked.txt"), "line1\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(
+            repo_dir.path().join("untracked.txt"),
+            "line1\nline2\nline3\n",
+        )
+        .await
+        .unwrap();
+        smol::fs::write(repo_dir.path().join("binary.bin"), b"hello\0world")
+            .await
+            .unwrap();
+
+        let stats = repo.diff_stat_untracked(&[]).await.unwrap();
+        assert_eq!(stats.entries.len(), 1);
+        assert_eq!(stats.entries[0].0, repo_path("untracked.txt"));
+        assert_eq!(
+            stats.entries[0].1,
+            DiffStat {
+                added: 3,
+                deleted: 0
+            }
+        );
+
+        let stats = repo
+            .diff_stat_untracked(&[repo_path("untracked.txt")])
+            .await
+            .unwrap();
+        assert_eq!(stats.entries.len(), 1);
+
+        let stats = repo
+            .diff_stat_untracked(&[repo_path("missing.txt")])
+            .await
+            .unwrap();
+        assert!(stats.entries.is_empty());
     }
 }

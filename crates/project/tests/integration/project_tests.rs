@@ -12376,7 +12376,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
-                    diff_stat: None,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 0,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
@@ -12414,7 +12417,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
-                    diff_stat: None,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 0,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
@@ -12515,7 +12521,10 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
             [StatusEntry {
                 repo_path: repo_path("ci2/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
-                diff_stat: None,
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -12557,7 +12566,10 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
             [StatusEntry {
                 repo_path: repo_path("ci3/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
-                diff_stat: None,
+                diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
             }]
         );
     });
@@ -13159,12 +13171,18 @@ async fn test_repository_pending_ops_stage_all(
                 StatusEntry {
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
-                    diff_stat: None,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 0,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
-                    diff_stat: None,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 0,
+                    }),
                 },
             ]
         );
