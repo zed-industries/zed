@@ -53,6 +53,15 @@ pub struct CreateDirectoryTool {
     project: Entity<Project>,
 }
 
+fn should_use_direct_out_of_project_creation(
+    sandboxing: bool,
+    full_access: bool,
+    is_local_project: bool,
+    platform_supported: bool,
+) -> bool {
+    is_local_project && platform_supported && (sandboxing || full_access)
+}
+
 impl CreateDirectoryTool {
     pub fn new(project: Entity<Project>) -> Self {
         Self { project }
@@ -95,19 +104,22 @@ impl AgentTool for CreateDirectoryTool {
 
             // Resolve where this directory lives. The global agent-skills dir is a
             // special case allowed outside the project; anything else outside the
-            // project is handled as a narrow sandbox write grant below.
+            // project requires either a narrow sandbox write grant (sandboxed mode)
+            // or Full Access permission checks (trusted local thread).
             let global_skill_directory =
                 resolve_creatable_global_skill_path(Path::new(&input.path), fs.as_ref()).await;
             let in_project = project.read_with(cx, |project, cx| {
                 project.find_project_path(&input.path, cx).is_some()
             });
 
-            // A path outside the project (and not the global skills dir) can only
-            // be created as a narrow sandbox write grant: create the directory and
-            // grant sandboxed terminal commands write access to exactly it. The
-            // sandbox approval prompt — which shows the real, canonicalized target
-            // — fully replaces the normal permission and symlink-escape prompts
-            // here.
+            // A path outside the project (and not the global skills dir) is handled
+            // by a narrow sandbox write grant, except for a trusted local thread
+            // using Full Access. The sensitive-path and symlink checks still run
+            // before the Full Access path is finalized.
+            //
+            // IMPORTANT: Out-of-project creation only works for LOCAL projects.
+            // Remote projects (SSH, dev servers) must not create directories on
+            // the client's local filesystem via GrantableWriteDir.
             if global_skill_directory.is_none() && !in_project {
                 if event_stream.full_access_enabled() {
                     let decision = cx.update(|cx| {
@@ -269,9 +281,15 @@ impl AgentTool for CreateDirectoryTool {
     }
 }
 
-/// Create a directory that lives **outside** the project by granting sandboxed
-/// terminal commands write access to exactly it, or directly when the thread
-/// already has unsandboxed access.
+/// Create a directory that lives **outside** the project.
+///
+/// For sandboxed threads, this grants sandboxed terminal commands write access to
+/// exactly the new directory. For trusted local threads using Full Access, the
+/// directory is created directly after permission checks (symlink escape, sensitive
+/// paths) without a sandbox grant.
+///
+/// Only works for local projects. Remote projects cannot create out-of-project
+/// directories through this tool.
 ///
 /// The directory is created (Linux: eagerly, pinning the inode; macOS: after
 /// approval) and the user is shown the real, canonicalized target in the sandbox
@@ -284,16 +302,24 @@ async fn create_out_of_project_directory(
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    // Narrowing a grant to a brand-new directory only makes sense when the
-    // project's terminal commands are sandboxed, and only on platforms that can
-    // grant a not-yet-existing directory. Otherwise keep the historical
-    // "outside the project" rejection.
-    let sandboxing = project.read_with(cx, |project, cx| {
-        crate::sandboxing::sandboxing_enabled_for_project(project, cx)
+    // Out-of-project directory creation using GrantableWriteDir (which uses
+    // std::fs on the client's local filesystem) requires a LOCAL project.
+    // Remote projects (SSH, dev servers) must never create directories on
+    // the client machine.
+    let (sandboxing, is_local_project) = project.read_with(cx, |project, cx| {
+        (
+            crate::sandboxing::sandboxing_enabled_for_project(project, cx),
+            project.is_local(),
+        )
     });
     let full_access = event_stream.full_access_enabled();
     let platform_supported = cfg!(any(target_os = "linux", target_os = "macos"));
-    if (!sandboxing && !full_access) || !platform_supported {
+    if !should_use_direct_out_of_project_creation(
+        sandboxing,
+        full_access,
+        is_local_project,
+        platform_supported,
+    ) {
         return Err("Path to create was outside the project".to_string());
     }
 
@@ -402,6 +428,16 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[test]
+    fn full_access_does_not_enable_local_directory_creation_for_remote_projects() {
+        assert!(!should_use_direct_out_of_project_creation(
+            false, true, false, true
+        ));
+        assert!(should_use_direct_out_of_project_creation(
+            false, true, true, true
+        ));
     }
 
     #[gpui::test]

@@ -39,7 +39,7 @@ run inside this OS sandbox.
 Selecting the built-in `Write (Full Access)` profile disables terminal sandboxing
 for the current trusted thread and removes the corresponding host and filesystem
 escalation prompts. It does not change persistent `agent.sandbox_permissions`
-settings, and it is not honored in a restricted workspace.
+settings, and it is not honored in a restricted project.
 
 ## Requirements {#requirements}
 

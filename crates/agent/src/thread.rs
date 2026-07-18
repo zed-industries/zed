@@ -1708,9 +1708,11 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = db_thread
+        let saved_profile_id = db_thread
             .profile
             .unwrap_or_else(|| settings.default_profile.clone());
+        let (profile_id, profile_downgraded_for_restricted_workspace) =
+            Self::profile_for_restricted_workspace(saved_profile_id, &project, cx);
 
         let saved_selection = db_thread.model.map(|model| SelectedModel {
             provider: model.provider.into(),
@@ -1767,7 +1769,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
-            profile_downgraded_for_restricted_workspace: false,
+            profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
@@ -2189,18 +2191,17 @@ impl Thread {
         &self.profile_id
     }
 
-    /// Whether this thread's profile was downgraded to `minimal` at thread start
-    /// because the workspace is restricted.
+    /// Whether this thread's profile was downgraded to `minimal` because the
+    /// project is restricted.
     pub fn profile_was_downgraded(&self) -> bool {
         self.profile_downgraded_for_restricted_workspace
     }
 
     /// Computes the profile a thread should start with, given the user's chosen
-    /// profile. In a restricted workspace, the built-in `write`,
-    /// `write-full-access`, and `ask` profiles are downgraded to `minimal` —
-    /// but only when both the chosen profile and `minimal` are unmodified,
-    /// shipped defaults, so we never override a user's custom or customized
-    /// profiles.
+    /// profile. Full Access is always downgraded to `minimal` in a restricted
+    /// project. The built-in `write` and `ask` profiles are downgraded only when
+    /// both the chosen profile and `minimal` are unmodified shipped defaults, so
+    /// we do not override a user's custom profiles.
     ///
     /// Returns the (possibly downgraded) profile and whether a downgrade
     /// happened.
@@ -2213,9 +2214,14 @@ impl Thread {
             profile_id.as_str(),
             builtin_profiles::WRITE | builtin_profiles::WRITE_FULL_ACCESS | builtin_profiles::ASK
         );
+        let is_full_access = profile_id.as_str() == builtin_profiles::WRITE_FULL_ACCESS;
         let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
-        if is_restricted_builtin
-            && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
+        let is_restricted =
+            TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx);
+        if is_full_access && is_restricted {
+            (minimal, true)
+        } else if is_restricted_builtin
+            && is_restricted
             && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
             && AgentProfileSettings::is_unmodified_default(&minimal, cx)
         {
@@ -2225,10 +2231,10 @@ impl Thread {
         }
     }
 
-    pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
-        // An explicit selection means any earlier automatic downgrade no longer
-        // applies, even if the user re-selects the same profile.
-        self.profile_downgraded_for_restricted_workspace = false;
+    pub fn set_profile(&mut self, requested_profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        let (profile_id, profile_downgraded) =
+            Self::profile_for_restricted_workspace(requested_profile_id, &self.project, cx);
+        self.profile_downgraded_for_restricted_workspace = profile_downgraded;
 
         if self.profile_id == profile_id {
             return;
@@ -3533,8 +3539,8 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
-        // A workspace can become restricted after a thread has already started.
-        // Tools that aren't allowed in restricted workspaces must never run in
+        // A project can become restricted after a thread has already started.
+        // Tools that aren't allowed in restricted projects must never run in
         // that state, even though they were exposed to the model earlier.
         if !tool.allow_in_restricted_mode()
             && TrustedWorktrees::has_restricted_worktrees(
@@ -4022,8 +4028,8 @@ impl Thread {
         // to the model under that name.
         let use_sandboxed_terminal = self.sandboxing_enabled(cx);
 
-        // Tools that aren't allowed in restricted workspaces must never be
-        // provided to the model while the workspace is restricted, regardless
+        // Tools that aren't allowed in restricted projects must never be
+        // provided to the model while the project is restricted, regardless
         // of what the active profile enables.
         let is_restricted =
             TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
@@ -4066,15 +4072,21 @@ impl Thread {
         let mut context_server_tools = Vec::new();
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
-        for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
-            for (tool_name, tool) in server_tools {
-                if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
-                    let tool_name: SharedString =
-                        provider_compatible_tool_name(tool_name.as_ref()).into();
-                    if !seen_tools.insert(tool_name.clone()) {
-                        duplicate_tool_names.insert(tool_name.clone());
+
+        // MCP tools are not allowed in restricted projects because we cannot
+        // verify they respect restricted mode constraints (e.g., not accessing
+        // sensitive paths, not making unauthorized network requests).
+        if !is_restricted {
+            for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+                for (tool_name, tool) in server_tools {
+                    if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
+                        let tool_name: SharedString =
+                            provider_compatible_tool_name(tool_name.as_ref()).into();
+                        if !seen_tools.insert(tool_name.clone()) {
+                            duplicate_tool_names.insert(tool_name.clone());
+                        }
+                        context_server_tools.push((server_id.clone(), tool_name, tool.clone()));
                     }
-                    context_server_tools.push((server_id.clone(), tool_name, tool.clone()));
                 }
             }
         }
@@ -6657,6 +6669,52 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    #[gpui::test]
+    async fn full_access_profile_is_downgraded_when_selected_in_restricted_project(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            project::trusted_worktrees::init(collections::HashMap::default(), cx);
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project =
+            Project::test_with_worktree_trust(fs, [std::path::Path::new("/project")], cx).await;
+
+        let templates = Templates::new();
+        let thread = cx.update(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+            cx.new(|cx| {
+                Thread::new(
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.set_profile(
+                AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into()),
+                cx,
+            );
+            assert_eq!(
+                thread.profile(),
+                &AgentProfileId(builtin_profiles::MINIMAL.into())
+            );
+            assert!(thread.profile_was_downgraded());
+        });
     }
 
     fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {
