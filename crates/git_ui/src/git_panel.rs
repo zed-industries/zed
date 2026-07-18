@@ -5345,11 +5345,8 @@ impl GitPanel {
 
         PopoverMenu::new(id.into())
             .trigger(
-                crate::render_split_button_chevron_trigger(
-                    "commit-split-button-right",
-                    menu_open,
-                )
-                .disabled(disabled),
+                crate::render_split_button_chevron_trigger("commit-split-button-right", menu_open)
+                    .disabled(disabled),
             )
             .with_handle(self.commit_menu_handle.clone())
             .menu({
