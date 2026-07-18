@@ -5,15 +5,16 @@ description: Configure Zed Agent profiles for model selection, built-in tool ava
 
 # Agent Profiles
 
-Agent profiles control how the [Zed Agent](./zed-agent.md) behaves in a thread. A profile can set a default model and choose which built-in tools and MCP tools are available.
+Agent profiles control how the [Zed Agent](./zed-agent.md) behaves in a thread. A profile can set a default model and choose which built-in tools and MCP tools are available. The built-in `Write (Full Access)` profile also enables routine tool calls without confirmation and disables terminal sandboxing for the current thread.
 
-Profiles do not decide whether a tool call is allowed automatically. Use [Tool Permissions](./tool-permissions.md) to control allow, deny, and confirm behavior.
+Profiles normally do not decide whether a tool call is allowed automatically. Use [Tool Permissions](./tool-permissions.md) to control allow, deny, and confirm behavior. `Write (Full Access)` is the built-in exception for routine confirmations; hard-coded safety rules, explicit deny rules, sensitive settings, and symlink escapes remain protected.
 
 ## Built-in Profiles {#built-in-profiles}
 
-Zed includes three built-in profiles:
+Zed includes four built-in profiles:
 
 - `Write`: enables tools for reading, editing, and running commands.
+- `Write (Full Access)`: enables the same tools as `Write`, automatically approves routine tool calls, and runs terminal commands without the OS sandbox for the current thread.
 - `Ask`: focuses on read-only codebase questions.
 - `Minimal`: uses no project tools.
 

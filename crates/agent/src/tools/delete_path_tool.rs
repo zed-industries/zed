@@ -4,17 +4,15 @@ use super::tool_permissions::{
 };
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    authorize_with_sensitive_settings, decide_permission_for_path,
+    authorize_with_sensitive_settings,
 };
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
-use agent_settings::AgentSettings;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
@@ -87,7 +85,7 @@ impl AgentTool for DeletePathTool {
             let path = input.path;
 
             let decision = cx.update(|cx| {
-                decide_permission_for_path(Self::NAME, &path, AgentSettings::get_global(cx))
+                event_stream.permission_decision_for_path(Self::NAME, &path, cx)
             });
 
             if let ToolPermissionDecision::Deny(reason) = decision {
@@ -270,10 +268,12 @@ impl AgentTool for DeletePathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_settings::AgentSettings;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use settings::Settings;
     use settings::SettingsStore;
     use std::path::PathBuf;
     use util::path;

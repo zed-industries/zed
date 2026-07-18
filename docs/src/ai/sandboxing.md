@@ -36,6 +36,11 @@ Tools are still governed by [Tool Permissions](./tool-permissions.md), [Agent
 Profiles](./agent-profiles.md), and project trust, but they are not currently
 run inside this OS sandbox.
 
+Selecting the built-in `Write (Full Access)` profile disables terminal sandboxing
+for the current trusted thread and removes the corresponding host and filesystem
+escalation prompts. It does not change persistent `agent.sandbox_permissions`
+settings, and it is not honored in a restricted workspace.
+
 ## Requirements {#requirements}
 
 Sandboxing is supported, in some form, on all platforms. In order to sandbox a

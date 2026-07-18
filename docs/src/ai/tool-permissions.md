@@ -127,7 +127,7 @@ From highest to lowest priority:
 
 ## Global Auto-Approve
 
-To auto-approve all tool actions:
+To auto-approve all tool actions globally:
 
 ```json [settings]
 {
@@ -140,6 +140,8 @@ To auto-approve all tool actions:
 ```
 
 This bypasses confirmation prompts for most tools, but `always_deny`, `always_confirm`, built-in security rules, and paths inside Zed settings directories still prompt or block.
+
+The Agent Panel also provides the built-in `Write (Full Access)` profile. It applies routine auto-approval to the current thread without changing your global `tool_permissions` settings. Sensitive settings, symlink escapes, explicit deny rules, and built-in security rules remain protected.
 
 ## Shell Compatibility
 

@@ -4,8 +4,10 @@ use crate::{
     FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
     RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_for_path,
+    decide_permission_for_path_with_default_override, decide_permission_for_paths,
+    decide_permission_for_paths_with_default_override, decide_permission_from_settings,
+    decide_permission_from_settings_with_default_override,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
@@ -1630,6 +1632,7 @@ impl Thread {
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
                 self.sandbox_grants.clone(),
+                self.full_access_enabled(cx),
                 Some(cx.weak_entity()),
             );
             tool.replay(input, output, tool_event_stream, cx).log_err();
@@ -1801,7 +1804,11 @@ impl Thread {
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
             .with_protected_paths(git_dirs.clone());
-        let thread = grants.thread_sandbox().with_protected_paths(git_dirs);
+        let thread = if self.full_access_enabled(cx) {
+            ThreadSandbox::Unsandboxed
+        } else {
+            grants.thread_sandbox().with_protected_paths(git_dirs)
+        };
         Some((settings, thread))
     }
 
@@ -1815,9 +1822,11 @@ impl Thread {
 
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
         let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
-        let grants = self.sandbox_grants.borrow();
-        let thread_sandbox = grants.thread_sandbox();
-        drop(grants);
+        let thread_sandbox = if self.full_access_enabled(cx) {
+            ThreadSandbox::Unsandboxed
+        } else {
+            self.sandbox_grants.borrow().thread_sandbox()
+        };
 
         let project = self.project.read(cx);
         let baseline_writable_paths = sandbox_worktree_writable_paths(project, cx);
@@ -1843,7 +1852,7 @@ impl Thread {
     /// Whether agent terminal commands are sandboxed for this thread's project,
     /// so the UI can decide whether to surface the sandbox status at all.
     pub fn sandboxing_enabled(&self, cx: &App) -> bool {
-        sandboxing_enabled_for_project(self.project.read(cx), cx)
+        sandboxing_enabled_for_project(self.project.read(cx), cx) && !self.full_access_enabled(cx)
     }
 
     /// Whether sandboxing is *applicable* for this thread's project (local
@@ -2187,10 +2196,11 @@ impl Thread {
     }
 
     /// Computes the profile a thread should start with, given the user's chosen
-    /// profile. In a restricted workspace, the built-in `write`/`ask` profiles
-    /// are downgraded to `minimal` — but only when both the chosen profile and
-    /// `minimal` are unmodified, shipped defaults, so we never override a user's
-    /// custom or customized profiles.
+    /// profile. In a restricted workspace, the built-in `write`,
+    /// `write-full-access`, and `ask` profiles are downgraded to `minimal` —
+    /// but only when both the chosen profile and `minimal` are unmodified,
+    /// shipped defaults, so we never override a user's custom or customized
+    /// profiles.
     ///
     /// Returns the (possibly downgraded) profile and whether a downgrade
     /// happened.
@@ -2199,10 +2209,12 @@ impl Thread {
         project: &Entity<Project>,
         cx: &App,
     ) -> (AgentProfileId, bool) {
-        let is_write_or_ask = profile_id.as_str() == builtin_profiles::WRITE
-            || profile_id.as_str() == builtin_profiles::ASK;
+        let is_restricted_builtin = matches!(
+            profile_id.as_str(),
+            builtin_profiles::WRITE | builtin_profiles::WRITE_FULL_ACCESS | builtin_profiles::ASK
+        );
         let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
-        if is_write_or_ask
+        if is_restricted_builtin
             && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
             && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
             && AgentProfileSettings::is_unmodified_default(&minimal, cx)
@@ -2234,6 +2246,14 @@ impl Thread {
                 .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
                 .ok();
         }
+    }
+
+    fn full_access_enabled(&self, cx: &App) -> bool {
+        self.profile_id.as_str() == builtin_profiles::WRITE_FULL_ACCESS
+            && !TrustedWorktrees::has_restricted_worktrees(
+                &self.project.read(cx).worktree_store(),
+                cx,
+            )
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -3540,6 +3560,7 @@ impl Thread {
             Some(fs),
             cancellation_rx,
             self.sandbox_grants.clone(),
+            self.full_access_enabled(cx),
             Some(cx.weak_entity()),
         );
         tool_event_stream.update_fields(
@@ -3999,7 +4020,7 @@ impl Thread {
         // Terminal variants are configured by users under the canonical
         // `terminal` name. Expose the one matching the current sandbox state
         // to the model under that name.
-        let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
+        let use_sandboxed_terminal = self.sandboxing_enabled(cx);
 
         // Tools that aren't allowed in restricted workspaces must never be
         // provided to the model while the workspace is restricted, regardless
@@ -4182,10 +4203,7 @@ impl Thread {
             model_name: self.model().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
-                self.project.read(cx),
-                cx,
-            ),
+            sandboxing: self.sandboxing_enabled(cx),
             is_linux: cfg!(target_os = "linux"),
             is_windows: cfg!(target_os = "windows"),
         }
@@ -5335,6 +5353,7 @@ pub struct ToolCallEventStream {
     /// sandbox grant is recorded so it survives reopening. `None` in tests and
     /// for streams not tied to a live thread.
     thread: Option<WeakEntity<Thread>>,
+    full_access: bool,
 }
 
 impl ToolCallEventStream {
@@ -5361,6 +5380,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             sandbox_grants,
+            false,
             None,
         );
 
@@ -5378,6 +5398,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            false,
             None,
         );
 
@@ -5400,6 +5421,7 @@ impl ToolCallEventStream {
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        full_access: bool,
         thread: Option<WeakEntity<Thread>>,
     ) -> Self {
         Self {
@@ -5408,6 +5430,7 @@ impl ToolCallEventStream {
             fs,
             cancellation_rx,
             sandbox_grants,
+            full_access,
             thread,
         }
     }
@@ -5419,6 +5442,65 @@ impl ToolCallEventStream {
             .as_ref()
             .and_then(|thread| thread.upgrade())
             .is_some_and(|thread| thread.read(cx).is_subagent())
+    }
+
+    fn permission_decision(
+        full_access: bool,
+        tool_name: &str,
+        input_values: &[String],
+        cx: &App,
+    ) -> ToolPermissionDecision {
+        let settings = AgentSettings::get_global(cx);
+        if full_access {
+            decide_permission_from_settings_with_default_override(
+                tool_name,
+                input_values,
+                settings,
+                ToolPermissionMode::Allow,
+            )
+        } else {
+            decide_permission_from_settings(tool_name, input_values, settings)
+        }
+    }
+
+    pub(crate) fn permission_decision_for_path(
+        &self,
+        tool_name: &str,
+        path: &str,
+        cx: &App,
+    ) -> ToolPermissionDecision {
+        if self.full_access {
+            decide_permission_for_path_with_default_override(
+                tool_name,
+                path,
+                AgentSettings::get_global(cx),
+                ToolPermissionMode::Allow,
+            )
+        } else {
+            decide_permission_for_path(tool_name, path, AgentSettings::get_global(cx))
+        }
+    }
+
+    pub(crate) fn permission_decision_for_paths(
+        &self,
+        tool_name: &str,
+        paths: &[String],
+        cx: &App,
+    ) -> ToolPermissionDecision {
+        if self.full_access {
+            decide_permission_for_paths_with_default_override(
+                tool_name,
+                paths,
+                AgentSettings::get_global(cx),
+                ToolPermissionMode::Allow,
+            )
+        } else {
+            decide_permission_for_paths(tool_name, paths, AgentSettings::get_global(cx))
+        }
+    }
+
+    pub(crate) fn full_access_enabled(&self) -> bool {
+        self.full_access
     }
 
     /// Persist the thread so a freshly recorded "for this thread" sandbox grant
@@ -5546,10 +5628,10 @@ impl ToolCallEventStream {
         // MCP tools are gated only by tool id (no per-input pattern
         // matching), so we pass a single empty input value just to satisfy
         // `decide_permission_from_settings`' signature.
+        let full_access = self.full_access;
         let check_settings: Box<dyn Fn(&App) -> ToolPermissionDecision> =
             Box::new(move |cx: &App| {
-                let settings = agent_settings::AgentSettings::get_global(cx);
-                decide_permission_from_settings(&tool_id, &[String::new()], settings)
+                Self::permission_decision(full_access, &tool_id, &[String::new()], cx)
             });
 
         self.run_authorization_loop(title, options, None, Some(check_settings), cx)
@@ -5583,13 +5665,10 @@ impl ToolCallEventStream {
 
         let tool_name = context.tool_name.clone();
         let input_values = context.input_values.clone();
+        let full_access = self.full_access;
         let check_settings: Box<dyn Fn(&App) -> ToolPermissionDecision> =
             Box::new(move |cx: &App| {
-                decide_permission_from_settings(
-                    &tool_name,
-                    &input_values,
-                    agent_settings::AgentSettings::get_global(cx),
-                )
+                Self::permission_decision(full_access, &tool_name, &input_values, cx)
             });
 
         self.run_authorization_loop(title, options, Some(context), Some(check_settings), cx)
@@ -5892,13 +5971,14 @@ impl ToolCallEventStream {
     }
 
     /// Whether unsandboxed access is currently in effect: granted for this
-    /// thread (a model-requested `unsandboxed` escape or a sandbox-creation
-    /// fallback) or configured persistently via `allow_unsandboxed`. When true,
-    /// commands already run without any OS sandbox, so per-host network grants
-    /// no longer provide isolation and callers may skip host authorization
-    /// entirely.
+    /// thread (the full-access profile, a model-requested `unsandboxed` escape,
+    /// or a sandbox-creation fallback) or configured persistently via
+    /// `allow_unsandboxed`. When true, commands already run without any OS
+    /// sandbox, so per-host network grants no longer provide isolation and
+    /// callers may skip host authorization entirely.
     pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
-        self.unsandboxed_granted_for_thread()
+        self.full_access
+            || self.unsandboxed_granted_for_thread()
             || self.sandbox_fallback_granted_for_thread()
             || AgentSettings::get_global(cx)
                 .sandbox_permissions

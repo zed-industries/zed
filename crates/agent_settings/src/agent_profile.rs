@@ -17,11 +17,15 @@ pub mod builtin_profiles {
     use super::AgentProfileId;
 
     pub const WRITE: &str = "write";
+    pub const WRITE_FULL_ACCESS: &str = "write-full-access";
     pub const ASK: &str = "ask";
     pub const MINIMAL: &str = "minimal";
 
     pub fn is_builtin(profile_id: &AgentProfileId) -> bool {
-        profile_id.as_str() == WRITE || profile_id.as_str() == ASK || profile_id.as_str() == MINIMAL
+        matches!(
+            profile_id.as_str(),
+            WRITE | WRITE_FULL_ACCESS | ASK | MINIMAL
+        )
     }
 }
 
@@ -274,6 +278,13 @@ mod tests {
         assert!(!profile.is_context_server_tool_enabled("other_server", "any_tool"));
     }
 
+    #[test]
+    fn full_access_profile_is_builtin() {
+        let full_access = AgentProfileId("write-full-access".into());
+
+        assert!(builtin_profiles::is_builtin(&full_access));
+    }
+
     #[gpui::test]
     fn unmodified_default_detection(cx: &mut gpui::App) {
         use gpui::UpdateGlobal as _;
@@ -284,11 +295,16 @@ mod tests {
         AgentSettings::register(cx);
 
         let write = AgentProfileId(builtin_profiles::WRITE.into());
+        let full_access = AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into());
         let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
         let custom = AgentProfileId("custom".into());
 
         // Fresh defaults: the shipped built-in profiles are unmodified.
         assert!(AgentProfileSettings::is_unmodified_default(&write, cx));
+        assert!(AgentProfileSettings::is_unmodified_default(
+            &full_access,
+            cx
+        ));
         assert!(AgentProfileSettings::is_unmodified_default(&minimal, cx));
         // Custom (non-built-in) ids are never considered unmodified defaults.
         assert!(!AgentProfileSettings::is_unmodified_default(&custom, cx));
@@ -304,6 +320,10 @@ mod tests {
         });
 
         assert!(!AgentProfileSettings::is_unmodified_default(&write, cx));
+        assert!(AgentProfileSettings::is_unmodified_default(
+            &full_access,
+            cx
+        ));
         assert!(AgentProfileSettings::is_unmodified_default(&minimal, cx));
     }
 }

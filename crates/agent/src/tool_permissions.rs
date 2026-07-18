@@ -256,6 +256,16 @@ impl ToolPermissionDecision {
         permissions: &ToolPermissions,
         shell_kind: ShellKind,
     ) -> ToolPermissionDecision {
+        Self::from_input_with_default_override(tool_name, inputs, permissions, shell_kind, None)
+    }
+
+    pub fn from_input_with_default_override(
+        tool_name: &str,
+        inputs: &[String],
+        permissions: &ToolPermissions,
+        shell_kind: ShellKind,
+        default_override: Option<ToolPermissionMode>,
+    ) -> ToolPermissionDecision {
         // First, check hardcoded security rules, such as banning `rm -rf /` in terminal tool.
         // These cannot be bypassed by any user settings.
         if let Some(denial) = check_hardcoded_security_rules(tool_name, inputs, shell_kind) {
@@ -272,8 +282,11 @@ impl ToolPermissionDecision {
 
         if tool_name == TerminalTool::NAME
             && !rules.map_or(
-                matches!(permissions.default, ToolPermissionMode::Allow),
-                |rules| is_unconditional_allow_all(rules, permissions.default),
+                matches!(
+                    apply_default_override(permissions.default, default_override),
+                    ToolPermissionMode::Allow
+                ),
+                |rules| is_unconditional_allow_all(rules, permissions.default, default_override),
             )
             && inputs.iter().any(|input| {
                 matches!(
@@ -289,7 +302,7 @@ impl ToolPermissionDecision {
             Some(rules) => rules,
             None => {
                 // No tool-specific rules, use the global default
-                return match permissions.default {
+                return match apply_default_override(permissions.default, default_override) {
                     ToolPermissionMode::Allow => ToolPermissionDecision::Allow,
                     ToolPermissionMode::Deny => {
                         ToolPermissionDecision::Deny("Blocked by global default: deny".into())
@@ -330,6 +343,7 @@ impl ToolPermissionDecision {
                     tool_name,
                     false,
                     permissions.default,
+                    default_override,
                 );
             }
 
@@ -352,6 +366,7 @@ impl ToolPermissionDecision {
                 tool_name,
                 !any_parse_failed,
                 permissions.default,
+                default_override,
             )
         } else {
             check_commands(
@@ -360,6 +375,7 @@ impl ToolPermissionDecision {
                 tool_name,
                 true,
                 permissions.default,
+                default_override,
             )
         }
     }
@@ -381,6 +397,7 @@ fn check_commands(
     tool_name: &str,
     allow_enabled: bool,
     global_default: ToolPermissionMode,
+    default_override: Option<ToolPermissionMode>,
 ) -> ToolPermissionDecision {
     // Single pass through all commands:
     // - DENY: If ANY command matches a deny pattern, deny immediately (short-circuit)
@@ -421,7 +438,7 @@ fn check_commands(
         return ToolPermissionDecision::Allow;
     }
 
-    match rules.default.unwrap_or(global_default) {
+    match apply_default_override(rules.default.unwrap_or(global_default), default_override) {
         ToolPermissionMode::Deny => {
             ToolPermissionDecision::Deny(format!("{} tool is disabled", tool_name))
         }
@@ -430,16 +447,31 @@ fn check_commands(
     }
 }
 
-fn is_unconditional_allow_all(rules: &ToolRules, global_default: ToolPermissionMode) -> bool {
+fn is_unconditional_allow_all(
+    rules: &ToolRules,
+    global_default: ToolPermissionMode,
+    default_override: Option<ToolPermissionMode>,
+) -> bool {
     // `always_allow` is intentionally not checked here: when the effective default
     // is already Allow and there are no deny/confirm restrictions, allow patterns
     // are redundant — the user has opted into allowing everything.
     rules.always_deny.is_empty()
         && rules.always_confirm.is_empty()
         && matches!(
-            rules.default.unwrap_or(global_default),
+            apply_default_override(rules.default.unwrap_or(global_default), default_override),
             ToolPermissionMode::Allow
         )
+}
+
+fn apply_default_override(
+    default: ToolPermissionMode,
+    default_override: Option<ToolPermissionMode>,
+) -> ToolPermissionMode {
+    if matches!(default, ToolPermissionMode::Confirm) {
+        default_override.unwrap_or(default)
+    } else {
+        default
+    }
 }
 
 /// Checks if the tool rules contain any invalid regex patterns.
@@ -474,6 +506,21 @@ pub fn decide_permission_from_settings(
         inputs,
         &settings.tool_permissions,
         ShellKind::system(),
+    )
+}
+
+pub fn decide_permission_from_settings_with_default_override(
+    tool_name: &str,
+    inputs: &[String],
+    settings: &AgentSettings,
+    default_override: ToolPermissionMode,
+) -> ToolPermissionDecision {
+    ToolPermissionDecision::from_input_with_default_override(
+        tool_name,
+        inputs,
+        &settings.tool_permissions,
+        ShellKind::system(),
+        Some(default_override),
     )
 }
 
@@ -533,12 +580,58 @@ pub fn decide_permission_for_paths(
     most_restrictive(raw_decision, normalized_decision)
 }
 
+pub fn decide_permission_for_paths_with_default_override(
+    tool_name: &str,
+    raw_paths: &[String],
+    settings: &AgentSettings,
+    default_override: ToolPermissionMode,
+) -> ToolPermissionDecision {
+    let raw_decision = decide_permission_from_settings_with_default_override(
+        tool_name,
+        raw_paths,
+        settings,
+        default_override,
+    );
+
+    let normalized: Vec<String> = raw_paths.iter().map(|path| normalize_path(path)).collect();
+    let any_changed = raw_paths
+        .iter()
+        .zip(&normalized)
+        .any(|(raw, normalized)| raw != normalized);
+    if !any_changed {
+        return raw_decision;
+    }
+
+    let normalized_decision = decide_permission_from_settings_with_default_override(
+        tool_name,
+        &normalized,
+        settings,
+        default_override,
+    );
+
+    most_restrictive(raw_decision, normalized_decision)
+}
+
 pub fn decide_permission_for_path(
     tool_name: &str,
     raw_path: &str,
     settings: &AgentSettings,
 ) -> ToolPermissionDecision {
     decide_permission_for_paths(tool_name, &[raw_path.to_string()], settings)
+}
+
+pub fn decide_permission_for_path_with_default_override(
+    tool_name: &str,
+    raw_path: &str,
+    settings: &AgentSettings,
+    default_override: ToolPermissionMode,
+) -> ToolPermissionDecision {
+    decide_permission_for_paths_with_default_override(
+        tool_name,
+        &[raw_path.to_string()],
+        settings,
+        default_override,
+    )
 }
 
 pub fn most_restrictive(
@@ -764,6 +857,71 @@ mod tests {
             },
             ShellKind::Posix,
         )
+    }
+
+    #[test]
+    fn default_override_only_auto_approves_confirm_fallbacks() {
+        let mut permissions = ToolPermissions::default();
+        let settings = test_agent_settings(permissions.clone());
+
+        assert_eq!(
+            decide_permission_from_settings_with_default_override(
+                FetchTool::NAME,
+                &["https://example.com".to_string()],
+                &settings,
+                ToolPermissionMode::Allow,
+            ),
+            ToolPermissionDecision::Allow
+        );
+
+        permissions.tools.insert(
+            FetchTool::NAME.into(),
+            ToolRules {
+                default: Some(ToolPermissionMode::Deny),
+                always_allow: Vec::new(),
+                always_deny: Vec::new(),
+                always_confirm: Vec::new(),
+                invalid_patterns: Vec::new(),
+            },
+        );
+        let settings = test_agent_settings(permissions.clone());
+        assert!(matches!(
+            decide_permission_from_settings_with_default_override(
+                FetchTool::NAME,
+                &["https://example.com".to_string()],
+                &settings,
+                ToolPermissionMode::Allow,
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+
+        permissions
+            .tools
+            .get_mut(FetchTool::NAME)
+            .expect("fetch rules should exist")
+            .always_confirm
+            .push(CompiledRegex::new("example", false).expect("valid regex"));
+        let settings = test_agent_settings(permissions);
+        assert_eq!(
+            decide_permission_from_settings_with_default_override(
+                FetchTool::NAME,
+                &["https://example.com".to_string()],
+                &settings,
+                ToolPermissionMode::Allow,
+            ),
+            ToolPermissionDecision::Confirm
+        );
+
+        let settings = test_agent_settings(ToolPermissions::default());
+        assert_eq!(
+            decide_permission_for_path_with_default_override(
+                FetchTool::NAME,
+                "https://example.com",
+                &settings,
+                ToolPermissionMode::Allow,
+            ),
+            ToolPermissionDecision::Allow
+        );
     }
 
     // allow pattern matches

@@ -39,18 +39,44 @@ pub trait ProfileProvider {
     /// Whether the current workspace is restricted (has untrusted worktrees).
     ///
     /// In a restricted workspace, profiles that enable tools forbidden in
-    /// restricted mode are flagged, and the active built-in `write`/`ask`
-    /// profiles are downgraded to `minimal`.
+    /// restricted mode are flagged, and the active built-in `write`,
+    /// `write-full-access`, and `ask` profiles are downgraded to `minimal`.
     fn is_restricted(&self, _cx: &App) -> bool {
         false
     }
 
     /// Whether the active profile has been downgraded to `minimal` because the
-    /// workspace is restricted (i.e. the user selected `write`/`ask`, but those
-    /// profiles aren't honored while restricted).
+    /// workspace is restricted (i.e. the user selected a tool-enabled built-in
+    /// profile, but that profile isn't honored while restricted).
     fn profile_downgraded(&self, _cx: &App) -> bool {
         false
     }
+}
+
+fn should_persist_as_default(profile_id: &AgentProfileId) -> bool {
+    profile_id.as_str() != builtin_profiles::WRITE_FULL_ACCESS
+}
+
+fn next_profile_for_cycle(
+    profiles: &AvailableProfiles,
+    current_profile_id: &AgentProfileId,
+) -> Option<AgentProfileId> {
+    let cycle_profiles = profiles
+        .keys()
+        .filter(|profile_id| profile_id.as_str() != builtin_profiles::WRITE_FULL_ACCESS)
+        .collect::<Vec<_>>();
+    if cycle_profiles.is_empty() {
+        return None;
+    }
+
+    let next_index = cycle_profiles
+        .iter()
+        .position(|profile_id| *profile_id == current_profile_id)
+        .map(|index| (index + 1) % cycle_profiles.len())
+        .unwrap_or(0);
+    cycle_profiles
+        .get(next_index)
+        .map(|profile_id| (*profile_id).clone())
 }
 
 pub struct ProfileSelector {
@@ -103,14 +129,7 @@ impl ProfileSelector {
         }
 
         let current_profile_id = self.provider.profile_id(cx);
-        let current_index = profiles
-            .keys()
-            .position(|id| id == &current_profile_id)
-            .unwrap_or(0);
-
-        let next_index = (current_index + 1) % profiles.len();
-
-        if let Some((next_profile_id, _)) = profiles.get_index(next_index) {
+        if let Some(next_profile_id) = next_profile_for_cycle(&profiles, &current_profile_id) {
             self.provider.set_profile(next_profile_id.clone(), cx);
             telemetry::event!(
                 "Agent Profile Switched",
@@ -389,6 +408,9 @@ impl ProfilePickerDelegate {
     fn documentation(candidate: &ProfileCandidate) -> Option<&'static str> {
         match candidate.id.as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
+            builtin_profiles::WRITE_FULL_ACCESS => {
+                Some("Run tools without routine permission prompts or terminal sandboxing.")
+            }
             builtin_profiles::ASK => Some("Chat about your codebase."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
@@ -578,17 +600,20 @@ impl PickerDelegate for ProfilePickerDelegate {
                     let fs = self.fs.clone();
                     let provider = self.provider.clone();
 
-                    update_settings_file(fs, cx, {
-                        let profile_id = profile_id.clone();
-                        move |settings, _cx| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_profile(profile_id.0);
-                        }
-                    });
+                    if should_persist_as_default(&profile_id) {
+                        update_settings_file(fs, cx, {
+                            let profile_id = profile_id.clone();
+                            move |settings, _cx| {
+                                settings
+                                    .agent
+                                    .get_or_insert_default()
+                                    .set_profile(profile_id.0);
+                            }
+                        });
+                    }
 
                     provider.set_profile(profile_id.clone(), cx);
+                    cx.notify();
 
                     telemetry::event!(
                         "Agent Profile Switched",
@@ -848,6 +873,46 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    #[test]
+    fn full_access_profile_is_not_persisted_as_default() {
+        assert!(!should_persist_as_default(&AgentProfileId(
+            builtin_profiles::WRITE_FULL_ACCESS.into()
+        )));
+        assert!(should_persist_as_default(&AgentProfileId(
+            builtin_profiles::WRITE.into()
+        )));
+    }
+
+    #[test]
+    fn full_access_profile_is_skipped_when_cycling() {
+        let profiles = AvailableProfiles::from_iter([
+            (
+                AgentProfileId(builtin_profiles::WRITE.into()),
+                SharedString::from("Write"),
+            ),
+            (
+                AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into()),
+                SharedString::from("Write (Full Access)"),
+            ),
+            (
+                AgentProfileId(builtin_profiles::ASK.into()),
+                SharedString::from("Ask"),
+            ),
+        ]);
+
+        assert_eq!(
+            next_profile_for_cycle(&profiles, &AgentProfileId(builtin_profiles::WRITE.into())),
+            Some(AgentProfileId(builtin_profiles::ASK.into()))
+        );
+        assert_eq!(
+            next_profile_for_cycle(
+                &profiles,
+                &AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into())
+            ),
+            Some(AgentProfileId(builtin_profiles::WRITE.into()))
+        );
+    }
 
     #[gpui::test]
     fn entries_include_custom_profiles(_cx: &mut TestAppContext) {

@@ -3,19 +3,17 @@ use super::tool_permissions::{
     resolve_creatable_global_skill_path, sensitive_settings_kind,
 };
 use agent_client_protocol::schema::v1 as acp;
-use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    authorize_with_sensitive_settings, decide_permission_for_path,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionContext, ToolPermissionDecision,
+    authorize_with_sensitive_settings,
 };
 use std::path::{Path, PathBuf};
 
@@ -45,7 +43,8 @@ pub struct CreateDirectoryToolInput {
     /// Justification for creating a directory **outside** the project, shown to
     /// the user (attributed to you) in the approval prompt that grants sandboxed
     /// terminal commands write access to it. Required only for out-of-project
-    /// paths; ignored for paths inside the project or the global skills dir.
+    /// paths when sandboxing is active; ignored for paths inside the project or
+    /// the global skills dir.
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -110,11 +109,69 @@ impl AgentTool for CreateDirectoryTool {
             // — fully replaces the normal permission and symlink-escape prompts
             // here.
             if global_skill_directory.is_none() && !in_project {
+                if event_stream.full_access_enabled() {
+                    let decision = cx.update(|cx| {
+                        event_stream.permission_decision_for_path(Self::NAME, &input.path, cx)
+                    });
+                    if let ToolPermissionDecision::Deny(reason) = decision {
+                        return Err(reason);
+                    }
+
+                    let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+                    let symlink_escape_target = project.read_with(cx, |project, cx| {
+                        detect_symlink_escape(project, &input.path, &canonical_roots, cx)
+                            .map(|(_, target)| target)
+                    });
+                    let sensitive_kind = sensitive_settings_kind(
+                        Path::new(&input.path),
+                        &canonical_roots,
+                        fs.as_ref(),
+                    )
+                    .await;
+                    let context = ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
+
+                    if let Some(canonical_target) = symlink_escape_target {
+                        cx.update(|cx| {
+                            authorize_symlink_access(
+                                Self::NAME,
+                                &input.path,
+                                &canonical_target,
+                                &event_stream,
+                                cx,
+                            )
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    } else if sensitive_kind.is_some() {
+                        let title = format!("Create directory {}", input.path);
+                        cx.update(|cx| {
+                            authorize_with_sensitive_settings(
+                                sensitive_kind,
+                                context,
+                                &title,
+                                &event_stream,
+                                cx,
+                            )
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    } else if matches!(decision, ToolPermissionDecision::Confirm) {
+                        cx.update(|cx| {
+                            event_stream.authorize(
+                                format!("Create directory {}", input.path),
+                                context,
+                                cx,
+                            )
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    }
+                }
                 return create_out_of_project_directory(&project, &input, &event_stream, cx).await;
             }
 
             let decision = cx.update(|cx| {
-                decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
+                event_stream.permission_decision_for_path(Self::NAME, &input.path, cx)
             });
 
             if let ToolPermissionDecision::Deny(reason) = decision {
@@ -213,7 +270,8 @@ impl AgentTool for CreateDirectoryTool {
 }
 
 /// Create a directory that lives **outside** the project by granting sandboxed
-/// terminal commands write access to exactly it.
+/// terminal commands write access to exactly it, or directly when the thread
+/// already has unsandboxed access.
 ///
 /// The directory is created (Linux: eagerly, pinning the inode; macOS: after
 /// approval) and the user is shown the real, canonicalized target in the sandbox
@@ -233,25 +291,30 @@ async fn create_out_of_project_directory(
     let sandboxing = project.read_with(cx, |project, cx| {
         crate::sandboxing::sandboxing_enabled_for_project(project, cx)
     });
+    let full_access = event_stream.full_access_enabled();
     let platform_supported = cfg!(any(target_os = "linux", target_os = "macos"));
-    if !sandboxing || !platform_supported {
+    if (!sandboxing && !full_access) || !platform_supported {
         return Err("Path to create was outside the project".to_string());
     }
 
-    let Some(reason) = input
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|reason| !reason.is_empty())
-    else {
-        return Err(
-            "Creating a directory outside the project grants sandboxed terminal commands write \
-             access to it, so a `reason` is required: briefly justify why the directory is needed, \
-             then try again."
-                .to_string(),
-        );
+    let reason = if full_access {
+        String::new()
+    } else {
+        let Some(reason) = input
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        else {
+            return Err(
+                "Creating a directory outside the project grants sandboxed terminal commands write \
+                 access to it, so a `reason` is required: briefly justify why the directory is needed, \
+                 then try again."
+                    .to_string(),
+            );
+        };
+        reason.to_string()
     };
-    let reason = reason.to_string();
 
     let absolute = resolve_absolute_path(project, &input.path, cx)
         .ok_or_else(|| format!("Couldn't resolve `{}` to an absolute path.", input.path))?;
@@ -266,6 +329,14 @@ async fn create_out_of_project_directory(
         write_paths: vec![canonical.clone()],
         ..Default::default()
     };
+
+    if full_access {
+        let display = canonical.display().to_string();
+        cx.background_spawn(async move { prepared.finalize() })
+            .await
+            .map_err(|error| format!("Creating directory {display}: {error}"))?;
+        return Ok(format!("Created directory {display}"));
+    }
 
     let approve = cx.update(|cx| event_stream.authorize_sandbox(request, reason, cx));
     match approve.await {
@@ -309,10 +380,12 @@ fn resolve_absolute_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_settings::AgentSettings;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use settings::Settings;
     use settings::SettingsStore;
     use std::path::PathBuf;
     use util::path;

@@ -174,7 +174,7 @@ macro_rules! tools {
 // not enough to make the model actually receive it. Three further gates will
 // silently drop the tool rather than fail to compile:
 //
-// 1. `assets/settings/default.json`: the `write` and `ask` agent profiles each
+// 1. `assets/settings/default.json`: the tool-enabled built-in agent profiles
 //    carry an explicit `tools` allowlist. `Thread::enabled_tools` filters out
 //    any tool not present there with value `true`, so it never reaches the
 //    model.

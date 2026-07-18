@@ -4,7 +4,7 @@ use acp_thread::{
     ThreadStatus,
 };
 use agent_client_protocol::schema::v1 as acp;
-use agent_settings::AgentProfileId;
+use agent_settings::{AgentProfileId, builtin_profiles};
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
 use collections::IndexMap;
@@ -278,6 +278,28 @@ fn always_allow_tools(cx: &mut TestAppContext) {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
         agent_settings::AgentSettings::override_global(settings, cx);
+    });
+}
+
+fn activate_full_access_profile(thread: &Entity<Thread>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        let profile = settings
+            .profiles
+            .get(&AgentProfileId("test-profile".into()))
+            .expect("test profile should exist")
+            .clone();
+        settings.profiles.insert(
+            AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into()),
+            profile,
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(
+            AgentProfileId(builtin_profiles::WRITE_FULL_ACCESS.into()),
+            cx,
+        );
     });
 }
 
@@ -1019,6 +1041,75 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             }
         )]
     );
+}
+
+#[gpui::test]
+async fn test_full_access_profile_auto_approves_tools(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    activate_full_access_profile(&thread, cx);
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.send(ClientUserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("tool should run without waiting for authorization");
+    let message = completion
+        .messages
+        .last()
+        .expect("tool result should exist");
+    assert_eq!(
+        message.content,
+        vec![language_model::MessageContent::ToolResult(
+            LanguageModelToolResult {
+                tool_use_id: "tool_id".into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
+                is_error: false,
+                content: vec!["Allowed".into()],
+                output: Some("Allowed".into()),
+            }
+        )]
+    );
+}
+
+#[gpui::test]
+async fn test_full_access_profile_disables_sandbox_for_thread(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    activate_full_access_profile(&thread, cx);
+
+    thread.update(cx, |thread, cx| {
+        assert!(!thread.sandboxing_enabled(cx));
+        let (_, thread_sandbox) = thread
+            .sandbox_status(cx)
+            .expect("sandboxing should be available for the test project");
+        assert!(thread_sandbox.is_unsandboxed());
+
+        thread.set_profile(AgentProfileId("test-profile".into()), cx);
+        assert!(thread.sandboxing_enabled(cx));
+        let (_, thread_sandbox) = thread
+            .sandbox_status(cx)
+            .expect("sandboxing should be available for the test project");
+        assert!(!thread_sandbox.is_unsandboxed());
+    });
 }
 
 #[gpui::test]
