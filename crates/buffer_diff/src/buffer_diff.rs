@@ -941,37 +941,6 @@ impl BufferDiffSnapshot {
                 )
             };
 
-            // A hunk whose secondary status is stale (e.g. because this diff
-            // and the unstaged diff anchored an ambiguous hunk differently)
-            // can produce an edit that inserts content the index already
-            // contains, duplicating it on every application. If the index
-            // already matches the replacement at this position, the hunk is
-            // already in the desired state; drop the edit.
-            if index_byte_range.is_empty() && !replacement_text.is_empty() {
-                let lookahead_end = index_byte_range.start + replacement_text.len();
-                if lookahead_end <= index_text.len() {
-                    let mut remaining: &str = &replacement_text;
-                    let already_present = index_text
-                        .chunks_in_range(index_byte_range.start..lookahead_end)
-                        .all(|chunk| match remaining.strip_prefix(chunk) {
-                            Some(rest) => {
-                                remaining = rest;
-                                true
-                            }
-                            None => false,
-                        })
-                        && remaining.is_empty();
-                    if already_present {
-                        log::warn!(
-                            "skipping index edit that would duplicate existing index content \
-                             at {:?}",
-                            index_byte_range,
-                        );
-                        continue;
-                    }
-                }
-            }
-
             // Distinct worktree hunks can project to touching index ranges
             // (e.g. a staged deletion ending exactly where the next hunk's
             // index position starts). Merge them so the edit list stays
@@ -1223,10 +1192,7 @@ fn compute_hunks(
             return tree;
         }
 
-        let input = InternedInput::new(
-            lines(diff_base.as_ref()),
-            lines(buffer_text.as_str()),
-        );
+        let input = InternedInput::new(lines(diff_base.as_ref()), lines(buffer_text.as_str()));
         let mut diff = Diff::compute(Algorithm::Histogram, &input);
         // Canonicalize the placement of ambiguous hunks (git's slider/indent
         // heuristic). Without this, diffs of the same buffer against different
