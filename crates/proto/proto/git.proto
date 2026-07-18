@@ -330,6 +330,14 @@ message GitAddPathToGitignore {
   bool is_dir = 5;
 }
 
+message GitAddPathToGitInfoExclude {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string path = 4;
+  bool is_dir = 5;
+}
+
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
   string repo_path = 1;
