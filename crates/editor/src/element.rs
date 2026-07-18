@@ -5344,10 +5344,7 @@ impl EditorElement {
                                     staged_deleted
                                         .iter()
                                         .cloned()
-                                        .chain(relative_added.map(|range| {
-                                            (range.start + deleted_lines - 1)
-                                                ..(range.end + deleted_lines - 1)
-                                        }))
+                                        .chain(relative_added)
                                         .collect()
                                 } else {
                                     relative_added.collect()

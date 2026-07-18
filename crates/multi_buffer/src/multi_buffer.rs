@@ -2304,10 +2304,6 @@ impl MultiBuffer {
             .is_some()
     }
 
-    pub fn single_hunk_is_expanded(&self, range: Range<Anchor>, cx: &App) -> bool {
-        self.read(cx).single_hunk_is_expanded(range)
-    }
-
     pub fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<Anchor>], cx: &App) -> bool {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
@@ -3056,7 +3052,7 @@ impl MultiBuffer {
             .excerpt_containing(range.end..range.end)
             .and_then(|(_, excerpt_range)| snapshot.anchor_in_excerpt(excerpt_range.context.end));
         let point_range = range.to_point(&snapshot);
-        let expand = !self.single_hunk_is_expanded(range, cx);
+        let expand = !snapshot.single_hunk_is_expanded(range);
         let edits =
             self.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_end)], expand, cx);
         if !edits.is_empty() {

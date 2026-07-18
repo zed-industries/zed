@@ -192,10 +192,7 @@ fn pending_hunks(
         .collect()
 }
 
-fn selected_rows_in_span(
-    selections: &[ResolvedLineSelection],
-    span: &Range<u32>,
-) -> BTreeSet<u32> {
+fn selected_rows_in_span(selections: &[ResolvedLineSelection], span: &Range<u32>) -> BTreeSet<u32> {
     selections
         .iter()
         .flat_map(|selection| {

@@ -186,8 +186,8 @@ fn resolve_line_selections(
                     }
                     deletion_selected = true;
                     // staged_deleted is relative to the hunk's deleted region
-                    let overlap = overlap.start - deleted_rows.start
-                        ..overlap.end - deleted_rows.start;
+                    let overlap =
+                        overlap.start - deleted_rows.start..overlap.end - deleted_rows.start;
                     if !rows_fully_staged(overlap, &hunk.staged_deleted) {
                         stage = true;
                     }
@@ -336,7 +336,13 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
             };
             project
                 .update(cx, |project, cx| {
-                    project.stage_or_unstage_lines(stage, buffer, hunks.diff, selections.clone(), cx)
+                    project.stage_or_unstage_lines(
+                        stage,
+                        buffer,
+                        hunks.diff,
+                        selections.clone(),
+                        cx,
+                    )
                 })
                 .log_err();
         }
@@ -3228,8 +3234,13 @@ impl EditorSnapshot {
                         .staged_added
                         .iter()
                         .map(|range| {
-                            range.start.to_display_point(&self.display_snapshot).row()
-                                ..range.end.to_display_point(&self.display_snapshot).row()
+                            let start = range.start.to_display_point(&self.display_snapshot);
+                            let end = range.end.to_display_point(&self.display_snapshot);
+                            let mut end_row = end.row();
+                            if end.column() > 0 {
+                                end_row.0 += 1;
+                            }
+                            start.row()..end_row
                         })
                         .collect();
 
