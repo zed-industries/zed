@@ -626,12 +626,17 @@ mod tests {
     };
     use core::panic;
     use smallvec::SmallVec;
-    use std::{cell::RefCell, ops::Range, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        ops::Range,
+        rc::Rc,
+    };
 
     use crate::{
-        ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
-        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
-        UTF16Selection, Unbind, Window,
+        ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
+        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Pixels, PlatformWindow, Point,
+        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
+        VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1037,12 +1042,14 @@ mod tests {
         struct CustomElement {
             focus_handle: FocusHandle,
             text: Rc<RefCell<String>>,
+            action_count: Rc<Cell<usize>>,
         }
         impl CustomElement {
             fn new(cx: &mut Context<Self>) -> Self {
                 Self {
                     focus_handle: cx.focus_handle(),
                     text: Rc::default(),
+                    action_count: Rc::default(),
                 }
             }
         }
@@ -1091,7 +1098,15 @@ mod tests {
                 key_context.add("Terminal");
                 window.set_key_context(key_context);
                 window.handle_input(&self.focus_handle, self.clone(), cx);
-                window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+                let action_count = self.action_count.clone();
+                window.on_action(
+                    std::any::TypeId::of::<TestAction>(),
+                    move |_, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            action_count.set(action_count.get() + 1);
+                        }
+                    },
+                );
             }
         }
         impl IntoElement for CustomElement {
@@ -1155,6 +1170,10 @@ mod tests {
 
             fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
 
+            fn prefers_ime_for_printable_keys(&mut self, _: &mut Window, _: &mut App) -> bool {
+                true
+            }
+
             fn bounds_for_range(
                 &mut self,
                 _: Range<usize>,
@@ -1182,6 +1201,7 @@ mod tests {
         cx.update(|cx| {
             cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
             cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-x k", TestAction, Some("Terminal"))]);
         });
         let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
         let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
@@ -1189,6 +1209,48 @@ mod tests {
             window.focus(&focus_handle, cx);
             window.activate_window();
         });
+
+        let query_prefers_ime_for_printable_keys = |cx: &mut VisualTestContext| {
+            let mut platform_window = cx.test_window(cx.window_handle());
+            let mut input_handler = platform_window.take_input_handler()?;
+            let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
+            platform_window.set_input_handler(input_handler);
+            Some(prefers_ime)
+        };
+
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
+        cx.simulate_keystrokes("ctrl-x");
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+
+        let prefers_ime_after_blur = {
+            let mut platform_window = cx.test_window(cx.window_handle());
+            let mut input_handler = platform_window.take_input_handler();
+            cx.update(|window, _| {
+                window.blur();
+                assert!(!window.has_pending_keystrokes());
+            });
+            let prefers_ime = input_handler
+                .as_mut()
+                .map(|input_handler| input_handler.query_prefers_ime_for_printable_keys());
+            if let Some(input_handler) = input_handler {
+                platform_window.set_input_handler(input_handler);
+            }
+            prefers_ime
+        };
+        assert_eq!(prefers_ime_after_blur, Some(true));
+        cx.update(|window, cx| window.focus(&focus_handle, cx));
+
+        cx.simulate_keystrokes("ctrl-x");
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+        cx.simulate_keystrokes("k");
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 1);
+            assert_eq!(test.text.borrow().as_str(), "");
+        });
+
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
