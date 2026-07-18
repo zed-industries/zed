@@ -7367,6 +7367,11 @@ impl Repository {
         })
     }
 
+    // Kept for wire compatibility: older remote clients run the pre-commit hook explicitly
+    // via `proto::RunGitHook` before committing. New code lets `git commit` run hooks itself.
+    //
+    // TODO: remove together with `proto::RunGitHook` once all supported peers commit without
+    // sending it (see the deprecation note on the message in git.proto).
     pub fn run_hook(&mut self, hook: RunHook, _cx: &mut App) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
@@ -7401,20 +7406,16 @@ impl Repository {
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         askpass: AskPassDelegate,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
-        let rx = self.run_hook(RunHook::PreCommit, cx);
-
         self.send_job(
             "commit",
             Some("git commit".into()),
             move |git_repo, _cx| async move {
-                rx.await??;
-
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,

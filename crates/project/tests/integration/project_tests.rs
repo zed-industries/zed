@@ -4645,6 +4645,71 @@ async fn test_diagnostic_summaries_retained_on_buffer_close_with_workspace_diagn
 }
 
 #[gpui::test]
+async fn test_workspace_diagnostics_pull_timeout_releases_waiters(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-ws-timeout".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                // Simulate a server that holds workspace diagnostic pull requests
+                // open forever without responding or streaming partial results.
+                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        future::pending::<()>().await;
+                        Err(anyhow::anyhow!("should never respond"))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let pull_task = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.pull_workspace_diagnostics_once(cx)
+    });
+
+    // The waiter must be released after the request times out, instead of
+    // being held through every retry of the background refresh loop.
+    cx.executor().advance_clock(DEFAULT_LSP_REQUEST_TIMEOUT * 2);
+    let refreshed = pull_task.await;
+    assert!(
+        !refreshed,
+        "pull should report a failed refresh when the server never responds"
+    );
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
