@@ -12,6 +12,7 @@ use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use text::{BufferId, Point};
+use util::ResultExt as _;
 
 use crate::{
     InlayHint, InlayId, LspStore, LspStoreEvent, ResolveState, lsp_command::InlayHints,
@@ -296,6 +297,29 @@ impl LspStore {
                 .await?;
                 Ok(resolved_hint)
             })
+        }
+    }
+
+    /// `request_id` orders per-server refreshes (a higher id invalidates the cache).
+    /// Client-initiated refreshes (e.g. after dynamic registration) pass `None`.
+    pub(crate) fn refresh_inlay_hints(
+        &mut self,
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(LspStoreEvent::RefreshInlayHints {
+            server_id,
+            request_id,
+        });
+        if let Some((client, project_id)) = self.downstream_client.as_ref() {
+            client
+                .send(proto::RefreshInlayHints {
+                    project_id: *project_id,
+                    server_id: server_id.to_proto(),
+                    request_id: request_id.map(|id| id as u64),
+                })
+                .log_err();
         }
     }
 

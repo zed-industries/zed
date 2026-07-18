@@ -3638,6 +3638,95 @@ let c = 3;"#
     }
 
     #[gpui::test]
+    async fn test_dynamic_inlay_hint_registration_requeries_open_document(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let request_count = Arc::new(AtomicU32::new(0));
+        let (_, editor, fake_server) =
+            prepare_test_objects_with_capabilities(cx, lsp::ServerCapabilities::default(), {
+                let request_count = request_count.clone();
+                move |fake_server, file_with_hints| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+                        let request_count = request_count.clone();
+                        move |params, _| {
+                            let request_count = request_count.clone();
+                            async move {
+                                assert_eq!(
+                                    params.text_document.uri,
+                                    lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                                );
+                                request_count.fetch_add(1, Ordering::AcqRel);
+                                Ok(Some(vec![lsp::InlayHint {
+                                    position: lsp::Position::new(0, 0),
+                                    label: lsp::InlayHintLabel::String(
+                                        "Dynamically registered".to_string(),
+                                    ),
+                                    kind: None,
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: None,
+                                    data: None,
+                                }]))
+                            }
+                        }
+                    });
+                }
+            })
+            .await;
+
+        assert_eq!(
+            request_count.load(Ordering::Acquire),
+            0,
+            "no inlay hints should be requested before the capability is registered"
+        );
+
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: "inlay-hints".to_string(),
+                        method: "textDocument/inlayHint".to_string(),
+                        register_options: None,
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .expect("register capability request failed");
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            request_count.load(Ordering::Acquire),
+            1,
+            "dynamic textDocument/inlayHint registration should re-query the open document"
+        );
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    visible_hint_labels(editor, cx),
+                    vec!["Dynamically registered".to_string()],
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_inlays_at_the_same_place(cx: &mut gpui::TestAppContext) {
         init_test(cx, &|settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
@@ -4809,6 +4898,22 @@ let c = 3;"#
         cx: &mut TestAppContext,
         initialize: impl 'static + Send + Fn(&mut FakeLanguageServer, &'static str) + Send + Sync,
     ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
+        prepare_test_objects_with_capabilities(
+            cx,
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initialize,
+        )
+        .await
+    }
+
+    async fn prepare_test_objects_with_capabilities(
+        cx: &mut TestAppContext,
+        capabilities: lsp::ServerCapabilities,
+        initialize: impl 'static + Send + Fn(&mut FakeLanguageServer, &'static str) + Send + Sync,
+    ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/a"),
@@ -4827,10 +4932,7 @@ let c = 3;"#
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
+                capabilities,
                 initializer: Some(Box::new(move |server| initialize(server, file_path))),
                 ..FakeLspAdapter::default()
             },

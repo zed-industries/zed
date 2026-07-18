@@ -1105,26 +1105,11 @@ impl LocalLspStore {
                     let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
-                        lsp_store
-                            .update(&mut cx, |lsp_store, cx| {
-                                let request_id =
-                                    Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
-                                cx.emit(LspStoreEvent::RefreshInlayHints {
-                                    server_id,
-                                    request_id,
-                                });
-                                lsp_store
-                                    .downstream_client
-                                    .as_ref()
-                                    .map(|(client, project_id)| {
-                                        client.send(proto::RefreshInlayHints {
-                                            project_id: *project_id,
-                                            server_id: server_id.to_proto(),
-                                            request_id: request_id.map(|id| id as u64),
-                                        })
-                                    })
-                            })?
-                            .transpose()?;
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
+                            let request_id =
+                                Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
+                            lsp_store.refresh_inlay_hints(server_id, request_id, cx);
+                        })?;
                         Ok(())
                     }
                 }
@@ -13211,6 +13196,7 @@ impl LspStore {
                         capabilities.inlay_hint_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
+                    self.refresh_inlay_hints(server_id, None, cx);
                 }
                 "textDocument/documentSymbol" => {
                     let options = parse_register_capabilities(reg)?;
