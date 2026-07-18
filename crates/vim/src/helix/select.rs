@@ -16,7 +16,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     let Some(range) = object
                         .helix_range(map, selection.clone(), around)
                         .unwrap_or({
@@ -45,7 +45,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     let Ok(Some(range)) = object.helix_next_range(map, selection.clone(), around)
                     else {
                         return;
@@ -69,7 +69,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     let Ok(Some(range)) =
                         object.helix_previous_range(map, selection.clone(), around)
                     else {

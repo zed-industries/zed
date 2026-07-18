@@ -1,3 +1,8 @@
+---
+title: Python
+description: "Configure Python language support in Zed, including language servers, formatting, and debugging."
+---
+
 # How to Set Up Python in Zed
 
 Python support is available natively in Zed.
@@ -63,7 +68,7 @@ Zed will recognize `.py` files automatically using its native tree-sitter-python
 
 ### Step 2: Use the Integrated Terminal (Optional)
 
-Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../configuring-zed.md#terminal-detect_venv) setting.
+Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../reference/all-settings.md#terminal-detect_venv) setting.
 
 ## Configure Python Language Servers in Zed
 
@@ -71,19 +76,21 @@ Zed provides several Python language servers out of the box. By default, [basedp
 
 Other built-in language servers are:
 
-- [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
-These are disabled by default, but can be enabled in your settings. For example:
+These are disabled by default, but can be enabled in your settings.
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
   "languages": {
     "Python": {
       "language_servers": [
-        // Disable basedpyright and enable Ty, and otherwise
-        // use the default configuration.
+        // Enable ty, disable basedpyright, and enable all
+        // other registered language servers (ruff, pylsp, pyright).
         "ty",
         "!basedpyright",
         "..."
@@ -99,7 +106,7 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 [basedpyright](https://docs.basedpyright.com/latest/) is the primary Python language server in Zed beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
 
-Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on more for more details about how to configure basedpyright.
+Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on for more details about how to configure basedpyright.
 
 #### Basedpyright Configuration
 
@@ -116,7 +123,7 @@ Examples of both kinds of configuration are provided below. Refer to the basedpy
 
 Language server settings for basedpyright in Zed can be set in the `lsp` section of your `settings.json`.
 
-For example, in order to:
+For example, to:
 
 - diagnose all files in the workspace instead of the only open files default
 - disable inlay hints on function arguments
@@ -146,7 +153,7 @@ basedpyright reads project-specific configuration from the `pyrightconfig.json` 
 
 Here's an example `pyrightconfig.json` file that configures basedpyright to use the `strict` type-checking mode and not to issue diagnostics for any files in `__pycache__` directories:
 
-```json [settings]
+```json
 {
   "typeCheckingMode": "strict",
   "ignore": ["**/__pycache__"]
@@ -190,35 +197,66 @@ For most projects, Zed will automatically select the right Python toolchain. In 
 
 ## Code Formatting & Linting
 
-Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for Python code. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Both formatting and linting are enabled by default, including format-on-save.
+Zed uses [Ruff](https://github.com/astral-sh/ruff) for formatting and linting Python code. Specifically, it runs Ruff as an LSP server using the `ruff server` subcommand.
 
-### Configuring formatting
+### Configuring Formatting
 
-You can disable format-on-save for Python files in your `settings.json`:
+Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      }
+    }
+  }
+}
+```
+
+These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        // Phase 1: Ruff still handles organize imports
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        // Phase 2: Black handles formatting
+        "external": {
+          "command": "black",
+          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+    }
+  }
+}
+```
+
+To completely switch to another tool and prevent Ruff from modifying your code at all, you must explicitly set `source.organizeImports.ruff` to false in the `code_actions_on_format` section, in addition to changing the formatter.
+
+To prevent any formatting actions when you save, you can disable format-on-save for Python files.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
   "languages": {
     "Python": {
       "format_on_save": "off"
-    }
-  }
-}
-```
-
-Alternatively, you can use the `black` command-line tool for Python formatting, while keeping Ruff enabled for linting:
-
-```json [settings]
-{
-  "languages": {
-    "Python": {
-      "formatter": {
-        "external": {
-          "command": "black",
-          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
-        }
-      }
-      // Or use `"formatter": null` to disable formatting entirely.
     }
   }
 }
@@ -360,9 +398,40 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
-## Troubleshoot and Maintain a Productive Python Setup
+#### Debug a Django App
 
-Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
+For projects using Django with a structure similar to the following:
+
+```
+my_django_project/
+  manage.py
+  …
+  my_django_app/
+    migrations/
+    templates/
+    models.py
+    urls.py
+    …
+```
+
+…the following configuration can be used:
+
+```json [debug]
+[
+  {
+    "label": "Python: Django",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "manage.py",
+    "args": ["runserver"],
+    "django": true
+  }
+]
+```
+
+## Troubleshooting
+
+Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.
 
 ### Resolve Language Server Startup Issues
 
@@ -375,4 +444,4 @@ If a language server isn't responding or features like diagnostics or autocomple
 - Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
 - Restart Zed to reinitialize language server connections, or try restarting the language server using the {#action editor::RestartLanguageServer}
 
-If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.
+If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use the "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.

@@ -1,3 +1,8 @@
+---
+title: Makefile
+description: "Configure Makefile language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Makefile
 
 Makefile language support in Zed is provided by the community-maintained [Make extension](https://github.com/caius/zed-make).

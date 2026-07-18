@@ -1,5 +1,6 @@
 pub mod client;
 pub mod listener;
+pub mod oauth;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -10,6 +11,7 @@ use collections::HashMap;
 use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
@@ -19,6 +21,7 @@ use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
 
+use crate::oauth::WwwAuthenticate;
 use crate::transport::HttpTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -39,6 +42,7 @@ pub struct ContextServer {
     id: ContextServerId,
     client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
     configuration: ContextServerTransport,
+    request_timeout: Option<Duration>,
 }
 
 impl ContextServer {
@@ -54,6 +58,7 @@ impl ContextServer {
                 command,
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
+            request_timeout: None,
         }
     }
 
@@ -63,6 +68,7 @@ impl ContextServer {
         headers: HashMap<String, String>,
         http_client: Arc<dyn HttpClient>,
         executor: gpui::BackgroundExecutor,
+        request_timeout: Option<Duration>,
     ) -> Result<Self> {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
@@ -73,14 +79,23 @@ impl ContextServer {
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
         };
-        Ok(Self::new(id, transport))
+        Ok(Self::new_with_timeout(id, transport, request_timeout))
     }
 
     pub fn new(id: ContextServerId, transport: Arc<dyn crate::transport::Transport>) -> Self {
+        Self::new_with_timeout(id, transport, None)
+    }
+
+    pub fn new_with_timeout(
+        id: ContextServerId,
+        transport: Arc<dyn crate::transport::Transport>,
+        request_timeout: Option<Duration>,
+    ) -> Self {
         Self {
             id,
             client: RwLock::new(None),
             configuration: ContextServerTransport::Custom(transport),
+            request_timeout,
         }
     }
 
@@ -90,6 +105,16 @@ impl ContextServer {
 
     pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
         self.client.read().clone()
+    }
+
+    /// The authentication challenge from the last `401 Unauthorized` response
+    /// this server's transport gave up on, if any. See
+    /// [`crate::transport::Transport::auth_challenge`].
+    pub fn auth_challenge(&self) -> Option<WwwAuthenticate> {
+        match &self.configuration {
+            ContextServerTransport::Stdio(..) => None,
+            ContextServerTransport::Custom(transport) => transport.auth_challenge(),
+        }
     }
 
     pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
@@ -113,7 +138,7 @@ impl ContextServer {
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
                 transport.clone(),
-                None,
+                self.request_timeout,
                 cx.clone(),
             )?,
         })
@@ -124,7 +149,9 @@ impl ContextServer {
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
             name: "Zed".to_string(),
+            title: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            description: None,
         };
         let initialized_protocol = protocol.initialize(client_info).await?;
 

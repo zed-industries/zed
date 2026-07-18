@@ -1,3 +1,8 @@
+---
+title: Release Notes
+description: "Guide to release notes for Zed development."
+---
+
 # Release Notes
 
 Whenever you open a pull request, the body is automatically populated based on this [pull request template](https://github.com/zed-industries/zed/blob/main/.github/pull_request_template.md).
@@ -10,9 +15,9 @@ Release Notes:
 - N/A _or_ Added/Fixed/Improved ...
 ```
 
-On Wednesdays, we run a [`get-preview-channel-changes`](https://github.com/zed-industries/zed/blob/main/script/get-preview-channel-changes) script that scrapes `Release Notes` lines from pull requests landing in preview, as documented in our [Release](https://zed.dev/docs/development/release-notes) docs.
+On Wednesdays, we run [`get-preview-channel-changes`](https://github.com/zed-industries/zed/blob/main/script/get-preview-channel-changes), which collects `Release Notes` lines from pull requests landing in preview, as described in the [Release](https://zed.dev/docs/development/release-notes) docs.
 
-The script outputs everything below the `Release Notes` line, including additional data such as the pull request author (if not a Zed team member) and a link to the pull request.
+The script outputs everything below the `Release Notes` line, including metadata such as the pull request author (if they are not a Zed team member) and a link to the pull request.
 If you use `N/A`, the script skips your pull request entirely.
 
 ## Guidelines for crafting your `Release Notes` line(s)
@@ -26,4 +31,4 @@ If you use `N/A`, the script skips your pull request entirely.
   Don't make the user dig into docs or the pull request to find this information (although it should be included in docs as well).
 - For pull requests that are reverts:
   - If the item being reverted **has already been shipped**, include a `Release Notes` line explaining why we reverted, as this is a breaking change.
-  - If the item being reverted **hasn't been shipped**, edit the original PR's `Release Notes` line to be `N/A`; otherwise, it will be included and the compiler of the release notes may not know to skip it, leading to a potentially-awkward situation where we are stating we shipped something we actually didn't.
+- If the item being reverted **hasn't been shipped**, edit the original PR's `Release Notes` line to `N/A`; otherwise, it will still be included and the release notes compiler may not know to skip it.

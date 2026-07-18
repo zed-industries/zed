@@ -99,19 +99,17 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        combined_command.insert_str(0, "exec </dev/null; ");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -145,19 +143,17 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        combined_command.insert_str(0, "exec </dev/null; ");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -176,15 +172,27 @@ impl ShellBuilder {
         (self.program, self.args)
     }
 
-    /// Builds a command with the given task command and arguments.
+    /// Builds a `smol::process::Command` with the given task command and arguments.
     ///
     /// Prefer this over manually constructing a command with the output of `Self::build`,
     /// as this method handles `cmd` weirdness on windows correctly.
-    pub fn build_command(
+    pub fn build_smol_command(
+        self,
+        task_command: Option<String>,
+        task_args: &[String],
+    ) -> smol::process::Command {
+        smol::process::Command::from(self.build_std_command(task_command, task_args))
+    }
+
+    /// Builds a `std::process::Command` with the given task command and arguments.
+    ///
+    /// Prefer this over manually constructing a command with the output of `Self::build`,
+    /// as this method handles `cmd` weirdness on windows correctly.
+    pub fn build_std_command(
         self,
         mut task_command: Option<String>,
         task_args: &[String],
-    ) -> smol::process::Command {
+    ) -> std::process::Command {
         #[cfg(windows)]
         let kind = self.kind;
         if task_args.is_empty() {
@@ -195,11 +203,11 @@ impl ShellBuilder {
         }
         let (program, args) = self.build(task_command, task_args);
 
-        let mut child = crate::command::new_smol_command(program);
+        let mut child = crate::command::new_std_command(program);
 
         #[cfg(windows)]
         if kind == ShellKind::Cmd {
-            use smol::process::windows::CommandExt;
+            use std::os::windows::process::CommandExt;
 
             for arg in args {
                 child.raw_arg(arg);
@@ -261,7 +269,7 @@ mod test {
             .build(Some("echo".into()), &["nothing".to_string()]);
 
         assert_eq!(program, "nu");
-        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "(echo nothing\n) </dev/null"]);
     }
 
     #[test]
@@ -274,7 +282,41 @@ mod test {
             .build(Some("echo".into()), &["test".to_string()]);
 
         assert_eq!(program, "fish");
-        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "exec </dev/null; echo test"]);
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_preserves_heredoc() {
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let command = "cat <<EOF\nhello\nEOF";
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some(command.into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(
+            args,
+            vec!["-i", "-c", "exec </dev/null; cat <<EOF\nhello\nEOF"]
+        );
+    }
+
+    #[test]
+    fn non_interactive_omits_interactive_flag() {
+        // Headless hosts (e.g. the eval CLI) build the agent's shell command
+        // non-interactively so it works without a controlling TTY.
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false).non_interactive();
+
+        let (program, args) = shell_builder.build(Some("echo hello".into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(args, vec!["-c", "echo hello"]);
+        assert!(
+            !args.iter().any(|arg| arg == "-i"),
+            "non-interactive shell command must not include `-i`"
+        );
     }
 
     #[test]

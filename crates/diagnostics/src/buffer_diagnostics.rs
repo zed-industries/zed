@@ -6,16 +6,16 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window, actions, div,
+    Task, TaskExt, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
+use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -24,13 +24,14 @@ use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::{self, Ordering},
+    ops::Range,
     sync::Arc,
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
+    ItemHandle, ItemNavHistory, Workspace,
+    item::{Item, ItemEvent, TabContentParams},
 };
 
 actions!(
@@ -219,7 +220,7 @@ impl BufferDiagnosticsEditor {
         // If there's no active editor with a project path, avoiding deploying
         // the buffer diagnostics view.
         if let Some(editor) = workspace.active_item_as::<Editor>(cx)
-            && let Some(project_path) = editor.project_path(cx)
+            && let Some(project_path) = editor.read(cx).active_project_path(cx)
         {
             // Check if there's already a `BufferDiagnosticsEditor` tab for this
             // same path, and if so, focus on that one instead of creating a new
@@ -480,25 +481,35 @@ impl BufferDiagnosticsEditor {
                     })
                 });
 
-                let (anchor_ranges, _) =
-                    buffer_diagnostics_editor
-                        .multibuffer
-                        .update(cx, |multibuffer, cx| {
-                            let excerpt_ranges = excerpt_ranges
-                                .into_iter()
-                                .map(|range| ExcerptRange {
-                                    context: range.context.to_point(&buffer_snapshot),
-                                    primary: range.primary.to_point(&buffer_snapshot),
-                                })
-                                .collect();
-                            multibuffer.set_excerpt_ranges_for_path(
-                                PathKey::for_buffer(&buffer, cx),
-                                buffer.clone(),
-                                &buffer_snapshot,
-                                excerpt_ranges,
-                                cx,
-                            )
-                        });
+                let excerpt_ranges: Vec<_> = excerpt_ranges
+                    .into_iter()
+                    .map(|range| ExcerptRange {
+                        context: range.context.to_point(&buffer_snapshot),
+                        primary: range.primary.to_point(&buffer_snapshot),
+                    })
+                    .collect();
+                buffer_diagnostics_editor
+                    .multibuffer
+                    .update(cx, |multibuffer, cx| {
+                        multibuffer.set_excerpt_ranges_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer.clone(),
+                            &buffer_snapshot,
+                            excerpt_ranges.clone(),
+                            cx,
+                        )
+                    });
+                let multibuffer_snapshot =
+                    buffer_diagnostics_editor.multibuffer.read(cx).snapshot(cx);
+                let anchor_ranges: Vec<Range<editor::Anchor>> = excerpt_ranges
+                    .into_iter()
+                    .filter_map(|range| {
+                        let text_range = buffer_snapshot.anchor_range_inside(range.primary);
+                        let start = multibuffer_snapshot.anchor_in_buffer(text_range.start)?;
+                        let end = multibuffer_snapshot.anchor_in_buffer(text_range.end)?;
+                        Some(start..end)
+                    })
+                    .collect();
 
                 if was_empty {
                     if let Some(anchor_range) = anchor_ranges.first() {
@@ -531,23 +542,22 @@ impl BufferDiagnosticsEditor {
                 // display map for the new diagnostics. Update the `blocks`
                 // property before finishing, to ensure the blocks are removed
                 // on the next execution.
-                let editor_blocks =
-                    anchor_ranges
-                        .into_iter()
-                        .zip(blocks.into_iter())
-                        .map(|(anchor, block)| {
-                            let editor = buffer_diagnostics_editor.editor.downgrade();
+                let editor_blocks = anchor_ranges
+                    .into_iter()
+                    .zip(blocks)
+                    .map(|(anchor, block)| {
+                        let editor = buffer_diagnostics_editor.editor.downgrade();
 
-                            BlockProperties {
-                                placement: BlockPlacement::Near(anchor.start),
-                                height: Some(1),
-                                style: BlockStyle::Flex,
-                                render: Arc::new(move |block_context| {
-                                    block.render_block(editor.clone(), block_context)
-                                }),
-                                priority: 1,
-                            }
-                        });
+                        BlockProperties {
+                            placement: BlockPlacement::Near(anchor.start),
+                            height: Some(1),
+                            style: BlockStyle::Flex,
+                            render: Arc::new(move |block_context| {
+                                block.render_block(editor.clone(), block_context)
+                            }),
+                            priority: 1,
+                        }
+                    });
 
                 let block_ids = buffer_diagnostics_editor.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
@@ -701,18 +711,6 @@ impl Item for BufferDiagnosticsEditor {
         });
     }
 
-    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
-            ToolbarItemLocation::PrimaryLeft
-        } else {
-            ToolbarItemLocation::Hidden
-        }
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
-    }
-
     fn can_save(&self, _cx: &App) -> bool {
         true
     }
@@ -751,6 +749,10 @@ impl Item for BufferDiagnosticsEditor {
         self.editor.for_each_project_item(cx, f);
     }
 
+    fn active_project_path(&self, _cx: &App) -> Option<ProjectPath> {
+        Some(self.project_path.clone())
+    }
+
     fn has_conflict(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).has_conflict(cx)
     }
@@ -763,9 +765,13 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
+    fn capability(&self, cx: &App) -> Capability {
+        self.multibuffer.read(cx).capability()
+    }
+
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -874,7 +880,7 @@ impl Item for BufferDiagnosticsEditor {
         Some("Buffer Diagnostics Opened")
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 }
@@ -912,7 +918,7 @@ impl Render for BufferDiagnosticsEditor {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(Tooltip::text("Open File"))
                                 .on_click(cx.listener(|buffer_diagnostics, _, window, cx| {
-                                    if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    if let Some(workspace) = Workspace::for_window(window, cx) {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_path(

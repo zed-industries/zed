@@ -23,7 +23,7 @@ pub fn rgba(hex: u32) -> Rgba {
 }
 
 /// Swap from RGBA with premultiplied alpha to BGRA
-pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+pub fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
     color.swap(0, 2);
     if color[3] > 0 {
         let a = color[3] as f32 / 255.;
@@ -67,6 +67,68 @@ impl Rgba {
                 b: (self.b * (1.0 - other.a)) + (other.b * other.a),
                 a: self.a,
             }
+        }
+    }
+
+    /// Returns a new RGBA color with the same red, green and blue channels, but
+    /// with a new alpha value.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0xFF0000FF);
+    /// let faded = color.alpha(0.25);
+    /// assert_eq!(faded.a, 0.25);
+    /// ```
+    ///
+    /// This will return a red color with 25% opacity.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0x3399FFCC);
+    /// let transparent = color.alpha(0.0);
+    /// assert_eq!(transparent.a, 0.0);
+    /// ```
+    ///
+    /// This will return the same blue color, fully transparent.
+    pub fn alpha(&self, a: f32) -> Self {
+        Rgba {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a: a.clamp(0., 1.),
+        }
+    }
+
+    /// Returns a new RGBA color with the same red, green, and blue channels,
+    /// but with the alpha channel multiplied by the given factor.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0xFF0000FF); // Fully opaque red
+    /// let faded = color.opacity(0.5);
+    /// assert_eq!(faded.a, 0.5);
+    /// ```
+    ///
+    /// This will return a red color with 50% opacity.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0x3399FFCC); // A light blue with 80% opacity
+    /// let faded = color.opacity(0.5);
+    /// assert!((faded.a - 0.4).abs() < 1e-6);
+    /// ```
+    ///
+    /// This will return the same blue color scaled down to 40% opacity.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Rgba {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a: self.a * factor.clamp(0., 1.),
         }
     }
 }
@@ -281,6 +343,32 @@ pub struct Hsla {
 
     /// Alpha, in a range from 0 to 1
     pub a: f32,
+}
+
+#[cfg(feature = "proptest")]
+mod property {
+    use super::Hsla;
+    use proptest::prelude::*;
+
+    impl Hsla {
+        /// Proptest [`Strategy`] that produces opaque colors (i.e. alpha = 1).
+        ///
+        /// For truly arbitrary colors, use the [`Arbitrary`] implementation.
+        pub fn opaque_strategy() -> impl Strategy<Value = Self> {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0).prop_map(|(h, s, l)| Hsla { h, s, l, a: 1. })
+        }
+    }
+
+    impl Arbitrary for Hsla {
+        type Strategy = BoxedStrategy<Self>;
+        type Parameters = ();
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
+                .prop_map(|(h, s, l, a)| Hsla { h, s, l, a })
+                .boxed()
+        }
+    }
 }
 
 impl PartialEq for Hsla {
@@ -565,7 +653,7 @@ impl Hsla {
     /// assert_eq!(red_color.a, 0.25);
     /// ```
     ///
-    /// This will return a red color with half the opacity.
+    /// This will return a red color with 25% opacity.
     ///
     /// Example:
     /// ```
@@ -658,6 +746,7 @@ pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
     PatternSlash = 2,
+    Checkerboard = 3,
 }
 
 /// A color space for color interpolation.
@@ -701,20 +790,21 @@ impl std::fmt::Debug for Background {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.tag {
             BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
-            BackgroundTag::LinearGradient => {
-                write!(
-                    f,
-                    "LinearGradient({}, {:?}, {:?})",
-                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
-                )
-            }
-            BackgroundTag::PatternSlash => {
-                write!(
-                    f,
-                    "PatternSlash({:?}, {})",
-                    self.solid, self.gradient_angle_or_pattern_height
-                )
-            }
+            BackgroundTag::LinearGradient => write!(
+                f,
+                "LinearGradient({}, {:?}, {:?})",
+                self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+            ),
+            BackgroundTag::PatternSlash => write!(
+                f,
+                "PatternSlash({:?}, {})",
+                self.solid, self.gradient_angle_or_pattern_height
+            ),
+            BackgroundTag::Checkerboard => write!(
+                f,
+                "Checkerboard({:?}, {})",
+                self.solid, self.gradient_angle_or_pattern_height
+            ),
         }
     }
 }
@@ -734,15 +824,25 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
+pub fn pattern_slash(color: impl Into<Hsla>, width: f32, interval: f32) -> Background {
     let width_scaled = (width * 255.0) as u32;
     let interval_scaled = (interval * 255.0) as u32;
     let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
 
     Background {
         tag: BackgroundTag::PatternSlash,
-        solid: color,
+        solid: color.into(),
         gradient_angle_or_pattern_height: height,
+        ..Default::default()
+    }
+}
+
+/// Creates a checkerboard pattern background
+pub fn checkerboard(color: impl Into<Hsla>, size: f32) -> Background {
+    Background {
+        tag: BackgroundTag::Checkerboard,
+        solid: color.into(),
+        gradient_angle_or_pattern_height: size,
         ..Default::default()
     }
 }
@@ -808,6 +908,15 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Returns the solid color if this is a solid background, None otherwise.
+    pub fn as_solid(&self) -> Option<Hsla> {
+        if self.tag == BackgroundTag::Solid {
+            Some(self.solid)
+        } else {
+            None
+        }
+    }
+
     /// Use specified color space for color interpolation.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
@@ -833,6 +942,7 @@ impl Background {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
+            BackgroundTag::Checkerboard => self.solid.is_transparent(),
         }
     }
 }
@@ -846,6 +956,7 @@ impl From<Hsla> for Background {
         }
     }
 }
+
 impl From<Rgba> for Background {
     fn from(value: Rgba) -> Self {
         Background {
@@ -930,5 +1041,30 @@ mod tests {
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_rgba_alpha() {
+        let color = Rgba {
+            r: 0.2,
+            g: 0.6,
+            b: 1.0,
+            a: 0.8,
+        };
+
+        assert_eq!(color.alpha(0.25).a, 0.25);
+        assert_eq!(color.alpha(1.5).a, 1.0);
+    }
+
+    #[test]
+    fn test_rgba_opacity() {
+        let color = Rgba {
+            r: 0.2,
+            g: 0.6,
+            b: 1.0,
+            a: 0.8,
+        };
+        assert!((color.opacity(0.5).a - 0.4).abs() < 1e-6);
+        assert_eq!(color.opacity(2.0).a, 0.8);
     }
 }

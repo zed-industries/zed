@@ -2,6 +2,7 @@
 # Rebuild with `cargo xtask workflows`.
 name: danger
 on:
+  merge_group: {}
   pull_request:
     types:
     - opened
@@ -10,31 +11,35 @@ on:
     - edited
     branches:
     - main
+permissions:
+  contents: read
 jobs:
   danger:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_pnpm
-      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       with:
         version: '9'
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
     - name: danger::danger_job::install_deps
       run: pnpm install --dir script/danger
-      shell: bash -euxo pipefail {0}
     - name: danger::danger_job::run
       run: pnpm run --dir script/danger danger ci
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: not_a_real_token
-        DANGER_GITHUB_API_BASE_URL: https://danger-proxy.fly.dev/github
+        DANGER_GITHUB_API_BASE_URL: https://danger-proxy.zed.dev/github
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

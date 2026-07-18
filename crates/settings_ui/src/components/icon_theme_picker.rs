@@ -13,13 +13,13 @@ pub struct IconThemePickerDelegate {
     filtered_themes: Vec<StringMatch>,
     selected_index: usize,
     current_theme: SharedString,
-    on_theme_changed: Arc<dyn Fn(SharedString, &mut App) + 'static>,
+    on_theme_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
 }
 
 impl IconThemePickerDelegate {
     fn new(
         current_theme: SharedString,
-        on_theme_changed: impl Fn(SharedString, &mut App) + 'static,
+        on_theme_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
         cx: &mut Context<IconThemePicker>,
     ) -> Self {
         let theme_registry = ThemeRegistry::global(cx);
@@ -32,15 +32,15 @@ impl IconThemePickerDelegate {
 
         let selected_index = icon_themes
             .iter()
-            .position(|icon_themes| *icon_themes == current_theme)
+            .position(|icon_theme| *icon_theme == current_theme)
             .unwrap_or(0);
 
         let filtered_themes = icon_themes
             .iter()
             .enumerate()
-            .map(|(index, icon_themes)| StringMatch {
+            .map(|(index, theme)| StringMatch {
                 candidate_id: index,
-                string: icon_themes.to_string(),
+                string: theme.to_string(),
                 positions: Vec::new(),
                 score: 0.0,
             })
@@ -59,6 +59,10 @@ impl IconThemePickerDelegate {
 impl PickerDelegate for IconThemePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "icon theme picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_themes.len()
     }
@@ -67,13 +71,18 @@ impl PickerDelegate for IconThemePickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<IconThemePicker>) {
-        self.selected_index = ix.min(self.filtered_themes.len().saturating_sub(1));
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<IconThemePicker>,
+    ) {
+        self.selected_index = index.min(self.filtered_themes.len().saturating_sub(1));
         cx.notify();
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search icon theme…".into()
+        "Search icon themes…".into()
     }
 
     fn update_matches(
@@ -89,9 +98,9 @@ impl PickerDelegate for IconThemePickerDelegate {
             icon_themes
                 .iter()
                 .enumerate()
-                .map(|(index, icon_theme)| StringMatch {
+                .map(|(index, theme)| StringMatch {
                     candidate_id: index,
-                    string: icon_theme.to_string(),
+                    string: theme.to_string(),
                     positions: Vec::new(),
                     score: 0.0,
                 })
@@ -100,16 +109,16 @@ impl PickerDelegate for IconThemePickerDelegate {
             let _candidates: Vec<StringMatchCandidate> = icon_themes
                 .iter()
                 .enumerate()
-                .map(|(id, icon_theme)| StringMatchCandidate::new(id, icon_theme.as_ref()))
+                .map(|(id, theme)| StringMatchCandidate::new(id, theme.as_ref()))
                 .collect();
 
             icon_themes
                 .iter()
                 .enumerate()
-                .filter(|(_, icon_theme)| icon_theme.to_lowercase().contains(&query.to_lowercase()))
-                .map(|(index, icon_theme)| StringMatch {
+                .filter(|(_, theme)| theme.to_lowercase().contains(&query.to_lowercase()))
+                .map(|(index, theme)| StringMatch {
                     candidate_id: index,
-                    string: icon_theme.to_string(),
+                    string: theme.to_string(),
                     positions: Vec::new(),
                     score: 0.0,
                 })
@@ -119,7 +128,7 @@ impl PickerDelegate for IconThemePickerDelegate {
         let selected_index = if query.is_empty() {
             icon_themes
                 .iter()
-                .position(|icon_theme| *icon_theme == current_theme)
+                .position(|theme| *theme == current_theme)
                 .unwrap_or(0)
         } else {
             matches
@@ -138,12 +147,12 @@ impl PickerDelegate for IconThemePickerDelegate {
     fn confirm(
         &mut self,
         _secondary: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<IconThemePicker>,
     ) {
         if let Some(theme_match) = self.filtered_themes.get(self.selected_index) {
             let theme = theme_match.string.clone();
-            (self.on_theme_changed)(theme.into(), cx);
+            (self.on_theme_changed)(theme.into(), window, cx);
         }
     }
 
@@ -156,15 +165,15 @@ impl PickerDelegate for IconThemePickerDelegate {
 
     fn render_match(
         &self,
-        ix: usize,
+        index: usize,
         selected: bool,
         _window: &mut Window,
         _cx: &mut Context<IconThemePicker>,
     ) -> Option<Self::ListItem> {
-        let theme_match = self.filtered_themes.get(ix)?;
+        let theme_match = self.filtered_themes.get(index)?;
 
         Some(
-            ListItem::new(ix)
+            ListItem::new(index)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
@@ -176,7 +185,7 @@ impl PickerDelegate for IconThemePickerDelegate {
 
 pub fn icon_theme_picker(
     current_theme: SharedString,
-    on_theme_changed: impl Fn(SharedString, &mut App) + 'static,
+    on_theme_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     window: &mut Window,
     cx: &mut Context<IconThemePicker>,
 ) -> IconThemePicker {
@@ -184,6 +193,7 @@ pub fn icon_theme_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .width(rems_from_px(210.))
-        .max_height(Some(rems(18.).into()))
+        .initial_width(rems_from_px(210.))
+        .max_height(rems(18.))
+        .popover()
 }

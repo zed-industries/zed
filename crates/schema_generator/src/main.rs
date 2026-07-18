@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use schemars::schema_for;
 use settings::ProjectSettingsContent;
-use theme::{IconThemeFamilyContent, ThemeFamilyContent};
+use theme::IconThemeFamilyContent;
+use theme_settings::ThemeFamilyContent;
 
 #[derive(Parser, Debug)]
 pub struct Args {

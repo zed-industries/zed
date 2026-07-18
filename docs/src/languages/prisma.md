@@ -1,3 +1,8 @@
+---
+title: Prisma
+description: "Configure Prisma language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Prisma
 
 Prisma support is available through the [Prisma extension](https://github.com/zed-extensions/prisma).

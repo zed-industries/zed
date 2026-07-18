@@ -20,23 +20,27 @@ gpui.workspace = true
 gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
+log.workspace = true
 menu.workspace = true
+num-format.workspace = true
 schemars.workspace = true
 serde.workspace = true
-settings.workspace = true
 smallvec.workspace = true
-story = { workspace = true, optional = true }
 strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
-util.workspace = true
+gpui_util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["log"]
 
 [features]
 default = []
-stories = ["dep:story"]

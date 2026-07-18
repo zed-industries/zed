@@ -6,30 +6,28 @@ use std::{
     path::{Path, PathBuf},
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
+use async_channel::{Receiver, Sender, bounded, unbounded};
 use collections::HashSet;
 use fs::Fs;
+use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use language::{Buffer, BufferSnapshot};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
+use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::{
-    channel::{Receiver, Sender, bounded, unbounded},
-    future::FutureExt,
-};
 
-use text::BufferId;
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
     buffer_store::BufferStore,
-    search::{SearchQuery, SearchResult},
+    search::{LineHint, SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
 };
 
@@ -63,18 +61,26 @@ enum SearchKind {
 #[must_use]
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
-    matching_buffers: Receiver<Entity<Buffer>>,
+    matching_buffers: Receiver<(Entity<Buffer>, LineHint)>,
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
+pub struct SearchResults<T> {
+    pub task_handle: Task<()>,
+    pub rx: Receiver<T>,
+}
 impl SearchResultsHandle {
-    pub fn results(self, cx: &mut App) -> Receiver<SearchResult> {
-        (self.trigger_search)(cx).detach();
-        self.results
+    pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
+        SearchResults {
+            task_handle: (self.trigger_search)(cx),
+            rx: self.results,
+        }
     }
-    pub fn matching_buffers(self, cx: &mut App) -> Receiver<Entity<Buffer>> {
-        (self.trigger_search)(cx).detach();
-        self.matching_buffers
+    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<(Entity<Buffer>, LineHint)> {
+        SearchResults {
+            task_handle: (self.trigger_search)(cx),
+            rx: self.matching_buffers,
+        }
     }
 }
 
@@ -146,7 +152,7 @@ impl Search {
     }
 
     pub(crate) const MAX_SEARCH_RESULT_FILES: usize = 5_000;
-    pub(crate) const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+    pub const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
     /// Prepares a project search run. The resulting [`SearchResultsHandle`] has to be used to specify whether you're interested in matching buffers
     /// or full search results.
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
@@ -158,6 +164,11 @@ impl Search {
             let buffer = handle.read(cx);
             if !buffers.is_searchable(&buffer.remote_id()) {
                 continue;
+            } else if buffer
+                .file()
+                .is_some_and(|file| file.disk_state().is_deleted())
+            {
+                continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
@@ -165,14 +176,18 @@ impl Search {
                 unnamed_buffers.push(handle)
             };
         }
+        let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
-        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
+        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
+            unbounded::<(Entity<Buffer>, LineHint)>();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
-                    _ = grab_buffer_snapshot_tx.send(buffer).await;
+                    _ = grab_buffer_snapshot_tx
+                        .send((buffer, LineHint::default()))
+                        .await;
                 }
 
                 let (find_all_matches_tx, find_all_matches_rx) =
@@ -180,14 +195,14 @@ impl Search {
                 let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
-                        let Ok(open_buffers) = cx.update(|cx| self.all_loaded_buffers(&query, cx))
-                        else {
-                            return;
-                        };
+                        let open_buffers = cx.update(|cx| self.all_loaded_buffers(&query, cx));
                         let fill_requests = cx
                             .background_spawn(async move {
                                 for buffer in open_buffers {
-                                    if let Err(_) = grab_buffer_snapshot_tx.send(buffer).await {
+                                    if let Err(_) = grab_buffer_snapshot_tx
+                                        .send((buffer, LineHint::default()))
+                                        .await
+                                    {
                                         return;
                                     }
                                 }
@@ -212,10 +227,11 @@ impl Search {
                                 query.clone(),
                                 input_paths_tx,
                                 sorted_search_results_tx,
+                                tx.clone(),
                             ))
                             .boxed_local(),
                             Self::open_buffers(
-                                &self.buffer_store,
+                                self.buffer_store,
                                 get_buffer_for_full_scan_rx,
                                 grab_buffer_snapshot_tx,
                                 cx.clone(),
@@ -243,37 +259,73 @@ impl Search {
                         remote_id,
                         models,
                     } => {
+                        let (handle, rx) = self
+                            .buffer_store
+                            .update(cx, |this, _| this.register_project_search_result_handle());
+
+                        let cancel_ongoing_search = util::defer({
+                            let client = client.clone();
+                            move || {
+                                _ = client.send(proto::FindSearchCandidatesCancelled {
+                                    project_id: remote_id,
+                                    handle,
+                                });
+                            }
+                        });
                         let request = client.request(proto::FindSearchCandidates {
                             project_id: remote_id,
                             query: Some(query.to_proto()),
                             limit: self.limit as _,
+                            handle,
                         });
-                        let Ok(guard) = cx.update(|cx| {
+
+                        let buffer_store = self.buffer_store;
+                        let guard = cx.update(|cx| {
                             Project::retain_remotely_created_models_impl(
                                 &models,
-                                &self.buffer_store,
+                                &buffer_store,
                                 &self.worktree_store,
                                 cx,
                             )
-                        }) else {
-                            return;
-                        };
-                        let buffer_store = self.buffer_store.downgrade();
+                        });
+
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
-                                    let response = request.await?;
-                                    for buffer_id in response.buffer_ids {
-                                        let buffer_id = BufferId::new(buffer_id)?;
-                                        let buffer = buffer_store
-                                            .update(cx, |buffer_store, cx| {
-                                                buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                                            })?
-                                            .await?;
-                                        let _ = grab_buffer_snapshot_tx.send(buffer).await;
-                                    }
+                                    request.await?;
+
+                                    let (buffer_tx, buffer_rx) = bounded(24);
+
+                                    let wait_for_remote_buffers = cx.spawn(async move |cx| {
+                                        while let Ok(buffer_id) = rx.recv().await {
+                                            let buffer =
+                                                buffer_store.update(cx, |buffer_store, cx| {
+                                                    buffer_store
+                                                        .wait_for_remote_buffer(buffer_id, cx)
+                                                });
+                                            buffer_tx.send(buffer).await?;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+
+                                    let forward_buffers = cx.background_spawn(async move {
+                                        while let Ok(buffer) = buffer_rx.recv().await {
+                                            let _ = grab_buffer_snapshot_tx
+                                                .send((buffer.await?, LineHint::default()))
+                                                .await;
+                                        }
+                                        anyhow::Ok(())
+                                    });
+                                    let (left, right) = futures::future::join(
+                                        wait_for_remote_buffers,
+                                        forward_buffers,
+                                    )
+                                    .await;
+                                    left?;
+                                    right?;
 
                                     drop(guard);
+                                    cancel_ongoing_search.abort();
                                     anyhow::Ok(())
                                 })
                                 .await
@@ -289,22 +341,28 @@ impl Search {
 
                 let should_find_all_matches = !tx.is_closed();
 
-                let worker_pool = executor.scoped(|scope| {
-                    let num_cpus = executor.num_cpus();
+                let _executor = executor.clone();
+                let worker_pool = executor.spawn(async move {
+                    let num_cpus = _executor.num_cpus();
 
                     assert!(num_cpus > 0);
-                    for _ in 0..executor.num_cpus() - 1 {
-                        let worker = Worker {
-                            query: &query,
-                            open_buffers: &open_buffers,
-                            candidates: candidate_searcher.clone(),
-                            find_all_matches_rx: find_all_matches_rx.clone(),
-                        };
-                        scope.spawn(worker.run());
-                    }
+                    _executor
+                        .scoped(|scope| {
+                            let worker_count = (num_cpus - 1).max(1);
+                            for _ in 0..worker_count {
+                                let worker = Worker {
+                                    query: query.clone(),
+                                    open_buffers: open_buffers.clone(),
+                                    candidates: candidate_searcher.clone(),
+                                    find_all_matches_rx: find_all_matches_rx.clone(),
+                                };
+                                scope.spawn(worker.run());
+                            }
 
-                    drop(find_all_matches_rx);
-                    drop(candidate_searcher);
+                            drop(find_all_matches_rx);
+                            drop(candidate_searcher);
+                        })
+                        .await;
                 });
 
                 let (sorted_matches_tx, sorted_matches_rx) = unbounded();
@@ -326,7 +384,6 @@ impl Search {
                     )
                 } else {
                     drop(find_all_matches_tx);
-
                     None
                 };
                 let ensure_matches_are_reported_in_order = if should_find_all_matches {
@@ -336,6 +393,7 @@ impl Search {
                     )
                 } else {
                     drop(tx);
+
                     None
                 };
 
@@ -361,16 +419,30 @@ impl Search {
         worktrees: Vec<Entity<Worktree>>,
         query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
-        results: Sender<oneshot::Receiver<ProjectPath>>,
+        results: Sender<oneshot::Receiver<(ProjectPath, LineHint)>>,
+        results_tx: Sender<SearchResult>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
+                let include_ignored = query.include_ignored();
                 for worktree in worktrees {
+                    let scan_complete = worktree.read_with(cx, |worktree, _| {
+                        worktree.as_local().map(|local| local.scan_complete())
+                    });
+                    if let Some(scan_complete) = scan_complete {
+                        let mut scan_complete = pin!(scan_complete);
+                        if scan_complete.as_mut().now_or_never().is_none() {
+                            _ = results_tx.send(SearchResult::WaitingForScan).await;
+                            scan_complete.await;
+                            _ = results_tx.send(SearchResult::Searching).await;
+                        }
+                    }
+
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))
-                        })?
+                        })
                         .context("The worktree is not local")?;
                     if query.include_ignored() {
                         // Pre-fetch all of the ignored directories as they're going to be searched.
@@ -392,33 +464,34 @@ impl Search {
                                 .map(|path| local.add_path_prefix_to_scan(path).into_future())
                                 .collect::<Vec<_>>();
                             Some(barrier)
-                        })?;
+                        });
                         if let Some(barriers) = barrier {
                             futures::future::join_all(barriers).await;
                         }
-                        snapshot = worktree.read_with(cx, |this, _| this.snapshot())?;
+                        snapshot = worktree.read_with(cx, |this, _| this.snapshot());
                     }
-                    cx.background_executor()
-                        .scoped(|scope| {
-                            scope.spawn(async {
-                                for entry in snapshot.files(query.include_ignored(), 0) {
-                                    let (should_scan_tx, should_scan_rx) = oneshot::channel();
+                    let tx = tx.clone();
+                    let results = results.clone();
 
-                                    let Ok(_) = tx
-                                        .send(InputPath {
-                                            entry: entry.clone(),
-                                            snapshot: snapshot.clone(),
-                                            should_scan_tx,
-                                        })
-                                        .await
-                                    else {
-                                        return;
-                                    };
-                                    if results.send(should_scan_rx).await.is_err() {
-                                        return;
-                                    };
-                                }
-                            })
+                    cx.background_executor()
+                        .spawn(async move {
+                            for entry in snapshot.files(include_ignored, 0) {
+                                let (should_scan_tx, should_scan_rx) = oneshot::channel();
+
+                                let Ok(_) = tx
+                                    .send(InputPath {
+                                        entry: entry.clone(),
+                                        snapshot: snapshot.clone(),
+                                        should_scan_tx,
+                                    })
+                                    .await
+                                else {
+                                    return;
+                                };
+                                if results.send(should_scan_rx).await.is_err() {
+                                    return;
+                                };
+                            }
                         })
                         .await;
                 }
@@ -429,18 +502,22 @@ impl Search {
     }
 
     async fn maintain_sorted_search_results(
-        rx: Receiver<oneshot::Receiver<ProjectPath>>,
-        paths_for_full_scan: Sender<ProjectPath>,
+        rx: Receiver<oneshot::Receiver<(ProjectPath, LineHint)>>,
+        paths_for_full_scan: Sender<(ProjectPath, LineHint)>,
         limit: usize,
     ) {
         let mut rx = pin!(rx);
         let mut matched = 0;
         while let Some(mut next_path_result) = rx.next().await {
-            let Some(successful_path) = next_path_result.next().await else {
+            let Some((successful_path, line_hint)) = next_path_result.next().await else {
                 // This file did not produce a match, hence skip it.
                 continue;
             };
-            if paths_for_full_scan.send(successful_path).await.is_err() {
+            if paths_for_full_scan
+                .send((successful_path, line_hint))
+                .await
+                .is_err()
+            {
                 return;
             };
             matched += 1;
@@ -452,24 +529,27 @@ impl Search {
 
     /// Background workers cannot open buffers by themselves, hence main thread will do it on their behalf.
     async fn open_buffers(
-        buffer_store: &Entity<BufferStore>,
-        rx: Receiver<ProjectPath>,
-        find_all_matches_tx: Sender<Entity<Buffer>>,
+        buffer_store: Entity<BufferStore>,
+        rx: Receiver<(ProjectPath, LineHint)>,
+        find_all_matches_tx: Sender<(Entity<Buffer>, LineHint)>,
         mut cx: AsyncApp,
     ) {
         let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
             while let Some(requested_paths) = rx.next().await {
+                let line_hints: Vec<LineHint> =
+                    requested_paths.iter().map(|(_, line)| *line).collect();
                 let mut buffers = buffer_store.update(&mut cx, |this, cx| {
                     requested_paths
                         .into_iter()
-                        .map(|path| this.open_buffer(path, cx))
+                        .map(|(path, _)| this.open_buffer(path, cx))
                         .collect::<FuturesOrdered<_>>()
-                })?;
-
+                });
+                let mut line_hints = line_hints.into_iter();
                 while let Some(buffer) = buffers.next().await {
+                    let line_hint = line_hints.next().unwrap_or(LineHint::default());
                     if let Some(buffer) = buffer.log_err() {
-                        find_all_matches_tx.send(buffer).await?;
+                        find_all_matches_tx.send((buffer, line_hint)).await?;
                     }
                 }
             }
@@ -479,20 +559,23 @@ impl Search {
     }
 
     async fn grab_buffer_snapshots(
-        rx: Receiver<Entity<Buffer>>,
-        find_all_matches_tx: Sender<(
-            Entity<Buffer>,
-            BufferSnapshot,
-            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-        )>,
+        rx: Receiver<(Entity<Buffer>, LineHint)>,
+        find_all_matches_tx: Sender<FindAllMatchesRequest>,
         results: Sender<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         mut cx: AsyncApp,
     ) {
         _ = maybe!(async move {
-            while let Ok(buffer) = rx.recv().await {
-                let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot())?;
+            while let Ok((buffer, line_hint)) = rx.recv().await {
+                let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot());
                 let (tx, rx) = oneshot::channel();
-                find_all_matches_tx.send((buffer, snapshot, tx)).await?;
+                find_all_matches_tx
+                    .send(FindAllMatchesRequest {
+                        buffer,
+                        snapshot,
+                        line_hint,
+                        report_matches: tx,
+                    })
+                    .await?;
                 results.send(rx).await?;
             }
             debug_assert!(rx.is_empty());
@@ -539,6 +622,9 @@ impl Search {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
+                    if file.disk_state().is_deleted() {
+                        return false;
+                    }
                     if !search_query.match_path(file.path()) {
                         return false;
                     }
@@ -570,20 +656,16 @@ impl Search {
     }
 }
 
-struct Worker<'search> {
-    query: &'search SearchQuery,
-    open_buffers: &'search HashSet<ProjectEntryId>,
+struct Worker {
+    query: Arc<SearchQuery>,
+    open_buffers: Arc<HashSet<ProjectEntryId>>,
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
-    find_all_matches_rx: Receiver<(
-        Entity<Buffer>,
-        BufferSnapshot,
-        oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-    )>,
+    find_all_matches_rx: Receiver<FindAllMatchesRequest>,
 }
 
-impl Worker<'_> {
+impl Worker {
     async fn run(self) {
         let (
             input_paths_rx,
@@ -614,7 +696,7 @@ impl Worker<'_> {
 
         loop {
             let handler = RequestHandler {
-                query: self.query,
+                query: &self.query,
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
@@ -661,29 +743,43 @@ struct RequestHandler<'worker> {
 }
 
 impl RequestHandler<'_> {
-    async fn handle_find_all_matches(
-        &self,
-        (buffer, snapshot, mut report_matches): (
-            Entity<Buffer>,
-            BufferSnapshot,
-            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-        ),
-    ) {
+    async fn handle_find_all_matches(&self, request: FindAllMatchesRequest) {
+        let FindAllMatchesRequest {
+            buffer,
+            snapshot,
+            line_hint,
+            mut report_matches,
+        } = request;
+        let range_offset = if line_hint > 0 {
+            snapshot.point_to_offset(Point::new(line_hint, 0))
+        } else {
+            0
+        };
+        let subrange = (range_offset > 0).then(|| range_offset..snapshot.len());
         let ranges = self
             .query
-            .search(&snapshot, None)
+            .search(&snapshot, subrange)
             .await
             .iter()
-            .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
+            .map(|range| {
+                snapshot.anchor_before(range.start + range_offset)
+                    ..snapshot.anchor_after(range.end + range_offset)
+            })
             .collect::<Vec<_>>();
 
         _ = report_matches.send((buffer, ranges)).await;
     }
 
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
-        _=maybe!(async move {
+        async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self.fs.context("Trying to query filesystem in remote project search")?.open_sync(&abs_path).await.log_err() else {
+            let Some(file) = self
+                .fs
+                .context("Trying to query filesystem in remote project search")?
+                .open_sync(&abs_path)
+                .await
+                .log_err()
+            else {
                 return anyhow::Ok(());
             };
 
@@ -691,22 +787,25 @@ impl RequestHandler<'_> {
             let file_start = file.fill_buf()?;
 
             if let Err(Some(starting_position)) =
-            std::str::from_utf8(file_start).map_err(|e| e.error_len())
+                std::str::from_utf8(file_start).map_err(|e| e.error_len())
             {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
                 log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
+                    "Invalid UTF-8 sequence in file {abs_path:?} \
+                    at byte position {starting_position}"
                 );
                 return Ok(());
             }
 
-            if self.query.detect(file).unwrap_or(false) {
+            if let Some(line_hint) = self.query.detect(file).await.ok().flatten() {
                 // Yes, we should scan the whole file.
-                entry.should_scan_tx.send(entry.path).await?;
+                entry.should_scan_tx.send((entry.path, line_hint)).await?;
             }
             Ok(())
-        }).await;
+        }
+        .await
+        .ok();
     }
 
     async fn handle_scan_path(&self, req: InputPath) {
@@ -738,10 +837,13 @@ impl RequestHandler<'_> {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
                 should_scan_tx
-                    .send(ProjectPath {
-                        worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
-                    })
+                    .send((
+                        ProjectPath {
+                            worktree_id: snapshot.id(),
+                            path: entry.path.clone(),
+                        },
+                        LineHint::default(),
+                    ))
                     .await?;
             } else {
                 self.confirm_contents_will_match_tx
@@ -765,26 +867,33 @@ impl RequestHandler<'_> {
 struct InputPath {
     entry: Entry,
     snapshot: Snapshot,
-    should_scan_tx: oneshot::Sender<ProjectPath>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, LineHint)>,
 }
 
 struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
-    should_scan_tx: oneshot::Sender<ProjectPath>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, LineHint)>,
+}
+
+struct FindAllMatchesRequest {
+    buffer: Entity<Buffer>,
+    snapshot: BufferSnapshot,
+    line_hint: LineHint,
+    report_matches: oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
 }
 
 /// This struct encapsulates the logic to decide whether a given gitignored directory should be
 /// scanned based on include/exclude patterns of a search query (as include/exclude parameters may match paths inside it).
 /// It is kind-of doing an inverse of glob. Given a glob pattern like `src/**/` and a parent path like `src`, we need to decide whether the parent
 /// may contain glob hits.
-struct PathInclusionMatcher {
+pub struct PathInclusionMatcher {
     included: BTreeSet<PathBuf>,
     query: Arc<SearchQuery>,
 }
 
 impl PathInclusionMatcher {
-    fn new(query: Arc<SearchQuery>) -> Self {
+    pub fn new(query: Arc<SearchQuery>) -> Self {
         let mut included = BTreeSet::new();
         // To do an inverse glob match, we split each glob into it's prefix and the glob part.
         // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
@@ -800,7 +909,7 @@ impl PathInclusionMatcher {
         Self { included, query }
     }
 
-    fn should_scan_gitignored_dir(
+    pub fn should_scan_gitignored_dir(
         &self,
         entry: &Entry,
         snapshot: &Snapshot,
@@ -881,122 +990,100 @@ impl PathInclusionMatcher {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use serde_json::json;
-    use settings::Settings;
-    use util::{
-        path,
-        paths::{PathMatcher, PathStyle},
-        rel_path::RelPath,
-    };
-    use worktree::{Entry, EntryKind, WorktreeSettings};
+type IsTerminating = bool;
+/// Adaptive batcher that starts eager (small batches) and grows batch size
+/// when items arrive quickly, reducing RPC overhead while preserving low latency
+/// for slow streams.
+pub struct AdaptiveBatcher<T> {
+    items: Sender<T>,
+    flush_batch: Sender<IsTerminating>,
+    _batch_task: Task<()>,
+}
 
-    use crate::{
-        Project, project_search::PathInclusionMatcher, project_tests::init_test,
-        search::SearchQuery,
-    };
+impl<T: 'static + Send> AdaptiveBatcher<T> {
+    pub fn new(cx: &BackgroundExecutor) -> (Self, Receiver<Vec<T>>) {
+        let (items, rx) = unbounded();
+        let (batch_tx, batch_rx) = unbounded();
+        let (flush_batch_tx, flush_batch_rx) = unbounded();
+        let flush_batch = flush_batch_tx.clone();
+        let executor = cx.clone();
+        let _batch_task = cx.spawn_with_priority(gpui::Priority::High, async move {
+            let mut current_batch = vec![];
+            let mut items_produced_so_far = 0_u64;
 
-    #[gpui::test]
-    async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                ".gitignore": "src/data/\n",
-                "src": {
-                    "data": {
-                        "main.csv": "field_1,field_2,field_3",
-                    },
-                    "lib": {
-                        "main.txt": "Are you familiar with fields?",
-                    },
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-        let (worktree_settings, worktree_snapshot) = worktree.update(cx, |worktree, cx| {
-            let settings_location = worktree.settings_location(cx);
-            return (
-                WorktreeSettings::get(Some(settings_location), cx).clone(),
-                worktree.snapshot(),
-            );
+            let mut _schedule_flush_after_delay: Option<Task<()>> = None;
+            let _time_elapsed_since_start_of_search = std::time::Instant::now();
+            let mut flush = pin!(flush_batch_rx);
+            let mut terminating = false;
+            loop {
+                select_biased! {
+                    item = rx.recv().fuse() => {
+                        match item {
+                            Ok(new_item) => {
+                                let is_fresh_batch = current_batch.is_empty();
+                                items_produced_so_far += 1;
+                                current_batch.push(new_item);
+                                if is_fresh_batch {
+                                    // Chosen arbitrarily based on some experimentation with plots.
+                                    let desired_duration_ms = (20 * (items_produced_so_far + 2).ilog2() as u64).min(300);
+                                    let desired_duration = Duration::from_millis(desired_duration_ms);
+                                    let _executor = executor.clone();
+                                    let _flush = flush_batch_tx.clone();
+                                    let new_timer = executor.spawn_with_priority(Priority::High, async move {
+                                        _executor.timer(desired_duration).await;
+                                        _ = _flush.send(false).await;
+                                    });
+                                    _schedule_flush_after_delay = Some(new_timer);
+                                }
+                            }
+                            Err(_) => {
+                                // Items channel closed - send any remaining batch before exiting
+                                if !current_batch.is_empty() {
+                                    _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    should_break_afterwards = flush.next() => {
+                        if !current_batch.is_empty() {
+                            _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                            _schedule_flush_after_delay = None;
+                        }
+                        if should_break_afterwards.unwrap_or_default() {
+                            terminating = true;
+                        }
+                    }
+                    complete => {
+                        break;
+                    }
+                }
+                if terminating {
+                    // Drain any remaining items before exiting
+                    while let Ok(new_item) = rx.try_recv() {
+                        current_batch.push(new_item);
+                    }
+                    if !current_batch.is_empty() {
+                        _ = batch_tx.send(std::mem::take(&mut current_batch)).await;
+                    }
+                    break;
+                }
+            }
         });
-
-        // Manually create a test entry for the gitignored directory since it won't
-        // be loaded by the worktree
-        let entry = Entry {
-            id: ProjectEntryId::from_proto(1),
-            kind: EntryKind::UnloadedDir,
-            path: Arc::from(RelPath::unix(Path::new("src/data")).unwrap()),
-            inode: 0,
-            mtime: None,
-            canonical_path: None,
-            is_ignored: true,
-            is_hidden: false,
-            is_always_included: false,
-            is_external: false,
-            is_private: false,
-            size: 0,
-            char_bag: Default::default(),
-            is_fifo: false,
+        let this = Self {
+            items,
+            _batch_task,
+            flush_batch,
         };
+        (this, batch_rx)
+    }
 
-        // 1. Test searching for `field`, including ignored files without any
-        // inclusion and exclusion filters.
-        let include_ignored = true;
-        let files_to_include = PathMatcher::default();
-        let files_to_exclude = PathMatcher::default();
-        let match_full_paths = false;
-        let search_query = SearchQuery::text(
-            "field",
-            false,
-            false,
-            include_ignored,
-            files_to_include,
-            files_to_exclude,
-            match_full_paths,
-            None,
-        )
-        .unwrap();
+    pub async fn push(&self, item: T) {
+        _ = self.items.send(item).await;
+    }
 
-        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
-        assert!(path_matcher.should_scan_gitignored_dir(
-            &entry,
-            &worktree_snapshot,
-            &worktree_settings
-        ));
-
-        // 2. Test searching for `field`, including ignored files but updating
-        // `files_to_include` to only include files under `src/lib`.
-        let include_ignored = true;
-        let files_to_include = PathMatcher::new(vec!["src/lib"], PathStyle::Posix).unwrap();
-        let files_to_exclude = PathMatcher::default();
-        let match_full_paths = false;
-        let search_query = SearchQuery::text(
-            "field",
-            false,
-            false,
-            include_ignored,
-            files_to_include,
-            files_to_exclude,
-            match_full_paths,
-            None,
-        )
-        .unwrap();
-
-        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
-        assert!(!path_matcher.should_scan_gitignored_dir(
-            &entry,
-            &worktree_snapshot,
-            &worktree_settings
-        ));
+    pub async fn flush(self) {
+        _ = self.flush_batch.send(true).await;
+        self._batch_task.await;
     }
 }

@@ -7,11 +7,16 @@
     allow(dead_code)
 )]
 
+mod completions;
+
+use crate::completions::Shell;
+
 use anyhow::{Context as _, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{CliRequest, CliResponse, DiffPaths, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsStr,
     fs, io,
@@ -20,10 +25,10 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
+use walkdir::WalkDir;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
 const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
@@ -66,14 +71,20 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing", "classic"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing", "classic"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new"])]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing", "classic"], hide = true)]
     reuse: bool,
+    /// Open in existing Zed window
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse", "classic"])]
+    existing: bool,
+    /// Use the classic open behavior: new window for directories, reuse for files
+    #[arg(long, hide = true, overrides_with_all = ["add", "new", "reuse", "existing"])]
+    classic: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
@@ -82,11 +93,12 @@ struct Args {
         not(any(target_os = "windows", target_os = "macos")),
         doc = "`$XDG_DATA_HOME/zed`."
     )]
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
     ///
     /// Use `path:line:column` syntax to open a file at the given line and column.
+    #[arg(trailing_var_arg = true, value_hint = clap::ValueHint::AnyPath)]
     paths_with_position: Vec<String>,
     /// Print Zed's version and the app path.
     #[arg(short, long)]
@@ -116,9 +128,19 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Open the project in a dev container.
+    ///
+    /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
+    /// configuration is found in the project directory.
+    #[arg(long)]
+    dev_container: bool,
     /// Pairs of file paths to diff. Can be specified multiple times.
-    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], value_hint = clap::ValueHint::AnyPath)]
     diff: Vec<String>,
+    /// Generate shell completions for Zed
+    #[arg(long, value_names = ["SHELL"])]
+    completions: Option<Shell>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -177,7 +199,111 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
             }))
         }),
     }
-    .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+    .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
+}
+
+fn expand_directory_diff_pairs(
+    diff_pairs: Vec<DiffPaths>,
+) -> anyhow::Result<(Vec<DiffPaths>, Vec<TempDir>)> {
+    let mut expanded = Vec::new();
+    let mut temp_dirs = Vec::new();
+
+    for pair in diff_pairs {
+        let left = PathBuf::from(&pair.old_path);
+        let right = PathBuf::from(&pair.new_path);
+
+        if left.is_dir() && right.is_dir() {
+            let (mut pairs, temp_dir) = expand_directory_pair(&left, &right)?;
+            expanded.append(&mut pairs);
+            if let Some(temp_dir) = temp_dir {
+                temp_dirs.push(temp_dir);
+            }
+        } else {
+            expanded.push(pair);
+        }
+    }
+
+    Ok((expanded, temp_dirs))
+}
+
+fn expand_directory_pair(
+    left: &Path,
+    right: &Path,
+) -> anyhow::Result<(Vec<DiffPaths>, Option<TempDir>)> {
+    let left_files = collect_files(left)?;
+    let right_files = collect_files(right)?;
+
+    let mut rel_paths = BTreeSet::new();
+    rel_paths.extend(left_files.keys().cloned());
+    rel_paths.extend(right_files.keys().cloned());
+
+    let mut temp_dir = TempDir::new()?;
+    let mut temp_dir_used = false;
+    let mut pairs = Vec::new();
+
+    for rel in rel_paths {
+        match (left_files.get(&rel), right_files.get(&rel)) {
+            (Some(left_path), Some(right_path)) => {
+                pairs.push(DiffPaths {
+                    old_path: left_path.to_string_lossy().into_owned(),
+                    new_path: right_path.to_string_lossy().into_owned(),
+                    new_row: None,
+                    new_column: None,
+                });
+            }
+            (Some(left_path), None) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push(DiffPaths {
+                    old_path: left_path.to_string_lossy().into_owned(),
+                    new_path: stub.to_string_lossy().into_owned(),
+                    new_row: None,
+                    new_column: None,
+                });
+            }
+            (None, Some(right_path)) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push(DiffPaths {
+                    old_path: stub.to_string_lossy().into_owned(),
+                    new_path: right_path.to_string_lossy().into_owned(),
+                    new_row: None,
+                    new_column: None,
+                });
+            }
+            (None, None) => {}
+        }
+    }
+
+    let temp_dir = if temp_dir_used { Some(temp_dir) } else { None };
+    Ok((pairs, temp_dir))
+}
+
+fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
+    let mut files = BTreeMap::new();
+
+    for entry in WalkDir::new(root) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .context("stripping directory prefix")?
+                .to_path_buf();
+            files.insert(rel, entry.into_path());
+        }
+    }
+
+    Ok(files)
+}
+
+fn create_empty_stub(temp_dir: &mut TempDir, rel: &Path) -> anyhow::Result<PathBuf> {
+    let stub_path = temp_dir.path().join(rel);
+    if let Some(parent) = stub_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::File::create(&stub_path)?;
+    Ok(stub_path)
 }
 
 #[cfg(test)]
@@ -344,10 +470,17 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 
     source.path = Path::new(result.trim()).to_owned();
 
-    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
+    Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -368,6 +501,14 @@ fn main() -> Result<()> {
             return mac_os::spawn_channel_cli(channel, std::env::args().skip(2).collect());
         }
     }
+
+    // Must happen before clap — SSH invokes cli.exe directly as SSH_ASKPASS
+    // and passes the socket path via env var to avoid argument parsing.
+    if let Ok(socket) = std::env::var("ZED_ASKPASS_SOCKET") {
+        askpass::main_from_args(&socket, std::env::args().skip(1));
+        return Ok(());
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
@@ -386,6 +527,20 @@ fn main() -> Result<()> {
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
+
+    if let Some(shell) = &args.completions {
+        let file_path = std::env::current_exe()?;
+        let file_name = file_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or("--completions expects a UTF-8 name for cli bin")
+            .map_err(anyhow::Error::msg)?;
+        let mut cmd = Args::command();
+        cmd.set_bin_name(file_name);
+        cmd.build();
+        crate::completions::main(&cmd, shell);
+        return Ok(());
+    }
 
     if args.version {
         println!("{}", app.zed_version_string());
@@ -429,12 +584,18 @@ fn main() -> Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let open_new_workspace = if args.new {
-        Some(true)
+    let open_behavior = if args.new {
+        cli::OpenBehavior::AlwaysNew
     } else if args.add {
-        Some(false)
+        cli::OpenBehavior::Add
+    } else if args.existing {
+        cli::OpenBehavior::ExistingWindow
+    } else if args.classic {
+        cli::OpenBehavior::Classic
+    } else if args.reuse {
+        cli::OpenBehavior::Reuse
     } else {
-        None
+        cli::OpenBehavior::Default
     };
 
     let env = {
@@ -476,16 +637,46 @@ fn main() -> Result<()> {
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
 
+    // Check if any diff paths are directories to determine diff_all mode
+    let diff_all_mode = args
+        .diff
+        .chunks(2)
+        .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
     for path in args.diff.chunks(2) {
         let old_path = parse_path_with_position(&path[0])?;
-        let new_path_with_pos = PathWithPosition::parse_str(&path[1]);
-        let new_path = parse_path_with_position(&path[1])?;
+        let (new_path, new_row, new_column) = if Path::new(&path[1]).exists() {
+            (parse_path_with_position(&path[1])?, None, None)
+        } else {
+            let new_path_with_position = PathWithPosition::parse_str(&path[1]);
+            (
+                parse_path_with_position(&new_path_with_position.path.to_string_lossy())?,
+                new_path_with_position.row,
+                new_path_with_position.column,
+            )
+        };
+        for diff_path in [&old_path, &new_path] {
+            anyhow::ensure!(
+                Path::new(diff_path).exists(),
+                "--diff path does not exist: {diff_path}"
+            );
+        }
         diff_paths.push(DiffPaths {
             old_path,
             new_path,
-            new_row: new_path_with_pos.row,
-            new_column: new_path_with_pos.column,
+            new_row,
+            new_column,
         });
+    }
+
+    let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
+    diff_paths = expanded_diff_paths;
+    // Prevent automatic cleanup of temp directories containing empty stub files
+    // for directory diffs. The CLI process may exit before Zed has read these
+    // files (e.g., when RPC-ing into an already-running instance). The files
+    // live in the OS temp directory and will be cleaned up on reboot.
+    for temp_dir in temp_dirs {
+        let _ = temp_dir.keep();
     }
 
     #[cfg(target_os = "windows")]
@@ -539,17 +730,21 @@ fn main() -> Result<()> {
                 #[cfg(not(target_os = "windows"))]
                 let wsl = None;
 
-                tx.send(CliRequest::Open {
+                let open_request = CliRequest::Open {
                     paths,
                     urls,
                     diff_paths,
+                    diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
-                    open_new_workspace,
-                    reuse: args.reuse,
+                    open_behavior,
                     env,
                     user_data_dir: user_data_dir_for_thread,
-                })?;
+                    dev_container: args.dev_container,
+                    cwd: env::current_dir().ok(),
+                };
+
+                tx.send(open_request)?;
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -559,6 +754,11 @@ fn main() -> Result<()> {
                         CliResponse::Exit { status } => {
                             exit_status.lock().replace(status);
                             return Ok(());
+                        }
+                        CliResponse::PromptOpenBehavior => {
+                            let behavior = prompt_open_behavior()
+                                .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
+                            tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
                 }
@@ -651,6 +851,43 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         // not implemented for bsd, windows. Could be, but isn't yet
         None
     }
+}
+
+/// Shows an interactive prompt asking the user to choose the default open
+/// behavior for `zed <path>`. Returns `None` if the prompt cannot be shown
+/// (e.g. stdin is not a terminal) or the user cancels.
+fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+
+    let blue = console::Style::new().blue();
+    let items = [
+        format!(
+            "Add to existing Zed window ({})",
+            blue.apply_to("zed --existing")
+        ),
+        format!("Open a new window ({})", blue.apply_to("zed --classic")),
+    ];
+
+    let prompt = format!(
+        "Configure default behavior for {}\n{}",
+        blue.apply_to("zed <path>"),
+        console::style("You can change this later in Zed settings"),
+    );
+
+    let selection = dialoguer::Select::new()
+        .with_prompt(&prompt)
+        .items(&items)
+        .default(0)
+        .interact()
+        .ok()?;
+
+    Some(if selection == 0 {
+        cli::CliBehaviorSetting::ExistingWindow
+    } else {
+        cli::CliBehaviorSetting::NewWindow
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -927,7 +1164,7 @@ mod windows {
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
-    use std::process::ExitStatus;
+    use std::process::{ExitStatus, Stdio};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -970,6 +1207,9 @@ mod windows {
                 if let Some(dir) = user_data_dir {
                     cmd.arg("--user-data-dir").arg(dir);
                 }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
                 cmd.spawn()?;
             } else {
                 unsafe {
@@ -1043,7 +1283,9 @@ mod mac_os {
         string::kCFStringEncodingUTF8,
         url::{CFURL, CFURLCreateWithBytes},
     };
-    use core_services::{LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults};
+    use core_services::{
+        LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults, kLSLaunchDontSwitch,
+    };
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -1142,7 +1384,7 @@ mod mac_os {
                                 appURL: app_url.as_concrete_TypeRef(),
                                 itemURLs: urls_to_open.as_concrete_TypeRef(),
                                 passThruParams: ptr::null(),
-                                launchFlags: kLSLaunchDefaults,
+                                launchFlags: kLSLaunchDefaults | kLSLaunchDontSwitch,
                                 asyncRefCon: ptr::null_mut(),
                             },
                             ptr::null_mut(),

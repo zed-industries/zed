@@ -1,12 +1,21 @@
-# Using Rules {#using-rules}
+---
+title: Rules (Replaced by Skills)
+description: Rules have been replaced by Skills and Instructions in Zed.
+---
 
-A rule is essentially a prompt that is inserted at the beginning of each interaction with the Agent.
-Currently, Zed supports adding rules through files inserted directly in the worktree or through the Rules Library, which allows you to store multiple rules for constant or on-demand usage.
+# Rules {#rules}
 
-## `.rules` files
+Rules have been replaced by [Skills](./skills.md) and [Instructions](./instructions.md).
 
-Zed supports including `.rules` files at the top level of worktrees, and they act as project-level instructions that are included in all of your interactions with the Agent Panel.
-Other names for this file are also supported for compatibility with other agents, but note that the first file which matches in this list will be used:
+> **Note:** Starting in Zed v1.4.0, on-demand Rules and the Rules Library have been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
+
+Use [Skills](./skills.md) for reusable task instructions that can be invoked by name or selected by the model. Use [Instructions](./instructions.md) for always-on personal and project context.
+
+## `.rules` Files {#rules-files}
+
+Project `.rules` files remain supported as compatibility project instruction files. See [Instructions](./instructions.md#project-instructions).
+
+Other instruction filenames are also supported for compatibility with other agents. The first matching file is used:
 
 - `.rules`
 - `.cursorrules`
@@ -18,58 +27,12 @@ Other names for this file are also supported for compatibility with other agents
 - `CLAUDE.md`
 - `GEMINI.md`
 
-## Rules Library {#rules-library}
+## Migrating to Skills {#migrating-to-skills}
 
-The Rules Library is an interface for writing and managing rules. Like other text-driven UIs in Zed, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
+Existing Rules migrate automatically:
 
-You can use the inline assistant right in the rules editor, allowing you to automate and rewrite rules.
+- Non-default Rules become global Skills in `~/.agents/skills/`, each with `disable-model-invocation: true`. They remain user-invocable by slash command or `@`-mention.
+- Default Rules are appended to your global `AGENTS.md` file (`~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows).
+- Git commit prompt customizations are also appended to the global `AGENTS.md` file.
 
-### Opening the Rules Library
-
-1. Open the Agent Panel.
-2. Click on the Agent menu (`...`) in the top right corner.
-3. Select `Rules...` from the dropdown.
-
-You can also reach it by running {#action agent::OpenRulesLibrary} in the command palette or through the {#kb agent::OpenRulesLibrary} keybinding.
-
-### Managing Rules
-
-Once a rules file is selected, you can edit it directly in the built-in editor. Its title can be changed from the editor title bar as well.
-
-Rules can be duplicated, deleted, or added to the default rules using the buttons in the rules editor.
-
-### Creating Rules {#creating-rules}
-
-To create a rule file, simply open the `Rules Library` and click the `+` button. Rules files are stored locally and can be accessed from the library at any time.
-
-Having a series of rules files specifically tailored to prompt engineering can also help you write consistent and effective rules.
-
-Here are a couple of helpful resources for writing better rules:
-
-- [Anthropic: Prompt Engineering](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview)
-- [OpenAI: Prompt Engineering](https://platform.openai.com/docs/guides/prompt-engineering)
-
-### Editing the Default Rules {#default-rules}
-
-Zed allows you to customize the default rules used when interacting with LLMs.
-Or to be more precise, it uses a series of rules that are combined to form the default rules.
-
-Default rules are included in the context of every new thread automatically.
-You can also manually add other rules (that are not flagged as default) as context using the `@rule` command.
-
-## Migrating from Prompt Library
-
-Previously, the Rules Library was called the "Prompt Library".
-The new rules system replaces the Prompt Library except in a few specific cases, which are outlined below.
-
-### Slash Commands in Rules
-
-Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules).
-There is currently no support for using @-mentions in rules files, however, slash commands are supported in rules files when used with text threads.
-See the documentation for using [slash commands in rules](./text-threads.md#slash-commands-in-rules) for more information.
-
-### Prompt templates
-
-Zed maintains backwards compatibility with its original template system, which allows you to customize prompts used throughout the application, including the inline assistant.
-While the Rules Library is now the primary way to manage prompts, you can still use these legacy templates to override default prompts.
-For more details, see the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).
+Rules Library content is not deleted, so downgrading to an earlier version of Zed leaves your Rules intact.

@@ -1,10 +1,14 @@
+use crate::Tooltip;
 use crate::prelude::*;
+use num_format::{Locale, ToFormattedString};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DiffStat {
     id: ElementId,
     added: usize,
     removed: usize,
+    label_size: LabelSize,
+    tooltip: Option<SharedString>,
 }
 
 impl DiffStat {
@@ -13,43 +17,44 @@ impl DiffStat {
             id: id.into(),
             added,
             removed,
+            label_size: LabelSize::Small,
+            tooltip: None,
         }
+    }
+
+    pub fn label_size(mut self, label_size: LabelSize) -> Self {
+        self.label_size = label_size;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
     }
 }
 
 impl RenderOnce for DiffStat {
     fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let tooltip = self.tooltip;
+        let added = self.added.to_formatted_string(&Locale::en);
+        let removed = self.removed.to_formatted_string(&Locale::en);
+
         h_flex()
             .id(self.id)
             .gap_1()
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::XSmall)
-                            .color(Color::Success),
-                    )
-                    .child(
-                        Label::new(self.added.to_string())
-                            .color(Color::Success)
-                            .size(LabelSize::Small),
-                    ),
+                Label::new(format!("+\u{2009}{added}"))
+                    .color(Color::Success)
+                    .size(self.label_size),
             )
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Dash)
-                            .size(IconSize::XSmall)
-                            .color(Color::Error),
-                    )
-                    .child(
-                        Label::new(self.removed.to_string())
-                            .color(Color::Error)
-                            .size(LabelSize::Small),
-                    ),
+                Label::new(format!("\u{2012}\u{2009}{removed}"))
+                    .color(Color::Error)
+                    .size(self.label_size),
             )
+            .when_some(tooltip, |this, tooltip| {
+                this.tooltip(Tooltip::text(tooltip))
+            })
     }
 }
 
@@ -58,7 +63,12 @@ impl Component for DiffStat {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A compact summary of additions and deletions for a diff, \
+        displayed as colored insertion and deletion counts."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             h_flex()
                 .py_4()
@@ -72,14 +82,12 @@ impl Component for DiffStat {
         let diff_stat_example = vec![single_example(
             "Default",
             container()
-                .child(DiffStat::new("id", 1, 2))
+                .child(DiffStat::new("id", 1_234, 5_678))
                 .into_any_element(),
         )];
 
-        Some(
-            example_group(diff_stat_example)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(diff_stat_example)
+            .vertical()
+            .into_any_element()
     }
 }

@@ -23,7 +23,6 @@ gpui.workspace = true
 language.workspace = true
 project.workspace = true
 proto.workspace = true
-semver.workspace = true
 smallvec.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -31,4 +30,4 @@ workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
+

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 use futures::{
-    Future, FutureExt as _,
+    Future, FutureExt as _, Stream, StreamExt as _,
     channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
+    stream::BoxStream,
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, BackgroundExecutor, Entity, FutureExt as _};
 use parking_lot::Mutex;
@@ -20,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AnyProtoClient(Arc<State>);
 
 type RequestIds = Arc<
@@ -45,12 +46,35 @@ struct State {
     request_ids: RequestIds,
 }
 
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("next_lsp_request_id", &self.next_lsp_request_id)
+            .field("request_ids", &self.request_ids)
+            .finish_non_exhaustive()
+    }
+}
+
 pub trait ProtoClient: Send + Sync {
     fn request(
         &self,
         envelope: Envelope,
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<Envelope>>;
+
+    fn request_stream(
+        &self,
+        envelope: Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Envelope>>>> {
+        async move {
+            anyhow::bail!(
+                "stream requests are not supported for {request_type}: {:?}",
+                envelope.payload
+            )
+        }
+        .boxed()
+    }
 
     fn send(&self, envelope: Envelope, message_type: &'static str) -> Result<()>;
 
@@ -64,11 +88,11 @@ pub trait ProtoClient: Send + Sync {
 
 #[derive(Default)]
 pub struct ProtoMessageHandlerSet {
-    pub entity_types_by_message_type: HashMap<TypeId, TypeId>,
+    pub entity_types_by_message_type: TypeIdHashMap<TypeId>,
     pub entities_by_type_and_remote_id: HashMap<(TypeId, u64), EntityMessageSubscriber>,
-    pub entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
-    pub entities_by_message_type: HashMap<TypeId, AnyWeakEntity>,
-    pub message_handlers: HashMap<TypeId, ProtoMessageHandler>,
+    pub entity_id_extractors: TypeIdHashMap<fn(&dyn AnyTypedEnvelope) -> u64>,
+    pub entities_by_message_type: TypeIdHashMap<AnyWeakEntity>,
+    pub message_handlers: TypeIdHashMap<ProtoMessageHandler>,
 }
 
 pub type ProtoMessageHandler = Arc<
@@ -214,6 +238,23 @@ impl AnyProtoClient {
         }
     }
 
+    pub fn request_stream<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<T::Response>>>> + use<T> {
+        let envelope = request.into_envelope(0, None, None);
+        let response_stream = self.0.client.request_stream(envelope, T::NAME);
+        async move {
+            Ok(response_stream
+                .await?
+                .map(|response| {
+                    T::Response::from_envelope(response?)
+                        .context("received response of the wrong type")
+                })
+                .boxed())
+        }
+    }
+
     pub fn send<T: EnvelopedMessage>(&self, request: T) -> Result<()> {
         let envelope = request.into_envelope(0, None, None);
         self.0.client.send(envelope, T::NAME)
@@ -355,16 +396,34 @@ impl AnyProtoClient {
                             Response::GetDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetDeclarationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetTypeDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetImplementationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::InlayHintsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::SemanticTokensResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetFoldingRangesResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDocumentSymbolsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDocumentLinksResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };
@@ -461,6 +520,68 @@ impl AnyProtoClient {
             );
     }
 
+    pub fn add_entity_stream_request_handler<M, E, H, F, S>(&self, handler: H)
+    where
+        M: EnvelopedMessage + RequestMessage + EntityMessage,
+        E: 'static,
+        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
+        F: 'static + Future<Output = Result<S>>,
+        S: 'static + Stream<Item = Result<M::Response>>,
+    {
+        let message_type_id = TypeId::of::<M>();
+        let entity_type_id = TypeId::of::<E>();
+        let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
+            (envelope as &dyn Any)
+                .downcast_ref::<TypedEnvelope<M>>()
+                .unwrap()
+                .payload
+                .remote_entity_id()
+        };
+        self.0
+            .client
+            .message_handler_set()
+            .lock()
+            .add_entity_message_handler(
+                message_type_id,
+                entity_type_id,
+                entity_id_extractor,
+                Arc::new(move |entity, envelope, client, cx| {
+                    let entity = entity.downcast::<E>().unwrap();
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                    let request_id = envelope.message_id();
+                    let stream = handler(entity, *envelope, cx);
+                    async move {
+                        // An Error response is itself a terminal stream frame on
+                        // both transports (Peer and ChannelClient), so we don't
+                        // need to follow it with an EndStream.
+                        match stream.await {
+                            Ok(stream) => {
+                                futures::pin_mut!(stream);
+                                while let Some(result) = stream.next().await {
+                                    match result {
+                                        Ok(response) => {
+                                            client.send_response(request_id, response)?
+                                        }
+                                        Err(error) => {
+                                            client.send_response(request_id, error.to_proto())?;
+                                            return Err(error);
+                                        }
+                                    }
+                                }
+                                client.send_response(request_id, proto::EndStream {})?;
+                                Ok(())
+                            }
+                            Err(error) => {
+                                client.send_response(request_id, error.to_proto())?;
+                                Err(error)
+                            }
+                        }
+                    }
+                    .boxed_local()
+                }),
+            );
+    }
+
     pub fn add_entity_message_handler<M, E, H, F>(&self, handler: H)
     where
         M: EnvelopedMessage + EntityMessage,
@@ -528,4 +649,44 @@ fn to_any_envelope<T: EnvelopedMessage>(
         received_at: envelope.received_at,
         payload: response,
     }) as Box<_>
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct NoopProtoClient {
+    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl NoopProtoClient {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            handler_set: parking_lot::Mutex::new(ProtoMessageHandlerSet::default()),
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ProtoClient for NoopProtoClient {
+    fn request(
+        &self,
+        _: proto::Envelope,
+        _: &'static str,
+    ) -> futures::future::BoxFuture<'static, Result<proto::Envelope>> {
+        unimplemented!()
+    }
+    fn send(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn send_response(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+        &self.handler_set
+    }
+    fn is_via_collab(&self) -> bool {
+        false
+    }
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }

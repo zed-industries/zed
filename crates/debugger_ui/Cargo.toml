@@ -26,7 +26,6 @@ test-support = [
 ]
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 bitflags.workspace = true
 client.workspace = true
@@ -64,12 +63,13 @@ settings.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
-telemetry.workspace = true
+terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 tree-sitter-json.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }

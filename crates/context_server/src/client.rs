@@ -1,13 +1,13 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
+use futures_lite::future::yield_now;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
-use postage::barrier;
+use postage::{barrier, prelude::Stream as _};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
 use slotmap::SlotMap;
-use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
@@ -21,6 +21,7 @@ use std::{
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
+    oauth::WwwAuthenticate,
     transport::{StdioTransport, Transport},
     types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
 };
@@ -35,7 +36,7 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(String)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
@@ -49,19 +50,27 @@ pub enum RequestId {
 pub(crate) struct Client {
     server_id: ContextServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
+    outbound_tx: async_channel::Sender<String>,
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
-    #[allow(dead_code)]
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     executor: BackgroundExecutor,
-    #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    /// Single-slot side channel for the last transport-level error. When the
+    /// output task encounters a send failure it stashes the error here and
+    /// exits; the next request to observe cancellation `.take()`s it so it
+    /// can fail with the underlying cause (e.g. "connection refused") instead
+    /// of a generic "cancelled". This is best-effort diagnostics: with
+    /// concurrent requests in flight, a single arbitrary one receives the
+    /// stashed error. Nothing may depend on it for correctness —
+    /// authentication challenges are observed via [`Self::wait_for_shutdown`]
+    /// and [`Transport::auth_challenge`], which do not involve requests.
+    last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -123,6 +132,7 @@ struct Notification<'a, T> {
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
     params: T,
 }
 
@@ -176,7 +186,7 @@ impl Client {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(String::new);
 
-        let timeout = binary.timeout.map(Duration::from_millis);
+        let timeout = binary.timeout.map(Duration::from_secs);
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
@@ -189,7 +199,7 @@ impl Client {
         request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
         let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
@@ -223,13 +233,16 @@ impl Client {
             input.or(err)
         });
 
+        let last_transport_error: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
         let output_task = cx.background_spawn({
             let transport = transport.clone();
+            let last_transport_error = last_transport_error.clone();
             Self::handle_output(
                 transport,
                 outbound_rx,
                 output_done_tx,
                 response_handlers.clone(),
+                last_transport_error,
             )
             .log_err()
         });
@@ -246,6 +259,7 @@ impl Client {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
             request_timeout,
+            last_transport_error,
         })
     }
 
@@ -279,7 +293,7 @@ impl Client {
                 if let Some(handlers) = response_handlers.lock().as_mut()
                     && let Some(handler) = handlers.remove(&response.id)
                 {
-                    handler(Ok(message.to_string()));
+                    handler(message.to_string());
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 subscription_set.lock().notify(
@@ -292,7 +306,7 @@ impl Client {
             }
         }
 
-        smol::future::yield_now().await;
+        yield_now().await;
 
         Ok(())
     }
@@ -312,9 +326,10 @@ impl Client {
     /// writes them to the server's stdin, and manages the lifecycle of response handlers.
     async fn handle_output(
         transport: Arc<dyn Transport>,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -324,10 +339,36 @@ impl Client {
         });
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message: {}", message);
-            transport.send(message).await?;
+            if let Err(err) = transport.send(message).await {
+                log::debug!("transport send failed: {:#}", err);
+                *last_transport_error.lock() = Some(err);
+                return Ok(());
+            }
         }
         drop(output_done_tx);
         Ok(())
+    }
+
+    /// A future that resolves once the transport's output loop has terminated
+    /// — after a send failure, or when this client is dropped — yielding the
+    /// authentication challenge recorded by the transport if it shut down on a
+    /// `401 Unauthorized` response.
+    ///
+    /// Unlike `last_transport_error`, this does not require a request to be in
+    /// flight when the transport fails. Returns `None` if the shutdown signal
+    /// was already claimed: there is a single signal per client.
+    pub(crate) fn wait_for_shutdown(
+        &self,
+    ) -> Option<future::BoxFuture<'static, Option<WwwAuthenticate>>> {
+        let mut output_done = self.output_done_rx.lock().take()?;
+        let transport = self.transport.clone();
+        Some(
+            async move {
+                output_done.recv().await;
+                transport.auth_challenge()
+            }
+            .boxed(),
+        )
     }
 
     /// Sends a JSON-RPC request to the context server and waits for a response.
@@ -408,7 +449,7 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
-                match response? {
+                match response {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
@@ -419,7 +460,12 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
-                    Err(_) => anyhow::bail!("cancelled")
+                    Err(_canceled) => {
+                        if let Some(err) = self.last_transport_error.lock().take() {
+                            return Err(err);
+                        }
+                        anyhow::bail!("cancelled")
+                    }
                 }
             }
             _ = cancel_fut => {
@@ -450,6 +496,13 @@ impl Client {
         .unwrap();
         self.outbound_tx.try_send(notification)?;
         Ok(())
+    }
+
+    /// Notify the underlying transport of the negotiated MCP protocol version
+    /// so it can stamp subsequent requests (e.g. HTTP's `MCP-Protocol-Version`
+    /// header required from 2025-06-18 onward).
+    pub(crate) fn set_protocol_version(&self, version: &str) {
+        self.transport.set_protocol_version(version);
     }
 
     #[must_use]

@@ -1,15 +1,4 @@
 services:
-  postgres:
-    image: docker.io/library/postgres:15
-    container_name: zed_postgres
-    ports:
-      - 5432:5432
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./docker-compose.sql:/docker-entrypoint-initdb.d/init.sql
-
   blob_store:
     image: quay.io/minio/minio
     container_name: blob_store
@@ -32,12 +21,3 @@ services:
       - 7882:7882/udp
     volumes:
       - ./livekit.yaml:/livekit.yaml
-
-  stripe-mock:
-    image: docker.io/stripe/stripe-mock:v0.178.0
-    ports:
-      - 12111:12111
-      - 12112:12112
-
-volumes:
-  postgres_data:

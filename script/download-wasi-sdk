@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Check if ./target/wasi-sdk exists
 if [ ! -d "./target/wasi-sdk" ]; then
@@ -49,7 +50,7 @@ if [ ! -d "./target/wasi-sdk" ]; then
     mkdir -p ./target
 
     # Download and extract
-    curl -L "$WASI_SDK_URL" | tar -xz -C ./target
+    curl -fL "$WASI_SDK_URL" | tar -xz -C ./target
 
     # Rename the extracted directory to wasi-sdk
     mv "./target/wasi-sdk-${WASI_SDK_VERSION}.0-${ARCH}-${OS}" "./target/wasi-sdk"

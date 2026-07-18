@@ -1,11 +1,12 @@
-pub mod arc_cow;
 pub mod archive;
 pub mod command;
+pub mod disambiguate;
 pub mod fs;
 pub mod markdown;
+pub mod path_list;
 pub mod paths;
+pub mod process;
 pub mod redact;
-pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell;
@@ -16,40 +17,30 @@ pub mod size;
 pub mod test;
 pub mod time;
 
-use anyhow::{Context as _, Result};
-use futures::Future;
+use anyhow::Result;
 use itertools::Either;
-use paths::PathExt;
 use regex::Regex;
 use std::path::PathBuf;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
-    env,
-    ops::{AddAssign, Range, RangeInclusive},
-    panic::Location,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Instant,
+    ops::{Range, RangeInclusive},
 };
 use unicase::UniCase;
+
+pub use gpui_util::*;
+pub use path::PathExt;
+pub use path::normalize_path;
+pub use path::rel_path;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
-#[macro_export]
-macro_rules! debug_panic {
-    ( $($fmt_arg:tt)* ) => {
-        if cfg!(debug_assertions) {
-            panic!( $($fmt_arg)* );
-        } else {
-            let backtrace = std::backtrace::Backtrace::capture();
-            log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
-        }
-    };
-}
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[inline]
 pub const fn is_utf8_char_boundary(u8: u8) -> bool {
@@ -62,6 +53,29 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
+}
+
+/// Parses the contents of an `os-release` file (as found at `/etc/os-release`
+/// and described by the systemd spec) into a human-readable string such as
+/// `"ubuntu 24.04"`, combining the `ID` and `VERSION_ID` fields.
+///
+/// Returns `None` if no `ID` field is present. When `VERSION_ID` is absent
+/// (e.g. on rolling releases), only the `ID` is returned.
+pub fn parse_os_release(content: &str) -> Option<String> {
+    let mut id = None;
+    let mut version_id = None;
+    for line in content.lines() {
+        match line.split_once('=') {
+            Some(("ID", value)) => id = Some(value.trim_matches('"')),
+            Some(("VERSION_ID", value)) => version_id = Some(value.trim_matches('"')),
+            _ => {}
+        }
+    }
+    let id = id?;
+    Some(match version_id {
+        Some(version) => format!("{id} {version}"),
+        None => id.to_string(),
+    })
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
@@ -173,12 +187,6 @@ fn test_truncate_lines_to_byte_limit() {
     );
 }
 
-pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
-    let prev = *value;
-    *value += T::from(1);
-    prev
-}
-
 /// Extend a sorted vector with a sorted sequence of items, maintaining the vector's sort order and
 /// enforcing a maximum length. This also de-duplicates items. Sort the items according to the given callback. Before calling this,
 /// both `vec` and `new_items` should already be sorted according to the `cmp` comparator.
@@ -286,7 +294,7 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+    let should_set_shell = std::env::var("SHELL").map_or(true, |shell_env| {
         shell_env != shell && !std::path::Path::new(&shell_env).exists()
     });
 
@@ -295,7 +303,7 @@ fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        unsafe { env::set_var("SHELL", shell) };
+        unsafe { std::env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -303,8 +311,21 @@ fn load_shell_from_passwd() -> Result<()> {
 
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
-    let zed_path =
+    use anyhow::Context as _;
+    use paths::PathExt;
+    let mut zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    if cfg!(target_os = "linux")
+        && !zed_path.is_file()
+        && let Some(truncated) = zed_path
+            .clone()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|n| n.strip_suffix(" (deleted)"))
+    {
+        // Might have been deleted during update; let's use the new binary if there is one.
+        zed_path.set_file_name(truncated);
+    }
 
     zed_path
         .try_shell_safe(shell_kind)
@@ -314,6 +335,7 @@ pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<S
 /// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
 pub fn get_zed_cli_path() -> Result<PathBuf> {
+    use anyhow::Context as _;
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     let parent = zed_path
@@ -353,6 +375,8 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
 
 #[cfg(unix)]
 pub async fn load_login_shell_environment() -> Result<()> {
+    use anyhow::Context as _;
+
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -364,7 +388,14 @@ pub async fn load_login_shell_environment() -> Result<()> {
         .await
         .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
     {
-        unsafe { env::set_var(&name, &value) };
+        // Skip SHLVL to prevent it from polluting Zed's process environment.
+        // The login shell used for env capture increments SHLVL, and if we propagate it,
+        // terminals spawned by Zed will inherit it and increment again, causing SHLVL
+        // to start at 2 instead of 1 (and increase by 2 on each reload).
+        if name == "SHLVL" {
+            continue;
+        }
+        unsafe { std::env::set_var(&name, &value) };
     }
 
     log::info!(
@@ -385,13 +416,11 @@ pub fn set_pre_exec_to_start_new_session(
 ) -> &mut std::process::Command {
     // safety: code in pre_exec should be signal safe.
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     unsafe {
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
             libc::setsid();
-            #[cfg(target_os = "macos")]
-            crate::command::reset_exception_ports();
             Ok(())
         });
     };
@@ -468,25 +497,6 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
     }
 }
 
-pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
-    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
-        env::var("ZED_MEASUREMENTS")
-            .map(|measurements| measurements == "1" || measurements == "true")
-            .unwrap_or(false)
-    });
-
-    if *zed_measurements {
-        let start = Instant::now();
-        let result = f();
-        let elapsed = start.elapsed();
-        eprintln!("{}: {:?}", label, elapsed);
-        result
-    } else {
-        f()
-    }
-}
-
 pub fn expanded_and_wrapped_usize_range(
     range: Range<usize>,
     additional_before: usize,
@@ -553,222 +563,6 @@ pub fn wrapped_usize_outward_from(
     })
 }
 
-pub trait ResultExt<E> {
-    type Ok;
-
-    fn log_err(self) -> Option<Self::Ok>;
-    /// Assert that this result should never be an error in development or tests.
-    fn debug_assert_ok(self, reason: &str) -> Self;
-    fn warn_on_err(self) -> Option<Self::Ok>;
-    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
-    fn anyhow(self) -> anyhow::Result<Self::Ok>
-    where
-        E: Into<anyhow::Error>;
-}
-
-impl<T, E> ResultExt<E> for Result<T, E>
-where
-    E: std::fmt::Debug,
-{
-    type Ok = T;
-
-    #[track_caller]
-    fn log_err(self) -> Option<T> {
-        self.log_with_level(log::Level::Error)
-    }
-
-    #[track_caller]
-    fn debug_assert_ok(self, reason: &str) -> Self {
-        if let Err(error) = &self {
-            debug_panic!("{reason} - {error:?}");
-        }
-        self
-    }
-
-    #[track_caller]
-    fn warn_on_err(self) -> Option<T> {
-        self.log_with_level(log::Level::Warn)
-    }
-
-    #[track_caller]
-    fn log_with_level(self, level: log::Level) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(*Location::caller(), error, level);
-                None
-            }
-        }
-    }
-
-    fn anyhow(self) -> anyhow::Result<T>
-    where
-        E: Into<anyhow::Error>,
-    {
-        self.map_err(Into::into)
-    }
-}
-
-fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
-where
-    E: std::fmt::Debug,
-{
-    #[cfg(not(target_os = "windows"))]
-    let file = caller.file();
-    #[cfg(target_os = "windows")]
-    let file = caller.file().replace('\\', "/");
-    // In this codebase all crates reside in a `crates` directory,
-    // so discard the prefix up to that segment to find the crate name
-    let file = file.split_once("crates/");
-    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
-
-    let module_path = target.map(|(krate, module)| {
-        if module.starts_with(krate) {
-            module.trim_end_matches(".rs").replace('/', "::")
-        } else {
-            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
-        }
-    });
-    let file = file.map(|(_, file)| format!("crates/{file}"));
-    log::logger().log(
-        &log::Record::builder()
-            .target(module_path.as_deref().unwrap_or(""))
-            .module_path(file.as_deref())
-            .args(format_args!("{:?}", error))
-            .file(Some(caller.file()))
-            .line(Some(caller.line()))
-            .level(level)
-            .build(),
-    );
-}
-
-pub fn log_err<E: std::fmt::Debug>(error: &E) {
-    log_error_with_caller(*Location::caller(), error, log::Level::Error);
-}
-
-pub trait TryFutureExt {
-    fn log_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-
-    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-
-    fn warn_on_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized;
-    fn unwrap(self) -> UnwrapFuture<Self>
-    where
-        Self: Sized;
-}
-
-impl<F, T, E> TryFutureExt for F
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    #[track_caller]
-    fn log_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        let location = Location::caller();
-        LogErrorFuture(self, log::Level::Error, *location)
-    }
-
-    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        LogErrorFuture(self, log::Level::Error, location)
-    }
-
-    #[track_caller]
-    fn warn_on_err(self) -> LogErrorFuture<Self>
-    where
-        Self: Sized,
-    {
-        let location = Location::caller();
-        LogErrorFuture(self, log::Level::Warn, *location)
-    }
-
-    fn unwrap(self) -> UnwrapFuture<Self>
-    where
-        Self: Sized,
-    {
-        UnwrapFuture(self)
-    }
-}
-
-#[must_use]
-pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
-
-impl<F, T, E> Future for LogErrorFuture<F>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    type Output = Option<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let level = self.1;
-        let location = self.2;
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        match inner.poll(cx) {
-            Poll::Ready(output) => Poll::Ready(match output {
-                Ok(output) => Some(output),
-                Err(error) => {
-                    log_error_with_caller(location, error, level);
-                    None
-                }
-            }),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-pub struct UnwrapFuture<F>(F);
-
-impl<F, T, E> Future for UnwrapFuture<F>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        match inner.poll(cx) {
-            Poll::Ready(result) => Poll::Ready(result.unwrap()),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-pub struct Deferred<F: FnOnce()>(Option<F>);
-
-impl<F: FnOnce()> Deferred<F> {
-    /// Drop without running the deferred function.
-    pub fn abort(mut self) {
-        self.0.take();
-    }
-}
-
-impl<F: FnOnce()> Drop for Deferred<F> {
-    fn drop(&mut self) {
-        if let Some(f) = self.0.take() {
-            f()
-        }
-    }
-}
-
-/// Run the given function when the returned value is dropped (unless it's cancelled).
-#[must_use]
-pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
-    Deferred(Some(f))
-}
-
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
     use rand::prelude::*;
@@ -830,23 +624,6 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }
-}
-
-/// Expands to an immediately-invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result.
-///
-/// Accepts a normal block, an async block, or an async move block.
-#[macro_export]
-macro_rules! maybe {
-    ($block:block) => {
-        (|| $block)()
-    };
-    (async $block:block) => {
-        (async || $block)()
-    };
-    (async move $block:block) => {
-        (async move || $block)()
-    };
 }
 
 pub trait RangeExt<T> {
@@ -935,28 +712,6 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
     }
 }
 
-/// Capitalizes the first character of a string.
-///
-/// This function takes a string slice as input and returns a new `String` with the first character
-/// capitalized.
-///
-/// # Examples
-///
-/// ```
-/// use util::capitalize;
-///
-/// assert_eq!(capitalize("hello"), "Hello");
-/// assert_eq!(capitalize("WORLD"), "WORLD");
-/// assert_eq!(capitalize(""), "");
-/// ```
-pub fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
 fn emoji_regex() -> &'static Regex {
     static EMOJI_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap());
@@ -978,7 +733,10 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 /// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
 /// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
-pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+pub fn split_str_with_ranges<'s>(
+    s: &'s str,
+    pat: &dyn Fn(char) -> bool,
+) -> Vec<(Range<usize>, &'s str)> {
     let mut result = Vec::new();
     let mut start = 0;
 
@@ -1001,10 +759,6 @@ pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<
 pub fn default<D: Default>() -> D {
     Default::default()
 }
-
-pub use self::shell::{
-    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
-};
 
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
@@ -1029,18 +783,26 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     }
 }
 
-#[track_caller]
-pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
-    #[cfg(debug_assertions)]
-    if option.is_none() {
-        panic!("Unexpected None");
-    }
-    option
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_os_release() {
+        let os_release =
+            "NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n";
+        assert_eq!(
+            parse_os_release(os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // VERSION_ID may be absent (e.g. rolling releases like Arch).
+        assert_eq!(parse_os_release("ID=arch\n"), Some("arch".to_string()));
+
+        // Without an ID there is nothing usable to report.
+        assert_eq!(parse_os_release("VERSION_ID=1\n"), None);
+        assert_eq!(parse_os_release(""), None);
+    }
 
     #[test]
     fn test_extend_sorted() {
@@ -1311,13 +1073,13 @@ Line 3"#
     #[test]
     fn test_split_with_ranges() {
         let input = "hi";
-        let result = split_str_with_ranges(input, |c| c == ' ');
+        let result = split_str_with_ranges(input, &|c| c == ' ');
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], (0..2, "hi"));
 
         let input = "héllo🦀world";
-        let result = split_str_with_ranges(input, |c| c == '🦀');
+        let result = split_str_with_ranges(input, &|c| c == '🦀');
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes

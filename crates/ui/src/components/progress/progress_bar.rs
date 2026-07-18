@@ -1,5 +1,5 @@
 use documented::Documented;
-use gpui::{Hsla, point};
+use gpui::Hsla;
 
 use crate::components::Label;
 use crate::prelude::*;
@@ -67,16 +67,15 @@ impl RenderOnce for ProgressBar {
         div()
             .id(self.id.clone())
             .w_full()
-            .h(px(8.0))
+            .h_2()
+            .p_0p5()
             .rounded_full()
-            .p(px(2.0))
             .bg(self.bg_color)
-            .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.08),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.),
-            }])
+            .shadow(vec![gpui::BoxShadow::new(
+                px(0.),
+                px(1.),
+                gpui::black().opacity(0.08),
+            )])
             .child(
                 div()
                     .h_full()
@@ -93,29 +92,23 @@ impl Component for ProgressBar {
         ComponentScope::Status
     }
 
-    fn description() -> Option<&'static str> {
-        Some(Self::DOCS)
+    fn description() -> &'static str {
+        Self::DOCS
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let max_value = 180.0;
+        let container = || v_flex().w_full().gap_1();
 
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .p_4()
-                .w(px(240.0))
-                .child(div().child("Progress Bar"))
+        example_group(vec![single_example(
+            "Examples",
+            v_flex()
+                .w_full()
+                .gap_2()
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    container()
                         .child(
-                            div()
-                                .flex()
+                            h_flex()
                                 .justify_between()
                                 .child(Label::new("0%"))
                                 .child(Label::new("Empty")),
@@ -123,13 +116,9 @@ impl Component for ProgressBar {
                         .child(ProgressBar::new("empty", 0.0, max_value, cx)),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    container()
                         .child(
-                            div()
-                                .flex()
+                            h_flex()
                                 .justify_between()
                                 .child(Label::new("38%"))
                                 .child(Label::new("Partial")),
@@ -137,13 +126,9 @@ impl Component for ProgressBar {
                         .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
+                    container()
                         .child(
-                            div()
-                                .flex()
+                            h_flex()
                                 .justify_between()
                                 .child(Label::new("100%"))
                                 .child(Label::new("Complete")),
@@ -151,6 +136,7 @@ impl Component for ProgressBar {
                         .child(ProgressBar::new("filled", max_value, max_value, cx)),
                 )
                 .into_any_element(),
-        )
+        )])
+        .into_any_element()
     }
 }

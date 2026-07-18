@@ -1,19 +1,20 @@
 mod application_menu;
 pub mod collab;
 mod onboarding_banner;
-pub mod platform_title_bar;
-mod platforms;
-mod system_window_tabs;
+mod plan_chip;
 mod title_bar_settings;
+mod update_version;
 
-#[cfg(feature = "stories")]
-mod stories;
-
-use crate::{
-    application_menu::{ApplicationMenu, show_menus},
-    platform_title_bar::PlatformTitleBar,
-    system_window_tabs::SystemWindowTabs,
+use crate::application_menu::{ApplicationMenu, show_menus};
+use crate::plan_chip::PlanChip;
+use agent_settings::{AgentSettings, WindowLayout};
+use arrayvec::ArrayVec;
+use git_ui::worktree_picker::WorktreePicker;
+pub use platform_title_bar::{
+    self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
+    ShowNextWindowTab, ShowPreviousWindowTab,
 };
+use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -23,33 +24,41 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use command_palette_hooks::CommandPaletteFilter;
+
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
+    pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
+    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
+    trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
-use settings::{Settings, SettingsLocation};
+use settings::{Settings as _, SettingsStore};
+
+use std::any::TypeId;
 use std::sync::Arc;
+use std::time::Duration;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
-use util::{ResultExt, rel_path::RelPath};
-use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenRecent, OpenRemote};
+use update_version::UpdateVersion;
+use util::ResultExt;
+use workspace::{
+    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    notifications::{NotifyResultExt, NotifyTaskExt as _},
+};
+
+use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
-
-#[cfg(feature = "stories")]
-pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -63,19 +72,56 @@ actions!(
         /// Toggles the project menu dropdown.
         ToggleProjectMenu,
         /// Switches to a different git branch.
-        SwitchBranch
+        SwitchBranch,
+        /// A debug action to simulate an update being available to test the update banner UI.
+        SimulateUpdateAvailable
+    ]
+);
+
+actions!(
+    workspace,
+    [
+        /// Switches to the classic, editor-focused panel layout.
+        UseClassicLayout,
+        /// Switches to the agentic panel layout.
+        UseAgenticLayout,
     ]
 );
 
 pub fn init(cx: &mut App) {
-    SystemWindowTabs::init(cx);
+    platform_title_bar::PlatformTitleBar::init(cx);
+
+    update_layout_action_filter(cx);
+
+    cx.observe_global::<SettingsStore>(update_layout_action_filter)
+        .detach();
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        let multi_workspace = workspace.multi_workspace().cloned();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
+
+        workspace.register_action(|_workspace, _: &UseClassicLayout, _window, cx| {
+            set_window_layout(WindowLayout::Editor(None), cx);
+        });
+
+        workspace.register_action(|_workspace, _: &UseAgenticLayout, _window, cx| {
+            set_window_layout(WindowLayout::Agent(None), cx);
+        });
+
+        workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    titlebar.toggle_update_simulation(cx);
+                });
+            }
+        });
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
@@ -126,29 +172,127 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// Hides or shows the panel layout actions in the command palette based on
+/// whether AI is currently disabled.
+fn update_layout_action_filter(cx: &mut App) {
+    let disable_ai = project::DisableAiSettings::get_global(cx).disable_ai;
+    let layout_actions = [
+        TypeId::of::<UseClassicLayout>(),
+        TypeId::of::<UseAgenticLayout>(),
+    ];
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        if disable_ai {
+            filter.hide_action_types(&layout_actions);
+        } else {
+            filter.show_action_types(layout_actions.iter());
+        }
+    });
+}
+
+fn set_window_layout(layout: WindowLayout, cx: &App) {
+    let fs = <dyn fs::Fs>::global(cx);
+    drop(AgentSettings::set_layout(layout, fs, cx));
+}
+
 pub struct TitleBar {
     platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    banner: Entity<OnboardingBanner>,
+    banner: Option<Entity<OnboardingBanner>>,
+    update_version: Entity<UpdateVersion>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
+    _diagnostics_subscription: Option<gpui::Subscription>,
 }
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.multi_workspace.is_none() {
+            if let Some(mw) = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| ws.read(cx).multi_workspace().cloned())
+            {
+                self.multi_workspace = Some(mw.clone());
+                self.platform_titlebar.update(cx, |titlebar, _cx| {
+                    titlebar.set_multi_workspace(mw);
+                });
+            }
+        }
+
         let title_bar_settings = *TitleBarSettings::get_global(cx);
+        let button_layout = title_bar_settings.button_layout;
+        let is_git_enabled = ProjectSettings::get_global(cx).git.enabled.status;
 
         let show_menus = show_menus(cx);
 
-        let mut children = Vec::new();
+        let mut children = <ArrayVec<_, 5>>::new();
+
+        let mut project_name = None;
+        let mut repository = None;
+        let mut linked_worktree_name = None;
+        if let Some(worktree) = self.effective_active_worktree(cx) {
+            repository = self.get_repository_for_worktree(&worktree, cx);
+            let worktree_abs_path = worktree.read(cx).abs_path();
+            project_name = worktree
+                .read(cx)
+                .root_name()
+                .file_name()
+                .map(|name| SharedString::from(name.to_string()));
+            if let Some(repo) = &repository {
+                let repo = repo.read(cx);
+                linked_worktree_name = repo
+                    .main_worktree_abs_path()
+                    .and_then(|main_worktree_path| {
+                        linked_worktree_short_name(
+                            main_worktree_path,
+                            repo.work_directory_abs_path.as_ref(),
+                        )
+                    })
+                    .or_else(|| {
+                        repo.is_linked_worktree()
+                            .then_some(project_name.clone())
+                            .flatten()
+                    });
+
+                let identity = repo_identity_path(&repo.common_dir_abs_path);
+
+                let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
+                    identity.file_stem()
+                } else {
+                    identity.file_name()
+                };
+
+                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let name = if visible_worktrees_in_repo == 1 {
+                        if let Ok(relative) =
+                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        {
+                            if relative.as_os_str().is_empty() {
+                                repo_name.to_string()
+                            } else {
+                                format!("{}/{}", repo_name, relative.display())
+                            }
+                        } else {
+                            repo_name.to_string()
+                        }
+                    } else {
+                        repo_name.to_string()
+                    };
+                    project_name = Some(SharedString::from(name));
+                }
+            }
+        }
 
         children.push(
             h_flex()
-                .gap_1()
+                .h_full()
+                .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
@@ -156,22 +300,34 @@ impl Render for TitleBar {
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
-                                render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                                // Hide the project/branch items to make room when the
+                                // menu bar is expanded -- except in accessible mode,
+                                // where the menu bar is always expanded but those
+                                // controls must still remain reachable.
+                                render_project_items &= !menu
+                                    .update(cx, |menu, cx| menu.all_menus_shown(cx))
+                                    || cx.accessible_mode();
                                 title_bar.child(menu)
                             },
                         )
+                        .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
-                                        .children(self.render_restricted_mode(cx))
-                                        .children(self.render_project_host(window, cx))
-                                        .child(self.render_project_name(window, cx))
+                                        .children(self.render_project_host(cx))
+                                        .child(self.render_project_name(project_name, window, cx))
                                 })
-                                .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_repo(window, cx))
-                                })
+                                .when_some(
+                                    repository.filter(|_| is_git_enabled),
+                                    |title_bar, repository| {
+                                        title_bar.children(self.render_worktree_and_branch(
+                                            repository,
+                                            linked_worktree_name,
+                                            cx,
+                                        ))
+                                    },
+                                )
                         })
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -181,7 +337,9 @@ impl Render for TitleBar {
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
         if title_bar_settings.show_onboarding_banner {
-            children.push(self.banner.clone().into_any_element())
+            if let Some(banner) = &self.banner {
+                children.push(banner.clone().into_any_element())
+            }
         }
 
         let status = self.client.status();
@@ -189,6 +347,18 @@ impl Render for TitleBar {
         let user = self.user_store.read(cx).current_user();
 
         let signed_in = user.is_some();
+        let is_signing_in = user.is_none()
+            && matches!(
+                status,
+                client::Status::Authenticating
+                    | client::Status::Authenticated
+                    | client::Status::Connecting
+            );
+        let is_signed_out_or_auth_error = user.is_none()
+            && matches!(
+                status,
+                client::Status::SignedOut | client::Status::AuthenticationError
+            );
 
         children.push(
             h_flex()
@@ -201,12 +371,29 @@ impl Render for TitleBar {
                 })
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .children(self.render_call_controls(window, cx))
+                .child(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
+                .child(self.update_version.clone())
                 .when(
-                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none()
+                        && is_signed_out_or_auth_error
+                        && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
+                .when(is_signing_in, |this| {
+                    this.child(
+                        Label::new("Signing in…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .with_animation(
+                                "signing-in",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                    )
+                })
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })
@@ -215,6 +402,7 @@ impl Render for TitleBar {
 
         if show_menus {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(
                     self.application_menu
                         .clone()
@@ -222,7 +410,7 @@ impl Render for TitleBar {
                 );
             });
 
-            let height = PlatformTitleBar::height(window);
+            let height = platform_title_bar_height(window);
             let title_bar_color = self.platform_titlebar.update(cx, |platform_titlebar, cx| {
                 platform_titlebar.title_bar_color(window, cx)
             });
@@ -242,6 +430,7 @@ impl Render for TitleBar {
                 .into_any_element()
         } else {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(children);
             });
             self.platform_titlebar.clone().into_any_element()
@@ -253,6 +442,7 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
+        multi_workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -282,7 +472,7 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
+
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
@@ -295,68 +485,123 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(workspace_entity) = workspace.weak_handle().upgrade() {
+            subscriptions.push(cx.subscribe(
+                &workspace_entity,
+                |_, _, event: &workspace::Event, cx| {
+                    if matches!(event, workspace::Event::WorktreeCreationChanged) {
+                        cx.notify();
+                    }
+                },
+            ));
+        }
+        subscriptions.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
                 cx.notify();
             }));
         }
 
-        let banner = cx.new(|cx| {
-            OnboardingBanner::new(
-                "ACP Claude Code Onboarding",
-                IconName::AiClaude,
-                "Claude Code",
-                Some("Introducing:".into()),
-                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
-                cx,
-            )
-            // When updating this to a non-AI feature release, remove this line.
-            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
+        let update_version = cx.new(|cx| UpdateVersion::new(cx));
+        let platform_titlebar = cx.new(|cx| {
+            let mut titlebar = PlatformTitleBar::new(id, cx);
+            if let Some(mw) = multi_workspace.clone() {
+                titlebar = titlebar.with_multi_workspace(mw);
+            }
+            titlebar
         });
 
-        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+        let banner = None;
 
-        Self {
+        let mut this = Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
+            multi_workspace,
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
             banner,
+            update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
-        }
+            _diagnostics_subscription: None,
+        };
+
+        this.observe_diagnostics(cx);
+
+        this
     }
 
-    fn project_name(&self, cx: &Context<Self>) -> Option<SharedString> {
+    fn worktree_count(&self, cx: &App) -> usize {
+        self.project.read(cx).visible_worktrees(cx).count()
+    }
+
+    fn toggle_update_simulation(&mut self, cx: &mut Context<Self>) {
+        self.update_version
+            .update(cx, |banner, cx| banner.update_simulation(cx));
+        cx.notify();
+    }
+
+    /// Returns the worktree to display in the title bar.
+    /// - Prefer the worktree owning the project's active repository
+    /// - Fall back to the first visible worktree
+    pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
+        let project = self.project.read(cx);
+
+        if let Some(repo) = project.active_repository(cx) {
+            let repo = repo.read(cx);
+            let repo_path = &repo.work_directory_abs_path;
+
+            for worktree in project.visible_worktrees(cx) {
+                let worktree_path = worktree.read(cx).abs_path();
+                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                    return Some(worktree);
+                }
+            }
+        }
+
+        project.visible_worktrees(cx).next()
+    }
+
+    fn get_repository_for_worktree(
+        &self,
+        worktree: &Entity<project::Worktree>,
+        cx: &App,
+    ) -> Option<Entity<project::git_store::Repository>> {
+        let project = self.project.read(cx);
+        let git_store = project.git_store().read(cx);
+        let worktree_path = worktree.read(cx).abs_path();
+
+        git_store
+            .repositories()
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .cloned()
+    }
+
+    fn visible_worktrees_in_repository(
+        &self,
+        repository: &project::git_store::Repository,
+        cx: &App,
+    ) -> usize {
+        let repo_path = &repository.work_directory_abs_path;
         self.project
             .read(cx)
             .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                let settings_location = SettingsLocation {
-                    worktree_id: worktree.id(),
-                    path: RelPath::empty(),
-                };
-
-                let settings = WorktreeSettings::get(Some(settings_location), cx);
-                let name = match &settings.project_name {
-                    Some(name) => name.as_str(),
-                    None => worktree.root_name_str(),
-                };
-                SharedString::new(name)
+            .filter(|worktree| {
+                let worktree_path = worktree.read(cx).abs_path();
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
             })
-            .next()
+            .count()
     }
 
-    fn render_remote_project_connection(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
-        let is_picker_open = self.is_picker_open(window, cx);
 
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
@@ -371,6 +616,8 @@ impl TitleBar {
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
                 (None, "Dev Container", IconName::Box)
             }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
         };
 
         let nickname = nickname.unwrap_or_else(|| host.clone());
@@ -402,63 +649,54 @@ impl TitleBar {
         let meta = SharedString::from(meta);
 
         Some(
-            ButtonLike::new("remote_project")
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .max_w_32()
+            PopoverMenu::new("remote-project-menu")
+                .menu(move |window, cx| {
+                    let workspace_entity = workspace.upgrade()?;
+                    let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+                    Some(recent_projects::RemoteServerProjects::popover(
+                        fs,
+                        workspace.clone(),
+                        None,
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger_with_tooltip(
+                    ButtonLike::new("remote_project")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .child(
-                            IconWithIndicator::new(
-                                Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                Some(Indicator::dot().color(indicator_color)),
-                            )
-                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                            .into_any_element(),
-                        )
-                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
-                )
-                .when(!is_picker_open, |this| {
-                    this.tooltip(move |_window, cx| {
+                            h_flex()
+                                .gap_2()
+                                .max_w_32()
+                                .child(
+                                    IconWithIndicator::new(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        Some(Indicator::dot().color(indicator_color)),
+                                    )
+                                    .indicator_border_color(Some(
+                                        cx.theme().colors().title_bar_background,
+                                    ))
+                                    .into_any_element(),
+                                )
+                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                        ),
+                    move |_window, cx| {
                         Tooltip::with_meta(
                             tooltip_title,
-                            Some(&OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }),
+                            Some(&OpenRemote::default()),
                             meta.clone(),
                             cx,
                         )
-                    })
-                })
-                .on_click(move |event, window, cx| {
-                    let position = event.position();
-                    let _ = workspace.update(cx, |this, cx| {
-                        this.set_next_modal_placement(workspace::ModalPlacement::Anchored {
-                            position,
-                        });
-
-                        window.dispatch_action(
-                            OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    });
-                })
+                    },
+                )
+                .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                trusted_worktrees
-                    .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
-            })
-            .unwrap_or(false);
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
         if !has_restricted_worktrees {
             return None;
         }
@@ -467,10 +705,11 @@ impl TitleBar {
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
-            .icon(IconName::Warning)
-            .icon_color(Color::Warning)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::Start)
+            .start_icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
             .tooltip(|_, cx| {
                 Tooltip::with_meta(
                     "You're in Restricted Mode",
@@ -489,7 +728,7 @@ impl TitleBar {
                 })
             });
 
-        if cfg!(macos_sdk_26) {
+        if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
             Some(div().child(button).ml_0p5().into_any_element())
         } else {
@@ -497,13 +736,9 @@ impl TitleBar {
         }
     }
 
-    pub fn render_project_host(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_remote_server() {
-            return self.render_remote_project_connection(window, cx);
+            return self.render_remote_project_connection(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {
@@ -522,16 +757,17 @@ impl TitleBar {
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host_user.id)?;
+            .get(&host_user.legacy_id)?;
 
         Some(
-            Button::new("project_owner_trigger", host_user.github_login.clone())
+            Button::new("project_owner_trigger", host_user.username.clone())
                 .color(Color::Player(participant_index.0))
                 .label_size(LabelSize::Small)
+                .tab_index(0isize)
                 .tooltip(move |_, cx| {
                     let tooltip_title = format!(
                         "{} is sharing this project. Click to follow.",
-                        host_user.github_login
+                        host_user.username
                     );
 
                     Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
@@ -550,63 +786,151 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(
+    fn render_project_name(
         &self,
-        window: &mut Window,
+        name: Option<SharedString>,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let workspace = self.workspace.clone();
-        let is_picker_open = self.is_picker_open(window, cx);
 
-        let name = self.project_name(cx);
         let is_project_selected = name.is_some();
-        let name = if let Some(name) = name {
-            util::truncate_and_trailoff(&name, MAX_PROJECT_NAME_LENGTH)
+
+        let display_name = if let Some(ref name) = name {
+            util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
         } else {
             "Open Recent Project".to_string()
         };
 
-        Button::new("project_name_trigger", name)
-            .label_size(LabelSize::Small)
-            .when(!is_project_selected, |s| s.color(Color::Muted))
-            .when(!is_picker_open, |this| {
-                this.tooltip(move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
-                })
-            })
-            .on_click(move |event, window, cx| {
-                let position = event.position();
-                let _ = workspace.update(cx, |this, _cx| {
-                    this.set_next_modal_placement(workspace::ModalPlacement::Anchored { position })
-                });
+        let is_sidebar_open = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).sidebar_open())
+            .unwrap_or(false)
+            && PlatformTitleBar::is_multi_workspace_enabled(cx);
 
-                window.dispatch_action(
-                    OpenRecent {
-                        create_new_window: false,
-                    }
-                    .boxed_clone(),
+        let is_threads_list_view_active = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).is_threads_list_view_active(cx))
+            .unwrap_or(false);
+
+        if is_sidebar_open && is_threads_list_view_active {
+            return self
+                .render_recent_projects_popover(display_name, is_project_selected, cx)
+                .into_any_element();
+        }
+
+        let focus_handle = workspace
+            .upgrade()
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        let window_project_groups: Vec<_> = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).project_group_keys())
+            .unwrap_or_default();
+
+        PopoverMenu::new("recent-projects-menu")
+            .menu(move |window, cx| {
+                Some(recent_projects::RecentProjects::popover(
+                    workspace.clone(),
+                    window_project_groups.clone(),
+                    None,
+                    focus_handle.clone(),
+                    window,
                     cx,
-                );
+                ))
             })
+            .trigger_with_tooltip(
+                Button::new("project_name_trigger", display_name)
+                    .label_size(LabelSize::Small)
+                    .tab_index(0isize)
+                    .when(self.worktree_count(cx) > 1, |this| {
+                        this.end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .when(!is_project_selected, |s| s.color(Color::Muted)),
+                move |_window, cx| {
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
+                },
+            )
+            .anchor(gpui::Anchor::TopLeft)
+            .into_any_element()
     }
 
-    pub fn render_project_repo(
+    fn render_recent_projects_popover(
         &self,
-        window: &mut Window,
+        display_name: String,
+        is_project_selected: bool,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        let repository = self.project.read(cx).active_repository(cx)?;
-        let repository_count = self.project.read(cx).repositories(cx).len();
+    ) -> impl IntoElement {
+        let workspace = self.workspace.clone();
+
+        let focus_handle = workspace
+            .upgrade()
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        let window_project_groups: Vec<_> = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).project_group_keys())
+            .unwrap_or_default();
+
+        PopoverMenu::new("sidebar-title-recent-projects-menu")
+            .menu(move |window, cx| {
+                Some(recent_projects::RecentProjects::popover(
+                    workspace.clone(),
+                    window_project_groups.clone(),
+                    None,
+                    focus_handle.clone(),
+                    window,
+                    cx,
+                ))
+            })
+            .trigger_with_tooltip(
+                Button::new("project_name_trigger", display_name)
+                    .label_size(LabelSize::Small)
+                    .tab_index(0isize)
+                    .when(self.worktree_count(cx) > 1, |this| {
+                        this.end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .when(!is_project_selected, |s| s.color(Color::Muted)),
+                move |_window, cx| {
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
+                },
+            )
+            .anchor(gpui::Anchor::TopLeft)
+    }
+
+    fn render_worktree_and_branch(
+        &self,
+        repository: Entity<project::git_store::Repository>,
+        linked_worktree_name: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let workspace = self.workspace.upgrade()?;
 
-        let (branch_name, icon_info) = {
+        let (branch_name, icon_info, is_detached_head) = {
             let repo = repository.read(cx);
+
+            let is_detached_head = repo.branch.is_none();
+
             let branch_name = repo
                 .branch
                 .as_ref()
@@ -622,22 +946,6 @@ impl TitleBar {
                     })
                 });
 
-            let branch_name = branch_name?;
-
-            let project_name = self.project_name(cx);
-            let repo_name = repo
-                .work_directory_abs_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(SharedString::new);
-            let show_repo_name =
-                repository_count > 1 && repo.branch.is_some() && repo_name != project_name;
-            let branch_name = if let Some(repo_name) = repo_name.filter(|_| show_repo_name) {
-                format!("{repo_name}/{branch_name}")
-            } else {
-                branch_name
-            };
-
             let status = repo.status_summary();
             let tracked = status.index + status.worktree;
             let icon_info = if status.conflict > 0 {
@@ -652,44 +960,144 @@ impl TitleBar {
                 (IconName::GitBranch, Color::Muted)
             };
 
-            (branch_name, icon_info)
+            (branch_name, icon_info, is_detached_head)
         };
 
-        let is_picker_open = self.is_picker_open(window, cx);
         let settings = TitleBarSettings::get_global(cx);
+        let effective_repository = Some(repository);
 
-        Some(
-            Button::new("project_branch_trigger", branch_name)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .when(!is_picker_open, |this| {
-                    this.tooltip(move |_window, cx| {
+        let worktree_label: SharedString = linked_worktree_name.unwrap_or_else(|| "main".into());
+
+        let (creation_in_progress, is_switch) = self
+            .workspace
+            .upgrade()
+            .map(|ws| {
+                let creation = ws.read(cx).active_worktree_creation();
+                (creation.label.clone(), creation.is_switch)
+            })
+            .unwrap_or((None, false));
+        let is_creating = creation_in_progress.is_some();
+
+        let display_label: SharedString = if let Some(ref name) = creation_in_progress {
+            if is_switch {
+                format!("Loading {}…", name).into()
+            } else {
+                format!("Creating {}…", name).into()
+            }
+        } else {
+            worktree_label.clone()
+        };
+
+        let worktree_button = {
+            let project = self.project.clone();
+            let workspace_handle = workspace.downgrade();
+            PopoverMenu::new("worktree-picker-menu")
+                .menu(move |window, cx| {
+                    // When opened from the title bar, focus is on the trigger
+                    // button (not a dock), so `focused_dock` is `None`. That's
+                    // fine — there's no prior dock focus to restore.
+                    Some(cx.new(|cx| {
+                        WorktreePicker::new(project.clone(), workspace_handle.clone(), window, cx)
+                    }))
+                })
+                .trigger_with_tooltip(
+                    Button::new("worktree_picker_trigger", display_label)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .tab_index(0isize)
+                        .loading(is_creating)
+                        .start_icon(
+                            Icon::new(IconName::GitWorktree)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    move |_window, cx| {
                         Tooltip::with_meta(
-                            "Recent Branches",
+                            "Worktree",
+                            Some(&zed_actions::git::Worktree),
+                            format!("Currently In Use: {}", worktree_label),
+                            cx,
+                        )
+                    },
+                )
+                .anchor(gpui::Anchor::TopLeft)
+        };
+
+        let branch_picker = branch_name.and_then(|branch_name| {
+            settings.show_branch_name.then(|| {
+                let branch_tooltip_label = branch_name.clone();
+                let (branch_icon, branch_icon_color) = if settings.show_branch_status_icon {
+                    icon_info
+                } else {
+                    (IconName::GitBranch, Color::Muted)
+                };
+
+                let trigger = if is_detached_head {
+                    Button::new("project_branch_trigger", "Create Branch")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .tab_index(0isize)
+                        .start_icon(
+                            Icon::new(IconName::GitBranchPlus)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                } else {
+                    Button::new("project_branch_trigger", branch_name)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .tab_index(0isize)
+                        .start_icon(
+                            Icon::new(branch_icon)
+                                .size(IconSize::XSmall)
+                                .color(branch_icon_color),
+                        )
+                };
+
+                PopoverMenu::new("branch-menu")
+                    .menu(move |window, cx| {
+                        Some(git_ui::git_picker::popover(
+                            workspace.downgrade(),
+                            effective_repository.clone(),
+                            git_ui::git_picker::GitPickerTab::Branches,
+                            gpui::rems(34.),
+                            window,
+                            cx,
+                        ))
+                    })
+                    .trigger_with_tooltip(trigger, move |_window, cx| {
+                        let meta = if is_detached_head {
+                            format!("Detached HEAD: {}", branch_tooltip_label)
+                        } else {
+                            format!("Currently Checked Out: {}", branch_tooltip_label)
+                        };
+                        Tooltip::with_meta(
+                            "Branch & Stash",
                             Some(&zed_actions::git::Branch),
-                            "Local branches only",
+                            meta,
                             cx,
                         )
                     })
+                    .anchor(gpui::Anchor::TopLeft)
+            })
+        });
+
+        Some(
+            h_flex()
+                .gap_px()
+                .child(worktree_button)
+                .when_some(branch_picker, |this, branch_picker| {
+                    this.child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .alpha(0.25),
+                    )
+                    .child(branch_picker)
                 })
-                .when(settings.show_branch_icon, |branch_button| {
-                    let (icon, icon_color) = icon_info;
-                    branch_button
-                        .icon(icon)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(icon_color)
-                        .icon_size(IconSize::Indicator)
-                })
-                .on_click(move |event, window, cx| {
-                    let position = event.position();
-                    let _ = workspace.update(cx, |this, cx| {
-                        this.set_next_modal_placement(workspace::ModalPlacement::Anchored {
-                            position,
-                        });
-                        window.focus(&this.active_pane().focus_handle(cx), cx);
-                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                    });
-                }),
+                .into_any_element(),
         )
     }
 
@@ -711,7 +1119,21 @@ impl TitleBar {
     }
 
     fn active_call_changed(&mut self, cx: &mut Context<Self>) {
+        self.observe_diagnostics(cx);
         cx.notify();
+    }
+
+    fn observe_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let diagnostics = ActiveCall::global(cx)
+            .read(cx)
+            .room()
+            .and_then(|room| room.read(cx).diagnostics().cloned());
+
+        if let Some(diagnostics) = diagnostics {
+            self._diagnostics_subscription = Some(cx.observe(&diagnostics, |_, _, cx| cx.notify()));
+        } else {
+            self._diagnostics_subscription = None;
+        }
     }
 
     fn share_project(&mut self, cx: &mut Context<Self>) {
@@ -780,82 +1202,111 @@ impl TitleBar {
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
+        let workspace = self.workspace.clone();
         Button::new("sign_in", "Sign In")
             .label_size(LabelSize::Small)
+            .tab_index(0isize)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
+                let workspace = workspace.clone();
                 window
-                    .spawn(cx, async move |cx| {
+                    .spawn(cx, async move |mut cx| {
                         client
                             .sign_in_with_optional_connect(true, cx)
                             .await
-                            .notify_async_err(cx);
+                            .notify_workspace_async_err(workspace, &mut cx);
                     })
                     .detach();
             })
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let user_store = self.user_store.read(cx);
-        let user = user_store.current_user();
+        let show_update_button = self.update_version.read(cx).show_update_in_menu_bar();
+
+        let user_store = self.user_store.clone();
+        let workspace = self.workspace.clone();
+        let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
-        let user_login = user.as_ref().map(|u| u.github_login.clone());
+        let username = user.as_ref().map(|u| u.username.clone());
 
         let is_signed_in = user.is_some();
 
-        let has_subscription_period = user_store.subscription_period().is_some();
-        let plan = user_store.plan().filter(|_| {
-            // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
-            has_subscription_period
-        });
+        let current_organization = user_store.read(cx).current_organization();
+        let business_organization = current_organization
+            .as_ref()
+            .filter(|organization| !organization.is_personal);
+        let organizations: Vec<_> = user_store
+            .read(cx)
+            .organizations()
+            .iter()
+            .map(|organization| {
+                let plan = user_store.read(cx).plan_for_organization(&organization.id);
+                (organization.clone(), plan)
+            })
+            .collect();
 
-        let free_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.05));
+        let show_user_picture = TitleBarSettings::get_global(cx).show_user_picture;
 
-        let pro_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.2));
+        let trigger = if is_signed_in && show_user_picture {
+            let avatar = user_avatar.map(|avatar| Avatar::new(avatar)).map(|avatar| {
+                if show_update_button {
+                    avatar.indicator(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .right_0()
+                            .child(Indicator::dot().color(Color::Accent)),
+                    )
+                } else {
+                    avatar
+                }
+            });
+
+            ButtonLike::new("user-menu")
+                .aria_label("User menu")
+                .tab_index(0isize)
+                .child(
+                    h_flex()
+                        .when_some(business_organization, |this, organization| {
+                            this.gap_2()
+                                .child(Label::new(&organization.name).size(LabelSize::Small))
+                        })
+                        .children(avatar),
+                )
+        } else {
+            ButtonLike::new("user-menu")
+                .aria_label("User menu")
+                .tab_index(0isize)
+                .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
+        };
 
         PopoverMenu::new("user-menu")
-            .anchor(Corner::TopRight)
+            .trigger(trigger)
             .menu(move |window, cx| {
+                let username = username.clone();
+                let current_organization = current_organization.clone();
+                let organizations = organizations.clone();
+                let user_store = user_store.clone();
+                let workspace = workspace.clone();
+
+                let ai_enabled = !project::DisableAiSettings::get_global(cx).disable_ai;
+                let current_layout = AgentSettings::get_layout(cx);
+                let is_editor = matches!(current_layout, WindowLayout::Editor(_));
+                let is_agent = matches!(current_layout, WindowLayout::Agent(_));
+                let is_custom = matches!(current_layout, WindowLayout::Custom(_));
+
                 ContextMenu::build(window, cx, |menu, _, _cx| {
-                    let user_login = user_login.clone();
-
-                    let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)) => {
-                            ("Free", Color::Default, free_chip_bg)
-                        }
-                        Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)) => {
-                            ("Pro Trial", Color::Accent, pro_chip_bg)
-                        }
-                        Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)) => {
-                            ("Pro", Color::Accent, pro_chip_bg)
-                        }
-                    };
-
                     menu.when(is_signed_in, |this| {
+                        let username = username.clone();
                         this.custom_entry(
                             move |_window, _cx| {
-                                let user_login = user_login.clone().unwrap_or_default();
+                                let username = username.clone().unwrap_or_default();
 
                                 h_flex()
                                     .w_full()
                                     .justify_between()
-                                    .child(Label::new(user_login))
-                                    .child(
-                                        Chip::new(plan_name.to_string())
-                                            .bg_color(bg_color)
-                                            .label_color(label_color),
-                                    )
+                                    .child(Label::new(username))
                                     .into_any_element()
                             },
                             move |_, cx| {
@@ -863,6 +1314,81 @@ impl TitleBar {
                             },
                         )
                         .separator()
+                    })
+                    .when(show_update_button, |this| {
+                        this.custom_entry(
+                            move |_window, _cx| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .justify_between()
+                                    .child(Label::new("Restart to update Zed").color(Color::Accent))
+                                    .child(
+                                        Icon::new(IconName::Download)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent),
+                                    )
+                                    .into_any_element()
+                            },
+                            move |_, cx| {
+                                workspace::reload(cx);
+                            },
+                        )
+                        .separator()
+                    })
+                    .map(|this| {
+                        let mut this = this.header("Organization");
+
+                        for (organization, plan) in &organizations {
+                            let organization = organization.clone();
+                            let plan = *plan;
+
+                            let is_current =
+                                current_organization
+                                    .as_ref()
+                                    .is_some_and(|current_organization| {
+                                        current_organization.id == organization.id
+                                    });
+
+                            this = this.custom_entry(
+                                {
+                                    let organization = organization.clone();
+                                    move |_window, _cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_4()
+                                            .justify_between()
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(&organization.name))
+                                                    .when(is_current, |this| {
+                                                        this.child(
+                                                            Icon::new(IconName::Check)
+                                                                .color(Color::Accent),
+                                                        )
+                                                    }),
+                                            )
+                                            .children(plan.map(|plan| PlanChip::new(plan)))
+                                            .into_any_element()
+                                    }
+                                },
+                                {
+                                    let user_store = user_store.clone();
+                                    let organization = organization.clone();
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        let task = user_store.update(cx, |user_store, cx| {
+                                            user_store
+                                                .set_current_organization(organization.clone(), cx)
+                                        });
+                                        task.detach_and_notify_err(workspace.clone(), window, cx);
+                                    }
+                                },
+                            );
+                        }
+
+                        this.separator()
                     })
                     .action("Settings", zed_actions::OpenSettings.boxed_clone())
                     .action("Keymap", Box::new(zed_actions::OpenKeymap))
@@ -878,6 +1404,36 @@ impl TitleBar {
                         "Extensions",
                         zed_actions::Extensions::default().boxed_clone(),
                     )
+                    .when(ai_enabled, |menu| {
+                        menu.separator()
+                            .submenu("Panel Layout", move |menu, _window, _cx| {
+                                menu.toggleable_entry(
+                                    "Classic",
+                                    is_editor,
+                                    IconPosition::Start,
+                                    Some(UseClassicLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseClassicLayout.boxed_clone(), cx);
+                                    },
+                                )
+                                .toggleable_entry(
+                                    "Agentic",
+                                    is_agent,
+                                    IconPosition::Start,
+                                    Some(UseAgenticLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseAgenticLayout.boxed_clone(), cx);
+                                    },
+                                )
+                                .when(is_custom, |menu| {
+                                    menu.item(
+                                        ContextMenuEntry::new("Custom")
+                                            .toggleable(IconPosition::Start, true)
+                                            .disabled(true),
+                                    )
+                                })
+                            })
+                    })
                     .when(is_signed_in, |this| {
                         this.separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
@@ -885,27 +1441,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .map(|this| {
-                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
-                    this.trigger_with_tooltip(
-                        ButtonLike::new("user-menu")
-                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
-                        Tooltip::text("Toggle User Menu"),
-                    )
-                } else {
-                    this.trigger_with_tooltip(
-                        IconButton::new("user-menu", IconName::ChevronDown)
-                            .icon_size(IconSize::Small),
-                        Tooltip::text("Toggle User Menu"),
-                    )
-                }
-            })
-            .anchor(gpui::Corner::TopRight)
-    }
-
-    fn is_picker_open(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
-            .unwrap_or(false)
+            .anchor(Anchor::TopRight)
     }
 }

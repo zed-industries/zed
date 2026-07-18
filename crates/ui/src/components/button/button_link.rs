@@ -81,22 +81,20 @@ impl Component for ButtonLink {
         ComponentScope::Navigation
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A button that opens a URL.")
+    fn description() -> &'static str {
+        "A button that opens a URL."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .child(
-                    example_group(vec![single_example(
-                        "Simple",
-                        ButtonLink::new("zed.dev", "https://zed.dev").into_any_element(),
-                    )])
-                    .vertical(),
-                )
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .child(
+                example_group(vec![single_example(
+                    "Simple",
+                    ButtonLink::new("zed.dev", "https://zed.dev").into_any_element(),
+                )])
+                .vertical(),
+            )
+            .into_any_element()
     }
 }

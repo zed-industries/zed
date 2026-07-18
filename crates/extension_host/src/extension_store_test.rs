@@ -7,8 +7,8 @@ use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, TestAppContext};
+use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
+use gpui::{AppContext as _, BackgroundExecutor, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -26,12 +26,191 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::test::TempTree;
+use util::{rel_path::rel_path_buf, test::TempTree};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+fn remote_sync_entry(id: &str, manifest_body: &str) -> ExtensionIndexEntry {
+    let manifest = format!(
+        r#"
+        id = "{id}"
+        name = "{id}"
+        version = "1.0.0"
+        schema_version = 0
+
+        {manifest_body}
+        "#
+    );
+
+    ExtensionIndexEntry {
+        manifest: Arc::new(toml::from_str(&manifest).unwrap()),
+        dev: false,
+    }
+}
+
+fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLanguageEntry {
+    ExtensionIndexLanguageEntry {
+        extension: extension.into(),
+        path: path.into(),
+        matcher: LanguageMatcher::default(),
+        hidden: false,
+        grammar: None,
+    }
+}
+
+fn remote_sync_extension_ids(index: &ExtensionIndex) -> Vec<String> {
+    let mut extensions = index
+        .extensions_to_sync_to_remote()
+        .into_entries()
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>();
+
+    extensions.sort();
+
+    extensions
+}
+
+#[test]
+fn remote_sync_includes_language_dependencies() {
+    let index = ExtensionIndex {
+        extensions: [
+            (
+                "bar-language".into(),
+                remote_sync_entry("bar-language", r#"languages = ["languages/bar"]"#),
+            ),
+            (
+                "foo-lsp".into(),
+                remote_sync_entry(
+                    "foo-lsp",
+                    r#"
+                    [language_servers.foo]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "foo-language".into(),
+                remote_sync_entry("foo-language", r#"languages = ["languages/foo"]"#),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        languages: [
+            (
+                "Bar".into(),
+                remote_sync_language_entry("bar-language", "languages/bar"),
+            ),
+            (
+                "Foo".into(),
+                remote_sync_language_entry("foo-language", "languages/foo"),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(
+        remote_sync_extension_ids(&index),
+        ["foo-language", "foo-lsp"]
+    );
+}
+
+#[test]
+fn remote_sync_keeps_shared_language_dependency_once() {
+    let index = ExtensionIndex {
+        extensions: [
+            (
+                "aaa-lsp".into(),
+                remote_sync_entry(
+                    "aaa-lsp",
+                    r#"
+                    [language_servers.aaa]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "bbb-lsp".into(),
+                remote_sync_entry(
+                    "bbb-lsp",
+                    r#"
+                    [language_servers.bbb]
+                    language = "Foo"
+                    "#,
+                ),
+            ),
+            (
+                "zzz-language".into(),
+                remote_sync_entry("zzz-language", r#"languages = ["languages/foo"]"#),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        languages: [(
+            "Foo".into(),
+            remote_sync_language_entry("zzz-language", "languages/foo"),
+        )]
+        .into_iter()
+        .collect(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(
+        remote_sync_extension_ids(&index),
+        ["aaa-lsp", "bbb-lsp", "zzz-language"]
+    );
+}
+
+#[test]
+fn remote_sync_keeps_remote_loadable_extensions_without_language_dependency() {
+    let index = ExtensionIndex {
+        extensions: [(
+            "foo".into(),
+            remote_sync_entry(
+                "foo",
+                r#"
+                [language_servers.foo]
+                language = "Foo"
+                "#,
+            ),
+        )]
+        .into_iter()
+        .collect(),
+        languages: BTreeMap::default(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(remote_sync_extension_ids(&index), ["foo"]);
+}
+
+#[test]
+fn remote_sync_keeps_debug_adapters() {
+    let index = ExtensionIndex {
+        extensions: [(
+            "foo".into(),
+            remote_sync_entry(
+                "foo",
+                r#"
+                [debug_adapters.foo]
+                "#,
+            ),
+        )]
+        .into_iter()
+        .collect(),
+        languages: BTreeMap::default(),
+        themes: BTreeMap::default(),
+        icon_themes: BTreeMap::default(),
+    };
+
+    assert_eq!(remote_sync_extension_ids(&index), ["foo"]);
 }
 
 #[gpui::test]
@@ -150,7 +329,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         themes: Default::default(),
                         icon_themes: Vec::new(),
                         lib: Default::default(),
-                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
+                        languages: vec![
+                            rel_path_buf("languages/erb"),
+                            rel_path_buf("languages/ruby"),
+                        ],
                         grammars: [
                             ("embedded_template".into(), GrammarManifestEntry::default()),
                             ("ruby".into(), GrammarManifestEntry::default()),
@@ -159,7 +341,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -182,8 +363,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: vec![],
                         repository: None,
                         themes: vec![
-                            "themes/monokai-pro.json".into(),
-                            "themes/monokai.json".into(),
+                            rel_path_buf("themes/monokai-pro.json"),
+                            rel_path_buf("themes/monokai.json"),
                         ],
                         icon_themes: Vec::new(),
                         lib: Default::default(),
@@ -191,7 +372,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -216,6 +396,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -229,6 +410,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -365,14 +547,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 description: None,
                 authors: vec![],
                 repository: None,
-                themes: vec!["themes/gruvbox.json".into()],
+                themes: vec![rel_path_buf("themes/gruvbox.json")],
                 icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
@@ -534,9 +715,25 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
-    log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
+
+    let executor = cx.executor();
+    async fn await_or_timeout<T>(
+        executor: &BackgroundExecutor,
+        what: &'static str,
+        seconds: u64,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        let timeout = executor.timer(std::time::Duration::from_secs(seconds));
+
+        futures::select! {
+            output = future.fuse() => output,
+            _ = futures::FutureExt::fuse(timeout) => panic!(
+            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
+        )
+        }
+    }
 
     let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -559,16 +756,24 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
 
-    log::info!("Setting up test");
-
-    let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
+    let project = await_or_timeout(
+        &executor,
+        "awaiting Project::test",
+        5,
+        Project::test(fs.clone(), [project_dir.as_path()], cx),
+    )
+    .await;
 
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     language_extension::init(
-        LspAccess::ViaLspStore(project.update(cx, |project, _| project.lsp_store())),
+        LspAccess::ViaLspStore(
+            project
+                .update(cx, |project, _| project.lsp_store())
+                .downgrade(),
+        ),
         proxy.clone(),
         language_registry.clone(),
     );
@@ -679,8 +884,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         )
     });
 
-    log::info!("Flushing events");
-
     // Ensure that debounces fire.
     let mut events = cx.events(&extension_store);
     let executor = cx.executor();
@@ -701,12 +904,40 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .detach();
     });
 
-    extension_store
-        .update(cx, |store, cx| {
+    let mut extension_events = cx.events(&cx.update(|cx| {
+        extension::ExtensionEvents::try_global(cx)
+            .expect("ExtensionEvents should be initialized in tests")
+    }));
+
+    let executor = cx.executor();
+    await_or_timeout(
+        &executor,
+        "awaiting install_dev_extension",
+        60,
+        extension_store.update(cx, |store, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
-        })
-        .await
-        .unwrap();
+        }),
+    )
+    .await
+    .unwrap();
+
+    await_or_timeout(
+        &executor,
+        "awaiting ExtensionsInstalledChanged",
+        10,
+        async {
+            while let Some(event) = extension_events.next().await {
+                if matches!(event, extension::Event::ExtensionsInstalledChanged) {
+                    return;
+                }
+            }
+
+            panic!(
+                "[test_extension_store_with_test_extension] extension event stream ended before ExtensionsInstalledChanged"
+            );
+        },
+    )
+    .await;
 
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
@@ -716,15 +947,33 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         },
         None,
     );
+    cx.executor().run_until_parked();
 
-    let (buffer, _handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(project_dir.join("test.gleam"), cx)
-        })
-        .await
-        .unwrap();
+    let mut project_events = cx.events(&project);
+    let buffer_path = project_dir.join("test.gleam");
+    let (buffer, _handle) = await_or_timeout(
+        &executor,
+        "awaiting open_local_buffer_with_lsp",
+        5,
+        project.update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(buffer_path.clone(), cx)
+        }),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
 
-    let fake_server = fake_servers.next().await.unwrap();
+    let buffer_remote_id = buffer.read_with(cx, |buffer, _cx| buffer.remote_id());
+
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting first fake server spawn",
+        10,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
+
     let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
     let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
@@ -738,16 +987,51 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
-        fs.load(&expected_server_path).await.unwrap(),
+        await_or_timeout(
+            &executor,
+            "awaiting fs.load(expected_server_path)",
+            5,
+            fs.load(&expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
     assert_eq!(language_server_version.lock().http_request_count, 2);
     assert_eq!(
         [
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #1",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #2",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #3",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #4",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
         ],
         [
             (
@@ -796,16 +1080,44 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ])))
     });
 
-    let completion_labels = project
-        .update(cx, |project, cx| {
+    // `register_fake_lsp_server` can yield a server instance before the client has fully registered
+    // the buffer with the project LSP plumbing. Wait for the project to observe that registration
+    // before issuing requests like completion.
+    await_or_timeout(
+        &executor,
+        "awaiting LanguageServerBufferRegistered",
+        5,
+        async {
+            while let Some(event) = project_events.next().await {
+                if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } = event {
+                    if buffer_id == buffer_remote_id {
+                        return;
+                    }
+                }
+            }
+
+            panic!(
+                "[test_extension_store_with_test_extension] project event stream ended before buffer registration for {}",
+                buffer_path.display()
+            );
+        },
+    )
+    .await;
+
+    let completion_labels = await_or_timeout(
+        &executor,
+        "awaiting completions",
+        5,
+        project.update(cx, |project, cx| {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
-        })
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|response| response.completions)
-        .map(|c| c.label.text)
-        .collect::<Vec<_>>();
+        }),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .flat_map(|response| response.completions)
+    .map(|c| c.label.text)
+    .collect::<Vec<_>>();
     assert_eq!(
         completion_labels,
         [
@@ -823,46 +1135,98 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        )
     });
     cx.executor().run_until_parked();
 
     // The extension has cached the binary path, and does not attempt
     // to reinstall it.
-    let fake_server = fake_servers.next().await.unwrap();
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting second fake server spawn",
+        5,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(
-        fs.load(&expected_server_path).await.unwrap(),
+        await_or_timeout(
+            &executor,
+            "awaiting fs.load(expected_server_path) after restart",
+            5,
+            fs.load(&expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
     assert_eq!(language_server_version.lock().http_request_count, 0);
 
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
-    extension_store
-        .update(cx, |store, cx| {
+    await_or_timeout(
+        &executor,
+        "awaiting extension_store.reload(test-extension)",
+        5,
+        extension_store.update(cx, |store, cx| {
             store.reload(Some("test-extension".into()), cx)
-        })
-        .await;
+        }),
+    )
+    .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        )
     });
 
     // The extension re-fetches the latest version of the language server.
-    let fake_server = fake_servers.next().await.unwrap();
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting third fake server spawn",
+        5,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
     let new_expected_server_path =
         extensions_dir.join(format!("work/{test_extension_id}/gleam-v2.0.0/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
     assert_eq!(fake_server.binary.path, new_expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
-        fs.load(&new_expected_server_path).await.unwrap(),
+        await_or_timeout(
+            &executor,
+            "awaiting fs.load(new_expected_server_path)",
+            5,
+            fs.load(&new_expected_server_path)
+        )
+        .await
+        .unwrap(),
         expected_binary_contents
     );
 
     // The old language server directory has been cleaned up.
-    assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
+    assert!(
+        await_or_timeout(
+            &executor,
+            "awaiting fs.metadata(expected_server_path)",
+            5,
+            fs.metadata(&expected_server_path)
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) {
@@ -871,7 +1235,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
 }

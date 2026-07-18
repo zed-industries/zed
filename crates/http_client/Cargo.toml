@@ -11,6 +11,13 @@ workspace = true
 
 [features]
 test-support = []
+github-download = [
+    "dep:async-fs",
+    "dep:async-tar",
+    "dep:sha2",
+    "dep:tempfile",
+    "dep:util",
+]
 
 [lib]
 path = "src/http_client.rs"
@@ -19,8 +26,6 @@ doctest = true
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
-async-fs.workspace = true
-async-tar.workspace = true
 bytes.workspace = true
 derive_more.workspace = true
 futures.workspace = true
@@ -31,7 +36,11 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-sha2.workspace = true
-tempfile.workspace = true
 url.workspace = true
-util.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+util = { workspace = true, optional = true }
+async-fs = { workspace = true, optional = true }
+async-tar = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }

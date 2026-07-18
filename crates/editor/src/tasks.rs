@@ -13,33 +13,24 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return Task::ready(None);
         };
-        let (selection, buffer, editor_snapshot) = {
-            let selection = self.selections.newest_adjusted(&self.display_snapshot(cx));
-            let Some((buffer, _)) = self
-                .buffer()
-                .read(cx)
-                .point_to_buffer_offset(selection.start, cx)
-            else {
-                return Task::ready(None);
-            };
-            let snapshot = self.snapshot(window, cx);
-            (selection, buffer, snapshot)
-        };
-        let selection_range = selection.range();
-        let start = editor_snapshot
-            .display_snapshot
+        let display_snapshot = self.display_snapshot(cx);
+        let selection = self.selections.newest_adjusted(&display_snapshot);
+        let start = display_snapshot
             .buffer_snapshot()
-            .anchor_after(selection_range.start)
-            .text_anchor;
-        let end = editor_snapshot
-            .display_snapshot
+            .anchor_after(selection.start);
+        let end = display_snapshot
             .buffer_snapshot()
-            .anchor_after(selection_range.end)
-            .text_anchor;
-        let location = Location {
-            buffer,
-            range: start..end,
+            .anchor_after(selection.end);
+        let Some((buffer_snapshot, range)) = display_snapshot
+            .buffer_snapshot()
+            .anchor_range_to_buffer_anchor_range(start..end)
+        else {
+            return Task::ready(None);
         };
+        let Some(buffer) = self.buffer.read(cx).buffer(buffer_snapshot.remote_id()) else {
+            return Task::ready(None);
+        };
+        let location = Location { buffer, range };
         let captured_variables = {
             let mut variables = TaskVariables::default();
             let buffer = location.buffer.read(cx);

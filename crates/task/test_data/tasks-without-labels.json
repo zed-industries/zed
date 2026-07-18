@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "start"
+    },
+    {
+      "label": "Explicit Label",
+      "type": "npm",
+      "script": "test"
+    },
+    {
+      "type": "gulp",
+      "task": "build"
+    },
+    {
+      "type": "shell",
+      "command": "echo hello"
+    }
+  ]
+}

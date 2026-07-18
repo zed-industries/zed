@@ -1,20 +1,27 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
-    parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
-use futures::{AsyncReadExt, StreamExt};
+use futures::{
+    FutureExt, StreamExt,
+    channel::oneshot::{self, Sender},
+    io,
+};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
+use language::LanguageConfig;
+use path::PathExt;
+use semver::Version;
 use serde::Deserialize;
 use std::{
     env, fs, mem,
+    num::NonZeroUsize,
+    ops::Not,
     path::{Path, PathBuf},
-    process::Stdio,
-    str::FromStr,
     sync::Arc,
 };
+use util::{ResultExt, command::Stdio};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -27,23 +34,15 @@ const RUST_TARGET: &str = "wasm32-wasip2";
 /// Once Clang 17 and its wasm target are available via system package managers, we won't need
 /// to download this.
 const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/";
-const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(all(target_os = "macos", target_arch = "x86_64"))
-{
-    Some("wasi-sdk-25.0-x86_64-macos.tar.gz")
-} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-macos.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-windows.tar.gz")
-} else {
-    None
+const WASI_SDK_ASSET_NAME: Option<&str> = cfg_select! {
+    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-macos.tar.gz"),
+    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-macos.tar.gz"),
+    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-windows.tar.gz"),
+    _ => None
 };
 
 pub struct ExtensionBuilder {
@@ -51,8 +50,25 @@ pub struct ExtensionBuilder {
     pub http: Arc<dyn HttpClient>,
 }
 
+pub enum CompilationConcurrency {
+    Unbounded,
+    Bounded(NonZeroUsize),
+}
+
+const DEFAULT_COMPILATION_CONCURRENCY: NonZeroUsize = NonZeroUsize::new(3).unwrap();
+
 pub struct CompileExtensionOptions {
     pub release: bool,
+    pub max_concurrency: CompilationConcurrency,
+}
+
+impl CompileExtensionOptions {
+    pub const fn dev() -> Self {
+        Self {
+            release: false,
+            max_concurrency: CompilationConcurrency::Bounded(DEFAULT_COMPILATION_CONCURRENCY),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -80,7 +96,9 @@ impl ExtensionBuilder {
         options: CompileExtensionOptions,
         fs: Arc<dyn Fs>,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, extension_dir, fs).await?;
+        let start = std::time::Instant::now();
+
+        populate_defaults(extension_manifest, extension_dir, fs.clone()).await?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -89,58 +107,116 @@ impl ExtensionBuilder {
             );
         }
 
-        fs::create_dir_all(&self.cache_dir).context("failed to create cache dir")?;
+        fs.create_dir(&self.cache_dir)
+            .await
+            .context("failed to create cache dir")?;
 
-        if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust) {
-            log::info!("compiling Rust extension {}", extension_dir.display());
-            self.compile_rust_extension(extension_dir, extension_manifest, options)
-                .await
-                .context("failed to compile Rust extension")?;
-            log::info!("compiled Rust extension {}", extension_dir.display());
-        }
+        let (tx, mut rx) = oneshot::channel();
 
-        for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
-            let debug_adapter_schema_path =
-                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
+        let clang_path = extension_manifest.grammars.is_empty().not().then(|| {
+            std::iter::repeat_n(
+                async {
+                    self.install_wasi_sdk_if_needed()
+                        .await
+                        .log_err()
+                        .map(Arc::new)
+                }
+                .shared(),
+                extension_manifest.grammars.len(),
+            )
+        });
 
-            let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
-                .with_context(|| {
-                    format!("failed to read debug adapter schema for `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`")
-                })?;
-            _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
-                format!("Debug adapter schema for `{debug_adapter_name}` (path: `{debug_adapter_schema_path:?}`) is not a valid JSON")
-            })?;
-        }
-        for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
-            let snake_cased_grammar_name = grammar_name.to_snake_case();
-            if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
-                bail!(
-                    "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"
-                );
+        let rust_compilation_task =
+            (extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)).then(|| {
+                async {
+                    log::info!("compiling Rust extension {}", extension_dir.display());
+                    self.compile_rust_extension(extension_dir, extension_manifest, tx, &options)
+                        .await
+                        .context("failed to compile Rust extension")?;
+
+                    log::info!("compiled Rust extension {}", extension_dir.display());
+                    Ok(())
+                }
+                .boxed()
+            });
+
+        let grammar_compilation_tasks = extension_manifest
+            .grammars
+            .iter()
+            .zip(clang_path.into_iter().flatten())
+            .map(|((grammar_name, grammar_metadata), clang_path_task)| {
+                async move {
+                    let snake_cased_grammar_name = grammar_name.to_snake_case();
+                    if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
+                        bail!(
+                            "grammar name '{grammar_name}' must be \
+                                written in snake_case: {snake_cased_grammar_name}"
+                        );
+                    }
+
+                    log::info!(
+                        "compiling grammar {grammar_name} for extension {}",
+                        extension_dir.display()
+                    );
+
+                    let clang_path = clang_path_task
+                        .await
+                        .context("Failed to resolve clang path")?;
+
+                    self.compile_grammar(
+                        extension_dir,
+                        grammar_name.as_ref(),
+                        grammar_metadata,
+                        &clang_path,
+                    )
+                    .await
+                    .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
+                    log::info!(
+                        "compiled grammar {grammar_name} for extension {}",
+                        extension_dir.display()
+                    );
+
+                    Ok(())
+                }
+                .boxed()
+            });
+
+        let tasks = rust_compilation_task
+            .into_iter()
+            .chain(grammar_compilation_tasks)
+            .collect::<Vec<_>>();
+
+        match options.max_concurrency {
+            CompilationConcurrency::Unbounded => {
+                futures::future::try_join_all(tasks).await?;
             }
+            CompilationConcurrency::Bounded(max_concurrency) => {
+                let mut stream = futures::stream::iter(tasks).buffered(max_concurrency.get());
 
-            log::info!(
-                "compiling grammar {grammar_name} for extension {}",
-                extension_dir.display()
-            );
-            self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
-                .await
-                .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
-            log::info!(
-                "compiled grammar {grammar_name} for extension {}",
-                extension_dir.display()
-            );
+                while let Some(result) = stream.next().await {
+                    result?;
+                }
+            }
         }
 
-        log::info!("finished compiling extension {}", extension_dir.display());
+        if let Ok(version) = rx.try_recv() {
+            extension_manifest.lib.version = version;
+        }
+
+        log::info!(
+            "finished compiling extension {} in {time:.2}s",
+            extension_dir.display(),
+            time = start.elapsed().as_secs_f64(),
+        );
         Ok(())
     }
 
     async fn compile_rust_extension(
         &self,
         extension_dir: &Path,
-        manifest: &mut ExtensionManifest,
-        options: CompileExtensionOptions,
+        manifest: &ExtensionManifest,
+        wasm_extension_api_version_tx: Sender<Version>,
+        options: &CompileExtensionOptions,
     ) -> anyhow::Result<()> {
         self.install_rust_wasm_target_if_needed().await?;
 
@@ -151,7 +227,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_smol_command("cargo")
+        let output = util::command::new_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -202,7 +278,9 @@ impl ExtensionBuilder {
         let wasm_extension_api_version =
             parse_wasm_extension_version(&manifest.id, &component_bytes)
                 .context("compiled wasm did not contain a valid zed extension api version")?;
-        manifest.lib.version = Some(wasm_extension_api_version);
+        wasm_extension_api_version_tx
+            .send(wasm_extension_api_version)
+            .map_err(|_| anyhow::anyhow!("Failed to send API version"))?;
 
         let extension_file = extension_dir.join("extension.wasm");
         fs::write(extension_file.clone(), &component_bytes)
@@ -222,9 +300,8 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         grammar_name: &str,
         grammar_metadata: &GrammarManifestEntry,
+        clang_path: &Path,
     ) -> Result<()> {
-        let clang_path = self.install_wasi_sdk_if_needed().await?;
-
         let mut grammar_repo_dir = extension_dir.to_path_buf();
         grammar_repo_dir.extend(["grammars", grammar_name]);
 
@@ -257,7 +334,7 @@ impl ExtensionBuilder {
             );
         } else {
             log::info!("compiling {grammar_name} parser");
-            let clang_output = util::command::new_smol_command(&clang_path)
+            let clang_output = util::command::new_command(&clang_path)
                 .args(["-fPIC", "-shared", "-Os"])
                 .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
                 .arg("-o")
@@ -286,19 +363,15 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_smol_command("git")
+            let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "-v"])
+                .args(["remote", "get-url", "origin"])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .await?;
             let has_remote = remotes_output.status.success()
-                && String::from_utf8_lossy(&remotes_output.stdout)
-                    .lines()
-                    .any(|line| {
-                        let mut parts = line.split(|c: char| c.is_whitespace());
-                        parts.next() == Some("origin") && parts.any(|part| part == url)
-                    });
+                && String::from_utf8_lossy(&remotes_output.stdout).trim() == url;
             if !has_remote {
                 bail!(
                     "grammar directory '{}' already exists, but is not a git clone of '{}'",
@@ -310,7 +383,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_smol_command("git")
+            let init_output = util::command::new_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()
@@ -322,7 +395,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_smol_command("git")
+            let remote_add_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -337,7 +410,7 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_smol_command("git")
+        let fetch_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
@@ -345,7 +418,7 @@ impl ExtensionBuilder {
             .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_smol_command("git")
+        let checkout_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -373,7 +446,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_smol_command("rustc")
+        let rustc_output = util::command::new_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -391,7 +464,7 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_smol_command("rustup")
+        let output = util::command::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -435,18 +508,20 @@ impl ExtensionBuilder {
 
         // Write the response to a temporary file
         let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
-        let mut tar_gz_file =
+        let tar_gz_file =
             fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
         let response_body = response.body_mut();
-        let mut body_bytes = Vec::new();
-        response_body.read_to_end(&mut body_bytes).await?;
-        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
-        drop(tar_gz_file);
+
+        let mut async_file = io::AllowStdIo::new(tar_gz_file);
+        io::copy(response_body, &mut async_file)
+            .await
+            .context("failed to stream response to file")?;
+        drop(async_file);
 
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 
         // Shell out to tar to extract the archive
-        let tar_output = util::command::new_smol_command("tar")
+        let tar_output = util::command::new_command("tar")
             .arg("-xzf")
             .arg(&tar_gz_path)
             .arg("-C")
@@ -575,10 +650,11 @@ async fn populate_defaults(
 
         while let Some(language_dir) = language_dir_entries.next().await {
             let language_dir = language_dir?;
-            let config_path = language_dir.join("config.toml");
+            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
-                let relative_language_dir =
-                    language_dir.strip_prefix(extension_path)?.to_path_buf();
+                let relative_language_dir = language_dir
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.languages.contains(&relative_language_dir) {
                     manifest.languages.push(relative_language_dir);
                 }
@@ -596,7 +672,8 @@ async fn populate_defaults(
         while let Some(theme_path) = theme_dir_entries.next().await {
             let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
-                let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_theme_path =
+                    theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
                 }
@@ -614,8 +691,9 @@ async fn populate_defaults(
         while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
             let icon_theme_path = icon_theme_path?;
             if icon_theme_path.extension() == Some("json".as_ref()) {
-                let relative_icon_theme_path =
-                    icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_icon_theme_path = icon_theme_path
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.icon_themes.contains(&relative_icon_theme_path) {
                     manifest.icon_themes.push(relative_icon_theme_path);
                 }
@@ -711,7 +789,7 @@ mod tests {
     use indoc::indoc;
 
     use crate::{
-        ExtensionManifest,
+        ExtensionManifest, ExtensionSnippets,
         extension_builder::{file_newer_than_deps, populate_defaults},
     };
 
@@ -785,7 +863,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("./snippets/snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("./snippets/snippets.json").unwrap()
+            ))
         )
     }
 
@@ -820,7 +900,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("snippets.json").unwrap()
+            ))
         )
     }
 }

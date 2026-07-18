@@ -1,15 +1,16 @@
 use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TextStyle,
-    WeakEntity, Window, relative, rems,
+    App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TaskExt,
+    TextStyle, WeakEntity, Window, relative,
 };
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -24,8 +25,9 @@ pub fn init(cx: &mut App) {
                     let project = workspace.project().clone();
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
-                        let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                        let delegate = ProjectSymbolsDelegate::new(handle, project.clone());
+                        let preview = picker_preview::editor_preview(project, window, cx);
+                        Picker::uniform_list_with_preview(delegate, preview, window, cx)
                     })
                 },
             );
@@ -61,9 +63,10 @@ impl ProjectSymbolsDelegate {
         }
     }
 
+    // Note if you make changes to this, also change `agent_ui::completion_provider::search_symbols`
     fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         const MAX_MATCHES: usize = 100;
-        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &self.visible_match_candidates,
             query,
             false,
@@ -72,7 +75,7 @@ impl ProjectSymbolsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &self.external_match_candidates,
             query,
             false,
@@ -106,6 +109,10 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "project symbols"
+    }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
     }
@@ -138,11 +145,20 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     );
 
                     editor.update(cx, |editor, cx| {
+                        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
+                            return;
+                        };
+                        let text_anchor = buffer_snapshot.anchor_before(position);
+                        let Some(anchor) = multibuffer_snapshot.anchor_in_buffer(text_anchor)
+                        else {
+                            return;
+                        };
                         editor.change_selections(
                             SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
-                            |s| s.select_ranges([position..position]),
+                            |s| s.select_ranges([anchor..anchor]),
                         );
                     });
                 })?;
@@ -172,13 +188,27 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         self.selected_match_index = ix;
     }
 
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+        let candidate_id = self.matches.get(self.selected_match_index)?.candidate_id;
+        let symbol = self.symbols.get(candidate_id)?.clone();
+        Some(PreviewUpdate::from_symbol(symbol))
+    }
+
     fn update_matches(
         &mut self,
         query: String,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        self.filter(&query, window, cx);
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query_filter = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        self.filter(&query_filter, window, cx);
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let symbols = self
             .project
@@ -208,7 +238,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     delegate.visible_match_candidates = visible_match_candidates;
                     delegate.external_match_candidates = external_match_candidates;
                     delegate.symbols = symbols;
-                    delegate.filter(&query, window, cx);
+                    delegate.filter(&query_filter, window, cx);
                 })
                 .log_err();
             }
@@ -232,7 +262,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let path = match &symbol.path {
             SymbolLocation::InProject(project_path) => {
                 let project = self.project.read(cx);
-                let mut path = project_path.path.clone();
+                let mut path = project_path.path.to_rel_path_buf();
                 if self.show_worktree_root_name
                     && let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
                 {
@@ -246,7 +276,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             } => abs_path.to_string_lossy(),
         };
         let label = symbol.label.text.clone();
-        let path = path.to_string();
+        let line_number = symbol.range.start.0.row + 1;
+        let path = path.into_owned();
 
         let settings = ThemeSettings::get_global(cx);
 
@@ -268,7 +299,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let custom_highlights = string_match
             .positions
             .iter()
-            .map(|pos| (*pos..pos + 1, highlight_style));
+            .map(|pos| (*pos..label.ceil_char_boundary(pos + 1), highlight_style));
 
         let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
@@ -279,10 +310,21 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
-                        .child(LabelLike::new().child(
-                            StyledText::new(label).with_default_highlights(&text_style, highlights),
-                        ))
-                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            LabelLike::new().child(
+                                StyledText::new(&label)
+                                    .with_default_highlights(&text_style, highlights),
+                            ),
+                        )
+                        .child(
+                            h_flex()
+                                .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder),
+                                ),
+                        ),
                 ),
         )
     }
@@ -300,6 +342,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
@@ -354,17 +397,24 @@ mod tests {
                 let executor = cx.background_executor().clone();
                 let fake_symbols = fake_symbols.clone();
                 async move {
+                    let (query, prefixed) = match params.query.strip_prefix("dir::") {
+                        Some(query) => (query, true),
+                        None => (&*params.query, false),
+                    };
                     let candidates = fake_symbols
                         .iter()
                         .enumerate()
+                        .filter(|(_, symbol)| {
+                            !prefixed || symbol.location.uri.path().contains("dir")
+                        })
                         .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
                         .collect::<Vec<_>>();
-                    let matches = if params.query.is_empty() {
+                    let matches = if query.is_empty() {
                         Vec::new()
                     } else {
                         fuzzy::match_strings(
                             &candidates,
-                            &params.query,
+                            &query,
                             true,
                             true,
                             100,
@@ -384,8 +434,9 @@ mod tests {
             },
         );
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Create the project symbols view.
         let symbols = cx.new_window_entity(|window, cx| {
@@ -434,13 +485,123 @@ mod tests {
         symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
+
+        // Check that rust-analyzer path style symbols work
+        symbols.update_in(cx, |p, window, cx| {
+            p.update_matches("dir::to".to_string(), window, cx);
+        });
+
+        cx.run_until_parked();
+        symbols.read_with(cx, |symbols, _| {
+            assert_eq!(symbols.delegate.matches.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_symbols_renders_utf8_match(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "test.rs": "" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        )));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    workspace_symbol_provider: Some(OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let fake_symbols = [symbol("안녕", path!("/dir/test.rs"))];
+        let fake_server = fake_servers.next().await.unwrap();
+        fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+            move |params: lsp::WorkspaceSymbolParams, cx| {
+                let executor = cx.background_executor().clone();
+                let fake_symbols = fake_symbols.clone();
+                async move {
+                    let candidates = fake_symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
+                        .collect::<Vec<_>>();
+                    let matches = fuzzy::match_strings(
+                        &candidates,
+                        &params.query,
+                        true,
+                        true,
+                        100,
+                        &Default::default(),
+                        executor,
+                    )
+                    .await;
+
+                    Ok(Some(lsp::WorkspaceSymbolResponse::Flat(
+                        matches
+                            .into_iter()
+                            .map(|mat| fake_symbols[mat.candidate_id].clone())
+                            .collect(),
+                    )))
+                }
+            },
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let symbols = cx.new_window_entity(|window, cx| {
+            Picker::uniform_list(
+                ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
+                window,
+                cx,
+            )
+        });
+
+        symbols.update_in(cx, |p, window, cx| {
+            p.update_matches("안".to_string(), window, cx);
+        });
+
+        cx.run_until_parked();
+        symbols.read_with(cx, |symbols, _| {
+            assert_eq!(symbols.delegate.matches.len(), 1);
+            assert_eq!(symbols.delegate.matches[0].string, "안녕");
+        });
+
+        symbols.update_in(cx, |p, window, cx| {
+            assert!(p.delegate.render_match(0, false, window, cx).is_some());
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             editor::init(cx);
         });

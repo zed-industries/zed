@@ -1,0 +1,580 @@
+// FluentBuilder
+// pub use gpui_util::{FutureExt, Timeout, arc_cow::ArcCow};
+
+use std::{
+    env,
+    ffi::OsStr,
+    ops::AddAssign,
+    panic::Location,
+    pin::Pin,
+    sync::OnceLock,
+    task::{Context, Poll},
+    time::Instant,
+};
+
+pub mod arc_cow;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
+
+#[cfg(target_os = "windows")]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    use std::path::PathBuf;
+
+    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
+        #[cfg(target_pointer_width = "64")]
+        let env_var = if find_alternate {
+            "ProgramFiles(x86)"
+        } else {
+            "ProgramFiles"
+        };
+
+        #[cfg(target_pointer_width = "32")]
+        let env_var = if find_alternate {
+            "ProgramW6432"
+        } else {
+            "ProgramFiles"
+        };
+
+        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
+        install_base_dir
+            .read_dir()
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
+            .filter_map(|entry| {
+                let dir_name = entry.file_name();
+                let dir_name = dir_name.to_string_lossy();
+
+                let version = if find_preview {
+                    let dash_index = dir_name.find('-')?;
+                    if &dir_name[dash_index + 1..] != "preview" {
+                        return None;
+                    };
+                    dir_name[..dash_index].parse::<u32>().ok()?
+                } else {
+                    dir_name.parse::<u32>().ok()?
+                };
+
+                let exe_path = entry.path().join("pwsh.exe");
+                if exe_path.exists() {
+                    Some((version, exe_path))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(version, _)| *version)
+            .map(|(_, path)| path)
+    }
+
+    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
+        let msix_app_dir =
+            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
+        if !msix_app_dir.exists() {
+            return None;
+        }
+
+        let prefix = if find_preview {
+            "Microsoft.PowerShellPreview_"
+        } else {
+            "Microsoft.PowerShell_"
+        };
+        msix_app_dir
+            .read_dir()
+            .ok()?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
+                    return None;
+                }
+
+                if !entry.file_name().to_string_lossy().starts_with(prefix) {
+                    return None;
+                }
+
+                let exe_path = entry.path().join("pwsh.exe");
+                exe_path.exists().then_some(exe_path)
+            })
+            .next()
+    }
+
+    fn find_pwsh_in_scoop() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
+    static SYSTEM_SHELL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let locations = [
+            || find_pwsh_in_programfiles(false, false),
+            || find_pwsh_in_programfiles(true, false),
+            || find_pwsh_in_msix(false),
+            || find_pwsh_in_programfiles(false, true),
+            || find_pwsh_in_msix(true),
+            || find_pwsh_in_programfiles(true, true),
+            || find_pwsh_in_scoop(),
+            || which::which_global("pwsh.exe").ok(),
+            || which::which_global("powershell.exe").ok(),
+        ];
+
+        locations
+            .into_iter()
+            .find_map(|f| f())
+            .map(|p| p.to_string_lossy().trim().to_owned())
+            .inspect(|shell| log::info!("Found powershell in: {}", shell))
+            .unwrap_or_else(|| {
+                log::warn!("Powershell not found, falling back to `cmd`");
+                "cmd.exe".to_string()
+            })
+    });
+
+    (*SYSTEM_SHELL).clone()
+}
+
+pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
+    let prev = *value;
+    *value += T::from(1);
+    prev
+}
+
+pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
+    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
+    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
+        env::var("ZED_MEASUREMENTS")
+            .map(|measurements| measurements == "1" || measurements == "true")
+            .unwrap_or(false)
+    });
+
+    if *zed_measurements {
+        let start = Instant::now();
+        let result = f();
+        let elapsed = start.elapsed();
+        eprintln!("{}: {:?}", label, elapsed);
+        result
+    } else {
+        f()
+    }
+}
+
+#[macro_export]
+macro_rules! debug_panic {
+    ( $($fmt_arg:tt)* ) => {
+        if cfg!(debug_assertions) {
+            panic!( $($fmt_arg)* );
+        } else {
+            let backtrace = std::backtrace::Backtrace::capture();
+            log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
+        }
+    };
+}
+
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
+}
+
+/// Expands to an immediately-invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result.
+///
+/// Accepts a normal block, an async block, or an async move block.
+#[macro_export]
+macro_rules! maybe {
+    ($block:block) => {
+        (|| $block)()
+    };
+    (async $block:block) => {
+        (async || $block)()
+    };
+    (async move $block:block) => {
+        (async move || $block)()
+    };
+}
+pub trait ResultExt<E> {
+    type Ok;
+
+    fn log_err(self) -> Option<Self::Ok>;
+    /// Like [`ResultExt::log_err`], but uses `{:?}` formatting so `anyhow::Error` values emit their
+    /// full backtrace. Reach for this only when a backtrace is genuinely wanted — most call sites
+    /// should stick with `log_err` / `warn_on_err`, whose output is a single chained error message.
+    fn log_err_with_backtrace(self) -> Option<Self::Ok>
+    where
+        E: std::fmt::Debug;
+    /// Assert that this result should never be an error in development or tests.
+    fn debug_assert_ok(self, reason: &str) -> Self;
+    fn warn_on_err(self) -> Option<Self::Ok>;
+    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
+    fn anyhow(self) -> anyhow::Result<Self::Ok>
+    where
+        E: Into<anyhow::Error>;
+}
+
+impl<T, E> ResultExt<E> for Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    type Ok = T;
+
+    #[track_caller]
+    fn log_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Error)
+    }
+
+    #[track_caller]
+    fn log_err_with_backtrace(self) -> Option<T>
+    where
+        E: std::fmt::Debug,
+    {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log_error_with_caller(
+                    *Location::caller(),
+                    DebugAsDisplay(&error),
+                    log::Level::Error,
+                );
+                None
+            }
+        }
+    }
+
+    #[track_caller]
+    fn debug_assert_ok(self, reason: &str) -> Self {
+        if let Err(error) = &self {
+            debug_panic!("{reason} - {error:#}");
+        }
+        self
+    }
+
+    #[track_caller]
+    fn warn_on_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Warn)
+    }
+
+    #[track_caller]
+    fn log_with_level(self, level: log::Level) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log_error_with_caller(*Location::caller(), error, level);
+                None
+            }
+        }
+    }
+
+    fn anyhow(self) -> anyhow::Result<T>
+    where
+        E: Into<anyhow::Error>,
+    {
+        self.map_err(Into::into)
+    }
+}
+
+fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
+where
+    E: std::fmt::Display,
+{
+    #[cfg(not(windows))]
+    let file = caller.file();
+    #[cfg(windows)]
+    let file = caller.file().replace('\\', "/");
+    // In this codebase all crates reside in a `crates` directory,
+    // so discard the prefix up to that segment to find the crate name
+    let file = file.split_once("crates/");
+    let target = file.as_ref().and_then(|(_, s)| s.split_once("/src/"));
+
+    let module_path = target.map(|(krate, module)| {
+        if module.starts_with(krate) {
+            module.trim_end_matches(".rs").replace('/', "::")
+        } else {
+            krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+        }
+    });
+    let file = file.map(|(_, file)| format!("crates/{file}"));
+    log::logger().log(
+        &log::Record::builder()
+            .target(module_path.as_deref().unwrap_or(""))
+            .module_path(file.as_deref())
+            .args(format_args!("{:#}", error))
+            .file(Some(caller.file()))
+            .line(Some(caller.line()))
+            .level(level)
+            .build(),
+    );
+}
+
+pub fn log_err<E: std::fmt::Display>(error: &E) {
+    log_error_with_caller(*Location::caller(), error, log::Level::Error);
+}
+
+// Forces `{:?}` formatting through a `Display`-bounded logging helper so `anyhow::Error` emits a
+// backtrace instead of the single-line chained message produced by its `Display`/`{:#}` forms.
+struct DebugAsDisplay<'a, E>(&'a E);
+
+impl<E: std::fmt::Debug> std::fmt::Display for DebugAsDisplay<'_, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+pub trait TryFutureExt {
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+
+    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+
+    fn warn_on_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized;
+}
+
+/// `{:?}`-formatting companion to [`TryFutureExt`]; emits a backtrace for `anyhow::Error`. Prefer
+/// [`TryFutureExt`] unless a backtrace is genuinely wanted.
+pub trait TryFutureExtBacktrace {
+    fn log_err_with_backtrace(self) -> LogErrorWithBacktraceFuture<Self>
+    where
+        Self: Sized;
+
+    fn log_tracked_err_with_backtrace(
+        self,
+        location: core::panic::Location<'static>,
+    ) -> LogErrorWithBacktraceFuture<Self>
+    where
+        Self: Sized;
+}
+
+impl<F, T, E> TryFutureExt for F
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    #[track_caller]
+    fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        let location = Location::caller();
+        LogErrorFuture(self, log::Level::Error, *location)
+    }
+
+    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorFuture(self, log::Level::Error, location)
+    }
+
+    #[track_caller]
+    fn warn_on_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        let location = Location::caller();
+        LogErrorFuture(self, log::Level::Warn, *location)
+    }
+
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized,
+    {
+        UnwrapFuture(self)
+    }
+}
+
+impl<F, T, E> TryFutureExtBacktrace for F
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
+{
+    #[track_caller]
+    fn log_err_with_backtrace(self) -> LogErrorWithBacktraceFuture<Self>
+    where
+        Self: Sized,
+    {
+        let location = Location::caller();
+        LogErrorWithBacktraceFuture(self, log::Level::Error, *location)
+    }
+
+    fn log_tracked_err_with_backtrace(
+        self,
+        location: core::panic::Location<'static>,
+    ) -> LogErrorWithBacktraceFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorWithBacktraceFuture(self, log::Level::Error, location)
+    }
+}
+
+#[must_use]
+pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
+
+impl<F, T, E> Future for LogErrorFuture<F>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let level = self.1;
+        let location = self.2;
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(match output {
+                Ok(output) => Some(output),
+                Err(error) => {
+                    log_error_with_caller(location, error, level);
+                    None
+                }
+            }),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+#[must_use]
+pub struct LogErrorWithBacktraceFuture<F>(F, log::Level, core::panic::Location<'static>);
+
+impl<F, T, E> Future for LogErrorWithBacktraceFuture<F>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
+{
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let level = self.1;
+        let location = self.2;
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(match output {
+                Ok(output) => Some(output),
+                Err(error) => {
+                    log_error_with_caller(location, DebugAsDisplay(&error), level);
+                    None
+                }
+            }),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub struct UnwrapFuture<F>(F);
+
+impl<F, T, E> Future for UnwrapFuture<F>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
+{
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(result) => Poll::Ready(result.unwrap()),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub struct Deferred<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Deferred<F> {
+    /// Drop without running the deferred function.
+    pub fn abort(mut self) {
+        self.0.take();
+    }
+}
+
+impl<F: FnOnce()> Drop for Deferred<F> {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f()
+        }
+    }
+}
+
+/// Run the given function when the returned value is dropped (unless it's cancelled).
+#[must_use]
+pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
+    Deferred(Some(f))
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeIdHashBuilder;
+
+impl std::hash::BuildHasher for TypeIdHashBuilder {
+    type Hasher = TypeIdHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        TypeIdHasher::default()
+    }
+}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeIdHasher {
+    value: u64,
+}
+
+impl std::hash::Hasher for TypeIdHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        // TypeId should only hash its first 8 bytes
+        if let Some(bytes) = bytes.get(..8) {
+            bytes
+                .as_array()
+                .map(|&array| self.value = u64::from_ne_bytes(array))
+                .unwrap_or_else(|| unreachable!("slice was sliced to 8 bytes"));
+        } else {
+            debug_panic!(
+                "expected a 64-bit value, did you use this hasher with something other than a TypeId?"
+            );
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.value
+    }
+}
+
+#[test]
+fn type_id_hasher() {
+    use core::any::TypeId;
+    use core::hash::{Hash, Hasher};
+    fn verify_hashing_with(type_id: TypeId) {
+        let mut hasher = TypeIdHasher::default();
+        type_id.hash(&mut hasher);
+        assert_ne!(hasher.finish(), 0);
+    }
+    // Pick a variety of types, just to demonstrate it’s all sane. Normal, zero-sized, unsized, &c.
+    verify_hashing_with(TypeId::of::<usize>());
+    verify_hashing_with(TypeId::of::<()>());
+    verify_hashing_with(TypeId::of::<str>());
+    verify_hashing_with(TypeId::of::<&str>());
+    verify_hashing_with(TypeId::of::<Vec<u8>>());
+}

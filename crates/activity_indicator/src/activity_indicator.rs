@@ -1,10 +1,10 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissMessage, VersionCheckType};
+use auto_update::DismissMessage;
 use editor::Editor;
 use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
+    App, Context, Entity, EventEmitter, InteractiveElement as _, ParentElement as _, Render,
+    SharedString, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -22,10 +22,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
-};
+use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -49,7 +46,6 @@ pub enum Event {
 pub struct ActivityIndicator {
     statuses: Vec<ServerStatus>,
     project: Entity<Project>,
-    auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs_jobs: Vec<fs::JobInfo>,
 }
@@ -66,8 +62,13 @@ struct PendingWork<'a> {
     progress: &'a LanguageServerProgress,
 }
 
+enum ActivityIcon {
+    LoadingSpinner,
+    Icon(IconName),
+}
+
 struct Content {
-    icon: Option<gpui::AnyElement>,
+    icon: ActivityIcon,
     message: String,
     on_click:
         Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>>,
@@ -82,7 +83,6 @@ impl ActivityIndicator {
         cx: &mut Context<Workspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
-        let auto_updater = AutoUpdater::get(cx);
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
@@ -215,14 +215,9 @@ impl ActivityIndicator {
             )
             .detach();
 
-            if let Some(auto_updater) = auto_updater.as_ref() {
-                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
-            }
-
             Self {
                 statuses: Vec::new(),
                 project: project.clone(),
-                auto_updater,
                 context_menu_handle: PopoverMenuHandle::default(),
                 fs_jobs: Vec::new(),
             }
@@ -234,7 +229,7 @@ impl ActivityIndicator {
                 status,
             } => {
                 let create_buffer =
-                    project.update(cx, |project, cx| project.create_buffer(false, cx));
+                    project.update(cx, |project, cx| project.create_buffer(None, false, cx));
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -246,7 +241,7 @@ impl ActivityIndicator {
                             cx,
                         );
                         buffer.set_capability(language::Capability::ReadOnly, cx);
-                    })?;
+                    });
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
@@ -302,15 +297,6 @@ impl ActivityIndicator {
     }
 
     fn dismiss_message(&mut self, _: &DismissMessage, _: &mut Window, cx: &mut Context<Self>) {
-        let dismissed = if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| updater.dismiss(cx))
-        } else {
-            false
-        };
-        if dismissed {
-            return;
-        }
-
         self.project.update(cx, |project, cx| {
             if project.last_formatting_failure(cx).is_some() {
                 project.reset_last_formatting_failure(cx);
@@ -329,24 +315,19 @@ impl ActivityIndicator {
             .read(cx)
             .language_server_statuses(cx)
             .rev()
-            .filter_map(|(server_id, status)| {
-                if status.pending_work.is_empty() {
-                    None
-                } else {
-                    let mut pending_work = status
-                        .pending_work
-                        .iter()
-                        .map(|(progress_token, progress)| PendingWork {
-                            language_server_id: server_id,
-                            progress_token,
-                            progress,
-                        })
-                        .collect::<SmallVec<[_; 4]>>();
-                    pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
-                    Some(pending_work)
-                }
+            .flat_map(|(server_id, status)| {
+                let mut pending_work = status
+                    .pending_work
+                    .iter()
+                    .map(|(progress_token, progress)| PendingWork {
+                        language_server_id: server_id,
+                        progress_token,
+                        progress,
+                    })
+                    .collect::<SmallVec<[_; 4]>>();
+                pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
+                pending_work
             })
-            .flatten()
     }
 
     fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
@@ -357,11 +338,7 @@ impl ActivityIndicator {
         // Show if any direnv calls failed
         if let Some(message) = self.pending_environment_error(cx) {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: message.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
@@ -398,14 +375,9 @@ impl ActivityIndicator {
                 }
 
                 return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(2)
-                            .into_any_element(),
-                    ),
+                    icon: ActivityIcon::LoadingSpinner,
                     message,
-                    on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
+                    on_click: None,
                     tooltip_message: None,
                 });
             }
@@ -420,12 +392,7 @@ impl ActivityIndicator {
             .find(|s| !s.read(cx).is_started())
         {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::Small)
-                        .with_rotate_animation(2)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::LoadingSpinner,
                 message: format!("Debug: {}", session.read(cx).adapter()),
                 tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
@@ -443,12 +410,7 @@ impl ActivityIndicator {
             && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
         {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::Small)
-                        .with_rotate_animation(2)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::LoadingSpinner,
                 message: job_info.message.into(),
                 on_click: None,
                 tooltip_message: None,
@@ -459,12 +421,7 @@ impl ActivityIndicator {
         for fs_job in &self.fs_jobs {
             if Instant::now().duration_since(fs_job.start) >= GIT_OPERATION_DELAY {
                 return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(2)
-                            .into_any_element(),
-                    ),
+                    icon: ActivityIcon::LoadingSpinner,
                     message: fs_job.message.clone().into(),
                     on_click: None,
                     tooltip_message: None,
@@ -517,11 +474,7 @@ impl ActivityIndicator {
 
         if !downloading.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
                     "Downloading {}...",
                     downloading.iter().map(|name| name.as_ref()).fold(
@@ -546,11 +499,7 @@ impl ActivityIndicator {
 
         if !checking_for_update.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
                     "Checking for updates to {}...",
                     checking_for_update.iter().map(|name| name.as_ref()).fold(
@@ -575,11 +524,7 @@ impl ActivityIndicator {
 
         if !failed.is_empty() {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: format!(
                     "Failed to run {}. Click to show error.",
                     failed
@@ -603,11 +548,7 @@ impl ActivityIndicator {
         // Show any formatting failure
         if let Some(failure) = self.project.read(cx).last_formatting_failure(cx) {
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: format!("Formatting failed: {failure}. Click to see logs."),
                 on_click: Some(Arc::new(|indicator, window, cx| {
                     indicator.project.update(cx, |project, cx| {
@@ -649,11 +590,7 @@ impl ActivityIndicator {
             };
 
             return Some(Content {
-                icon: Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                ),
+                icon: ActivityIcon::Icon(IconName::Warning),
                 message: final_message,
                 tooltip_message,
                 on_click: Some(Arc::new(move |activity_indicator, window, cx| {
@@ -669,130 +606,38 @@ impl ActivityIndicator {
             });
         }
 
-        // Show any application auto-update info.
-        self.auto_updater
-            .as_ref()
-            .and_then(|updater| match &updater.read(cx).status() {
-                AutoUpdateStatus::Checking => Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(3)
-                            .into_any_element(),
-                    ),
-                    message: "Checking for Zed updates…".to_string(),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_message(&DismissMessage, window, cx)
-                    })),
-                    tooltip_message: None,
-                }),
-                AutoUpdateStatus::Downloading { version } => Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: "Downloading Zed update…".to_string(),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_message(&DismissMessage, window, cx)
-                    })),
-                    tooltip_message: Some(Self::version_tooltip_message(version)),
-                }),
-                AutoUpdateStatus::Installing { version } => Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .with_rotate_animation(3)
-                            .into_any_element(),
-                    ),
-                    message: "Installing Zed update…".to_string(),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_message(&DismissMessage, window, cx)
-                    })),
-                    tooltip_message: Some(Self::version_tooltip_message(version)),
-                }),
-                AutoUpdateStatus::Updated { version } => Some(Content {
-                    icon: None,
-                    message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
-                    tooltip_message: Some(Self::version_tooltip_message(version)),
-                }),
-                AutoUpdateStatus::Errored { error } => Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: "Failed to update Zed".to_string(),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        window.dispatch_action(Box::new(workspace::OpenLog), cx);
-                        this.dismiss_message(&DismissMessage, window, cx);
-                    })),
-                    tooltip_message: Some(format!("{error}")),
-                }),
-                AutoUpdateStatus::Idle => None,
-            })
-            .or_else(|| {
-                if let Some(extension_store) =
-                    ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-                    && let Some((extension_id, operation)) =
-                        extension_store.outstanding_operations().iter().next()
-                {
-                    let (message, icon, rotate) = match operation {
-                        ExtensionOperation::Install => (
-                            format!("Installing {extension_id} extension…"),
-                            IconName::LoadCircle,
-                            true,
-                        ),
-                        ExtensionOperation::Upgrade => (
-                            format!("Updating {extension_id} extension…"),
-                            IconName::Download,
-                            false,
-                        ),
-                        ExtensionOperation::Remove => (
-                            format!("Removing {extension_id} extension…"),
-                            IconName::LoadCircle,
-                            true,
-                        ),
-                    };
+        // Show any extension installation info.
+        if let Some(extension_store) =
+            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+            && let Some((extension_id, operation)) =
+                extension_store.outstanding_operations().iter().next()
+        {
+            let (message, icon) = match operation {
+                ExtensionOperation::Install => (
+                    format!("Installing {extension_id} extension…"),
+                    ActivityIcon::LoadingSpinner,
+                ),
+                ExtensionOperation::Upgrade => (
+                    format!("Updating {extension_id} extension…"),
+                    ActivityIcon::Icon(IconName::Download),
+                ),
+                ExtensionOperation::Remove => (
+                    format!("Removing {extension_id} extension…"),
+                    ActivityIcon::LoadingSpinner,
+                ),
+            };
 
-                    Some(Content {
-                        icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
-                            if rotate {
-                                this.with_rotate_animation(3).into_any_element()
-                            } else {
-                                this.into_any_element()
-                            }
-                        })),
-                        message,
-                        on_click: Some(Arc::new(|this, window, cx| {
-                            this.dismiss_message(&Default::default(), window, cx)
-                        })),
-                        tooltip_message: None,
-                    })
-                } else {
-                    None
-                }
-            })
-    }
+            return Some(Content {
+                icon,
+                message,
+                on_click: Some(Arc::new(|this, window, cx| {
+                    this.dismiss_message(&Default::default(), window, cx)
+                })),
+                tooltip_message: None,
+            });
+        }
 
-    fn version_tooltip_message(version: &VersionCheckType) -> String {
-        format!("Version: {}", {
-            match version {
-                auto_update::VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
-                auto_update::VersionCheckType::Semantic(semantic_version) => {
-                    semantic_version.to_string()
-                }
-            }
-        })
-    }
-
-    fn toggle_language_server_work_context_menu(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.context_menu_handle.toggle(window, cx);
+        None
     }
 }
 
@@ -806,108 +651,115 @@ impl Render for ActivityIndicator {
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_message));
+
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };
+
         let activity_indicator = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
-        result.gap_2().child(
+        let has_click_handler = content.on_click.is_some();
+
+        result.child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
-                    ButtonLike::new("activity-indicator-trigger").child(
-                        h_flex()
-                            .id("activity-indicator-status")
-                            .gap_2()
-                            .children(content.icon)
-                            .map(|button| {
-                                if truncate_content {
-                                    button
-                                        .child(
-                                            Label::new(truncate_and_trailoff(
-                                                &content.message,
-                                                MAX_MESSAGE_LEN,
-                                            ))
-                                            .size(LabelSize::Small),
-                                        )
-                                        .tooltip(Tooltip::text(content.message))
-                                } else {
-                                    button
-                                        .child(Label::new(content.message).size(LabelSize::Small))
-                                        .when_some(
-                                            content.tooltip_message,
-                                            |this, tooltip_message| {
-                                                this.tooltip(Tooltip::text(tooltip_message))
-                                            },
-                                        )
-                                }
-                            })
-                            .when_some(content.on_click, |this, handler| {
-                                this.on_click(cx.listener(move |this, _, window, cx| {
-                                    handler(this, window, cx);
-                                }))
-                                .cursor(CursorStyle::PointingHand)
-                            }),
-                    ),
-                )
-                .anchor(gpui::Corner::BottomLeft)
-                .menu(move |window, cx| {
-                    let strong_this = activity_indicator.upgrade()?;
-                    let mut has_work = false;
-                    let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
-                        for work in strong_this.read(cx).pending_language_server_work(cx) {
-                            has_work = true;
-                            let activity_indicator = activity_indicator.clone();
-                            let mut title = work
-                                .progress
-                                .title
-                                .clone()
-                                .unwrap_or(work.progress_token.to_string());
-
-                            if work.progress.is_cancellable {
-                                let language_server_id = work.language_server_id;
-                                let token = work.progress_token.clone();
-                                let title = SharedString::from(title);
-                                menu = menu.custom_entry(
-                                    move |_, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(Label::new(title.clone()))
-                                            .child(Icon::new(IconName::XCircle))
-                                            .into_any_element()
-                                    },
-                                    move |_, cx| {
-                                        let token = token.clone();
-                                        activity_indicator
-                                            .update(cx, |activity_indicator, cx| {
-                                                activity_indicator.project.update(
-                                                    cx,
-                                                    |project, cx| {
-                                                        project.cancel_language_server_work(
-                                                            language_server_id,
-                                                            Some(token),
-                                                            cx,
-                                                        );
-                                                    },
-                                                );
-                                                activity_indicator.context_menu_handle.hide(cx);
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                    },
-                                );
-                            } else {
-                                if let Some(progress_message) = work.progress.message.as_ref() {
-                                    title.push_str(": ");
-                                    title.push_str(progress_message);
-                                }
-
-                                menu = menu.label(title);
-                            }
+                    Button::new("activity-indicator-trigger", {
+                        if truncate_content {
+                            truncate_and_trailoff(&content.message, MAX_MESSAGE_LEN)
+                        } else {
+                            content.message.clone()
                         }
-                        menu
-                    });
-                    has_work.then_some(menu)
+                    })
+                    .label_size(LabelSize::Small)
+                    .tab_index(0isize)
+                    .map(|this| match content.icon {
+                        ActivityIcon::LoadingSpinner => this.loading(true),
+                        ActivityIcon::Icon(icon_name) => this.start_icon(
+                            Icon::new(icon_name)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    })
+                    .map(|button| {
+                        if truncate_content {
+                            button.tooltip(Tooltip::text(content.message))
+                        } else {
+                            button.when_some(content.tooltip_message, |this, tooltip_message| {
+                                this.tooltip(Tooltip::text(tooltip_message))
+                            })
+                        }
+                    })
+                    .when_some(content.on_click, |this, handler| {
+                        this.on_click(cx.listener(move |this, _, window, cx| {
+                            handler(this, window, cx);
+                        }))
+                    }),
+                )
+                .anchor(gpui::Anchor::BottomLeft)
+                .when(!has_click_handler, |this| {
+                    this.menu(move |window, cx| {
+                        let strong_this = activity_indicator.upgrade()?;
+                        let mut has_cancellable_work = false;
+                        let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
+                            for work in strong_this.read(cx).pending_language_server_work(cx) {
+                                let activity_indicator = activity_indicator.clone();
+                                let mut title = work
+                                    .progress
+                                    .title
+                                    .clone()
+                                    .unwrap_or(work.progress_token.to_string());
+
+                                if work.progress.is_cancellable {
+                                    has_cancellable_work = true;
+                                    let language_server_id = work.language_server_id;
+                                    let token = work.progress_token.clone();
+                                    let title = SharedString::from(format!("Cancel {title}"));
+                                    menu = menu.custom_entry(
+                                        move |_, _| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(IconName::Close)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small),
+                                                )
+                                                .child(Label::new(title.clone()))
+                                                .into_any_element()
+                                        },
+                                        move |_, cx| {
+                                            let token = token.clone();
+                                            activity_indicator
+                                                .update(cx, |activity_indicator, cx| {
+                                                    activity_indicator.project.update(
+                                                        cx,
+                                                        |project, cx| {
+                                                            project.cancel_language_server_work(
+                                                                language_server_id,
+                                                                Some(token),
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
+                                                    activity_indicator.context_menu_handle.hide(cx);
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                        },
+                                    );
+                                } else {
+                                    if let Some(progress_message) = work.progress.message.as_ref() {
+                                        title.push_str(": ");
+                                        title.push_str(progress_message);
+                                    }
+
+                                    menu = menu.label(title);
+                                }
+                            }
+                            menu
+                        });
+                        has_cancellable_work.then_some(menu)
+                    })
                 }),
         )
     }
@@ -921,27 +773,9 @@ impl StatusItemView for ActivityIndicator {
         _: &mut Context<Self>,
     ) {
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use release_channel::AppCommitSha;
-    use semver::Version;
-
-    use super::*;
-
-    #[test]
-    fn test_version_tooltip_message() {
-        let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Semantic(
-            Version::new(1, 0, 0),
-        ));
-
-        assert_eq!(message, "Version: 1.0.0");
-
-        let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Sha(
-            AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
-        ));
-
-        assert_eq!(message, "Version: 14d9a41…");
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        // Activity indicator auto-hides when there's no work to display.
+        None
     }
 }

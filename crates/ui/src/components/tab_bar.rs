@@ -10,7 +10,6 @@ pub struct TabBar {
     start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
-    pre_end_children: SmallVec<[AnyElement; 2]>,
     scroll_handle: Option<ScrollHandle>,
 }
 
@@ -21,7 +20,6 @@ impl TabBar {
             start_children: SmallVec::new(),
             children: SmallVec::new(),
             end_children: SmallVec::new(),
-            pre_end_children: SmallVec::new(),
             scroll_handle: None,
         }
     }
@@ -68,15 +66,6 @@ impl TabBar {
         Self: Sized,
     {
         self.end_children_mut()
-            .push(end_child.into_element().into_any());
-        self
-    }
-
-    pub fn pre_end_child(mut self, end_child: impl IntoElement) -> Self
-    where
-        Self: Sized,
-    {
-        self.pre_end_children
             .push(end_child.into_element().into_any());
         self
     }
@@ -140,7 +129,7 @@ impl RenderOnce for TabBar {
                     .child(
                         h_flex()
                             .id("tabs")
-                            .flex_grow()
+                            .flex_grow_1()
                             .overflow_x_scroll()
                             .when_some(self.scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
@@ -148,32 +137,18 @@ impl RenderOnce for TabBar {
                             .children(self.children),
                     ),
             )
-            .when(
-                !self.end_children.is_empty() || !self.pre_end_children.is_empty(),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .flex_none()
-                            .gap(DynamicSpacing::Base04.rems(cx))
-                            .px(DynamicSpacing::Base06.rems(cx))
-                            .children(self.pre_end_children)
-                            .border_color(cx.theme().colors().border)
-                            .border_b_1()
-                            .when(!self.end_children.is_empty(), |div| {
-                                div.child(
-                                    h_flex()
-                                        .h_full()
-                                        .flex_none()
-                                        .pl(DynamicSpacing::Base04.rems(cx))
-                                        .gap(DynamicSpacing::Base04.rems(cx))
-                                        .border_l_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .children(self.end_children),
-                                )
-                            }),
-                    )
-                },
-            )
+            .when(!self.end_children.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .flex_none()
+                        .gap(DynamicSpacing::Base04.rems(cx))
+                        .px(DynamicSpacing::Base06.rems(cx))
+                        .border_color(cx.theme().colors().border)
+                        .border_b_1()
+                        .border_l_1()
+                        .children(self.end_children),
+                )
+            })
     }
 }
 
@@ -186,47 +161,46 @@ impl Component for TabBar {
         "TabBar"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A horizontal bar containing tabs for navigation between different views or sections.")
+    fn description() -> &'static str {
+        "A horizontal bar containing tabs for navigation between different views \
+        or sections."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Usage",
-                        vec![
-                            single_example(
-                                "Empty TabBar",
-                                TabBar::new("empty_tab_bar").into_any_element(),
-                            ),
-                            single_example(
-                                "With Tabs",
-                                TabBar::new("tab_bar_with_tabs")
-                                    .child(Tab::new("tab1"))
-                                    .child(Tab::new("tab2"))
-                                    .child(Tab::new("tab3"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Start and End Children",
-                        vec![single_example(
-                            "Full TabBar",
-                            TabBar::new("full_tab_bar")
-                                .start_child(Button::new("start_button", "Start"))
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Usage",
+                    vec![
+                        single_example(
+                            "Empty TabBar",
+                            TabBar::new("empty_tab_bar").into_any_element(),
+                        ),
+                        single_example(
+                            "With Tabs",
+                            TabBar::new("tab_bar_with_tabs")
                                 .child(Tab::new("tab1"))
                                 .child(Tab::new("tab2"))
                                 .child(Tab::new("tab3"))
-                                .end_child(Button::new("end_button", "End"))
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Start and End Children",
+                    vec![single_example(
+                        "Full TabBar",
+                        TabBar::new("full_tab_bar")
+                            .start_child(Button::new("start_button", "Start"))
+                            .child(Tab::new("tab1"))
+                            .child(Tab::new("tab2"))
+                            .child(Tab::new("tab3"))
+                            .end_child(Button::new("end_button", "End"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

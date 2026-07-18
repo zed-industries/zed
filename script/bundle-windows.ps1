@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
 $buildSuccess = $false
+$canCodeSign = $false
 
 $OSArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
     "X64" { "x86_64" }
@@ -66,18 +67,31 @@ function CheckEnvironmentVariables {
         return
     }
 
-    $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
+    $requiredVars = @('ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL')
+
+    foreach ($var in $requiredVars) {
+        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($var))) {
+            Write-Error "$var is not set"
+            exit 1
+        }
+    }
+
+    # On PRs from forks the signing secrets are not populated,
+    # so skip code signing instead of failing, like bundle-mac does.
+    $signingVars = @(
         'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
         'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
         'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
     )
 
-    foreach ($var in $requiredVars) {
-        if (-not (Test-Path "env:$var")) {
-            Write-Error "$var is not set"
-            exit 1
-        }
+    $missingVars = @($signingVars | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+    if ($missingVars.Count -eq 0) {
+        $script:canCodeSign = $true
+    } else {
+        Write-Host "====== WARNING ======"
+        Write-Host "One or more of the following variables are missing: $($missingVars -join ', ')"
+        Write-Host "This bundle will not be code signed"
+        Write-Host "====== WARNING ======"
     }
 }
 
@@ -96,10 +110,7 @@ function PrepareForBundle {
 }
 
 function GenerateLicenses {
-    $oldErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
     . $PSScriptRoot/generate-licenses.ps1
-    $ErrorActionPreference = $oldErrorActionPreference
 }
 
 function BuildZedAndItsFriends {
@@ -124,12 +135,32 @@ function BuildZedAndItsFriends {
     Copy-Item -Path ".\$CargoOutDir\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
 }
 
+function BuildRemoteServer {
+    Write-Output "Building remote_server for $target"
+    cargo build --release --package remote_server --target $target
+
+    # Create zipped remote server binary
+    $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
+
+    if ($canCodeSign) {
+        Write-Output "Code signing remote_server.exe"
+        & "$innoDir\sign.ps1" $remoteServerSrc
+    }
+
+    $remoteServerDst = "$env:ZED_WORKSPACE\target\zed-remote-server-windows-$Architecture.zip"
+    Write-Output "Compressing remote_server to $remoteServerDst"
+    Compress-Archive -Path $remoteServerSrc -DestinationPath $remoteServerDst -Force
+
+    Write-Output "Remote server compressed successfully"
+}
+
 function ZipZedAndItsFriendsDebug {
     $items = @(
         ".\$CargoOutDir\zed.pdb",
         ".\$CargoOutDir\cli.pdb",
         ".\$CargoOutDir\auto_update_helper.pdb",
-        ".\$CargoOutDir\explorer_command_injector.pdb"
+        ".\$CargoOutDir\explorer_command_injector.pdb",
+        ".\$CargoOutDir\remote_server.pdb"
     )
 
     Compress-Archive -Path $items -DestinationPath ".\$CargoOutDir\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
@@ -142,7 +173,7 @@ function UploadToSentry {
         Write-Output "install with: 'winget install -e --id=Sentry.sentry-cli'"
         return
     }
-    if (-not (Test-Path "env:SENTRY_AUTH_TOKEN")) {
+    if ([string]::IsNullOrWhiteSpace($env:SENTRY_AUTH_TOKEN)) {
         Write-Output "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
         return
     }
@@ -183,7 +214,7 @@ function MakeAppx {
 }
 
 function SignZedAndItsFriends {
-    if (-not $env:CI) {
+    if (-not $canCodeSign) {
         return
     }
 
@@ -202,8 +233,8 @@ function DownloadAMDGpuServices {
 }
 
 function DownloadConpty {
-    $url = "https://github.com/microsoft/terminal/releases/download/v1.23.12811.0/Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
-    $zipPath = ".\Microsoft.Windows.Console.ConPTY.1.23.251008001.nupkg"
+    $url = "https://github.com/microsoft/terminal/releases/download/v1.23.13503.0/Microsoft.Windows.Console.ConPTY.1.23.251216003.nupkg"
+    $zipPath = ".\Microsoft.Windows.Console.ConPTY.1.23.251216003.nupkg"
     Invoke-WebRequest -Uri $url -OutFile $zipPath
     Expand-Archive -Path $zipPath -DestinationPath ".\conpty" -Force
 }
@@ -323,7 +354,9 @@ function BuildInstaller {
     }
 
     $innoArgs = @($issFilePath) + $defs
-    if($env:CI) {
+    if($canCodeSign) {
+        # Checked by zed.iss to decide whether to sign the installer.
+        $env:ZED_SIGN_BUNDLE = "1"
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
     }
@@ -352,6 +385,7 @@ CheckEnvironmentVariables
 PrepareForBundle
 GenerateLicenses
 BuildZedAndItsFriends
+BuildRemoteServer
 MakeAppx
 SignZedAndItsFriends
 ZipZedAndItsFriendsDebug

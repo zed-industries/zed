@@ -285,7 +285,7 @@ mod tests {
         futures::future::join_all(tasks).await;
     }
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }

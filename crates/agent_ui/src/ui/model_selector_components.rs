@@ -1,5 +1,9 @@
-use gpui::{Action, FocusHandle, prelude::*};
-use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
+use language_model::DisabledReason;
+use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use zed_actions::agent::ToggleModelSelector;
+
+use crate::CycleFavoriteModels;
 
 enum ModelIcon {
     Name(IconName),
@@ -47,8 +51,11 @@ pub struct ModelSelectorListItem {
     icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
+    is_latest: bool,
     is_favorite: bool,
-    on_toggle_favorite: Option<Box<dyn Fn(&App) + 'static>>,
+    disabled: Option<DisabledReason>,
+    on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    cost_info: Option<SharedString>,
 }
 
 impl ModelSelectorListItem {
@@ -59,8 +66,11 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
+            is_latest: false,
             is_favorite: false,
+            disabled: None,
             on_toggle_favorite: None,
+            cost_info: None,
         }
     }
 
@@ -79,8 +89,18 @@ impl ModelSelectorListItem {
         self
     }
 
+    pub fn disabled(mut self, disabled: Option<DisabledReason>) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     pub fn is_focused(mut self, is_focused: bool) -> Self {
         self.is_focused = is_focused;
+        self
+    }
+
+    pub fn is_latest(mut self, is_latest: bool) -> Self {
+        self.is_latest = is_latest;
         self
     }
 
@@ -89,16 +109,28 @@ impl ModelSelectorListItem {
         self
     }
 
-    pub fn on_toggle_favorite(mut self, handler: impl Fn(&App) + 'static) -> Self {
+    pub fn on_toggle_favorite(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle_favorite = Some(Box::new(handler));
+        self
+    }
+
+    pub fn cost_info(mut self, cost_info: Option<SharedString>) -> Self {
+        self.cost_info = cost_info;
         self
     }
 }
 
 impl RenderOnce for ModelSelectorListItem {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let is_disabled = self.disabled.is_some();
+
         let model_icon_color = if self.is_selected {
             Color::Accent
+        } else if is_disabled {
+            Color::Disabled
         } else {
             Color::Muted
         };
@@ -109,6 +141,10 @@ impl RenderOnce for ModelSelectorListItem {
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(self.is_focused)
+            .when_some(self.disabled, |this, disabled_reason| {
+                this.disabled(true)
+                    .tooltip(Tooltip::text(disabled_reason.0))
+            })
             .child(
                 h_flex()
                     .w_full()
@@ -123,28 +159,56 @@ impl RenderOnce for ModelSelectorListItem {
                             .size(IconSize::Small),
                         )
                     })
-                    .child(Label::new(self.title).truncate()),
-            )
-            .end_slot(div().pr_2().when(self.is_selected, |this| {
-                this.child(Icon::new(IconName::Check).color(Color::Accent))
-            }))
-            .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
-                |this, handle_click| {
-                    let (icon, color, tooltip) = if is_favorite {
-                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
-                    } else {
-                        (IconName::Star, Color::Default, "Favorite Model")
-                    };
-                    this.child(
-                        IconButton::new(("toggle-favorite", self.index), icon)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .icon_color(color)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(move |_, _, cx| (handle_click)(cx)),
+                    .child(
+                        Label::new(self.title)
+                            .when(is_disabled, |this| this.color(Color::Disabled))
+                            .truncate(),
                     )
-                }
-            }))
+                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest")))
+                    .when_some(self.cost_info, |this, cost_info| {
+                        let tooltip_text = if cost_info.ends_with('×') {
+                            format!("Cost Multiplier: {}", cost_info)
+                        } else if cost_info.contains('$') {
+                            format!("Cost per Million Tokens: {}", cost_info)
+                        } else {
+                            format!("Cost: {}", cost_info)
+                        };
+
+                        this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
+                    }),
+            )
+            .end_slot(
+                h_flex()
+                    .pr_2()
+                    .gap_1p5()
+                    .when(self.is_selected, |this| {
+                        this.child(Icon::new(IconName::Check).color(Color::Accent))
+                    })
+                    .when(is_disabled, |this| {
+                        this.child(Icon::new(IconName::Info).color(Color::Muted))
+                    }),
+            )
+            .when(!is_disabled, |this| {
+                this.end_slot_on_hover(div().pr_1p5().when_some(self.on_toggle_favorite, {
+                    |this, handle_click| {
+                        let (icon, color, tooltip) = if is_favorite {
+                            (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                        } else {
+                            (IconName::Star, Color::Default, "Favorite Model")
+                        };
+                        this.child(
+                            IconButton::new(("toggle-favorite", self.index), icon)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .icon_color(color)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text(tooltip))
+                                .on_click(move |event, window, cx| {
+                                    (handle_click)(event, window, cx)
+                                }),
+                        )
+                    }
+                }))
+            })
     }
 }
 
@@ -185,5 +249,49 @@ impl RenderOnce for ModelSelectorFooter {
                         window.dispatch_action(action.boxed_clone(), cx);
                     }),
             )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ModelSelectorTooltip {
+    show_cycle_row: bool,
+}
+
+impl ModelSelectorTooltip {
+    pub fn new() -> Self {
+        Self {
+            show_cycle_row: true,
+        }
+    }
+
+    pub fn show_cycle_row(mut self, show: bool) -> Self {
+        self.show_cycle_row = show;
+        self
+    }
+}
+
+impl RenderOnce for ModelSelectorTooltip {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new("Change Model"))
+                    .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
+            )
+            .when(self.show_cycle_row, |this| {
+                this.child(
+                    h_flex()
+                        .pt_1()
+                        .gap_2()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .justify_between()
+                        .child(Label::new("Cycle Favorite Models"))
+                        .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
+                )
+            })
     }
 }

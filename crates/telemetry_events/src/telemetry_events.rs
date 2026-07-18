@@ -101,7 +101,7 @@ pub struct FlexibleEvent {
     pub event_properties: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EditPredictionRating {
     Positive,
     Negative,

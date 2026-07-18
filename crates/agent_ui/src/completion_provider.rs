@@ -4,25 +4,33 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::DEFAULT_THREAD_TITLE;
+use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
-use agent::{HistoryEntry, HistoryStore};
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
+use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, Task, WeakEntity};
+use gpui::{
+    App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
+};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
+use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse,
-    PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
+    DiagnosticSummary, PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
-use prompt_store::{PromptStore, UserPromptId};
+
 use rope::Point;
-use text::{Anchor, ToPoint as _};
+use settings::Settings;
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use text::{Anchor, ToOffset as _, ToPoint as _};
+use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
 use util::paths::PathStyle;
@@ -32,6 +40,104 @@ use workspace::Workspace;
 
 use crate::AgentPanel;
 use crate::mention_set::MentionSet;
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSelection {
+    Editor(Vec<(Entity<Buffer>, Range<text::Anchor>)>),
+    Terminal(Vec<String>),
+}
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSource {
+    Editor(WeakEntity<Editor>),
+    TerminalView(WeakEntity<TerminalView>),
+    TerminalPanel,
+}
+
+impl AgentContextSource {
+    pub(crate) fn read_selection(
+        &self,
+        workspace: &Workspace,
+        include_current_line: bool,
+        cx: &mut App,
+    ) -> Option<AgentContextSelection> {
+        match self {
+            Self::Editor(handle) => {
+                let editor = handle.upgrade()?;
+                let ranges = editor_selection_ranges(&editor, include_current_line, cx);
+                (!ranges.is_empty()).then_some(AgentContextSelection::Editor(ranges))
+            }
+            Self::TerminalView(handle) => {
+                let terminal_view = handle.upgrade()?;
+                terminal_view_selection(&terminal_view, cx)
+                    .map(|text| AgentContextSelection::Terminal(vec![text]))
+            }
+            Self::TerminalPanel => {
+                let panel = workspace.panel::<TerminalPanel>(cx)?;
+                let selections = panel.read(cx).terminal_selections(cx);
+                (!selections.is_empty()).then_some(AgentContextSelection::Terminal(selections))
+            }
+        }
+    }
+
+    pub(crate) fn from_focused(workspace: &Workspace, window: &Window, cx: &App) -> Option<Self> {
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && agent_panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return None;
+        }
+
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                if editor.focus_handle(cx).is_focused(window) {
+                    return Some(Self::Editor(editor.downgrade()));
+                }
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx)
+                && terminal_view.focus_handle(cx).is_focused(window)
+            {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+
+        if let Some(panel) = workspace.panel::<TerminalPanel>(cx)
+            && panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return Some(Self::TerminalPanel);
+        }
+
+        None
+    }
+
+    pub(crate) fn from_active(workspace: &Workspace, cx: &App) -> Option<Self> {
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                return Some(Self::Editor(editor.downgrade()));
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+        if terminal_panel_dock_is_open(workspace, cx) {
+            return Some(Self::TerminalPanel);
+        }
+        None
+    }
+
+    pub(crate) fn exists(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self {
+            Self::Editor(handle) => handle.upgrade().is_some(),
+            Self::TerminalView(handle) => handle.upgrade().is_some(),
+            Self::TerminalPanel => terminal_panel_dock_is_open(workspace, cx),
+        }
+    }
+}
+
+fn terminal_panel_dock_is_open(workspace: &Workspace, cx: &App) -> bool {
+    if workspace.panel::<TerminalPanel>(cx).is_none() {
+        return false;
+    }
+    let position = TerminalSettings::get_global(cx).dock.into();
+    workspace.dock_at_position(position).read(cx).is_open()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PromptContextEntry {
@@ -54,7 +160,9 @@ pub(crate) enum PromptContextType {
     Symbol,
     Fetch,
     Thread,
-    Rules,
+    Skill,
+    Diagnostics,
+    BranchDiff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +190,51 @@ impl PromptContextAction {
     }
 }
 
+/// A slash command that runs a local UI action against the conversation
+/// (sending feedback) instead of being sent to the agent as part of a prompt.
+/// Each variant maps to a method on `ThreadView`; the completion provider only
+/// surfaces them and emits an event, while `ThreadView` performs the actual
+/// work (see `handle_message_editor_event`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptLocalCommand {
+    ThumbsUp,
+    ThumbsDown,
+}
+
+impl PromptLocalCommand {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::ThumbsUp => "helpful",
+            Self::ThumbsDown => "not-helpful",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ThumbsUp => "Positive Feedback",
+            Self::ThumbsDown => "Negative Feedback",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::ThumbsUp => {
+                "Rate this response as helpful. Sends the current conversation to the Zed team."
+            }
+            Self::ThumbsDown => {
+                "Rate this response as not helpful. Sends the current conversation to the Zed team."
+            }
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::ThumbsUp => IconName::ThumbsUp,
+            Self::ThumbsDown => IconName::ThumbsDown,
+        }
+    }
+}
+
 impl TryFrom<&str> for PromptContextType {
     type Error = String;
 
@@ -91,7 +244,9 @@ impl TryFrom<&str> for PromptContextType {
             "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
-            "rule" => Ok(Self::Rules),
+            "skill" => Ok(Self::Skill),
+            "diagnostics" => Ok(Self::Diagnostics),
+            "diff" => Ok(Self::BranchDiff),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -104,7 +259,9 @@ impl PromptContextType {
             Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
-            Self::Rules => "rule",
+            Self::Skill => "skill",
+            Self::Diagnostics => "diagnostics",
+            Self::BranchDiff => "branch diff",
         }
     }
 
@@ -114,7 +271,9 @@ impl PromptContextType {
             Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
-            Self::Rules => "Rules",
+            Self::Skill => "Skills",
+            Self::Diagnostics => "Diagnostics",
+            Self::BranchDiff => "Branch Diff",
         }
     }
 
@@ -124,7 +283,9 @@ impl PromptContextType {
             Self::Symbol => IconName::Code,
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
-            Self::Rules => IconName::Reader,
+            Self::Skill => IconName::Sparkle,
+            Self::Diagnostics => IconName::Warning,
+            Self::BranchDiff => IconName::GitBranch,
         }
     }
 }
@@ -132,11 +293,17 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(HistoryEntry),
-    RecentThread(HistoryEntry),
+    Thread(SessionMatch),
+    RecentThread(SessionMatch),
     Fetch(SharedString),
-    Rules(RulesContextEntry),
+    Skill(AvailableSkill),
     Entry(EntryMatch),
+    BranchDiff(BranchDiffMatch),
+}
+
+#[derive(Debug, Clone)]
+pub struct BranchDiffMatch {
+    pub base_ref: SharedString,
 }
 
 impl Match {
@@ -147,10 +314,17 @@ impl Match {
             Match::Thread(_) => 1.,
             Match::RecentThread(_) => 1.,
             Match::Symbol(_) => 1.,
-            Match::Rules(_) => 1.,
+            Match::Skill(_) => 1.,
             Match::Fetch(_) => 1.,
+            Match::BranchDiff(_) => 1.,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMatch {
+    session_id: acp::SessionId,
+    title: SharedString,
 }
 
 pub struct EntryMatch {
@@ -158,10 +332,45 @@ pub struct EntryMatch {
     entry: PromptContextEntry,
 }
 
+fn session_title(title: Option<SharedString>) -> SharedString {
+    title
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
+}
+
 #[derive(Debug, Clone)]
-pub struct RulesContextEntry {
-    pub prompt_id: UserPromptId,
-    pub title: SharedString,
+pub struct AvailableSkill {
+    pub name: Arc<str>,
+    pub description: Arc<str>,
+    /// Scope prefix for this skill: empty for global skills, or the
+    /// worktree root name for project-local skills.
+    pub source: SharedString,
+    pub skill_file_path: PathBuf,
+    pub warning: Option<SharedString>,
+}
+
+fn skill_completion_icon_path(
+    skill: &AvailableSkill,
+    uri: &MentionUri,
+    cx: &mut App,
+) -> SharedString {
+    if skill.warning.is_some() {
+        IconName::Warning.path().into()
+    } else {
+        uri.icon_path(cx)
+    }
+}
+
+fn skill_completion_icon_color(skill: &AvailableSkill, cx: &App) -> Option<Hsla> {
+    skill.warning.is_some().then(|| cx.theme().status().warning)
+}
+
+fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
+    let text = match &skill.warning {
+        Some(warning) => warning.clone(),
+        None => skill.description.to_string().into(),
+    };
+    CompletionDocumentation::MultiLinePlainText(text)
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +378,74 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    pub source: Option<SharedString>,
+    /// Source category used to group the command in the slash popup. `None`
+    /// means the command came from an external ACP agent.
+    pub category: Option<acp_thread::CommandCategory>,
+}
+
+impl AvailableCommand {
+    fn category_order(&self) -> u8 {
+        match self.category {
+            Some(acp_thread::CommandCategory::Native) => 0,
+            Some(acp_thread::CommandCategory::Mcp) => 1,
+            None => 2,
+        }
+    }
+
+    /// Completion group key and header label for this command's category.
+    fn group(&self) -> CompletionGroup {
+        let (key, label) = match self.category {
+            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
+            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
+            None => ("acp-commands", "Commands"),
+        };
+        CompletionGroup {
+            key: key.into(),
+            label: Some(label.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SlashCompletionCandidate {
+    Skill(AvailableSkill),
+    Command(AvailableCommand),
+    LocalCommand(PromptLocalCommand),
+}
+
+impl SlashCompletionCandidate {
+    fn name(&self) -> &str {
+        match self {
+            Self::Skill(skill) => &skill.name,
+            Self::Command(command) => &command.name,
+            Self::LocalCommand(command) => command.keyword(),
+        }
+    }
+}
+
+/// Stable group identity for a slash completion: skills are one group, commands
+/// are grouped by category. This identifies which section header an entry sits
+/// under; the order the groups appear in is decided by relevance (see
+/// [`group_by_relevance`]).
+fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
+    match candidate {
+        SlashCompletionCandidate::Skill(_) => 0,
+        SlashCompletionCandidate::Command(command) => 1 + command.category_order() as u32,
+        SlashCompletionCandidate::LocalCommand(_) => 4,
+    }
+}
+
+/// Reorders `items` (which must already be in relevance/score order, best
+/// first) so that each group's entries stay contiguous while the groups
+/// themselves are ordered by their best-ranked member. The sort is stable, so
+/// within a group the original order is preserved.
+fn group_by_relevance<T>(items: &mut [T], group_key: impl Fn(&T) -> u32) {
+    let mut group_best_rank: collections::HashMap<u32, usize> = collections::HashMap::default();
+    for (rank, item) in items.iter().enumerate() {
+        group_best_rank.entry(group_key(item)).or_insert(rank);
+    }
+    items.sort_by_key(|item| group_best_rank[&group_key(item)]);
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -179,15 +456,29 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
     fn supports_images(&self, cx: &App) -> bool;
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
+    fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
+        Vec::new()
+    }
+
+    fn available_local_commands(&self, _cx: &App) -> Vec<PromptLocalCommand> {
+        Vec::new()
+    }
+
+    fn run_local_command(&self, _command: PromptLocalCommand, _cx: &mut App) {}
+
     fn confirm_command(&self, cx: &mut App);
+
+    /// Called once each time the user opens slash-command autocomplete
+    /// in the editor this delegate serves. Implementations may use it
+    /// to lazily kick off work that produces commands (for example,
+    /// scanning the global skills directory). The default is a no-op.
+    fn slash_autocomplete_invoked(&self, _cx: &mut App) {}
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
-    prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -196,8 +487,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history_store: Entity<HistoryStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
         Self {
@@ -205,8 +494,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history_store,
-            prompt_store,
         }
     }
 
@@ -224,6 +511,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
+                icon_color: None,
                 documentation: None,
                 source: project::CompletionSource::Custom,
                 match_start: None,
@@ -233,20 +521,21 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 // completion menu will still be shown after "@category " is
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
+                group: None,
             }),
-            PromptContextEntry::Action(action) => Self::completion_for_action(
-                action,
-                source_range,
-                editor,
-                mention_set,
-                workspace,
-                cx,
-            ),
+            PromptContextEntry::Action(action) => {
+                let selection = workspace.update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                });
+                Self::completion_for_action(action, source_range, editor, mention_set, selection)
+            }
         }
     }
 
     fn completion_for_thread(
-        thread_entry: HistoryEntry,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -255,7 +544,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = thread_entry.mention_uri();
+        let title = session_title(title);
+        let uri = MentionUri::Thread {
+            id: session_id,
+            name: title.to_string(),
+        };
 
         let icon_for_completion = if recent {
             IconName::HistoryRerun.path().into()
@@ -269,15 +562,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(thread_entry.title().to_string(), None),
+            label: CodeLabel::plain(title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
+            icon_color: None,
             confirm: Some(confirm_completion_callback(
-                thread_entry.title().clone(),
+                title,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -286,11 +580,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
-    fn completion_for_rules(
-        rule: RulesContextEntry,
+    fn completion_for_skill(
+        skill: AvailableSkill,
         source_range: Range<Anchor>,
         source: Arc<T>,
         editor: WeakEntity<Editor>,
@@ -298,25 +593,34 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = MentionUri::Rule {
-            id: rule.prompt_id.into(),
-            name: rule.title.to_string(),
+        let uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
-        let icon_path = uri.icon_path(cx);
+        let icon_path = skill_completion_icon_path(&skill, &uri, cx);
+        let crease_text: SharedString = uri.name().into();
+        let source_highlight_id = cx
+            .theme()
+            .syntax()
+            .highlight_id("variable")
+            .map(HighlightId::new);
+        let label = build_slash_item_label(&skill.name, Some(&skill.source), source_highlight_id);
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(rule.title.to_string(), None),
-            documentation: None,
+            label,
+            documentation: Some(skill_completion_documentation(&skill)),
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_path),
+            icon_color: skill_completion_icon_color(&skill, cx),
             confirm: Some(confirm_completion_callback(
-                rule.title,
+                crease_text,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -325,6 +629,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
@@ -378,6 +683,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -391,6 +697,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -443,6 +750,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -456,6 +764,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -483,6 +792,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -496,6 +806,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -504,54 +815,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: &Entity<Workspace>,
-        cx: &mut App,
+        selection: Option<AgentContextSelection>,
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
-            PromptContextAction::AddSelections => {
-                const PLACEHOLDER: &str = "selection ";
-                let selections = selection_ranges(workspace, cx)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (buffer, range))| {
-                        (
-                            buffer,
-                            range,
-                            (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                let new_text: String = PLACEHOLDER.repeat(selections.len());
-
-                let callback = Arc::new({
-                    let source_range = source_range.clone();
-                    move |_, window: &mut Window, cx: &mut App| {
-                        let editor = editor.clone();
-                        let selections = selections.clone();
-                        let mention_set = mention_set.clone();
-                        let source_range = source_range.clone();
-                        window.defer(cx, move |window, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                mention_set
-                                    .update(cx, |store, cx| {
-                                        store.confirm_mention_for_selection(
-                                            source_range,
-                                            selections,
-                                            editor,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
-                            }
-                        });
-                        false
-                    }
-                });
-
-                (new_text, callback)
-            }
+            PromptContextAction::AddSelections => match selection? {
+                AgentContextSelection::Editor(editor_selections) => {
+                    completion_text_for_editor_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        editor_selections,
+                    )
+                }
+                AgentContextSelection::Terminal(terminal_selections) => {
+                    completion_text_for_terminal_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        terminal_selections,
+                    )
+                }
+            },
         };
 
         Some(Completion {
@@ -559,6 +843,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label: CodeLabel::plain(action.label().to_string(), None),
             icon_path: Some(action.icon().path().into()),
+            icon_color: None,
             documentation: None,
             source: project::CompletionSource::Custom,
             match_start: None,
@@ -568,24 +853,196 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             // completion menu will still be shown after "@category " is
             // inserted
             confirm: Some(on_action),
+            group: None,
         })
     }
 
-    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
-        let commands = self.source.available_commands(cx);
-        if commands.is_empty() {
+    fn completion_for_diagnostics(
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<Completion> {
+        let summary = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .diagnostic_summary(false, cx);
+        if summary.error_count == 0 && summary.warning_count == 0 {
+            return Vec::new();
+        }
+        let icon_path = MentionUri::Diagnostics {
+            include_errors: true,
+            include_warnings: false,
+        }
+        .icon_path(cx);
+
+        let mut completions = Vec::new();
+
+        let cases = [
+            (summary.error_count > 0, true, false),
+            (summary.warning_count > 0, false, true),
+            (
+                summary.error_count > 0 && summary.warning_count > 0,
+                true,
+                true,
+            ),
+        ];
+
+        for (condition, include_errors, include_warnings) in cases {
+            if condition {
+                completions.push(Self::build_diagnostics_completion(
+                    diagnostics_submenu_label(summary, include_errors, include_warnings),
+                    source_range.clone(),
+                    source.clone(),
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    icon_path.clone(),
+                    include_errors,
+                    include_warnings,
+                    summary,
+                ));
+            }
+        }
+
+        completions
+    }
+
+    fn build_diagnostics_completion(
+        menu_label: String,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        icon_path: SharedString,
+        include_errors: bool,
+        include_warnings: bool,
+        summary: DiagnosticSummary,
+    ) -> Completion {
+        let uri = MentionUri::Diagnostics {
+            include_errors,
+            include_warnings,
+        };
+        let crease_text = diagnostics_crease_label(summary, include_errors, include_warnings);
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(menu_label, None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            icon_color: None,
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    fn build_branch_diff_completion(
+        base_ref: SharedString,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::GitDiff {
+            base_ref: base_ref.to_string(),
+        };
+        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(crease_text.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            icon_color: None,
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    fn search_slash_commands(
+        &self,
+        query: String,
+        cx: &mut App,
+    ) -> Task<Vec<SlashCompletionCandidate>> {
+        // Notify the delegate that slash autocomplete is being
+        // invoked, so it can lazily kick off any work that produces
+        // additional commands or skills. Whatever it produces won't be
+        // visible in the current autocomplete pass (we read available
+        // items synchronously below), but will appear on the next
+        // invocation.
+        self.source.slash_autocomplete_invoked(cx);
+
+        let mut candidates = self
+            .source
+            .available_commands(cx)
+            .into_iter()
+            .map(SlashCompletionCandidate::Command)
+            .collect::<Vec<_>>();
+        candidates.extend(
+            self.source
+                .available_skills(cx)
+                .into_iter()
+                .map(SlashCompletionCandidate::Skill),
+        );
+        candidates.extend(
+            self.source
+                .available_local_commands(cx)
+                .into_iter()
+                .map(SlashCompletionCandidate::LocalCommand),
+        );
+        if candidates.is_empty() {
             return Task::ready(Vec::new());
         }
 
         cx.spawn(async move |cx| {
-            let candidates = commands
+            let string_match_candidates = candidates
                 .iter()
                 .enumerate()
-                .map(|(id, command)| StringMatchCandidate::new(id, &command.name))
+                .map(|(id, candidate)| StringMatchCandidate::new(id, candidate.name()))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(
-                &candidates,
+                &string_match_candidates,
                 &query,
                 false,
                 true,
@@ -597,9 +1054,30 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             matches
                 .into_iter()
-                .map(|mat| commands[mat.candidate_id].clone())
+                .map(|mat| candidates[mat.candidate_id].clone())
                 .collect()
         })
+    }
+
+    fn fetch_branch_diff_match(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Task<Option<BranchDiffMatch>>> {
+        let project = workspace.read(cx).project().clone();
+        let repo = project.read(cx).active_repository(cx)?;
+
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
+
+        Some(cx.spawn(async move |_cx| {
+            let base_ref = default_branch_receiver
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()?;
+
+            Some(BranchDiffMatch { base_ref })
+        }))
     }
 
     fn search_mentions(
@@ -636,15 +1114,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                let search_threads_task =
-                    search_threads(query, cancellation_flag, &self.history_store, cx);
-                cx.background_spawn(async move {
-                    search_threads_task
-                        .await
-                        .into_iter()
-                        .map(Match::Thread)
-                        .collect()
-                })
+                let sessions = collect_session_matches(cx);
+                if !sessions.is_empty() {
+                    let search_task =
+                        filter_sessions_by_query(query, cancellation_flag, sessions, cx);
+                    cx.spawn(async move |_cx| {
+                        search_task.await.into_iter().map(Match::Thread).collect()
+                    })
+                } else {
+                    Task::ready(Vec::new())
+                }
             }
 
             Some(PromptContextType::Fetch) => {
@@ -655,37 +1134,56 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 }
             }
 
-            Some(PromptContextType::Rules) => {
-                if let Some(prompt_store) = self.prompt_store.as_ref() {
-                    let search_rules_task =
-                        search_rules(query, cancellation_flag, prompt_store, cx);
-                    cx.background_spawn(async move {
-                        search_rules_task
-                            .await
-                            .into_iter()
-                            .map(Match::Rules)
-                            .collect::<Vec<_>>()
-                    })
-                } else {
-                    Task::ready(Vec::new())
-                }
+            Some(PromptContextType::Skill) => {
+                let skills = self.source.available_skills(cx);
+                let search_skills_task = search_skills(query, cancellation_flag, skills, cx);
+                cx.background_spawn(async move {
+                    search_skills_task
+                        .await
+                        .into_iter()
+                        .map(Match::Skill)
+                        .collect::<Vec<_>>()
+                })
             }
 
+            Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
+
+            Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
+
             None if query.is_empty() => {
-                let mut matches = self.recent_context_picker_entries(&workspace, cx);
+                let recent_task = self.recent_context_picker_entries(&workspace, cx);
+                let entries = self
+                    .available_context_picker_entries(&workspace, cx)
+                    .into_iter()
+                    .map(|mode| {
+                        Match::Entry(EntryMatch {
+                            entry: mode,
+                            mat: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
 
-                matches.extend(
-                    self.available_context_picker_entries(&workspace, cx)
-                        .into_iter()
-                        .map(|mode| {
-                            Match::Entry(EntryMatch {
-                                entry: mode,
-                                mat: None,
-                            })
-                        }),
-                );
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
 
-                Task::ready(matches)
+                cx.spawn(async move |_cx| {
+                    let mut matches = recent_task.await;
+                    matches.extend(entries);
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        if let Some(branch_diff_match) = branch_diff_task.await {
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
+                    }
+
+                    matches
+                })
             }
             None => {
                 let executor = cx.background_executor().clone();
@@ -700,7 +1198,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
-                cx.background_spawn(async move {
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |cx| {
                     let mut matches = search_files_task
                         .await
                         .into_iter()
@@ -725,6 +1232,26 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         })
                     }));
 
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
+                        let branch_diff_matches = fuzzy::match_strings(
+                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
+                            &query,
+                            false,
+                            true,
+                            1,
+                            &Arc::new(AtomicBool::default()),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+
+                        if !branch_diff_matches.is_empty() {
+                            if let Some(branch_diff_match) = branch_diff_task.await {
+                                matches.push(Match::BranchDiff(branch_diff_match));
+                            }
+                        }
+                    }
+
                     matches.sort_by(|a, b| {
                         b.score()
                             .partial_cmp(&a.score())
@@ -741,7 +1268,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         &self,
         workspace: &Entity<Workspace>,
         cx: &mut App,
-    ) -> Vec<Match> {
+    ) -> Task<Vec<Match>> {
         let mut recent = Vec::with_capacity(6);
 
         let mut mentions = self
@@ -753,11 +1280,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
         {
-            let thread = thread.read(cx);
             mentions.insert(MentionUri::Thread {
-                id: thread.session_id().clone(),
-                name: thread.title().into(),
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
             });
         }
 
@@ -779,7 +1306,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             let path_prefix = if include_root_name {
                                 worktree.read(cx).root_name().into()
                             } else {
-                                RelPath::empty().into()
+                                RelPath::empty_arc()
                             };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
@@ -797,21 +1324,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 }),
         );
 
-        if self.source.supports_context(PromptContextType::Thread, cx) {
-            const RECENT_COUNT: usize = 2;
-            let threads = self
-                .history_store
-                .read(cx)
-                .recently_opened_entries(cx)
-                .into_iter()
-                .filter(|thread| !mentions.contains(&thread.mention_uri()))
-                .take(RECENT_COUNT)
-                .collect::<Vec<_>>();
-
-            recent.extend(threads.into_iter().map(Match::RecentThread));
+        if !self.source.supports_context(PromptContextType::Thread, cx) {
+            return Task::ready(recent);
         }
 
-        recent
+        let sessions = collect_session_matches(cx);
+        const RECENT_COUNT: usize = 2;
+        recent.extend(
+            sessions
+                .into_iter()
+                .filter(|session| {
+                    let uri = MentionUri::Thread {
+                        id: session.session_id.clone(),
+                        name: session.title.to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
+                .take(RECENT_COUNT)
+                .map(Match::RecentThread),
+        );
+
+        Task::ready(recent)
     }
 
     fn available_context_picker_entries(
@@ -828,28 +1361,39 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_selection = workspace
-            .read(cx)
-            .active_item(cx)
-            .and_then(|item| item.downcast::<Editor>())
-            .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                })
-            });
-        if has_selection {
+        let has_active_selection = workspace.update(cx, |workspace, cx| {
+            AgentContextSource::from_active(workspace, cx)
+                .and_then(|source| source.read_selection(workspace, false, cx))
+                .is_some()
+        });
+        if has_active_selection {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
         }
 
-        if self.prompt_store.is_some() && self.source.supports_context(PromptContextType::Rules, cx)
+        if self.source.supports_context(PromptContextType::Skill, cx)
+            && !self.source.available_skills(cx).is_empty()
         {
-            entries.push(PromptContextEntry::Mode(PromptContextType::Rules));
+            entries.push(PromptContextEntry::Mode(PromptContextType::Skill));
         }
 
         if self.source.supports_context(PromptContextType::Fetch, cx) {
             entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
+        }
+
+        if self
+            .source
+            .supports_context(PromptContextType::Diagnostics, cx)
+        {
+            let summary = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .diagnostic_summary(false, cx);
+            if summary.error_count > 0 || summary.warning_count > 0 {
+                entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
         }
 
         entries
@@ -859,7 +1403,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -895,50 +1438,217 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
-                cx.background_spawn(async move {
-                    let completions = search_task
-                        .await
-                        .into_iter()
-                        .map(|command| {
-                            let new_text = if let Some(argument) = argument.as_ref() {
-                                format!("/{} {}", command.name, argument)
-                            } else {
-                                format!("/{} ", command.name)
-                            };
+                // Keep the category section headers visible while the user is
+                // still narrowing the command name (`/c`); only drop them once
+                // they've moved on to typing the command's argument, where
+                // grouping no longer applies.
+                let show_section_headers = argument.is_none();
 
-                            let is_missing_argument =
-                                command.requires_argument && argument.is_none();
-                            Completion {
-                                replace_range: source_range.clone(),
-                                new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
-                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                                    command.description.into(),
-                                )),
-                                source: project::CompletionSource::Custom,
-                                icon_path: None,
-                                match_start: None,
-                                snippet_deduplication_key: None,
-                                insert_text_mode: None,
-                                confirm: Some(Arc::new({
-                                    let source = source.clone();
-                                    move |intent, _window, cx| {
-                                        if !is_missing_argument {
+                let source_highlight_id = cx
+                    .theme()
+                    .syntax()
+                    .highlight_id("variable")
+                    .map(HighlightId::new);
+
+                type SkillInfo = (
+                    String,
+                    SharedString,
+                    Option<Hsla>,
+                    Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
+                );
+                let slash_candidates: Task<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>> = {
+                    let source = source.clone();
+                    cx.spawn(async move |_this, cx| {
+                        let candidates = search_task.await;
+                        cx.update(|cx| {
+                            candidates
+                                .into_iter()
+                                .map(|candidate| match &candidate {
+                                    SlashCompletionCandidate::Skill(skill) => {
+                                        let uri = MentionUri::Skill {
+                                            name: skill.name.to_string(),
+                                            source: skill.source.to_string(),
+                                            skill_file_path: skill.skill_file_path.clone(),
+                                        };
+                                        let new_text = format!("{} ", uri.as_link());
+                                        let new_text_len = new_text.len();
+                                        let icon_path = skill_completion_icon_path(skill, &uri, cx);
+                                        let icon_color = skill_completion_icon_color(skill, cx);
+                                        let crease_text: SharedString = uri.name().into();
+                                        let confirm = confirm_completion_callback(
+                                            crease_text,
+                                            source_range.start,
+                                            new_text_len - 1,
+                                            uri,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                        );
+                                        (
+                                            candidate,
+                                            Some((new_text, icon_path, icon_color, confirm)),
+                                        )
+                                    }
+                                    SlashCompletionCandidate::Command(_)
+                                    | SlashCompletionCandidate::LocalCommand(_) => {
+                                        (candidate, None)
+                                    }
+                                })
+                                .collect::<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>>()
+                        })
+                    })
+                };
+
+                cx.background_spawn(async move {
+                    let mut slash_candidates = slash_candidates.await;
+                    // `slash_candidates` arrives in fuzzy-match order (best
+                    // first). Keep each group's items contiguous so section
+                    // headers render once, but order the groups by their
+                    // best-scoring member. That way an exact/prefix match (e.g.
+                    // `/compa` -> `compact`) floats its whole section to the top
+                    // and becomes the default selection, instead of being
+                    // buried under a less relevant skill. Within a group, the
+                    // fuzzy-match order is preserved (the sort is stable).
+                    group_by_relevance(&mut slash_candidates, |(candidate, _)| {
+                        slash_completion_group_key(candidate)
+                    });
+                    let completions = slash_candidates
+                        .into_iter()
+                        .map(|(candidate, skill_info)| match candidate {
+                            SlashCompletionCandidate::Skill(skill) => {
+                                let label = build_slash_item_label(
+                                    &skill.name,
+                                    Some(&skill.source),
+                                    source_highlight_id,
+                                );
+                                let Some((new_text, icon_path, icon_color, confirm)) = skill_info
+                                else {
+                                    unreachable!("skill candidates always have confirm callbacks")
+                                };
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(skill_completion_documentation(&skill)),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: Some(icon_path),
+                                    icon_color,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(confirm),
+                                    group: show_section_headers.then(|| CompletionGroup {
+                                        key: "skills".into(),
+                                        label: Some("Skills".into()),
+                                    }),
+                                }
+                            }
+                            SlashCompletionCandidate::Command(command) => {
+                                let label =
+                                    build_slash_command_label(&command, source_highlight_id);
+                                let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                    (Some(source), Some(argument)) => {
+                                        format!("/{}:{} {}", source, command.name, argument)
+                                    }
+                                    (Some(source), None) => {
+                                        format!("/{}:{} ", source, command.name)
+                                    }
+                                    (None, Some(argument)) => {
+                                        format!("/{} {}", command.name, argument)
+                                    }
+                                    (None, None) => format!("/{} ", command.name),
+                                };
+
+                                let is_missing_argument =
+                                    command.requires_argument && argument.is_none();
+                                let group = show_section_headers.then(|| command.group());
+
+                                let icon_path = (command.category
+                                    == Some(acp_thread::CommandCategory::Native)
+                                    && command.name.as_ref() == agent::COMPACT_COMMAND_NAME)
+                                    .then(|| IconName::Compact.path().into());
+
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description.into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path,
+                                    icon_color: None,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(Arc::new({
+                                        let source = source.clone();
+                                        move |intent, _window, cx| {
+                                            if !is_missing_argument {
+                                                cx.defer({
+                                                    let source = source.clone();
+                                                    move |cx| match intent {
+                                                        CompletionIntent::Complete
+                                                        | CompletionIntent::CompleteWithInsert
+                                                        | CompletionIntent::CompleteWithReplace => {
+                                                            source.confirm_command(cx);
+                                                        }
+                                                        CompletionIntent::Compose => {}
+                                                    }
+                                                });
+                                            }
+                                            false
+                                        }
+                                    })),
+                                    group,
+                                }
+                            }
+                            SlashCompletionCandidate::LocalCommand(command) => {
+                                let group = show_section_headers.then(|| CompletionGroup {
+                                    key: "local-commands".into(),
+                                    label: Some("Actions".into()),
+                                });
+
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    // Local commands aren't part of the prompt;
+                                    // confirming one clears the typed text
+                                    // rather than leaving `/keyword` behind.
+                                    new_text: String::new(),
+                                    label: CodeLabel::plain(command.label().to_string(), None),
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description().into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: Some(command.icon().path().into()),
+                                    icon_color: None,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(Arc::new({
+                                        let source = source.clone();
+                                        move |intent, _window, cx| {
                                             cx.defer({
                                                 let source = source.clone();
                                                 move |cx| match intent {
                                                     CompletionIntent::Complete
                                                     | CompletionIntent::CompleteWithInsert
                                                     | CompletionIntent::CompleteWithReplace => {
-                                                        source.confirm_command(cx);
+                                                        source.run_local_command(command, cx);
                                                     }
                                                     CompletionIntent::Compose => {}
                                                 }
                                             });
+                                            false
                                         }
-                                        false
-                                    }
-                                })),
+                                    })),
+                                    group,
+                                }
                             }
                         })
                         .collect();
@@ -948,13 +1658,34 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         display_options: CompletionDisplayOptions {
                             dynamic_width: true,
                         },
-                        // Since this does its own filtering (see `filter_completions()` returns false),
-                        // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
                     }])
                 })
             }
             PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                if let Some(PromptContextType::Diagnostics) = mode {
+                    if argument.is_some() {
+                        return Task::ready(Ok(Vec::new()));
+                    }
+
+                    let completions = Self::completion_for_diagnostics(
+                        source_range.clone(),
+                        source.clone(),
+                        editor.clone(),
+                        mention_set.clone(),
+                        workspace.clone(),
+                        cx,
+                    );
+                    if !completions.is_empty() {
+                        return Task::ready(Ok(vec![CompletionResponse {
+                            completions,
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: false,
+                        }]));
+                    }
+                }
+
+                let show_section_headers = mode.is_none() && argument.is_none();
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -985,114 +1716,159 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 };
 
                 cx.spawn(async move |_, cx| {
-                    let matches = search_task.await;
+                    let mut matches = search_task.await;
+                    if show_section_headers {
+                        matches.sort_by_key(|mat| match mat {
+                            Match::File(FileMatch {
+                                is_recent: true, ..
+                            })
+                            | Match::RecentThread(_) => 0,
+                            Match::Entry(_) | Match::BranchDiff(_) => 1,
+                            _ => 2,
+                        });
+                    }
 
                     let completions = cx.update(|cx| {
                         matches
                             .into_iter()
-                            .filter_map(|mat| match mat {
-                                Match::File(FileMatch { mat, is_recent }) => {
-                                    let project_path = ProjectPath {
-                                        worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                        path: mat.path.clone(),
-                                    };
+                            .filter_map(|mat| {
+                                let group = if show_section_headers {
+                                    match &mat {
+                                        Match::File(FileMatch {
+                                            is_recent: true, ..
+                                        })
+                                        | Match::RecentThread(_) => Some(CompletionGroup {
+                                            key: "recent".into(),
+                                            label: None,
+                                        }),
+                                        Match::Entry(_) | Match::BranchDiff(_) => {
+                                            Some(CompletionGroup {
+                                                key: "context".into(),
+                                                label: None,
+                                            })
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                let mut completion = match mat {
+                                    Match::File(FileMatch { mat, is_recent }) => {
+                                        let project_path = ProjectPath {
+                                            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                            path: mat.path.clone(),
+                                        };
 
-                                    // If path is empty, this means we're matching with the root directory itself
-                                    // so we use the path_prefix as the name
-                                    let path_prefix = if mat.path.is_empty() {
-                                        project
-                                            .read(cx)
-                                            .worktree_for_id(project_path.worktree_id, cx)
-                                            .map(|wt| wt.read(cx).root_name().into())
-                                            .unwrap_or_else(|| mat.path_prefix.clone())
-                                    } else {
-                                        mat.path_prefix.clone()
-                                    };
+                                        // If path is empty, this means we're matching with the root directory itself
+                                        // so we use the path_prefix as the name
+                                        let path_prefix = if mat.path.is_empty() {
+                                            project
+                                                .read(cx)
+                                                .worktree_for_id(project_path.worktree_id, cx)
+                                                .map(|wt| wt.read(cx).root_name().into())
+                                                .unwrap_or_else(|| mat.path_prefix.clone())
+                                        } else {
+                                            mat.path_prefix.clone()
+                                        };
 
-                                    Self::completion_for_path(
-                                        project_path,
-                                        &path_prefix,
-                                        is_recent,
-                                        mat.is_dir,
+                                        Self::completion_for_path(
+                                            project_path,
+                                            &path_prefix,
+                                            is_recent,
+                                            mat.is_dir,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            project.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Symbol(SymbolMatch { symbol, .. }) => {
+                                        Self::completion_for_symbol(
+                                            symbol,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Thread(thread) => Some(Self::completion_for_thread(
+                                        thread.session_id,
+                                        Some(thread.title),
+                                        source_range.clone(),
+                                        false,
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )),
+                                    Match::RecentThread(thread) => {
+                                        Some(Self::completion_for_thread(
+                                            thread.session_id,
+                                            Some(thread.title),
+                                            source_range.clone(),
+                                            true,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                    Match::Skill(skill) => Some(Self::completion_for_skill(
+                                        skill,
                                         source_range.clone(),
                                         source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
-                                        project.clone(),
-                                        label_max_chars,
                                         cx,
-                                    )
-                                }
-
-                                Match::Symbol(SymbolMatch { symbol, .. }) => {
-                                    Self::completion_for_symbol(
-                                        symbol,
+                                    )),
+                                    Match::Fetch(url) => Self::completion_for_fetch(
                                         source_range.clone(),
+                                        url,
                                         source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
-                                        label_max_chars,
                                         cx,
-                                    )
+                                    ),
+                                    Match::Entry(EntryMatch { entry, .. }) => {
+                                        Self::completion_for_entry(
+                                            entry,
+                                            source_range.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            &workspace,
+                                            cx,
+                                        )
+                                    }
+                                    Match::BranchDiff(branch_diff) => {
+                                        Some(Self::build_branch_diff_completion(
+                                            branch_diff.base_ref,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                };
+                                if let Some(completion) = &mut completion {
+                                    completion.group = group;
                                 }
-
-                                Match::Thread(thread) => Some(Self::completion_for_thread(
-                                    thread,
-                                    source_range.clone(),
-                                    false,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-
-                                Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                                    thread,
-                                    source_range.clone(),
-                                    true,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-
-                                Match::Rules(user_rules) => Some(Self::completion_for_rules(
-                                    user_rules,
-                                    source_range.clone(),
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-
-                                Match::Fetch(url) => Self::completion_for_fetch(
-                                    source_range.clone(),
-                                    url,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                ),
-
-                                Match::Entry(EntryMatch { entry, .. }) => {
-                                    Self::completion_for_entry(
-                                        entry,
-                                        source_range.clone(),
-                                        editor.clone(),
-                                        mention_set.clone(),
-                                        &workspace,
-                                        cx,
-                                    )
-                                }
+                                completion
                             })
-                            .collect()
-                    })?;
+                            .collect::<Vec<_>>()
+                    });
 
                     Ok(vec![CompletionResponse {
                         completions,
@@ -1236,17 +2012,31 @@ pub struct SlashCommandCompletion {
 
 impl SlashCommandCompletion {
     pub fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
-        // If we decide to support commands that are not at the beginning of the prompt, we can remove this check
-        if !line.starts_with('/') || offset_to_line != 0 {
-            return None;
+        let mut last_command_start = None;
+        for (idx, _) in line.rmatch_indices('/') {
+            if line[idx + 1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            last_command_start = Some(idx);
+            break;
         }
 
-        let (prefix, last_command) = line.rsplit_once('/')?;
-        if prefix.chars().last().is_some_and(|c| !c.is_whitespace())
-            || last_command.starts_with(char::is_whitespace)
-        {
-            return None;
-        }
+        let last_command_start = last_command_start?;
+        let last_command = &line[last_command_start + 1..];
 
         let mut argument = None;
         let mut command = None;
@@ -1260,7 +2050,7 @@ impl SlashCommandCompletion {
         };
 
         Some(Self {
-            source_range: prefix.len() + offset_to_line
+            source_range: last_command_start + offset_to_line
                 ..line
                     .rfind(|c: char| !c.is_whitespace())
                     .unwrap_or_else(|| line.len())
@@ -1285,26 +2075,33 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        let last_mention_start = line.rfind('@')?;
-
-        // No whitespace immediately after '@'
-        if line[last_mention_start + 1..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace())
-        {
-            return None;
-        }
-
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
+        // Find the rightmost '@' that has a boundary before it and no whitespace immediately after.
+        // A boundary is the start of the line, whitespace, or an opening bracket.
+        let mut last_mention_start = None;
+        for (idx, _) in line.rmatch_indices('@') {
+            // No whitespace immediately after '@'.
+            if line[idx + 1..]
                 .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, '(' | '[' | '{'))
+            {
+                continue;
+            }
+
+            last_mention_start = Some(idx);
+            break;
         }
+
+        let last_mention_start = last_mention_start?;
 
         let rest_of_line = &line[last_mention_start + 1..];
 
@@ -1353,6 +2150,87 @@ impl MentionCompletion {
     }
 }
 
+fn diagnostics_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    let mut parts = Vec::new();
+
+    if include_errors && summary.error_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ));
+    }
+
+    if include_warnings && summary.warning_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ));
+    }
+
+    if parts.is_empty() {
+        return "Diagnostics".into();
+    }
+
+    let body = if parts.len() == 2 {
+        format!("{} and {}", parts[0], parts[1])
+    } else {
+        parts
+            .pop()
+            .expect("at least one part present after non-empty check")
+    };
+
+    format!("Diagnostics: {body}")
+}
+
+fn diagnostics_submenu_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    match (include_errors, include_warnings) {
+        (true, true) => format!(
+            "{} {} & {} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count),
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (true, _) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (_, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        _ => "Diagnostics".into(),
+    }
+}
+
+fn diagnostics_crease_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> SharedString {
+    diagnostics_label(summary, include_errors, include_warnings).into()
+}
+
+pub(crate) fn pluralize(noun: &str, count: usize) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
+}
+
 pub(crate) fn search_files(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
@@ -1373,9 +2251,9 @@ pub(crate) fn search_files(
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|wt| wt.read(cx).root_name().into())
-                        .unwrap_or_else(|| RelPath::empty().into())
+                        .unwrap_or_else(|| RelPath::empty_arc())
                 } else {
-                    RelPath::empty().into()
+                    RelPath::empty_arc()
                 };
 
                 FileMatch {
@@ -1397,7 +2275,7 @@ pub(crate) fn search_files(
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {
@@ -1415,7 +2293,12 @@ pub(crate) fn search_files(
 
         Task::ready(recent_matches.chain(file_matches).collect())
     } else {
-        let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let workspace = workspace.read(cx);
+        let relative_to = workspace
+            .recent_navigation_history_iter(cx)
+            .next()
+            .map(|(path, _)| path.path);
+        let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
@@ -1436,7 +2319,7 @@ pub(crate) fn search_files(
             fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.as_str(),
-                &None,
+                &relative_to,
                 false,
                 100,
                 &cancellation_flag,
@@ -1469,29 +2352,30 @@ pub(crate) fn search_symbols(
         let Some(symbols) = symbols_task.await.log_err() else {
             return Vec::new();
         };
-        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
-            project
-                .update(cx, |project, cx| {
-                    symbols
-                        .iter()
-                        .enumerate()
-                        .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, symbol.label.filter_text())
-                        })
-                        .partition(|candidate| match &symbols[candidate.id].path {
-                            SymbolLocation::InProject(project_path) => project
-                                .entry_for_path(project_path, cx)
-                                .is_some_and(|e| !e.is_ignored),
-                            SymbolLocation::OutsideProject { .. } => false,
-                        })
-                })
-                .log_err()
-        else {
-            return Vec::new();
-        };
-
+        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
+            .update(cx, |project, cx| {
+                symbols
+                    .iter()
+                    .enumerate()
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.label.filter_text()))
+                    .partition(|candidate| match &symbols[candidate.id].path {
+                        SymbolLocation::InProject(project_path) => project
+                            .entry_for_path(project_path, cx)
+                            .is_some_and(|e| !e.is_ignored),
+                        SymbolLocation::OutsideProject { .. } => false,
+                    })
+            });
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        // Note if you make changes to this filtering below, also change `project_symbols::ProjectSymbolsDelegate::filter`
         const MAX_MATCHES: usize = 100;
-        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &visible_match_candidates,
             &query,
             false,
@@ -1500,7 +2384,7 @@ pub(crate) fn search_symbols(
             &cancellation_flag,
             cx.background_executor().clone(),
         ));
-        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &external_match_candidates,
             &query,
             false,
@@ -1533,23 +2417,90 @@ pub(crate) fn search_symbols(
     })
 }
 
-pub(crate) fn search_threads(
+fn collect_session_matches(cx: &App) -> Vec<SessionMatch> {
+    let Some(store) = ThreadMetadataStore::try_global(cx) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ThreadMetadata> = store
+        .read(cx)
+        .entries()
+        .filter(|t| !t.archived && t.agent_id == *agent::ZED_AGENT_ID)
+        .collect();
+    entries.sort_by_key(|t| Reverse(t.updated_at));
+    entries
+        .into_iter()
+        .map(|metadata| {
+            let info = acp_thread::AgentSessionInfo::from(metadata);
+            SessionMatch {
+                session_id: info.session_id,
+                title: session_title(info.title),
+            }
+        })
+        .collect()
+}
+
+fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    thread_store: &Entity<HistoryStore>,
+    sessions: Vec<SessionMatch>,
     cx: &mut App,
-) -> Task<Vec<HistoryEntry>> {
-    let threads = thread_store.read(cx).entries().collect();
+) -> Task<Vec<SessionMatch>> {
     if query.is_empty() {
-        return Task::ready(threads);
+        return Task::ready(sessions);
     }
-
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
-        let candidates = threads
+        filter_sessions(query, cancellation_flag, sessions, executor).await
+    })
+}
+
+async fn filter_sessions(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    sessions: Vec<SessionMatch>,
+    executor: BackgroundExecutor,
+) -> Vec<SessionMatch> {
+    let titles = sessions
+        .iter()
+        .map(|session| session.title.clone())
+        .collect::<Vec<_>>();
+    let candidates = titles
+        .iter()
+        .enumerate()
+        .map(|(id, title)| StringMatchCandidate::new(id, title.as_ref()))
+        .collect::<Vec<_>>();
+    let matches = fuzzy::match_strings(
+        &candidates,
+        &query,
+        false,
+        true,
+        100,
+        &cancellation_flag,
+        executor,
+    )
+    .await;
+
+    matches
+        .into_iter()
+        .map(|mat| sessions[mat.candidate_id].clone())
+        .collect()
+}
+
+pub(crate) fn search_skills(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    skills: Vec<AvailableSkill>,
+    cx: &mut App,
+) -> Task<Vec<AvailableSkill>> {
+    if skills.is_empty() {
+        return Task::ready(Vec::new());
+    }
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        let candidates = skills
             .iter()
             .enumerate()
-            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
+            .map(|(id, skill)| StringMatchCandidate::new(id, &skill.name))
             .collect::<Vec<_>>();
         let matches = fuzzy::match_strings(
             &candidates,
@@ -1561,37 +2512,10 @@ pub(crate) fn search_threads(
             executor,
         )
         .await;
-
         matches
             .into_iter()
-            .map(|mat| threads[mat.candidate_id].clone())
+            .map(|mat| skills[mat.candidate_id].clone())
             .collect()
-    })
-}
-
-pub(crate) fn search_rules(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
-    prompt_store: &Entity<PromptStore>,
-    cx: &mut App,
-) -> Task<Vec<RulesContextEntry>> {
-    let search_task = prompt_store.read(cx).search(query, cancellation_flag, cx);
-    cx.background_spawn(async move {
-        search_task
-            .await
-            .into_iter()
-            .flat_map(|metadata| {
-                // Default prompts are filtered out as they are automatically included.
-                if metadata.default {
-                    None
-                } else {
-                    Some(RulesContextEntry {
-                        prompt_id: metadata.id.as_user()?,
-                        title: metadata.title?,
-                    })
-                }
-            })
-            .collect::<Vec<_>>()
     })
 }
 
@@ -1625,6 +2549,41 @@ pub fn extract_file_name_and_directory(
     )
 }
 
+fn build_slash_command_label(
+    command: &AvailableCommand,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    build_slash_item_label(&command.name, command.source.as_ref(), source_highlight_id)
+}
+
+/// Build the autocomplete-popup label for a slash menu item, appending
+/// the item origin after the name when one is present and non-empty.
+/// The suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match the entry.
+fn build_slash_item_label(
+    name: &Arc<str>,
+    source: Option<&SharedString>,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let source = source.filter(|source| !source.is_empty());
+    let Some(source) = source else {
+        return CodeLabel::plain(name.to_string(), None);
+    };
+    let mut builder = CodeLabelBuilder::default();
+    builder.push_str(name, None);
+    builder.push_str(" ", None);
+    builder.push_str(source, source_highlight_id);
+    // The filter range defaults to the entire label after `build()`,
+    // which would let the source text participate in fuzzy filtering.
+    // Slash commands are matched up-front in `search_slash_commands`
+    // against the command name, and the editor doesn't re-filter
+    // (`filter_completions()` is false), so this is mostly defensive
+    // — but it keeps the displayed filter consistent with what we
+    // actually matched against.
+    builder.respan_filter_range(Some(name));
+    builder.build()
+}
+
 fn build_code_label_for_path(
     file: &str,
     directory: Option<&str>,
@@ -1636,7 +2595,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -1657,42 +2616,225 @@ fn build_code_label_for_path(
     label.build()
 }
 
-fn selection_ranges(
-    workspace: &Entity<Workspace>,
+fn terminal_view_selection(terminal_view: &Entity<TerminalView>, cx: &App) -> Option<String> {
+    terminal_view
+        .read(cx)
+        .terminal()
+        .read(cx)
+        .last_content
+        .selection_text
+        .clone()
+        .filter(|text| !text.is_empty())
+}
+
+fn editor_selection_ranges(
+    editor: &Entity<Editor>,
+    include_current_line: bool,
     cx: &mut App,
 ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
-    let Some(editor) = workspace
-        .read(cx)
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-    else {
-        return Vec::new();
-    };
-
     editor.update(cx, |editor, cx| {
         let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
 
-        let buffer = editor.buffer().clone().read(cx);
-        let snapshot = buffer.snapshot(cx);
+        let multi_buffer = editor.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
 
-        selections
-            .into_iter()
-            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
-            .flat_map(|range| {
-                let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
-                let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;
-                if start_buffer != end_buffer {
-                    return None;
+        let non_empty_rows: collections::HashSet<u32> = selections
+            .iter()
+            .filter(|s| !s.is_empty())
+            .flat_map(|s| s.start.row..=s.end.row)
+            .collect();
+
+        let mut seen_current_line_rows = collections::HashSet::default();
+        let mut results = Vec::new();
+
+        for s in selections {
+            if s.is_empty() {
+                if !include_current_line
+                    || non_empty_rows.contains(&s.start.row)
+                    || !seen_current_line_rows.insert(s.start.row)
+                {
+                    continue;
                 }
-                Some((start_buffer, start..end))
-            })
-            .collect::<Vec<_>>()
+                let Some((buffer, anchor)) = multi_buffer.text_anchor_for_position(s.start, cx)
+                else {
+                    continue;
+                };
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let row = anchor.to_point(&buffer_snapshot).row;
+                let line_start = text::Point::new(row, 0);
+                let line_end = text::Point::new(row, buffer_snapshot.line_len(row));
+                let start = buffer_snapshot.anchor_after(line_start);
+                let end = buffer_snapshot.anchor_before(line_end);
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((buffer, start..end));
+            } else {
+                let mb_start = multi_buffer_snapshot.anchor_after(s.start);
+                let mb_end = multi_buffer_snapshot.anchor_before(s.end);
+                let Some((start_buffer, start)) =
+                    multi_buffer.text_anchor_for_position(mb_start, cx)
+                else {
+                    continue;
+                };
+                let Some((end_buffer, end)) = multi_buffer.text_anchor_for_position(mb_end, cx)
+                else {
+                    continue;
+                };
+                if start_buffer != end_buffer {
+                    continue;
+                }
+                let buffer_snapshot = start_buffer.read(cx).snapshot();
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((start_buffer, start..end));
+            }
+        }
+
+        results
     })
+}
+
+type ConfirmCallback = Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>;
+
+fn completion_text_for_editor_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+) -> (String, ConfirmCallback) {
+    const EDITOR_PLACEHOLDER: &str = "selection ";
+
+    let selections = editor_selections
+        .into_iter()
+        .enumerate()
+        .map(|(ix, (buffer, range))| {
+            (
+                buffer,
+                range,
+                (EDITOR_PLACEHOLDER.len() * ix)..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let new_text = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let selections = selections.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(editor) = editor.upgrade()
+                    && !selections.is_empty()
+                {
+                    mention_set
+                        .update(cx, |store, cx| {
+                            store.confirm_mention_for_selection(
+                                source_range.clone(),
+                                selections,
+                                editor.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
+}
+
+fn completion_text_for_terminal_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    terminal_selections: Vec<String>,
+) -> (String, ConfirmCallback) {
+    const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+    let mut new_text = String::new();
+    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+        .into_iter()
+        .map(|text| {
+            let start = new_text.len();
+            new_text.push_str(TERMINAL_PLACEHOLDER);
+            (text, start..(new_text.len() - 1))
+        })
+        .collect();
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            let terminal_ranges = terminal_ranges.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(editor) = editor.upgrade() else {
+                    return;
+                };
+                for (terminal_text, terminal_range) in terminal_ranges {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
+                        return;
+                    };
+                    let offset = start.to_offset(&snapshot);
+
+                    let line_count = terminal_text.lines().count() as u32;
+                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                    let crease = crate::mention_set::crease_for_mention(
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        range,
+                        editor.downgrade(),
+                    );
+
+                    let Some(crease_id) = editor.update(cx, |editor, cx| {
+                        let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                        editor.fold_creases(vec![crease], false, window, cx);
+                        crease_ids.first().copied()
+                    }) else {
+                        log::error!("insert_creases returned no ids for terminal selection");
+                        continue;
+                    };
+
+                    mention_set
+                        .update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                Task::ready(Ok(crate::mention_set::Mention::Text {
+                                    content: terminal_text,
+                                    tracked_buffers: vec![],
+                                }))
+                                .shared(),
+                                None,
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     #[test]
     fn test_prompt_completion_parse() {
@@ -1784,9 +2926,41 @@ mod tests {
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
 
-        assert_eq!(SlashCommandCompletion::try_parse("Lorem /", 0), None);
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..7,
+                command: None,
+                argument: None,
+            })
+        );
 
-        assert_eq!(SlashCommandCompletion::try_parse("Lorem /help", 0), None);
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..11,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help /test", 0),
+            Some(SlashCommandCompletion {
+                source_range: 12..17,
+                command: Some("test".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help", 10),
+            Some(SlashCommandCompletion {
+                source_range: 10..15,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
 
@@ -1794,8 +2968,58 @@ mod tests {
     }
 
     #[test]
+    fn test_section_headers_visible_until_argument() {
+        // Section headers stay visible while the user narrows the command name
+        // (`/`, `/comp`, `/compact `) and only disappear once they start typing
+        // the command's argument, where category grouping no longer applies.
+        let show_section_headers = |input: &str| {
+            SlashCommandCompletion::try_parse(input, 0)
+                .unwrap()
+                .argument
+                .is_none()
+        };
+
+        assert!(show_section_headers("/"));
+        assert!(show_section_headers("/comp"));
+        assert!(show_section_headers("/compact"));
+        assert!(show_section_headers("/compact "));
+        assert!(!show_section_headers("/compact now"));
+    }
+
+    #[test]
+    fn test_group_by_relevance_floats_best_group_and_keeps_groups_contiguous() {
+        // Items arrive in fuzzy-score order (best first). The group containing
+        // the best match floats to the top, groups stay contiguous, and the
+        // within-group order is preserved.
+        let mut items = [
+            ("compact", 1u32),  // best match, group 1
+            ("skill-a", 0u32),  // group 0
+            ("deploy", 2u32),   // group 2
+            ("skill-b", 0u32),  // group 0 (after skill-a in score order)
+            ("native-b", 1u32), // group 1 (after compact)
+        ];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            order,
+            vec!["compact", "native-b", "skill-a", "skill-b", "deploy"]
+        );
+
+        // When the best match is a skill, the skill group leads instead.
+        let mut items = [("skill-a", 0u32), ("compact", 1u32)];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(order, vec!["skill-a", "compact"]);
+    }
+
+    #[test]
     fn test_mention_completion_parse() {
         let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+        let supported_modes_with_diagnostics = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
 
         assert_eq!(
             MentionCompletion::try_parse("Lorem Ipsum", 0, &supported_modes),
@@ -1895,6 +3119,32 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @symbol agent_ui::completion_provider",
+                0,
+                &supported_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 6..43,
+                mode: Some(PromptContextType::Symbol),
+                argument: Some("agent_ui::completion_provider".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @diagnostics",
+                0,
+                &supported_modes_with_diagnostics
+            ),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(PromptContextType::Diagnostics),
+                argument: None,
+            })
+        );
+
         // Disallowed non-file mentions
         assert_eq!(
             MentionCompletion::try_parse("Lorem @symbol main", 0, &[PromptContextType::File]),
@@ -1918,5 +3168,253 @@ mod tests {
             None,
             "Should not parse with a space after @ at the start of the line"
         );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
+        );
+
+        // Bracketed mentions: opening brackets count as a boundary before '@' so
+        // typing `(@`, `[@`, or `{@` still opens the completion menu.
+
+        assert_eq!(
+            MentionCompletion::try_parse("(@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '('"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("[@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '['"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("{@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '{{'"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
+        let alpha = SessionMatch {
+            session_id: acp::SessionId::new("session-alpha"),
+            title: "Alpha Session".into(),
+        };
+        let beta = SessionMatch {
+            session_id: acp::SessionId::new("session-beta"),
+            title: "Beta Session".into(),
+        };
+
+        let sessions = vec![alpha.clone(), beta];
+
+        let task = {
+            let mut app = cx.app.borrow_mut();
+            filter_sessions_by_query(
+                "Alpha".into(),
+                Arc::new(AtomicBool::default()),
+                sessions,
+                &mut app,
+            )
+        };
+
+        let results = task.await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, alpha.session_id);
+    }
+
+    #[gpui::test]
+    async fn test_search_files_path_distance_ordering(cx: &mut TestAppContext) {
+        use project::Project;
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::{AppState, MultiWorkspace};
+
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees[0].read(cx).id()
+        });
+
+        // Open a file in dir2 to create navigation history.
+        // When searching for "a.txt", dir2/a.txt should be sorted first because
+        // it is closer to the most recently opened file (dir2/b.txt).
+        let b_path = ProjectPath {
+            worktree_id,
+            path: rel_path("dir2/b.txt").into(),
+        };
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(b_path, None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let results = cx
+            .update(|_window, cx| {
+                search_files(
+                    "a.txt".into(),
+                    Arc::new(AtomicBool::default()),
+                    &workspace,
+                    cx,
+                )
+            })
+            .await;
+
+        assert_eq!(results.len(), 2, "expected 2 matching files");
+        assert_eq!(
+            results[0].mat.path.as_ref(),
+            rel_path("dir2/a.txt"),
+            "dir2/a.txt should be first because it's closer to the recently opened dir2/b.txt"
+        );
+        assert_eq!(
+            results[1].mat.path.as_ref(),
+            rel_path("dir1/a.txt"),
+            "dir1/a.txt should be second"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_source_read_selection_editor_whole_line(cx: &mut TestAppContext) {
+        use editor::Editor;
+        use project::Project;
+        use serde_json::json;
+        use text::ToOffset as _;
+        use util::path;
+        use workspace::{AppState, MultiWorkspace};
+
+        crate::conversation_view::tests::init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "a.txt": "" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = cx.new(|cx| language::Buffer::local("abc\ndef\nghi", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 1)..text::Point::new(1, 1)]);
+            });
+        });
+
+        let source = AgentContextSource::Editor(editor.downgrade());
+
+        workspace.update(cx, |workspace, cx| {
+            let selection = source
+                .read_selection(workspace, true, cx)
+                .expect("editor source with cursor on a line should yield a selection");
+            assert!(
+                matches!(selection, AgentContextSelection::Editor(_)),
+                "expected Editor variant"
+            );
+            if let AgentContextSelection::Editor(ranges) = selection {
+                assert_eq!(
+                    ranges.len(),
+                    1,
+                    "expected exactly one range for whole-line fallback"
+                );
+                let (range_buffer, range) = &ranges[0];
+                let snapshot = range_buffer.read(cx).snapshot();
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                assert_eq!(
+                    &snapshot.text()[start_offset..end_offset],
+                    "def",
+                    "whole-line fallback should capture the current row"
+                );
+            }
+
+            // With include_current_line = false and no non-empty selection, the
+            // fallback is suppressed and read_selection should return None.
+            assert!(source.read_selection(workspace, false, cx).is_none());
+        });
     }
 }

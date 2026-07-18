@@ -1,6 +1,0 @@
-name = "Zed Keybind Context"
-grammar = "rust"
-autoclose_before = ")"
-brackets = [
-    { start = "(", end = ")", close = true, newline = false },
-]

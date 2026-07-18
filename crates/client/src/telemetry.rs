@@ -1,10 +1,11 @@
 mod event_coalescer;
 
 use crate::TelemetrySettings;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clock::SystemClock;
+use fs::Fs;
 use futures::channel::mpsc;
-use futures::{Future, FutureExt, StreamExt};
+use futures::{Future, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
@@ -19,7 +20,18 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::TryFutureExt;
+
+pub struct TelemetrySubscription {
+    pub historical_events: Result<HistoricalEvents>,
+    pub queued_events: Vec<EventWrapper>,
+    pub live_events: mpsc::UnboundedReceiver<EventWrapper>,
+}
+
+pub struct HistoricalEvents {
+    pub events: Vec<EventWrapper>,
+    pub parse_error_count: usize,
+}
+use util::ResultExt as _;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -37,10 +49,11 @@ struct TelemetryState {
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    release_channel: Option<&'static str>,
+    release_channel: Option<ReleaseChannel>,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
+
     log_file: Option<File>,
     is_staff: Option<bool>,
     first_event_date_time: Option<Instant>,
@@ -51,6 +64,8 @@ struct TelemetryState {
     os_name: String,
     app_version: String,
     os_version: Option<String>,
+
+    subscribers: Vec<mpsc::UnboundedSender<EventWrapper>>,
 }
 
 #[cfg(debug_assertions)]
@@ -84,10 +99,6 @@ static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
 
-#[cfg(target_os = "macos")]
-static MACOS_VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
-
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
     {
@@ -110,63 +121,57 @@ pub fn os_name() -> String {
 
 /// Note: This might do blocking IO! Only call from background threads
 pub fn os_version() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_foundation::NSProcessInfo;
-        let process_info = NSProcessInfo::processInfo();
-        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
-        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
-        let version_string = version_nsstring.to_string().replace("Version ", "");
-        // "15.6.1 (Build 24G90)" -> "15.6.1"
-        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
-        MACOS_VERSION_REGEX
-            .replace_all(&version_string, "")
-            .to_string()
-    }
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        use std::path::Path;
+    cfg_select! {
+       feature = "test-support" => {
+           // MacOS branch in particular is quite slow, hence we ought to "avoid" it in tests.
+           "test binary".to_owned()
+       }
+       target_os = "macos" => {
+           static MACOS_VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+               Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap()
+           });
+           use objc2_foundation::NSProcessInfo;
+           let process_info = NSProcessInfo::processInfo();
+           let version_nsstring = process_info.operatingSystemVersionString();
+           // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+           let version_string = version_nsstring.to_string().replace("Version ", "");
+           // "15.6.1 (Build 24G90)" -> "15.6.1"
+           // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+           MACOS_VERSION_REGEX
+               .replace_all(&version_string, "")
+               .to_string()
+       }
+       any(target_os = "linux", target_os = "freebsd") => {
+           use std::path::Path;
 
-        let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
-            file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
-            file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
-            file
-        } else {
-            log::error!(
-                "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
-            );
-            "".to_string()
-        };
-        let mut name = "unknown";
-        let mut version = "unknown";
-
-        for line in content.lines() {
-            match line.split_once('=') {
-                Some(("ID", val)) => name = val.trim_matches('"'),
-                Some(("VERSION_ID", val)) => version = val.trim_matches('"'),
-                _ => {}
-            }
-        }
-
-        format!("{} {}", name, version)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut info = unsafe { std::mem::zeroed() };
-        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
-        if status.is_ok() {
-            semver::Version::new(
-                info.dwMajorVersion as _,
-                info.dwMinorVersion as _,
-                info.dwBuildNumber as _,
-            )
-            .to_string()
-        } else {
-            "unknown".to_string()
-        }
+           let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
+               file
+           } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
+               file
+           } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
+               file
+           } else {
+               log::error!(
+                   "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
+               );
+               "".to_string()
+           };
+           util::parse_os_release(&content).unwrap_or_else(|| "unknown".to_string())
+       }
+       target_os = "windows" => {
+           let mut info = unsafe { std::mem::zeroed() };
+           let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
+           if status.is_ok() {
+               semver::Version::new(
+                   info.dwMajorVersion as _,
+                   info.dwMinorVersion as _,
+                   info.dwBuildNumber as _,
+               )
+               .to_string()
+           } else {
+               "unknown".to_string()
+           }
+       }
     }
 }
 
@@ -176,13 +181,10 @@ impl Telemetry {
         client: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let release_channel =
-            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
-            release_channel,
+            release_channel: ReleaseChannel::try_global(cx),
             system_id: None,
             installation_id: None,
             session_id: None,
@@ -199,8 +201,8 @@ impl Telemetry {
             os_version: None,
             os_name: os_name(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
+            subscribers: Vec::new(),
         }));
-        Self::log_file_path();
 
         cx.background_spawn({
             let state = state.clone();
@@ -237,6 +239,9 @@ impl Telemetry {
         cx.background_spawn({
             let this = Arc::downgrade(&this);
             async move {
+                if cfg!(feature = "test-support") {
+                    return;
+                }
                 while let Some(event) = rx.next().await {
                     let Some(state) = this.upgrade() else { break };
                     state.report_event(Event::Flexible(event))
@@ -271,6 +276,70 @@ impl Telemetry {
 
     pub fn log_file_path() -> PathBuf {
         paths::logs_dir().join("telemetry.log")
+    }
+
+    pub async fn subscribe_with_history(
+        self: &Arc<Self>,
+        fs: Arc<dyn Fs>,
+    ) -> TelemetrySubscription {
+        let historical_events = self.read_log_file(fs).await;
+
+        let mut state = self.state.lock();
+        let queued_events: Vec<EventWrapper> = state.events_queue.clone();
+
+        let (tx, rx) = mpsc::unbounded();
+        state.subscribers.push(tx);
+
+        drop(state);
+
+        TelemetrySubscription {
+            historical_events,
+            queued_events,
+            live_events: rx,
+        }
+    }
+
+    async fn read_log_file(self: &Arc<Self>, fs: Arc<dyn Fs>) -> anyhow::Result<HistoricalEvents> {
+        const MAX_LOG_READ: usize = 5 * 1024 * 1024;
+
+        let path = Self::log_file_path();
+
+        let content = fs
+            .load_bytes(&path)
+            .await
+            .with_context(|| format!("failed to load telemetry log from {:?}", path))?;
+
+        let start_offset = if content.len() > MAX_LOG_READ {
+            let skip = content.len() - MAX_LOG_READ;
+            content[skip..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|pos| skip + pos + 1)
+                .unwrap_or(skip)
+        } else {
+            0
+        };
+
+        let content_str = std::str::from_utf8(&content[start_offset..])
+            .context("telemetry log file contains invalid UTF-8")?;
+
+        let mut events = Vec::new();
+        let mut parse_error_count = 0;
+
+        for line in content_str.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<EventWrapper>(line) {
+                Ok(event) => events.push(event),
+                Err(_) => parse_error_count += 1,
+            }
+        }
+
+        Ok(HistoricalEvents {
+            events,
+            parse_error_count,
+        })
     }
 
     pub fn has_checksum_seed(&self) -> bool {
@@ -408,16 +477,12 @@ impl Telemetry {
                 continue;
             };
 
-            let project_type = if file_name == "pnpm-lock.yaml" {
-                Some("pnpm")
-            } else if file_name == "yarn.lock" {
-                Some("yarn")
-            } else if file_name == "package.json" {
-                Some("node")
-            } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                Some("dotnet")
-            } else {
-                None
+            let project_type = match file_name {
+                "pnpm-lock.yaml" => Some("pnpm"),
+                "yarn.lock" => Some("yarn"),
+                "package.json" => Some("node"),
+                _ if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) => Some("dotnet"),
+                _ => None,
             };
 
             if let Some(project_type) = project_type {
@@ -434,6 +499,61 @@ impl Telemetry {
         let mut project_types: Vec<_> = project_types.into_iter().map(String::from).collect();
         project_types.sort();
         Some(project_types)
+    }
+
+    /// Report a telemetry event that originated on a remote server.
+    ///
+    /// The remote server cannot upload telemetry itself, so it forwards events
+    /// (as a JSON-serialized [`Event`]) to the client. Since the OS metadata in
+    /// [`EventRequestBody`] is batch-level (describing the uploading client),
+    /// the remote server's OS is attached as event properties instead, so the
+    /// origin can still be distinguished downstream.
+    pub fn report_remote_event(
+        self: &Arc<Self>,
+        event_json: &str,
+        connection_type: &str,
+        os_name: String,
+        os_version: Option<String>,
+        architecture: String,
+    ) -> Result<()> {
+        // The remote server forwards a bare `telemetry_events::FlexibleEvent`
+        // (the type behind `telemetry::event!`), not the tagged `Event` enum.
+        let mut flexible: telemetry_events::FlexibleEvent =
+            serde_json::from_str(event_json).context("invalid remote telemetry event")?;
+        flexible
+            .event_properties
+            .insert("remote".into(), true.into());
+        flexible
+            .event_properties
+            .insert("remote_connection_type".into(), connection_type.into());
+        flexible
+            .event_properties
+            .insert("remote_os_name".into(), os_name.into());
+        flexible
+            .event_properties
+            .insert("remote_architecture".into(), architecture.into());
+        if let Some(os_version) = os_version {
+            flexible
+                .event_properties
+                .insert("remote_os_version".into(), os_version.into());
+        }
+        self.report_event(Event::Flexible(flexible));
+        Ok(())
+    }
+
+    /// Returns a snapshot of the currently queued (not-yet-flushed) telemetry
+    /// events, for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queued_events(self: &Arc<Self>) -> Vec<telemetry_events::FlexibleEvent> {
+        self.state
+            .lock()
+            .events_queue
+            .iter()
+            .map(|wrapper| {
+                let Event::Flexible(event) = &wrapper.event;
+                event.clone()
+            })
+            .collect()
     }
 
     fn report_event(self: &Arc<Self>, mut event: Event) {
@@ -473,11 +593,17 @@ impl Telemetry {
         };
 
         let signed_in = state.metrics_id.is_some();
-        state.events_queue.push(EventWrapper {
+        let event_wrapper = EventWrapper {
             signed_in,
             milliseconds_since_first_event,
             event,
-        });
+        };
+
+        state
+            .subscribers
+            .retain(|tx| tx.unbounded_send(event_wrapper.clone()).is_ok());
+
+        state.events_queue.push(event_wrapper);
 
         if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
             drop(state);
@@ -524,66 +650,67 @@ impl Telemetry {
             .body(json_bytes.into())?)
     }
 
-    pub fn flush_events(self: &Arc<Self>) -> Task<()> {
-        let mut state = self.state.lock();
-        state.first_event_date_time = None;
-        let events = mem::take(&mut state.events_queue);
-        state.flush_events_task.take();
-        drop(state);
-        if events.is_empty() {
-            return Task::ready(());
+    pub async fn flush_events_inner(self: &Arc<Self>) -> Result<()> {
+        let (json_bytes, request_body) = {
+            let mut state = self.state.lock();
+            state.first_event_date_time = None;
+            let events = mem::take(&mut state.events_queue);
+            state.flush_events_task.take();
+            if events.is_empty() {
+                return Ok(());
+            }
+
+            let mut json_bytes = Vec::new();
+
+            if let Some(file) = &mut state.log_file {
+                for event in &events {
+                    json_bytes.clear();
+                    serde_json::to_writer(&mut json_bytes, event)?;
+                    file.write_all(&json_bytes)?;
+                    file.write_all(b"\n")?;
+                }
+            }
+
+            (
+                json_bytes,
+                EventRequestBody {
+                    system_id: state.system_id.as_deref().map(Into::into),
+                    installation_id: state.installation_id.as_deref().map(Into::into),
+                    session_id: state.session_id.clone(),
+                    metrics_id: state.metrics_id.as_deref().map(Into::into),
+                    is_staff: state.is_staff,
+                    app_version: state.app_version.clone(),
+                    os_name: state.os_name.clone(),
+                    os_version: state.os_version.clone(),
+                    architecture: state.architecture.to_string(),
+
+                    release_channel: state
+                        .release_channel
+                        .map(|channel| channel.display_name().to_owned()),
+                    events,
+                },
+            )
+        };
+
+        let request = self.build_request(json_bytes, &request_body)?;
+        let response = self.http_client.send(request).await?;
+        if response.status() != 200 {
+            log::error!("Failed to send events: HTTP {:?}", response.status());
         }
 
+        anyhow::Ok(())
+    }
+
+    pub fn flush_events(self: &Arc<Self>) -> Task<()> {
         let this = self.clone();
-        self.executor.spawn(
-            async move {
-                let mut json_bytes = Vec::new();
-
-                if let Some(file) = &mut this.state.lock().log_file {
-                    for event in &events {
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, event)?;
-                        file.write_all(&json_bytes)?;
-                        file.write_all(b"\n")?;
-                    }
-                }
-
-                let request_body = {
-                    let state = this.state.lock();
-
-                    EventRequestBody {
-                        system_id: state.system_id.as_deref().map(Into::into),
-                        installation_id: state.installation_id.as_deref().map(Into::into),
-                        session_id: state.session_id.clone(),
-                        metrics_id: state.metrics_id.as_deref().map(Into::into),
-                        is_staff: state.is_staff,
-                        app_version: state.app_version.clone(),
-                        os_name: state.os_name.clone(),
-                        os_version: state.os_version.clone(),
-                        architecture: state.architecture.to_string(),
-
-                        release_channel: state.release_channel.map(Into::into),
-                        events,
-                    }
-                };
-
-                let request = this.build_request(json_bytes, &request_body)?;
-                let response = this.http_client.send(request).await?;
-                if response.status() != 200 {
-                    log::error!("Failed to send events: HTTP {:?}", response.status());
-                }
-                anyhow::Ok(())
-            }
-            .log_err()
-            .map(|_| ()),
-        )
+        self.executor.spawn(async move {
+            this.flush_events_inner().await.log_err();
+        })
     }
 }
 
 pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
+    let checksum_seed = ZED_CLIENT_CHECKSUM_SEED.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);
@@ -602,6 +729,7 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 mod tests {
     use super::*;
     use clock::FakeSystemClock;
+
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
@@ -610,7 +738,10 @@ mod tests {
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
-    fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
+    async fn test_telemetry_flush_on_max_queue_size(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_200_response();
@@ -618,7 +749,7 @@ mod tests {
         let installation_id = Some("installation_id".to_string());
         let session_id = "session_id".to_string();
 
-        cx.update(|cx| {
+        let (telemetry, first_date_time, event) = cx.update(|cx| {
             let telemetry = Telemetry::new(clock.clone(), http, cx);
 
             telemetry.state.lock().max_queue_size = 4;
@@ -637,6 +768,10 @@ mod tests {
                 event_properties,
             };
 
+            (telemetry, first_date_time, event)
+        });
+
+        cx.update(|_cx| {
             telemetry.report_event(Event::Flexible(event.clone()));
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
@@ -669,6 +804,12 @@ mod tests {
 
             // Adding a 4th event should cause a flush
             telemetry.report_event(Event::Flexible(event));
+        });
+
+        // Run the spawned flush task to completion
+        executor.run_until_parked();
+
+        cx.update(|_cx| {
             assert!(is_empty_state(&telemetry));
         });
     }
@@ -723,6 +864,79 @@ mod tests {
 
             assert!(is_empty_state(&telemetry));
         });
+    }
+
+    #[gpui::test]
+    async fn test_report_remote_event_tags_origin(cx: &mut TestAppContext) {
+        init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+
+        let telemetry = cx.update(|cx| {
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
+            telemetry.start(
+                Some("system_id".to_string()),
+                Some("installation_id".to_string()),
+                "session_id".to_string(),
+                cx,
+            );
+            telemetry
+        });
+
+        // Mirror what the remote server forwards: a bare `FlexibleEvent`, which
+        // is the type produced by `telemetry::event!` / sent over the queue.
+        let event_json = serde_json::to_string(&FlexibleEvent {
+            event_type: "fs_watcher_poll".to_string(),
+            event_properties: HashMap::from_iter([(
+                "path".to_string(),
+                serde_json::Value::String("/code/project".to_string()),
+            )]),
+        })
+        .unwrap();
+
+        cx.update(|_| {
+            telemetry
+                .report_remote_event(
+                    &event_json,
+                    "ssh",
+                    "Linux".to_string(),
+                    Some("ubuntu 24.04".to_string()),
+                    "aarch64".to_string(),
+                )
+                .unwrap();
+        });
+
+        let queue = telemetry.state.lock().events_queue.clone();
+        assert_eq!(queue.len(), 1);
+        let Event::Flexible(event) = &queue[0].event;
+        assert_eq!(event.event_type, "fs_watcher_poll");
+        // Original properties are preserved.
+        assert_eq!(
+            event.event_properties.get("path"),
+            Some(&serde_json::Value::String("/code/project".to_string()))
+        );
+        // The remote server's OS is attached as properties, since the batch-level
+        // OS describes the uploading client rather than the remote host.
+        assert_eq!(
+            event.event_properties.get("remote"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_connection_type"),
+            Some(&serde_json::Value::String("ssh".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_os_name"),
+            Some(&serde_json::Value::String("Linux".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_os_version"),
+            Some(&serde_json::Value::String("ubuntu 24.04".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_architecture"),
+            Some(&serde_json::Value::String("aarch64".to_string()))
+        );
     }
 
     #[gpui::test]
@@ -863,7 +1077,7 @@ mod tests {
             .enumerate()
             .filter_map(|(i, path)| {
                 Some((
-                    Arc::from(RelPath::unix(path).ok()?),
+                    Arc::from(RelPath::from_unix_str(path).ok()?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
                 ))

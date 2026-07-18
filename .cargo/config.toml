@@ -16,5 +16,9 @@ rustflags = [
     "target-feature=+crt-static", # This fixes the linking issue when compiling livekit on Windows
 ]
 
+# We need lld to link libwebrtc.a successfully on aarch64-linux
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"

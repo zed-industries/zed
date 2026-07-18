@@ -5,46 +5,46 @@ title: Zed Editor Git integration documentation
 
 # Git
 
-Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones, like conflict resolution tools, line by line staging, and more.
+Zed has built-in Git support that lets you manage version control without leaving the editor. The Git Panel shows your working tree state, staging area, and branch information. Changes you make on the command line are reflected immediately in Zed.
 
-Here's an overview of all currently supported features:
-
-- Committing
-- Staging, pushing, pulling, and fetching
-- Project Diff: A multibuffer view of all changes
-- Diff indicators in buffers and editor scrollbars
-- Inline diff toggle and reverts in the editor for unstaged changes
-- Git status in the Project Panel
-- Branch creating and switching
-- Git blame viewing
-- Git stash pop, apply, drop and view
+For operations that Zed doesn't support natively, you can use the integrated terminal.
 
 ## Git Panel
 
-The Git Panel gives you a birds-eye view of the state of your working tree and of Git's staging area.
+The Git Panel shows the state of your working tree and Git's staging area.
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
-In the panel you can see the state of your project at a glance—which repository and branch are active, what files have changed and the current staging state of each file.
+In the panel you can see the state of your project at a glance: which repository and branch are active, what files have changed and the current staging state of each file.
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
 ### Configuration
 
-You can configure how Zed hard wraps commit messages with the `preferred-line-length` setting of the "Git Commit" language. The default is `72`, but it can be set to any number of characters `0` or more.
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) to customize Git behavior. Settings are spread across two pages:
 
-The Git Panel also allows configuring the `soft_wrap` setting to adjust how commit messages display while you are typing them in the Git Panel. The default setting is `editor_width`, however, `none`, `preferred_line_length`, and `bounded` are also options.
+- **Panels > Git Panel**: Panel position, tree vs flat view, status display style
+- **Version Control**: Gutter indicators, inline blame, hunk styles
 
-#### Example
+#### Moving the Git Panel
 
-```json
-"languages": {
-  "Git Commit": {
-    "soft_wrap": "editor_width",
-    "preferred_line_length": 72
-  },
-}
-```
+By default, the Git Panel docks on the left. Go to **Panels > Git Panel** and change **Git Panel Dock** to move it to the right or bottom.
+
+#### Switching to Tree View
+
+The Git Panel shows a flat list of changed files by default. To see files organized by folder hierarchy instead, toggle **Tree View** in the panel's context menu, or enable it in **Panels > Git Panel**.
+
+#### Inline Blame
+
+Zed shows Git blame information on the current line. To turn this off or add a delay before it appears, go to **Version Control > Inline Git Blame**.
+
+#### Hiding the Gutter Indicators
+
+The colored bars in the gutter that show added, modified, and deleted lines can be hidden. Go to **Version Control > Git Gutter** and set **Visibility** to "Hide".
+
+#### Commit Message Line Length
+
+Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
 ## Project Diff
 
@@ -54,11 +54,75 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
-<!-- Add media -->
+### Word Diff Highlighting
 
-## Fetch, push, and pull
+By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.
+
+To disable word diff for specific languages only, add this to your settings.json:
+
+```json
+{
+  "languages": {
+    "Markdown": {
+      "word_diff_enabled": false
+    }
+  }
+}
+```
+
+### Diff View Styles
+
+Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
+
+#### Changing the diff view
+
+Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
+
+To change the default, add this to your `settings.json`:
+
+```json
+{
+  "diff_view_style": "unified"
+}
+```
+
+See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
+
+#### Split vs unified
+
+- **Split**: Shows the original and modified versions side by side. Useful for comparing file structure or reviewing large changes.
+- **Unified**: Shows changes inline with additions and deletions in a single view. Useful for focusing on specific line changes.
+
+You can switch between modes at any time. Your preference applies to [Project Diff](#project-diff), [File History](#file-history), and [Stash Diff View](#stash-diff-view). These diff views function as [multibuffers](./multibuffers.md), allowing you to edit multiple excerpts simultaneously.
+
+## File History
+
+File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
+
+To view File History:
+
+- Right-click on a file in the Project Panel and select "View File History"
+- Right-click on a file in the Git Panel and select "View File History"
+- Right-click on an editor tab and select "View File History"
+- Use the Command Palette and search for "file history"
+
+## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
+
+### Push Configuration
+
+Zed respects Git's push configuration. When pushing, Zed checks the following in order:
+
+1. `pushRemote` configured for the current branch
+2. `remote.pushDefault` in your Git config
+3. The branch's tracking remote
+
+This matches Git's standard behavior, so if you've configured `pushRemote` or `pushDefault` in your `.gitconfig` or via `git config`, Zed will use those settings.
+
+## Remotes
+
+When your repository has multiple remotes, Zed shows a remote selector in the Git Panel. Click the remote button next to push/pull to choose which remote to use for that operation.
 
 ## Staging Workflow
 
@@ -77,6 +141,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 <!-- Show a set of changes with default staged -->
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
+
+To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
 
 <!-- Add media -->
 
@@ -98,6 +164,78 @@ By default, Zed sets the commit line length to `72` but it can be configured in 
 
 Find more information about setting the `preferred-line-length` in the [Configuration](#configuration) section.
 
+## Branch Management
+
+### Creating and Switching Branches
+
+Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
+
+When you are working in a [Git worktree](#git-worktrees), use the branch picker after switching to the worktree to create or check out the branch you want to use there.
+
+### Deleting Branches
+
+To delete a branch, open the branch switcher with {#action git::Switch}, find the branch you want to delete, and use the delete option. Zed will confirm before deleting to prevent accidental data loss.
+
+> **Note:** You cannot delete the branch you currently have checked out. Switch to a different branch first.
+
+## Git Worktrees
+
+Git worktrees let you keep multiple checkouts of the same repository on disk at the same time.
+This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
+
+Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+From the picker, you can:
+
+- Create a new linked worktree either from the current branch or default branch
+- Type a name to create a named worktree or let Zed automatically pick one for you
+- Switch the current workspace to an existing worktree
+- Open an existing worktree in a new window
+- Delete linked worktrees that are not currently open in the project
+
+### Worktree Management
+
+New worktrees are created in detached HEAD state.
+After switching to the new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing, unused branch.
+This keeps Zed from accidentally checking out the same branch in multiple worktrees.
+
+The directory used for new worktrees is controlled by the `git.worktree_directory` setting.
+By default, Zed creates worktrees under `../worktrees` relative to the repository's working directory.
+
+See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
+
+### Init Setup
+
+To run setup steps after Zed creates a linked worktree, use the [`create_worktree` task hook](./tasks.md#hooks).
+For agent-specific workflows, see [Worktree Isolation](./ai/parallel-agents.md#worktree-isolation).
+
+### Multi-root Workspaces
+
+If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
+Non-Git folders in the same project are included in the new workspace as-is.
+
+## Merge Conflicts
+
+When you encounter merge conflicts after a merge, rebase, or pull, Zed highlights the conflicting regions in your files and displays resolution buttons above each conflict.
+
+### Viewing Conflicts
+
+Conflicting files appear in the Git Panel with a warning icon. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
+
+- Changes from your current branch are highlighted in green
+- Changes from the incoming branch are highlighted in blue
+
+### Resolving Conflicts
+
+Each conflict shows three buttons:
+
+- **Use [branch-name]**: Keep the changes from one branch (shows the actual branch name, like "main")
+- **Use [other-branch]**: Keep the changes from the other branch (like "feature-branch")
+- **Use Both**: Keep both sets of changes, with your branch's changes first
+
+Click a button to resolve that conflict. The conflict markers are removed and replaced with your chosen content. After resolving all conflicts in a file, stage it and commit to complete the merge.
+
+> **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
@@ -108,7 +246,7 @@ To stash all your current changes, use the {#action git::StashAll} action. This 
 
 ### Managing Stashes
 
-Zed provides a comprehensive stash picker accessible via {#action git::ViewStash}. From the stash picker, you can:
+Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:
 
 - **View stash list**: Browse all your saved stashes with their descriptions and timestamps
 - **Open diffs**: See exactly what changes are stored in each stash
@@ -125,37 +263,52 @@ For faster workflows, Zed provides direct actions to work with the most recent s
 
 ### Stash Diff View
 
-When viewing a specific stash in the diff view, you have additional options available through the interface:
+To view a stash's contents, select it in the stash picker and press {#kb stash_picker::ShowStashItem}. From the diff view, you can use these keybindings:
 
-- Apply the current stash to your working directory
-- Pop the current stash (apply and remove)
-- Remove the stash without applying changes
-
-To open the stash diff view, select a stash from the stash picker and use the {#action stash_picker::ShowStashItem} ({#kb stash_picker::ShowStashItem}) keybinding.
+| Action                               | Keybinding                   |
+| ------------------------------------ | ---------------------------- |
+| Apply stash                          | {#kb git::ApplyCurrentStash} |
+| Pop stash (apply and remove)         | {#kb git::PopCurrentStash}   |
+| Drop stash (remove without applying) | {#kb git::DropCurrentStash}  |
 
 ## AI Support in Git
 
 Zed currently supports LLM-powered commit message generation.
-You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} ({#kb git::GenerateCommitMessage}) keybinding.
+You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage}, or through the {#kb git::GenerateCommitMessage} keybinding.
 
-> Note that you need to have an LLM provider configured for billing purposes, either via your own API keys or trialing/paying for Zed's hosted AI models. Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
+> Note that you need to have an LLM provider configured either via your own API keys or through Zed's hosted AI models.
+> Visit [AI Quick Start](./ai/quick-start.md) to learn how to configure AI.
 
-You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
+You can specify your preferred model for this task by adding a `commit_message_model` field to your agent settings.
+See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
 ```json [settings]
 {
   "agent": {
     "commit_message_model": {
       "provider": "anthropic",
-      "model": "claude-3-5-haiku"
+      "model": "claude-4-5-haiku"
     }
   }
 }
 ```
 
-<!-- Add media -->
+To add custom commit instructions for the model, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
-More advanced AI integration with Git features may come in the future.
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
+
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+
+> Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
+> See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.
 
 ## Git Integrations
 
@@ -168,7 +321,11 @@ Zed currently supports links to the hosted versions of
 [SourceHut](https://sr.ht) and
 [Codeberg](https://codeberg.org).
 
-For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
+### Self-Hosted Instances
+
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+
+However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 
 ```json [settings]
 {
@@ -182,10 +339,16 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
 }
 ```
 
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+
+You can configure multiple custom providers if you work with several self-hosted instances.
+
+### Permalinks
+
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
-by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
+by creating [custom key bindings](./key-bindings.md#custom-key-bindings) for the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
@@ -223,6 +386,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Branch}                     | {#kb git::Branch}                     |
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |

@@ -175,12 +175,30 @@ pub struct ThemeColors {
     pub vim_visual_line_background: Hsla,
     /// Background color for Vim Visual Block mode indicator.
     pub vim_visual_block_background: Hsla,
+    /// Background color for Vim yank highlight.
+    pub vim_yank_background: Hsla,
+    /// Foreground color for Helix jump labels.
+    pub vim_helix_jump_label_foreground: Hsla,
     /// Background color for Vim Helix Normal mode indicator.
     pub vim_helix_normal_background: Hsla,
     /// Background color for Vim Helix Select mode indicator.
     pub vim_helix_select_background: Hsla,
-    /// Text color for Vim mode indicator label.
-    pub vim_mode_text: Hsla,
+    /// Foreground color for Vim Normal mode indicator.
+    pub vim_normal_foreground: Hsla,
+    /// Foreground color for Vim Insert mode indicator.
+    pub vim_insert_foreground: Hsla,
+    /// Foreground color for Vim Replace mode indicator.
+    pub vim_replace_foreground: Hsla,
+    /// Foreground color for Vim Visual mode indicator.
+    pub vim_visual_foreground: Hsla,
+    /// Foreground color for Vim Visual Line mode indicator.
+    pub vim_visual_line_foreground: Hsla,
+    /// Foreground color for Vim Visual Block mode indicator.
+    pub vim_visual_block_foreground: Hsla,
+    /// Foreground color for Vim Helix Normal mode indicator.
+    pub vim_helix_normal_foreground: Hsla,
+    /// Foreground color for Vim Helix Select mode indicator.
+    pub vim_helix_select_foreground: Hsla,
 
     // ===
     // Editor
@@ -223,6 +241,18 @@ pub struct ThemeColors {
     ///
     /// Matching brackets in the cursor scope are highlighted with this background color.
     pub editor_document_highlight_bracket_background: Hsla,
+    /// Filled background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_background: Hsla,
+    /// Hollow background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_background: Hsla,
+    /// Hollow border color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_border: Hsla,
+    /// Filled background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_background: Hsla,
+    /// Hollow background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_background: Hsla,
+    /// Hollow border color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_border: Hsla,
 
     // ===
     // Terminal

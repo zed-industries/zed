@@ -13,13 +13,13 @@ pub struct ThemePickerDelegate {
     filtered_themes: Vec<StringMatch>,
     selected_index: usize,
     current_theme: SharedString,
-    on_theme_changed: Arc<dyn Fn(SharedString, &mut App) + 'static>,
+    on_theme_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
 }
 
 impl ThemePickerDelegate {
     fn new(
         current_theme: SharedString,
-        on_theme_changed: impl Fn(SharedString, &mut App) + 'static,
+        on_theme_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
         cx: &mut Context<ThemePicker>,
     ) -> Self {
         let theme_registry = ThemeRegistry::global(cx);
@@ -53,6 +53,10 @@ impl ThemePickerDelegate {
 
 impl PickerDelegate for ThemePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "theme picker"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_themes.len()
@@ -130,10 +134,10 @@ impl PickerDelegate for ThemePickerDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<ThemePicker>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<ThemePicker>) {
         if let Some(theme_match) = self.filtered_themes.get(self.selected_index) {
             let theme = theme_match.string.clone();
-            (self.on_theme_changed)(theme.into(), cx);
+            (self.on_theme_changed)(theme.into(), window, cx);
         }
     }
 
@@ -166,7 +170,7 @@ impl PickerDelegate for ThemePickerDelegate {
 
 pub fn theme_picker(
     current_theme: SharedString,
-    on_theme_changed: impl Fn(SharedString, &mut App) + 'static,
+    on_theme_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     window: &mut Window,
     cx: &mut Context<ThemePicker>,
 ) -> ThemePicker {
@@ -174,6 +178,7 @@ pub fn theme_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .width(rems_from_px(210.))
-        .max_height(Some(rems(18.).into()))
+        .initial_width(rems_from_px(210.))
+        .max_height(rems(18.))
+        .popover()
 }

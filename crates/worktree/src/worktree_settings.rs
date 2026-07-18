@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use settings::{RegisterSetting, Settings};
+use settings::{RegisterSetting, ScanSymlinksSetting, Settings};
 use util::{
     ResultExt,
     paths::{PathMatcher, PathStyle},
@@ -10,7 +10,6 @@ use util::{
 
 #[derive(Clone, PartialEq, Eq, RegisterSetting)]
 pub struct WorktreeSettings {
-    pub project_name: Option<String>,
     /// Whether to prevent this project from being shared in public channels.
     pub prevent_sharing_in_public_channels: bool,
     pub file_scan_exclusions: PathMatcher,
@@ -18,8 +17,10 @@ pub struct WorktreeSettings {
     /// This field contains all ancestors of the `file_scan_inclusions`. It's used to
     /// determine whether to terminate worktree scanning for a given dir.
     pub parent_dir_scan_inclusions: PathMatcher,
+    pub scan_symlinks: ScanSymlinksSetting,
     pub private_files: PathMatcher,
     pub hidden_files: PathMatcher,
+    pub read_only_files: PathMatcher,
 }
 
 impl WorktreeSettings {
@@ -45,6 +46,14 @@ impl WorktreeSettings {
         path.ancestors()
             .any(|ancestor| self.hidden_files.is_match(ancestor))
     }
+
+    pub fn is_path_read_only(&self, path: &RelPath) -> bool {
+        self.read_only_files.is_match(path)
+    }
+
+    pub fn is_std_path_read_only(&self, path: &Path) -> bool {
+        self.read_only_files.is_match_std_path(path)
+    }
 }
 
 impl Settings for WorktreeSettings {
@@ -54,6 +63,8 @@ impl Settings for WorktreeSettings {
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
         let private_files = worktree.private_files.unwrap().0;
         let hidden_files = worktree.hidden_files.unwrap();
+        let read_only_files = worktree.read_only_files.unwrap_or_default();
+        let scan_symlinks = worktree.scan_symlinks.unwrap();
         let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
             .flat_map(|glob| {
@@ -66,7 +77,6 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: worktree.project_name,
             prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()
@@ -84,6 +94,10 @@ impl Settings for WorktreeSettings {
             hidden_files: path_matchers(hidden_files, "hidden_files")
                 .log_err()
                 .unwrap_or_default(),
+            read_only_files: path_matchers(read_only_files, "read_only_files")
+                .log_err()
+                .unwrap_or_default(),
+            scan_symlinks,
         }
     }
 }

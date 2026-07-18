@@ -2,17 +2,18 @@
 //! Uses tree-sitter queries from brackets.scm to capture bracket pairs,
 //! and theme accents to colorize those.
 
+use std::cmp::Ordering;
 use std::ops::Range;
+use std::sync::Arc;
 
-use crate::Editor;
-use collections::HashMap;
-use gpui::{Context, HighlightStyle};
-use itertools::Itertools;
-use language::language_settings;
-use multi_buffer::{Anchor, ExcerptId};
-use ui::{ActiveTheme, utils::ensure_minimum_contrast};
-
-struct ColorizedBracketsHighlight;
+use crate::{Editor, HighlightKey};
+use collections::{HashMap, HashSet};
+use gpui::{AppContext as _, Context, HighlightStyle, Hsla};
+use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
+use multi_buffer::{Anchor, BufferOffset, ExcerptRange, MultiBufferSnapshot};
+use text::OffsetRangeExt as _;
+use theme::{Appearance, Oklab, Oklch, hsla_to_oklab, hsla_to_oklch, oklch_to_hsla};
+use ui::utils::apca_contrast;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
@@ -21,141 +22,364 @@ impl Editor {
         }
 
         if invalidate {
-            self.fetched_tree_sitter_chunks.clear();
+            self.bracket_fetched_tree_sitter_chunks.clear();
         }
 
-        let accents_count = cx.theme().accents().0.len();
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let all_excerpts = self.buffer().read(cx).excerpt_ids();
-        let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
-                                       text_anchors: [text::Anchor; 4]|
-         -> Option<[Option<_>; 4]> {
-            multi_buffer_snapshot
-                .anchors_in_excerpt(current_excerpt, text_anchors)
-                .or_else(|| {
-                    all_excerpts
-                        .iter()
-                        .filter(|&&excerpt_id| excerpt_id != current_excerpt)
-                        .find_map(|&excerpt_id| {
-                            multi_buffer_snapshot.anchors_in_excerpt(excerpt_id, text_anchors)
-                        })
-                })?
-                .collect_array()
+        let Some(accent_data) = self.accent_data.as_ref() else {
+            return;
         };
+        let accents = accent_data.colors.0.clone();
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-        let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
-            HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
-                let buffer_snapshot = buffer.read(cx).snapshot();
-                if language_settings::language_settings(
-                    buffer_snapshot.language().map(|language| language.name()),
-                    buffer_snapshot.file(),
-                    cx,
-                )
-                .colorize_brackets
-                {
-                    let fetched_chunks = self
-                        .fetched_tree_sitter_chunks
-                        .entry(excerpt_id)
-                        .or_default();
+        let visible_excerpts = self.visible_buffer_ranges(cx);
+        let excerpt_data: Vec<(
+            BufferSnapshot,
+            Range<BufferOffset>,
+            ExcerptRange<text::Anchor>,
+        )> = visible_excerpts
+            .into_iter()
+            .filter(|(buffer_snapshot, _, _)| {
+                let Some(buffer) = self.buffer().read(cx).buffer(buffer_snapshot.remote_id())
+                else {
+                    return false;
+                };
+                LanguageSettings::for_buffer(buffer.read(cx), cx).colorize_brackets
+            })
+            .collect();
 
-                    let brackets_by_accent = buffer_snapshot
-                        .fetch_bracket_ranges(
-                            buffer_range.start..buffer_range.end,
-                            Some(fetched_chunks),
-                        )
-                        .into_iter()
-                        .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(chunk_range) {
-                                pairs
-                            } else {
-                                Vec::new()
+        let mut fetched_tree_sitter_chunks = excerpt_data
+            .iter()
+            .filter_map(|(_, _, excerpt_range)| {
+                let key = excerpt_range.context.clone();
+                Some((
+                    key.clone(),
+                    self.bracket_fetched_tree_sitter_chunks.get(&key).cloned()?,
+                ))
+            })
+            .collect::<HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>>();
+
+        let accents_count = accents.len();
+        let bracket_matches_by_accent = cx.background_spawn(async move {
+            if accents_count == 0 {
+                return (HashMap::default(), fetched_tree_sitter_chunks);
+            }
+
+            let bracket_matches_by_accent: HashMap<usize, Vec<Range<Anchor>>> =
+                excerpt_data.into_iter().fold(
+                    HashMap::default(),
+                    |mut acc, (buffer_snapshot, buffer_range, excerpt_range)| {
+                        let fetched_chunks = fetched_tree_sitter_chunks
+                            .entry(excerpt_range.context.clone())
+                            .or_default();
+
+                        let brackets_by_accent = compute_bracket_ranges(
+                            &multi_buffer_snapshot,
+                            &buffer_snapshot,
+                            buffer_range,
+                            excerpt_range,
+                            fetched_chunks,
+                            accents_count,
+                        );
+
+                        for (accent_number, new_ranges) in brackets_by_accent {
+                            let ranges = acc
+                                .entry(accent_number)
+                                .or_insert_with(Vec::<Range<Anchor>>::new);
+
+                            for new_range in new_ranges {
+                                let i = ranges
+                                    .binary_search_by(|probe| {
+                                        probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
+                                    })
+                                    .unwrap_or_else(|i| i);
+                                ranges.insert(i, new_range);
                             }
-                        })
-                        .filter_map(|pair| {
-                            let color_index = pair.color_index?;
-
-                            let buffer_open_range = buffer_snapshot
-                                .anchor_before(pair.open_range.start)
-                                ..buffer_snapshot.anchor_after(pair.open_range.end);
-                            let buffer_close_range = buffer_snapshot
-                                .anchor_before(pair.close_range.start)
-                                ..buffer_snapshot.anchor_after(pair.close_range.end);
-                            let [
-                                buffer_open_range_start,
-                                buffer_open_range_end,
-                                buffer_close_range_start,
-                                buffer_close_range_end,
-                            ] = anchors_in_multi_buffer(
-                                excerpt_id,
-                                [
-                                    buffer_open_range.start,
-                                    buffer_open_range.end,
-                                    buffer_close_range.start,
-                                    buffer_close_range.end,
-                                ],
-                            )?;
-                            let multi_buffer_open_range =
-                                buffer_open_range_start.zip(buffer_open_range_end);
-                            let multi_buffer_close_range =
-                                buffer_close_range_start.zip(buffer_close_range_end);
-
-                            let mut ranges = Vec::with_capacity(2);
-                            if let Some((open_start, open_end)) = multi_buffer_open_range {
-                                ranges.push(open_start..open_end);
-                            }
-                            if let Some((close_start, close_end)) = multi_buffer_close_range {
-                                ranges.push(close_start..close_end);
-                            }
-                            if ranges.is_empty() {
-                                None
-                            } else {
-                                Some((color_index % accents_count, ranges))
-                            }
-                        });
-
-                    for (accent_number, new_ranges) in brackets_by_accent {
-                        let ranges = acc
-                            .entry(accent_number)
-                            .or_insert_with(Vec::<Range<Anchor>>::new);
-
-                        for new_range in new_ranges {
-                            let i = ranges
-                                .binary_search_by(|probe| {
-                                    probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
-                                })
-                                .unwrap_or_else(|i| i);
-                            ranges.insert(i, new_range);
                         }
+
+                        acc
+                    },
+                );
+
+            (bracket_matches_by_accent, fetched_tree_sitter_chunks)
+        });
+
+        self.colorize_brackets_task = cx.spawn(async move |editor, cx| {
+            if invalidate {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.clear_highlights_with(
+                            &mut |key| matches!(key, HighlightKey::ColorizeBracket(_)),
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+
+            let (bracket_matches_by_accent, updated_chunks) = bracket_matches_by_accent.await;
+
+            editor
+                .update(cx, |editor, cx| {
+                    editor
+                        .bracket_fetched_tree_sitter_chunks
+                        .extend(updated_chunks);
+                    for (accent_number, bracket_highlights) in bracket_matches_by_accent {
+                        let Some(&bracket_color) = accents.get(accent_number) else {
+                            continue;
+                        };
+                        let style = HighlightStyle {
+                            color: Some(bracket_color),
+                            ..HighlightStyle::default()
+                        };
+
+                        editor.highlight_text_key(
+                            HighlightKey::ColorizeBracket(accent_number),
+                            bracket_highlights,
+                            style,
+                            true,
+                            cx,
+                        );
                     }
-                }
+                })
+                .ok();
+        });
+    }
+}
 
-                acc
-            },
-        );
+const BACKGROUND_APCA_LIGHT: f32 = 35.0;
+const BACKGROUND_APCA_DARK: f32 = 30.0;
+const ADJACENT_OKLAB_LIGHT: f32 = 0.10;
+const ADJACENT_OKLAB_DARK: f32 = 0.08;
+const ADJACENT_OKLAB_LIGHT_INTERVENTION: f32 = 0.095;
+const ADJACENT_OKLAB_DARK_INTERVENTION: f32 = 0.08;
+const LIGHTNESS_CLAMP_MIN: f32 = 0.18;
+const LIGHTNESS_CLAMP_MAX: f32 = 0.92;
 
-        if invalidate {
-            self.clear_highlights::<ColorizedBracketsHighlight>(cx);
+pub(crate) fn bracket_colorization_accents(
+    accents: &[Hsla],
+    appearance: Appearance,
+    background: Hsla,
+) -> Arc<[Hsla]> {
+    let (intervention_distance, comfortable_distance, min_background_contrast) = match appearance {
+        Appearance::Light => (
+            ADJACENT_OKLAB_LIGHT_INTERVENTION,
+            ADJACENT_OKLAB_LIGHT,
+            BACKGROUND_APCA_LIGHT,
+        ),
+        Appearance::Dark => (
+            ADJACENT_OKLAB_DARK_INTERVENTION,
+            ADJACENT_OKLAB_DARK,
+            BACKGROUND_APCA_DARK,
+        ),
+    };
+    let background_adjusted = accents
+        .iter()
+        .copied()
+        .map(|accent| adjust_color_for_background(accent, background, min_background_contrast))
+        .collect::<Vec<_>>();
+    let adjusted_min_adj = min_adjacent_oklab_distance(&background_adjusted, background);
+
+    if accents.len() < 3 || adjusted_min_adj >= intervention_distance {
+        return Arc::from(background_adjusted);
+    }
+
+    let reordered = maximize_adjacent_separation(&background_adjusted, background);
+    if min_adjacent_oklab_distance(&reordered, background) >= comfortable_distance {
+        Arc::from(reordered)
+    } else {
+        Arc::from(background_adjusted)
+    }
+}
+
+fn maximize_adjacent_separation(accents: &[Hsla], background: Hsla) -> Vec<Hsla> {
+    let Some((&first, rest)) = accents.split_first() else {
+        return Vec::new();
+    };
+    let mut remaining = rest.to_vec();
+    let mut order = Vec::with_capacity(accents.len());
+    order.push(first);
+    let mut last = first;
+
+    while !remaining.is_empty() {
+        let Some((position, &next)) =
+            remaining
+                .iter()
+                .enumerate()
+                .max_by(|&(_, &left), &(_, &right)| {
+                    compare_candidates(background, last, first, left, right)
+                })
+        else {
+            break;
+        };
+        remaining.swap_remove(position);
+        order.push(next);
+        last = next;
+    }
+
+    order
+}
+
+fn compare_candidates(
+    background: Hsla,
+    last: Hsla,
+    first: Hsla,
+    left: Hsla,
+    right: Hsla,
+) -> Ordering {
+    adjacent_distance(last, left, background)
+        .partial_cmp(&adjacent_distance(last, right, background))
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| {
+            adjacent_distance(first, left, background)
+                .partial_cmp(&adjacent_distance(first, right, background))
+                .unwrap_or(Ordering::Equal)
+        })
+}
+
+fn min_adjacent_oklab_distance(accents: &[Hsla], background: Hsla) -> f32 {
+    if accents.len() < 2 {
+        return f32::MAX;
+    }
+    accents
+        .iter()
+        .copied()
+        .zip(accents.iter().copied().cycle().skip(1))
+        .take(accents.len())
+        .map(|(left, right)| adjacent_distance(left, right, background))
+        .fold(f32::MAX, f32::min)
+}
+
+fn oklab_distance(left: Oklab, right: Oklab) -> f32 {
+    let dl = left.l - right.l;
+    let da = left.a - right.a;
+    let db = left.b - right.b;
+    (dl * dl + da * da + db * db).sqrt()
+}
+
+fn adjacent_distance(left: Hsla, right: Hsla, background: Hsla) -> f32 {
+    oklab_distance(
+        hsla_to_oklab(background.blend(left)),
+        hsla_to_oklab(background.blend(right)),
+    )
+}
+
+fn adjust_color_for_background(
+    color: Hsla,
+    background: Hsla,
+    minimum_background_contrast: f32,
+) -> Hsla {
+    if background_contrast(color, background) >= minimum_background_contrast {
+        return color;
+    }
+
+    let original = hsla_to_oklab(color);
+    let darker_candidate = adjusted_lightness_candidate(
+        color,
+        background,
+        minimum_background_contrast,
+        LIGHTNESS_CLAMP_MIN,
+    );
+    let lighter_candidate = adjusted_lightness_candidate(
+        color,
+        background,
+        minimum_background_contrast,
+        LIGHTNESS_CLAMP_MAX,
+    );
+
+    match (darker_candidate, lighter_candidate) {
+        (Some(darker_candidate), Some(lighter_candidate)) => {
+            let darker_distance = oklab_distance(original, hsla_to_oklab(darker_candidate));
+            let lighter_distance = oklab_distance(original, hsla_to_oklab(lighter_candidate));
+            if darker_distance <= lighter_distance {
+                darker_candidate
+            } else {
+                lighter_candidate
+            }
         }
+        (Some(darker_candidate), None) => darker_candidate,
+        (None, Some(lighter_candidate)) => lighter_candidate,
+        (None, None) => color,
+    }
+}
 
-        let editor_background = cx.theme().colors().editor_background;
-        for (accent_number, bracket_highlights) in bracket_matches_by_accent {
-            let bracket_color = cx.theme().accents().color_for_index(accent_number as u32);
-            let adjusted_color = ensure_minimum_contrast(bracket_color, editor_background, 55.0);
-            let style = HighlightStyle {
-                color: Some(adjusted_color),
-                ..HighlightStyle::default()
+fn adjusted_lightness_candidate(
+    color: Hsla,
+    background: Hsla,
+    minimum_background_contrast: f32,
+    target_lightness: f32,
+) -> Option<Hsla> {
+    let original = hsla_to_oklch(color);
+    let lightness_delta = target_lightness - original.l;
+
+    if lightness_delta.abs() <= f32::EPSILON {
+        return None;
+    }
+
+    (1..=128).find_map(|step| {
+        let amount = step as f32 / 128.0;
+        let candidate = oklch_to_hsla(
+            Oklch {
+                l: (original.l + lightness_delta * amount).clamp(0.0, 1.0),
+                chroma: original.chroma,
+                hue: original.hue,
+            },
+            color.a,
+        );
+        (background_contrast(candidate, background) >= minimum_background_contrast)
+            .then_some(candidate)
+    })
+}
+
+fn background_contrast(foreground: Hsla, background: Hsla) -> f32 {
+    apca_contrast(background.blend(foreground), background).abs()
+}
+
+fn compute_bracket_ranges(
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+    buffer_snapshot: &BufferSnapshot,
+    buffer_range: Range<BufferOffset>,
+    excerpt_range: ExcerptRange<text::Anchor>,
+    fetched_chunks: &mut HashSet<Range<BufferRow>>,
+    accents_count: usize,
+) -> Vec<(usize, Vec<Range<Anchor>>)> {
+    let context = excerpt_range.context.to_offset(buffer_snapshot);
+
+    buffer_snapshot
+        .fetch_bracket_ranges(
+            buffer_range.start.0..buffer_range.end.0,
+            Some(fetched_chunks),
+        )
+        .into_iter()
+        .flat_map(|(chunk_range, pairs)| {
+            if fetched_chunks.insert(chunk_range) {
+                pairs
+            } else {
+                Vec::new()
+            }
+        })
+        .filter_map(|pair| {
+            let color_index = pair.color_index?;
+
+            let mut ranges = Vec::new();
+
+            if context.start <= pair.open_range.start && pair.open_range.end <= context.end {
+                let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
+                ranges.push(
+                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                );
             };
 
-            self.highlight_text_key::<ColorizedBracketsHighlight>(
-                accent_number,
-                bracket_highlights,
-                style,
-                true,
-                cx,
-            );
-        }
-    }
+            if context.start <= pair.close_range.start && pair.close_range.end <= context.end {
+                let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
+                ranges.push(
+                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                );
+            };
+
+            Some((color_index % accents_count, ranges))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -173,21 +397,165 @@ mod tests {
     };
     use collections::HashSet;
     use fs::FakeFs;
-    use gpui::{AppContext as _, UpdateGlobal as _};
+    use gpui::{Rgba, UpdateGlobal as _, hsla};
     use indoc::indoc;
     use itertools::Itertools;
     use language::{Capability, markdown_lang};
     use languages::rust_lang;
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use multi_buffer::{MultiBuffer, PathKey};
     use pretty_assertions::assert_eq;
     use project::Project;
     use rope::Point;
     use serde_json::json;
     use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
-    use theme::ThemeStyleContent;
-    use ui::SharedString;
+    use theme::Appearance;
+    use theme_settings::ThemeStyleContent;
+    use ui::ActiveTheme;
+
     use util::{path, post_inc};
+
+    fn light_editor_background() -> Hsla {
+        hsla(0.0, 0.0, 0.98, 1.0)
+    }
+
+    fn dark_editor_background() -> Hsla {
+        hsla(0.0, 0.0, 0.12, 1.0)
+    }
+
+    #[test]
+    fn test_auto_bracket_colorization_mode_reorders_weak_palette() {
+        let accents = vec![
+            hsla(0.0, 1.0, 0.68, 1.0),
+            hsla(0.02, 1.0, 0.68, 1.0),
+            hsla(0.34, 1.0, 0.68, 1.0),
+            hsla(0.36, 1.0, 0.68, 1.0),
+        ];
+
+        let original_min_adj = min_adjacent_oklab_distance(&accents, dark_editor_background());
+        let reordered = maximize_adjacent_separation(&accents, dark_editor_background());
+        let reordered_min_adj = min_adjacent_oklab_distance(&reordered, dark_editor_background());
+
+        assert_ne!(reordered.as_slice(), accents.as_slice());
+        assert!(reordered_min_adj > original_min_adj);
+    }
+
+    #[test]
+    fn test_preserves_strong_palette() {
+        let accents = vec![
+            hsla(0.0, 1.0, 0.78, 1.0),
+            hsla(0.16, 1.0, 0.78, 1.0),
+            hsla(0.33, 1.0, 0.78, 1.0),
+            hsla(0.66, 1.0, 0.78, 1.0),
+        ];
+
+        let palette =
+            bracket_colorization_accents(&accents, Appearance::Dark, dark_editor_background());
+
+        assert_eq!(palette.as_ref(), accents.as_slice());
+    }
+
+    #[test]
+    fn test_adjusts_background_failures_preserving_hue_and_chroma() {
+        let accents = vec![
+            hsla(0.58, 1.0, 0.28, 1.0),
+            hsla(0.12, 1.0, 0.28, 1.0),
+            hsla(0.22, 0.9, 0.76, 1.0),
+        ];
+
+        let palette =
+            bracket_colorization_accents(&accents, Appearance::Light, light_editor_background());
+        let original = hsla_to_oklch(accents[2]);
+        let adjusted = hsla_to_oklch(palette[2]);
+
+        assert_ne!(palette.as_ref(), accents.as_slice());
+        assert_eq!(palette.len(), accents.len());
+        assert_eq!(palette[0], accents[0]);
+        assert_eq!(palette[1], accents[1]);
+        assert_ne!(palette[2], accents[2]);
+        assert!((original.chroma - adjusted.chroma).abs() < 0.0001);
+        assert!((original.hue - adjusted.hue).abs() < 0.001);
+        assert_ne!(original.l, adjusted.l);
+        assert!(
+            background_contrast(palette[2], light_editor_background()) >= BACKGROUND_APCA_LIGHT
+        );
+    }
+
+    #[test]
+    fn test_preserves_light_near_miss_palette() {
+        let accents = vec![
+            Hsla::from(Rgba::try_from("#CC241D").expect("valid color")),
+            Hsla::from(Rgba::try_from("#98971A").expect("valid color")),
+            Hsla::from(Rgba::try_from("#D79921").expect("valid color")),
+            Hsla::from(Rgba::try_from("#458588").expect("valid color")),
+            Hsla::from(Rgba::try_from("#B16286").expect("valid color")),
+            Hsla::from(Rgba::try_from("#689D6A").expect("valid color")),
+            Hsla::from(Rgba::try_from("#D65D0E").expect("valid color")),
+        ];
+        let background = Hsla::from(Rgba::try_from("#FBF1C7").expect("valid color"));
+
+        let palette = bracket_colorization_accents(&accents, Appearance::Light, background);
+        let original_min_adj = min_adjacent_oklab_distance(&accents, background);
+
+        assert_eq!(palette.as_ref(), accents.as_slice());
+        assert!(original_min_adj < ADJACENT_OKLAB_LIGHT);
+        assert!(original_min_adj >= ADJACENT_OKLAB_LIGHT_INTERVENTION);
+    }
+
+    #[test]
+    fn test_adjust_color_for_background_prefers_closest_passing_candidate() {
+        // Verify that when both darker and lighter candidates exist,
+        // we pick the one with minimum OKLab distance from the original.
+        let background = hsla(0.0, 0.0, 0.50, 1.0);
+        let min_contrast = 30.0;
+        let color = hsla(0.33, 0.7, 0.46, 1.0);
+
+        assert!(
+            background_contrast(color, background) < min_contrast,
+            "test color must fail contrast check; got {}",
+            background_contrast(color, background)
+        );
+
+        let original = hsla_to_oklab(color);
+        let darker =
+            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MIN)
+                .expect("fixture must produce a darker passing candidate");
+        let lighter =
+            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MAX)
+                .expect("fixture must produce a lighter passing candidate");
+
+        let darker_dist = oklab_distance(original, hsla_to_oklab(darker));
+        let lighter_dist = oklab_distance(original, hsla_to_oklab(lighter));
+        let expected = if darker_dist <= lighter_dist {
+            darker
+        } else {
+            lighter
+        };
+        assert_eq!(
+            adjust_color_for_background(color, background, min_contrast),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_background_adjustment_edge_cases() {
+        let color = hsla(0.22, 0.9, 0.76, 1.0);
+        let original_contrast = background_contrast(color, light_editor_background());
+        assert!(original_contrast < 20.0);
+        let palette =
+            bracket_colorization_accents(&[color], Appearance::Light, light_editor_background());
+        assert_ne!(palette.as_ref(), &[color][..]);
+        assert!(
+            background_contrast(palette[0], light_editor_background()) >= BACKGROUND_APCA_LIGHT
+        );
+
+        let impossible_color = hsla(0.58, 1.0, 0.47, 1.0);
+        let impossible_bg = hsla(0.0, 0.0, 0.50, 1.0);
+        assert_eq!(
+            adjust_color_for_background(impossible_color, impossible_bg, 200.0),
+            impossible_color
+        );
+    }
 
     #[gpui::test]
     async fn test_basic_bracket_colorization(cx: &mut gpui::TestAppContext) {
@@ -263,11 +631,11 @@ where
     2
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 6 hsla(95.00, 38.00%, 62.00%, 1.00)
 7 hsla(39.00, 67.00%, 69.00%, 1.00)
 "#,
@@ -299,7 +667,7 @@ where
 
         assert_eq!(
             "fn main«1()1» «1{}1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
 ",
             editor
                 .update(cx, |editor, window, cx| {
@@ -328,7 +696,7 @@ where
 
         assert_eq!(
             r#"«1[LLM-powered features]1»«1(./ai/overview.md)1», «1[bring and configure your own API keys]1»«1(./ai/llm-providers.md#use-your-own-keys)1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth"
@@ -340,11 +708,83 @@ where
 
         assert_eq!(
             r#"«1{«2{}2»}1»
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth, again"
+        );
+
+        cx.set_state(indoc! {r#"ˇ('')('')
+
+((''))('')
+
+('')((''))"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            "«1('')1»«1('')1»\n\n«1(«2('')2»)1»«1('')1»\n\n«1('')1»«1(«2('')2»)1»\n1 hsla(207.80, 81.00%, 66.00%, 1.00)\n2 hsla(29.00, 54.00%, 61.00%, 1.00)\n",
+            &bracket_colors_markup(&mut cx),
+            "Markdown quote pairs should not interfere with parenthesis pairing"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_brackets_in_multiple_hunks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        let rows = 100;
+        let footer = "1 hsla(207.80, 81.00%, 66.00%, 1.00)\n";
+
+        let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
+        let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
+        cx.set_state(&simple_brackets);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{simple_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Simple bracket pairs should be colored"
+        );
+
+        let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
+        let paired_brackets_highlights = (0..rows).map(|_| "«1[]1»«1()1»\n").collect::<String>();
+        cx.set_state(&paired_brackets);
+        // Wait for reparse to complete after content change
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            // Force invalidation of bracket cache after reparse
+            editor.colorize_brackets(true, cx);
+        });
+        // Scroll to beginning to fetch first chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // Scroll to end to fetch remaining chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{paired_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Paired bracket pairs should be colored"
         );
     }
 
@@ -377,8 +817,8 @@ where
     let v: Vec<String> = vec!«2[]2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "Markdown does not colorize <> brackets"
@@ -395,8 +835,8 @@ where
     let v: Vec«2<String>2» = vec!«2[]2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
 "#,
             &bracket_colors_markup(&mut cx),
             "After switching to Rust, <> brackets are now colorized"
@@ -440,9 +880,9 @@ fn process_data«1()1» «1{
     let map: Result<
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
             "Brackets without pairs should be ignored and not colored"
@@ -463,9 +903,9 @@ fn process_data«1()1» «1{
     let map: Result<Option<Foo<'_, «2()2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -485,9 +925,9 @@ fn process_data«1()1» «1{
     let map: Result<Option<Foo«2<'_, «3()3»>2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
             "When brackets start to get closed, inner brackets are re-colored based on their depth"
@@ -508,10 +948,10 @@ fn process_data«1()1» «1{
     let map: Result<Option«2<Foo«3<'_, «4()4»>3»>2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -531,11 +971,11 @@ fn process_data«1()1» «1{
     let map: Result«2<Option«3<Foo«4<'_, «5()5»>4»>3», «3()3»>2» = unimplemented!«2()2»;
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
         );
@@ -587,11 +1027,11 @@ mod foo «1{
     }
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -619,11 +1059,11 @@ mod foo «1{
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -650,11 +1090,11 @@ mod foo «1{
     }
     «3{«4{}4»}3»}2»}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -681,11 +1121,11 @@ mod foo «1{
     }
     «3{«4{}4»}3»}2»}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#},
                 comment_lines,
             ),
@@ -700,6 +1140,7 @@ mod foo «1{
                 });
             });
         });
+        cx.executor().run_until_parked();
         assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
@@ -727,6 +1168,7 @@ mod foo {
                 });
             });
         });
+        cx.executor().run_until_parked();
         assert_eq!(
             &separate_with_comment_lines(
                 indoc! {r#"
@@ -740,11 +1182,11 @@ mod foo «1{
     }
     {{}}}}1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,
                 comment_lines,
             ),
@@ -991,7 +1433,7 @@ mod foo «1{
         let actual_ranges = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
 
         let mut highlighted_brackets = HashMap::default();
@@ -1019,7 +1461,7 @@ mod foo «1{
         let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
         let new_last_bracket = ranges_after_scrolling
             .iter()
@@ -1047,7 +1489,9 @@ mod foo «1{
             let colored_brackets = cx.update_editor(|editor, window, cx| {
                 editor
                     .snapshot(window, cx)
-                    .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                    .all_text_highlight_ranges(&|key| {
+                        matches!(key, HighlightKey::ColorizeBracket(_))
+                    })
             });
             for (color, range) in colored_brackets.clone() {
                 assert!(
@@ -1080,7 +1524,7 @@ mod foo «1{
                 );
             }
 
-            let buffer_snapshot = snapshot.buffer().as_singleton().unwrap().2;
+            let buffer_snapshot = snapshot.buffer().as_singleton().unwrap();
             for bracket_match in buffer_snapshot
                 .fetch_bracket_ranges(
                     snapshot
@@ -1188,32 +1632,34 @@ mod foo «1{
 
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer_2.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
 
             let excerpt_rows = 5;
             let rest_of_first_except_rows = 3;
-            multi_buffer.push_excerpts(
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer_1.clone(),
                 [
-                    ExcerptRange::new(Point::new(0, 0)..Point::new(excerpt_rows, 0)),
-                    ExcerptRange::new(
-                        Point::new(
-                            comment_lines as u32 + excerpt_rows + rest_of_first_except_rows,
+                    Point::new(0, 0)..Point::new(excerpt_rows, 0),
+                    Point::new(
+                        comment_lines as u32 + excerpt_rows + rest_of_first_except_rows,
+                        0,
+                    )
+                        ..Point::new(
+                            comment_lines as u32
+                                + excerpt_rows
+                                + rest_of_first_except_rows
+                                + excerpt_rows,
                             0,
-                        )
-                            ..Point::new(
-                                comment_lines as u32
-                                    + excerpt_rows
-                                    + rest_of_first_except_rows
-                                    + excerpt_rows,
-                                0,
-                            ),
-                    ),
+                        ),
                 ],
+                0,
                 cx,
             );
             multi_buffer
@@ -1240,18 +1686,18 @@ mod foo «1{
         let map: Option«3<Vec«4<«5()5»>4»>3» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
             "Multi buffers should have their brackets colored even if no excerpts contain the bracket counterpart (after fn `process_data_2()`) \
@@ -1280,18 +1726,18 @@ mod foo «1{
         let map: Option«3<Vec«4<«5()5»>4»>3» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«3<Vec«4<«5()5»>4»>3» = None;
     }2»
 }1»
 
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+4 hsla(187.00, 47.00%, 55.00%, 1.00)
+5 hsla(355.00, 65.00%, 65.00%, 1.00)
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
         );
@@ -1304,8 +1750,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some(SharedString::new("#ff0000"))),
-                                AccentContent(Some(SharedString::new("#0000ff"))),
+                                AccentContent(Some("#ff0000".to_string())),
+                                AccentContent(Some("#0000ff".to_string())),
                             ],
                             ..ThemeStyleContent::default()
                         },
@@ -1318,7 +1764,18 @@ mod foo «1{
         let editor_snapshot = editor
             .update(cx, |editor, window, cx| editor.snapshot(window, cx))
             .unwrap();
-        assert_eq!(
+        let adjusted_palette = cx.update(|cx| {
+            bracket_colorization_accents(
+                &[
+                    Hsla::from(Rgba::try_from("#ff0000").expect("valid override accent")),
+                    Hsla::from(Rgba::try_from("#0000ff").expect("valid override accent")),
+                ],
+                cx.theme().appearance,
+                cx.theme().colors().editor_background,
+            )
+        });
+        let expected_markup = format!(
+            "{}\n1 {}\n2 {}\n",
             indoc! {r#"
 
 
@@ -1330,18 +1787,169 @@ mod foo «1{
         let map: Option«1<Vec«2<«1()1»>2»>1» = None;
         // a
         // b
-
+        // c
 
     fn process_data_2«2()2» «2{
         let other_map: Option«1<Vec«2<«1()1»>2»>1» = None;
     }2»
 }1»
-
-1 hsla(0.00, 100.00%, 78.12%, 1.00)
-2 hsla(240.00, 100.00%, 82.81%, 1.00)
 "#,},
-            &editor_bracket_colors_markup(&editor_snapshot),
+            adjusted_palette[0],
+            adjusted_palette[1],
+        );
+        assert_eq!(
+            expected_markup,
+            editor_bracket_colors_markup(&editor_snapshot),
             "After updating theme accents, the editor should update the bracket coloring"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_buffer_close_excerpts(cx: &mut gpui::TestAppContext) {
+        let comment_lines = 5;
+
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "lib.rs": separate_with_comment_lines(
+                    indoc! {r#"
+    fn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+    "#},
+                    indoc! {r#"
+    fn process_data_2() {
+        let other_map: Option<Vec<()>> = None;
+    }
+    "#},
+                    comment_lines,
+                )
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let second_excerpt_start = buffer_1.read_with(cx, |buffer, _| {
+            let text = buffer.text();
+            text.lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("process_data_2"))
+                .map(|(row, _)| row as u32)
+                .unwrap()
+        });
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer_1.clone(),
+                [
+                    Point::new(0, 0)..Point::new(3, 0),
+                    Point::new(second_excerpt_start, 0)..Point::new(second_excerpt_start + 3, 0),
+                ],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let editor_snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+        assert_eq!(
+            concat!(
+                "\n",
+                "\n",
+                "fn process_data_1\u{00ab}1()1\u{00bb} \u{00ab}1{\n",
+                "    let map: Option\u{00ab}2<Vec\u{00ab}3<\u{00ab}4()4\u{00bb}>3\u{00bb}>2\u{00bb} = None;\n",
+                "}1\u{00bb}\n",
+                "\n",
+                "\n",
+                "fn process_data_2\u{00ab}1()1\u{00bb} \u{00ab}1{\n",
+                "    let other_map: Option\u{00ab}2<Vec\u{00ab}3<\u{00ab}4()4\u{00bb}>3\u{00bb}>2\u{00bb} = None;\n",
+                "}1\u{00bb}\n",
+                "\n",
+                "1 hsla(207.80, 81.00%, 66.00%, 1.00)\n",
+                "2 hsla(29.00, 54.00%, 61.00%, 1.00)\n",
+                "3 hsla(286.00, 51.00%, 64.00%, 1.00)\n",
+                "4 hsla(187.00, 47.00%, 55.00%, 1.00)\n",
+            ),
+            &editor_bracket_colors_markup(&editor_snapshot),
+            "Two close excerpts from the same buffer (within same tree-sitter chunk) should both have bracket colors"
+        );
+    }
+
+    #[gpui::test]
+    // reproduction of #47846
+    async fn test_bracket_colorization_with_folds(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        // Generate a large function body. When folded, this collapses
+        // to a single display line, making small_function visible on screen.
+        let mut big_body = String::new();
+        for i in 0..700 {
+            big_body.push_str(&format!("    let var_{i:04} = ({i});\n"));
+        }
+        let source = format!(
+            "ˇfn big_function() {{\n{big_body}}}\n\nfn small_function() {{\n    let x = (1, (2, 3));\n}}\n"
+        );
+
+        cx.set_state(&source);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_ranges(
+                vec![Point::new(0, 0)..Point::new(701, 1)],
+                false,
+                window,
+                cx,
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            indoc! {r#"
+⋯1»
+
+fn small_function«1()1» «1{
+    let x = «2(1, «3(2, 3)3»)2»;
+}1»
+
+1 hsla(207.80, 81.00%, 66.00%, 1.00)
+2 hsla(29.00, 54.00%, 61.00%, 1.00)
+3 hsla(286.00, 51.00%, 64.00%, 1.00)
+"#,},
+            bracket_colors_markup(&mut cx),
         );
     }
 
@@ -1373,7 +1981,8 @@ mod foo «1{
             offset
         }
 
-        let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
+        let actual_ranges = snapshot
+            .all_text_highlight_ranges(&|key| matches!(key, HighlightKey::ColorizeBracket(_)));
         let editor_text = snapshot.text();
 
         let mut next_index = 1;

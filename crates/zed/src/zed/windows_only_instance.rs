@@ -45,7 +45,7 @@ pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
         std::thread::Builder::new()
             .name("EnsureSingleton".to_owned())
             .spawn(move || {
-                with_pipe(|url| {
+                with_pipe(&|url| {
                     opener.open(RawOpenRequest {
                         urls: vec![url],
                         ..Default::default()
@@ -61,7 +61,7 @@ pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
     is_first_instance
 }
 
-fn with_pipe(f: impl Fn(String)) {
+fn with_pipe(f: &dyn Fn(String)) {
     let pipe = unsafe {
         CreateNamedPipeW(
             &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
@@ -144,10 +144,12 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             let old = std::fs::canonicalize(&path[0]).log_err();
             let new = std::fs::canonicalize(&path[1]).log_err();
             if let Some((old, new)) = old.zip(new) {
-                diff_paths.push([
-                    old.to_string_lossy().into_owned(),
-                    new.to_string_lossy().into_owned(),
-                ]);
+                diff_paths.push(cli::DiffPaths {
+                    old_path: old.to_string_lossy().into_owned(),
+                    new_path: new.to_string_lossy().into_owned(),
+                    new_row: None,
+                    new_column: None,
+                });
             }
         }
 
@@ -155,12 +157,14 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             paths,
             urls,
             diff_paths,
+            diff_all: false,
             wait: false,
             wsl: args.wsl.clone(),
-            open_new_workspace: None,
-            reuse: false,
+            open_behavior: Default::default(),
             env: None,
             user_data_dir: args.user_data_dir.clone(),
+            dev_container: args.dev_container,
+            cwd: std::env::current_dir().ok(),
         }
     };
 
@@ -183,6 +187,11 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                         CliResponse::Exit { status } => {
                             exit_status.lock().replace(status);
                             return Ok(());
+                        }
+                        CliResponse::PromptOpenBehavior => {
+                            tx.send(CliRequest::SetOpenBehavior {
+                                behavior: cli::CliBehaviorSetting::ExistingWindow,
+                            })?;
                         }
                     }
                 }

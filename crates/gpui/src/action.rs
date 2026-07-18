@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 pub use gpui_macros::Action;
-pub use no_action::{NoAction, is_no_action};
+pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -232,7 +232,7 @@ type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Actio
 
 pub(crate) struct ActionRegistry {
     by_name: HashMap<&'static str, ActionData>,
-    names_by_type_id: HashMap<TypeId, &'static str>,
+    names_by_type_id: TypeIdHashMap<&'static str>,
     all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
@@ -290,19 +290,6 @@ impl ActionRegistry {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn load_action<A: Action>(&mut self) {
-        self.insert_action(MacroActionData {
-            name: A::name_for_type(),
-            type_id: TypeId::of::<A>(),
-            build: A::build,
-            json_schema: A::action_json_schema,
-            deprecated_aliases: A::deprecated_aliases(),
-            deprecation_message: A::deprecation_message(),
-            documentation: A::documentation(),
-        });
-    }
-
     fn insert_action(&mut self, action: MacroActionData) {
         let name = action.name;
         if self.by_name.contains_key(name) {
@@ -355,6 +342,11 @@ impl ActionRegistry {
         Ok(self.build_action(name, None)?)
     }
 
+    #[cfg(feature = "profiler")]
+    pub(crate) fn try_resolve_action(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.names_by_type_id.get(type_id).copied()
+    }
+
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
     pub fn build_action(
         &self,
@@ -397,6 +389,16 @@ impl ActionRegistry {
             .collect::<Vec<_>>()
     }
 
+    pub fn action_schema_by_name(
+        &self,
+        name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<Option<schemars::Schema>> {
+        self.by_name
+            .get(name)
+            .map(|action_data| (action_data.json_schema)(generator))
+    }
+
     pub fn deprecated_aliases(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecated_aliases
     }
@@ -422,7 +424,8 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
 
 mod no_action {
     use crate as gpui;
-    use std::any::Any as _;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         zed,
@@ -433,8 +436,23 @@ mod no_action {
         ]
     );
 
+    /// Action with special handling which unbinds later bindings for the same keystrokes when they
+    /// dispatch the named action, regardless of that action's context.
+    ///
+    /// In keymap JSON this is written as:
+    ///
+    /// `["zed::Unbind", "editor::NewLine"]`
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+    #[action(namespace = zed)]
+    pub struct Unbind(pub gpui::SharedString);
+
     /// Returns whether or not this action represents a removed key binding.
     pub fn is_no_action(action: &dyn gpui::Action) -> bool {
-        action.as_any().type_id() == (NoAction {}).type_id()
+        action.as_any().is::<NoAction>()
+    }
+
+    /// Returns whether or not this action represents an unbind marker.
+    pub fn is_unbind(action: &dyn gpui::Action) -> bool {
+        action.as_any().is::<Unbind>()
     }
 }

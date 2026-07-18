@@ -1,9 +1,19 @@
 use anyhow::Context as _;
 
 use git::repository::{Remote, RemoteCommandOutput};
-use linkify::{LinkFinder, LinkKind};
 use ui::SharedString;
 use util::ResultExt as _;
+
+const PULL_REQUEST_HINTS: &[(&str, &str)] = &[
+    // GitHub: "Create a pull request for 'branch' on GitHub by visiting:"
+    ("Create a pull request", "Create Pull Request"),
+    // Bitbucket: "Create pull request for branch:"
+    ("Create pull request", "Create Pull Request"),
+    // GitLab: "To create a merge request for branch, visit:"
+    ("create a merge request", "Create Merge Request"),
+    // GitLab: "View merge request for branch:"
+    ("View merge request", "View Merge Request"),
+];
 
 #[derive(Clone)]
 pub enum RemoteAction {
@@ -25,12 +35,48 @@ impl RemoteAction {
 pub enum SuccessStyle {
     Toast,
     ToastWithLog { output: RemoteCommandOutput },
-    PushPrLink { text: String, link: String },
+    PushPrLink { label: &'static str, url: String },
 }
 
 pub struct SuccessMessage {
     pub message: String,
     pub style: SuccessStyle,
+}
+
+fn extract_pull_request_link(output: &RemoteCommandOutput) -> Option<(&'static str, String)> {
+    let mut pending_label: Option<&'static str> = None;
+
+    for line in output.stderr.lines() {
+        let Some(remote_line) = line.trim_start().strip_prefix("remote:") else {
+            pending_label = None;
+            continue;
+        };
+
+        if let Some((_, label)) = PULL_REQUEST_HINTS
+            .iter()
+            .find(|(hint, _)| remote_line.contains(hint))
+        {
+            pending_label = Some(label);
+        }
+
+        if let Some(url) = extract_url(remote_line)
+            && let Some(label) = pending_label
+        {
+            return Some((label, url));
+        }
+    }
+
+    None
+}
+
+fn extract_url(line: &str) -> Option<String> {
+    let http_index = line.find("https://").or_else(|| line.find("http://"))?;
+    let url = line[http_index..]
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|character| matches!(character, ',' | '.' | ')' | ']' | '>'));
+
+    Some(url.to_string())
 }
 
 pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> SuccessMessage {
@@ -119,42 +165,21 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
             }
         }
         RemoteAction::Push(branch_name, remote_ref) => {
-            let message = if output.stderr.ends_with("Everything up-to-date\n") {
-                "Push: Everything is up-to-date".to_string()
+            if output.stderr.ends_with("Everything up-to-date\n") {
+                SuccessMessage {
+                    message: "Push: Everything is up-to-date".to_string(),
+                    style: SuccessStyle::Toast,
+                }
+            } else if let Some((label, url)) = extract_pull_request_link(&output) {
+                SuccessMessage {
+                    message: format!("Pushed {} to {}", branch_name, remote_ref.name),
+                    style: SuccessStyle::PushPrLink { label, url },
+                }
             } else {
-                format!("Pushed {} to {}", branch_name, remote_ref.name)
-            };
-
-            let style = if output.stderr.ends_with("Everything up-to-date\n") {
-                Some(SuccessStyle::Toast)
-            } else if output.stderr.contains("\nremote: ") {
-                let pr_hints = [
-                    ("Create a pull request", "Create Pull Request"), // GitHub
-                    ("Create pull request", "Create Pull Request"),   // Bitbucket
-                    ("create a merge request", "Create Merge Request"), // GitLab
-                    ("View merge request", "View Merge Request"),     // GitLab
-                ];
-                pr_hints
-                    .iter()
-                    .find(|(indicator, _)| output.stderr.contains(indicator))
-                    .and_then(|(_, mapped)| {
-                        let finder = LinkFinder::new();
-                        finder
-                            .links(&output.stderr)
-                            .filter(|link| *link.kind() == LinkKind::Url)
-                            .map(|link| link.start()..link.end())
-                            .next()
-                            .map(|link| SuccessStyle::PushPrLink {
-                                text: mapped.to_string(),
-                                link: output.stderr[link].to_string(),
-                            })
-                    })
-            } else {
-                None
-            };
-            SuccessMessage {
-                message,
-                style: style.unwrap_or(SuccessStyle::ToastWithLog { output }),
+                SuccessMessage {
+                    message: format!("Pushed {} to {}", branch_name, remote_ref.name),
+                    style: SuccessStyle::ToastWithLog { output },
+                }
             }
         }
     }
@@ -168,9 +193,9 @@ mod tests {
     #[test]
     fn test_push_new_branch_pull_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -189,10 +214,10 @@ mod tests {
         };
 
         let msg = format_output(&action, output);
-
-        if let SuccessStyle::PushPrLink { text: hint, link } = &msg.style {
-            assert_eq!(hint, "Create Pull Request");
-            assert_eq!(link, "https://example.com/test/test/pull/new/test");
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "Create Pull Request");
+            assert_eq!(url, "https://example.com/test/test/pull/new/test");
         } else {
             panic!("Expected PushPrLink variant");
         }
@@ -201,9 +226,9 @@ mod tests {
     #[test]
     fn test_push_new_branch_merge_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -223,29 +248,57 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
-            assert_eq!(text, "Create Merge Request");
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "Create Merge Request");
             assert_eq!(
-                link,
+                url,
                 "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
-            );
+            )
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected PushPrLink variant")
         }
+    }
+
+    #[test]
+    fn test_push_new_branch_bitbucket_pull_request() {
+        let output = RemoteCommandOutput {
+            stdout: String::new(),
+            stderr: indoc! {"
+                remote:
+                remote: Create pull request for test:
+                remote:   https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test
+                "}
+            .to_string(),
+        };
+
+        assert_eq!(
+            extract_pull_request_link(&output),
+            Some((
+                "Create Pull Request",
+                "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string()
+            ))
+        );
     }
 
     #[test]
     fn test_push_branch_existing_merge_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
+            // Include an unrelated URL outside of the `remote:` lines, in this
+            // case, an OpenSSH warning, to ensure that it is not mistaken for
+            // the merge request link.
             stderr: indoc! {"
+                ** WARNING: connection is not using a post-quantum key exchange algorithm.
+                ** This session may be vulnerable to \"store now, decrypt later\" attacks.
+                ** The server may need to be upgraded. See https://openssh.com/pq.html
                 Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
                 remote:
                 remote: View merge request for test:
@@ -259,20 +312,21 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
-            assert_eq!(text, "View Merge Request");
-            assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "View Merge Request");
+            assert_eq!(url, "https://example.com/test/test/-/merge_requests/99999");
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected PushPrLink variant")
         }
     }
 
     #[test]
     fn test_push_new_branch_no_link() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -293,6 +347,7 @@ mod tests {
                 output.stderr,
                 "To http://example.com/test/test.git\n * [new branch]      test -> test\n"
             );
+            assert_eq!(extract_pull_request_link(output), None);
         } else {
             panic!("Expected ToastWithLog variant");
         }

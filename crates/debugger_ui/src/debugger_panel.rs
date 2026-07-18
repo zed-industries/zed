@@ -15,11 +15,11 @@ use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
+    Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
-    Subscription, Task, WeakEntity, anchored, deferred,
+    Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -30,11 +30,13 @@ use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::sync::{Arc, LazyLock};
-use task::{DebugScenario, TaskContext};
+use task::{DebugScenario, SharedTaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
-    ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, Divider, ElevationIndex, PopoverMenu, PopoverMenuHandle, SplitButton,
+    Tab, TintColor, Tooltip, prelude::*,
 };
+use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
@@ -43,18 +45,19 @@ use workspace::{
     Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::ToggleFocus;
+use zed_actions::debug_panel::ToggleFocus;
 
 pub struct DebuggerHistoryFeatureFlag;
 
 impl FeatureFlag for DebuggerHistoryFeatureFlag {
     const NAME: &'static str = "debugger-history";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(DebuggerHistoryFeatureFlag);
 
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
 pub struct DebugPanel {
-    size: Pixels,
     active_session: Option<Entity<DebugSession>>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -92,7 +95,6 @@ impl DebugPanel {
             );
 
             Self {
-                size: px(300.),
                 sessions_with_children: Default::default(),
                 active_session: None,
                 focus_handle,
@@ -176,7 +178,7 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -227,9 +229,6 @@ impl DebugPanel {
             inventory.update(cx, |inventory, _| {
                 inventory.scenario_scheduled(
                     scenario.clone(),
-                    // todo(debugger): Task context is cloned three times
-                    // once in Session,inventory, and in resolve scenario
-                    // we should wrap it in an RC instead to save some memory
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
@@ -268,7 +267,7 @@ impl DebugPanel {
                 dap_store
                     .update(cx, |dap_store, cx| {
                         dap_store.boot_session(session.clone(), definition, worktree, cx)
-                    })?
+                    })
                     .await
             }
         });
@@ -278,15 +277,16 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error:#}");
+                    let redacted_error = redact_command(&format!("{error:#}"));
+                    log::error!("{redacted_error}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {:#}", error))
+                                .unbounded_send(format!("error: {:#}", redacted_error))
                                 .ok();
                             session.shutdown(cx)
-                        })?
+                        })
                         .await;
                 }
                 anyhow::Ok(())
@@ -404,7 +404,7 @@ impl DebugPanel {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
-            })?;
+            });
             Self::register_session(this.clone(), session.clone(), true, cx).await?;
 
             if let Err(error) = task.await {
@@ -418,7 +418,7 @@ impl DebugPanel {
                             ))
                             .ok();
                         session.shutdown(cx)
-                    })?
+                    })
                     .await;
 
                 return Err(error);
@@ -466,11 +466,10 @@ impl DebugPanel {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
-            })?;
+            });
             // Focus child sessions if the parent has never emitted a stopped event;
             // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
-            let parent_ever_stopped =
-                parent_session.update(cx, |this, _| this.has_ever_stopped())?;
+            let parent_ever_stopped = parent_session.update(cx, |this, _| this.has_ever_stopped());
             Self::register_session(this, session, !parent_ever_stopped, cx).await?;
             task.await
         })
@@ -517,9 +516,11 @@ impl DebugPanel {
                     return;
                 }
             }
-            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
-                this.retain_sessions(|other| entity_id != other.entity_id());
+                this.retain_sessions(&|other: &Entity<DebugSession>| {
+                    entity_id != other.entity_id()
+                });
                 if let Some(active_session_id) = this
                     .active_session
                     .as_ref()
@@ -731,11 +732,11 @@ impl DebugPanel {
                                                     IconName::DebugContinue,
                                                 )
                                                 .icon_size(IconSize::Small)
+                                                .disabled(thread_status != ThreadStatus::Stopped)
                                                 .on_click(window.listener_for(
                                                     running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
                                                 ))
-                                                .disabled(thread_status != ThreadStatus::Stopped)
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
                                                     move |_window, cx| {
@@ -953,28 +954,26 @@ impl DebugPanel {
                                     .map(|session| session.read(cx).running_state())
                                     .cloned(),
                                 |this, running_state| {
-                                    this.children({
-                                        let threads =
-                                            running_state.update(cx, |running_state, cx| {
-                                                let session = running_state.session();
-                                                session.read(cx).is_started().then(|| {
-                                                    session.update(cx, |session, cx| {
-                                                        session.threads(cx)
-                                                    })
-                                                })
-                                            });
-
-                                        threads.and_then(|threads| {
-                                            self.render_thread_dropdown(
-                                                &running_state,
-                                                threads,
-                                                window,
-                                                cx,
-                                            )
+                                    let threads = running_state.update(cx, |running_state, cx| {
+                                        let session = running_state.session();
+                                        session.read(cx).is_started().then(|| {
+                                            session.update(cx, |session, cx| session.threads(cx))
                                         })
-                                    })
-                                    .when(!is_side, |this| {
-                                        this.gap_0p5().child(Divider::vertical())
+                                    });
+
+                                    let thread_dropdown = threads.and_then(|threads| {
+                                        self.render_thread_dropdown(
+                                            &running_state,
+                                            threads,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+
+                                    this.when_some(thread_dropdown, |this, dropdown| {
+                                        this.child(dropdown).when(!is_side, |this| {
+                                            this.gap_0p5().child(Divider::vertical())
+                                        })
                                     })
                                 },
                             ),
@@ -1091,14 +1090,14 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(RelPath::unix(".vscode").unwrap()) {
-                    dir.join(RelPath::unix("launch.json").unwrap())
+                let relative_path = if dir.ends_with(RelPath::from_unix_str(".vscode").unwrap()) {
+                    dir.join(RelPath::from_unix_str("launch.json").unwrap())
                 } else {
-                    dir.join(RelPath::unix("debug.json").unwrap())
+                    dir.join(RelPath::from_unix_str("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,
-                    path: relative_path,
+                    path: relative_path.into(),
                 }
             }
             _ => return self.save_scenario(scenario, worktree_id, window, cx),
@@ -1333,7 +1332,7 @@ impl DebugPanel {
         None
     }
 
-    fn retain_sessions(&mut self, keep: impl Fn(&Entity<DebugSession>) -> bool) {
+    fn retain_sessions(&mut self, keep: &dyn Fn(&Entity<DebugSession>) -> bool) {
         self.sessions_with_children
             .retain(|session, _| keep(session));
         for children in self.sessions_with_children.values_mut() {
@@ -1351,9 +1350,14 @@ impl DebugPanel {
         running_state: &Entity<RunningState>,
         thread_status: ThreadStatus,
         window: &mut Window,
-    ) -> IconButton {
-        IconButton::new("debug-back-in-history", IconName::HistoryRerun)
-            .icon_size(IconSize::Small)
+    ) -> ButtonLike {
+        ButtonLike::new_rounded_left("debug-back-in-history")
+            .layer(ElevationIndex::ModalSurface)
+            .child(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
+            .disabled(
+                thread_status == ThreadStatus::Running || thread_status == ThreadStatus::Stepping,
+            )
+            .tooltip(Tooltip::text("Step Back in Session History"))
             .on_click(window.listener_for(running_state, |this, _, _window, cx| {
                 this.session().update(cx, |session, cx| {
                     let ix = session
@@ -1363,9 +1367,6 @@ impl DebugPanel {
                     session.select_historic_snapshot(Some(ix.saturating_sub(1)), cx);
                 })
             }))
-            .disabled(
-                thread_status == ThreadStatus::Running || thread_status == ThreadStatus::Stepping,
-            )
     }
 
     fn render_history_toggle_button(
@@ -1373,20 +1374,19 @@ impl DebugPanel {
         thread_status: ThreadStatus,
         running_state: &Entity<RunningState>,
     ) -> impl IntoElement {
+        let chevron_button_size = rems_from_px(20.);
         PopoverMenu::new("debug-back-in-history-menu")
             .trigger(
-                ui::ButtonLike::new_rounded_right("debug-back-in-history-menu-trigger")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    )
+                ButtonLike::new_rounded_right("debug-back-in-history-menu-trigger")
+                    .layer(ElevationIndex::ModalSurface)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .disabled(
                         thread_status == ThreadStatus::Running
                             || thread_status == ThreadStatus::Stepping,
-                    ),
+                    )
+                    .width(chevron_button_size)
+                    .height(chevron_button_size.into())
+                    .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
             )
             .menu({
                 let running_state = running_state.clone();
@@ -1417,7 +1417,10 @@ impl DebugPanel {
                                     handler(None, running_state.clone(), cx);
                                 }
                             });
-                            context_menu = context_menu.separator();
+
+                            if !history.is_empty() {
+                                context_menu = context_menu.separator();
+                            }
 
                             for (ix, _) in history.iter().enumerate().rev() {
                                 context_menu =
@@ -1434,7 +1437,7 @@ impl DebugPanel {
                     ))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }
 
@@ -1443,7 +1446,7 @@ async fn register_session_inner(
     session: Entity<Session>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<DebugSession>> {
-    let adapter_name = session.read_with(cx, |session, _| session.adapter())?;
+    let adapter_name = session.read_with(cx, |session, _| session.adapter());
     this.update_in(cx, |_, window, cx| {
         cx.subscribe_in(
             &session,
@@ -1461,14 +1464,19 @@ async fn register_session_inner(
         .detach();
     })
     .ok();
-    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let serialized_layout = this
+        .update(cx, |_, cx| {
+            persistence::get_serialized_layout(&adapter_name, &db::kvp::KeyValueStore::global(cx))
+        })
+        .ok()
+        .flatten();
     let debug_session = this.update_in(cx, |this, window, cx| {
         let parent_session = this
             .sessions_with_children
             .keys()
             .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
             .cloned();
-        this.retain_sessions(|session| {
+        this.retain_sessions(&|session: &Entity<DebugSession>| {
             !session
                 .read(cx)
                 .running_state()
@@ -1567,20 +1575,18 @@ impl Panel for DebugPanel {
         });
     }
 
-    fn size(&self, _window: &Window, _: &App) -> Pixels {
-        self.size
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.size = size.unwrap_or(px(300.));
+    fn default_size(&self, _window: &Window, _: &App) -> Pixels {
+        px(300.)
     }
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::DebugPanel)
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> Option<IconName> {
-        Some(IconName::Debug)
+    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
+        DebuggerSettings::get_global(cx)
+            .button
+            .then_some(IconName::Debug)
     }
 
     fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
@@ -1600,7 +1606,13 @@ impl Panel for DebugPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        9
+        7
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.debugger.get_or_insert_default().button = Some(false);
+        }))
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
@@ -1630,13 +1642,6 @@ impl Render for DebugPanel {
         }
 
         v_flex()
-            .when(!self.is_zoomed, |this| {
-                this.when_else(
-                    self.position(window, cx) == DockPosition::Bottom,
-                    |this| this.max_h(self.size),
-                    |this| this.max_w(self.size),
-                )
-            })
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
@@ -1796,7 +1801,7 @@ impl Render for DebugPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(1)
@@ -1819,20 +1824,22 @@ impl Render for DebugPanel {
                         .gap_2()
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(crate::Start.boxed_clone(), cx);
                                 }),
                         )
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
-                                .icon(IconName::Code)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Code)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(
                                         zed_actions::OpenProjectDebugTasks.boxed_clone(),
@@ -1842,10 +1849,11 @@ impl Render for DebugPanel {
                         )
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
-                                .icon(IconName::Book)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Book)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
                         )
                         .child(
@@ -1853,10 +1861,11 @@ impl Render for DebugPanel {
                                 "spawn-new-session-install-extensions",
                                 "Debugger Extensions",
                             )
-                            .icon(IconName::Blocks)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(
+                                Icon::new(IconName::Blocks)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     zed_actions::Extensions {
@@ -1929,9 +1938,9 @@ impl Render for DebugPanel {
                                         h_flex()
                                             .size_full()
                                             .child(breakpoint_list)
-                                            .child(Divider::vertical())
+                                            .child(Divider::vertical().h_full())
                                             .child(welcome_experience)
-                                            .child(Divider::vertical()),
+                                            .child(Divider::vertical().h_full()),
                                     )
                                 } else {
                                     this.child(
@@ -1956,7 +1965,7 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        context: TaskContext,
+        context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,

@@ -21,14 +21,14 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         Self { picker }
     }
 
     pub fn set_query(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
-            picker.set_query(query, window, cx);
+            picker.set_query(&query, window, cx);
         });
     }
 }
@@ -48,7 +48,6 @@ impl Render for ContactFinder {
                     .child(h_flex().child(Label::new("Invite new contacts"))),
             )
             .child(self.picker.clone())
-            .w(rems(34.))
     }
 }
 
@@ -70,6 +69,10 @@ impl Focusable for ContactFinder {
 
 impl PickerDelegate for ContactFinderDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "contact finder"
+    }
 
     fn match_count(&self) -> usize {
         self.potential_contacts.len()
@@ -122,12 +125,12 @@ impl PickerDelegate for ContactFinderDelegate {
             match user_store.contact_request_status(user) {
                 ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
                     self.user_store
-                        .update(cx, |store, cx| store.request_contact(user.id, cx))
+                        .update(cx, |store, cx| store.request_contact(user.legacy_id, cx))
                         .detach();
                 }
                 ContactRequestStatus::RequestSent => {
                     self.user_store
-                        .update(cx, |store, cx| store.remove_contact(user.id, cx))
+                        .update(cx, |store, cx| store.remove_contact(user.legacy_id, cx))
                         .detach();
                 }
                 _ => {}
@@ -164,7 +167,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot::<Icon>(icon_path.map(Icon::from_path)),
         )
     }

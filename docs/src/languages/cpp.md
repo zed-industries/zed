@@ -1,3 +1,8 @@
+---
+title: C++
+description: "Configure C++ language support in Zed, including language servers, formatting, and debugging."
+---
+
 # C++
 
 C++ support is available natively in Zed.
@@ -75,7 +80,7 @@ You can pass any number of arguments to clangd. To see a full set of available o
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C++ code. Its formatter is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
 # yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
@@ -92,7 +97,9 @@ PointerAlignment: Left
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
 
-You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+You can trigger formatting via {#kb editor::Format} or the {#action editor::Format} action from the command palette or by enabling format on save.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > C++, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -169,11 +176,11 @@ Automatically dims inactive sections of code due to preprocessor directives, suc
 
 ### Switch Between Source and Header Files
 
-Allows switching between corresponding C++ source files (e.g., `.cpp`) and header files (e.g., `.h`).
+Allows switching between corresponding C++ source files (e.g., `.cpp`) and header files (e.g., `.h`)
 by running the command {#action editor::SwitchSourceHeader} from the command palette or by setting
 a keybinding for the `editor::SwitchSourceHeader` action.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor",
   "bindings": {

@@ -38,7 +38,7 @@ impl Connection {
         &self,
         domain: &'static str,
         migrations: &[&'static str],
-        mut should_allow_migration_change: impl FnMut(usize, &str, &str) -> bool,
+        should_allow_migration_change: &mut dyn FnMut(usize, &str, &str) -> bool,
     ) -> Result<()> {
         self.with_savepoint("migrating", || {
             // Setup the migrations table unconditionally
@@ -163,7 +163,7 @@ mod test {
                     a TEXT,
                     b TEXT
                 )"}],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
 
@@ -192,7 +192,7 @@ mod test {
                         d TEXT
                     )"},
                 ],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
 
@@ -274,7 +274,7 @@ mod test {
             .migrate(
                 "test",
                 &["DELETE FROM test_table"],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
         assert_eq!(
@@ -296,7 +296,7 @@ mod test {
             .migrate(
                 "test",
                 &["DELETE FROM test_table"],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
         assert_eq!(
@@ -320,7 +320,7 @@ mod test {
                     "CREATE TABLE test (col INTEGER)",
                     "INSERT INTO test (col) VALUES (1)",
                 ],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
 
@@ -333,7 +333,7 @@ mod test {
                 "CREATE TABLE test (color INTEGER )",
                 "INSERT INTO test (color) VALUES (1)",
             ],
-            |_, old, new| {
+            &mut |_, old, new| {
                 assert_eq!(old, "CREATE TABLE test (col INTEGER)");
                 assert_eq!(new, "CREATE TABLE test (color INTEGER)");
                 migration_changed = true;
@@ -353,7 +353,7 @@ mod test {
             .migrate(
                 "first_migration",
                 &["CREATE TABLE table1(a TEXT) STRICT;"],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
 
@@ -375,7 +375,7 @@ mod test {
 
                     ALTER TABLE table2 RENAME TO table1;
                 "}],
-                disallow_migration_change,
+                &mut disallow_migration_change,
             )
             .unwrap();
 

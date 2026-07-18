@@ -11,10 +11,15 @@ pub const AUTO_OUTLINE_SIZE: usize = 16384;
 
 /// Result of getting buffer content, which can be either full content or an outline.
 pub struct BufferContent {
-    /// The actual content (either full text or outline)
+    /// The actual content (either full text, a symbol outline, or a
+    /// truncated fallback — see `is_synthetic`).
     pub text: String,
-    /// Whether this is an outline (true) or full content (false)
-    pub is_outline: bool,
+    /// `true` when `text` is not the file's full content — either a symbol
+    /// outline or the truncated first-1KB fallback used when no outline is
+    /// available. Callers that prefix line numbers to file content must
+    /// skip prefixing in this case, because line numbers in `text` would
+    /// not correspond to the file's real line numbers.
+    pub is_synthetic: bool,
 }
 
 /// Returns either the full content of a buffer or its outline, depending on size.
@@ -25,13 +30,13 @@ pub async fn get_buffer_content_or_outline(
     path: Option<&str>,
     cx: &AsyncApp,
 ) -> Result<BufferContent> {
-    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
+    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len());
 
     if file_size > AUTO_OUTLINE_SIZE {
         // For large files, use outline instead of full content
         // Wait until the buffer has been fully parsed, so we can read its outline
         buffer
-            .read_with(cx, |buffer, _| buffer.parsing_idle())?
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
             .await;
 
         let outline_items = buffer.read_with(cx, |buffer, _| {
@@ -42,9 +47,12 @@ pub async fn get_buffer_content_or_outline(
                 .into_iter()
                 .map(|item| item.to_point(&snapshot))
                 .collect::<Vec<_>>()
-        })?;
+        });
 
-        // If no outline exists, fall back to first 1KB so the agent has some context
+        // If no outline exists, fall back to first 1KB so the agent has some context.
+        // This is reported as `is_synthetic: true` because the returned text is not
+        // the file's full content — it has a synthetic header and is truncated — so
+        // callers must not attach real-file line numbers to it.
         if outline_items.is_empty() {
             let text = buffer.read_with(cx, |buffer, _| {
                 let snapshot = buffer.snapshot();
@@ -55,11 +63,11 @@ pub async fn get_buffer_content_or_outline(
                 } else {
                     format!("# First 1KB of file (file too large to show full content, and no outline available)\n\n{content}")
                 }
-            })?;
+            });
 
             return Ok(BufferContent {
                 text,
-                is_outline: false,
+                is_synthetic: true,
             });
         }
 
@@ -72,14 +80,14 @@ pub async fn get_buffer_content_or_outline(
         };
         Ok(BufferContent {
             text,
-            is_outline: true,
+            is_synthetic: true,
         })
     } else {
         // File is small enough, return full content
-        let text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
         Ok(BufferContent {
             text,
-            is_outline: false,
+            is_synthetic: false,
         })
     }
 }
@@ -179,7 +187,7 @@ mod tests {
         let content = "⚡".repeat(100 * 1024); // 100KB
         let content_len = content.len();
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer(true, cx))
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
             .await
             .expect("failed to create buffer");
 
@@ -196,10 +204,13 @@ mod tests {
             "Result did not contain content subset"
         );
 
-        // Should be marked as not an outline (it's truncated content)
+        // Should be marked synthetic: the returned text is not the file's full
+        // content (it's a truncated first-1KB fallback with a synthetic header), so
+        // callers must treat it the same as the symbol-outline case and not attach
+        // real-file line numbers to it.
         assert!(
-            !result.is_outline,
-            "Large file without outline should not be marked as outline"
+            result.is_synthetic,
+            "Truncated fallback should be reported as synthetic so callers skip line numbering"
         );
 
         // Should be reasonably sized (much smaller than original)

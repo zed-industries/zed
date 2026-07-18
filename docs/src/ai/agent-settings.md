@@ -1,266 +1,164 @@
+---
+title: Agent Settings - Zed
+description: Map the AI settings pages to Zed AI setup for LLM providers, External Agents, MCP servers, and related settings.
+---
+
 # Agent Settings
 
-Learn about all the settings you can customize in Zed's Agent Panel.
+Agent Settings live in the **AI** section of the Settings Editor, which configures model providers, External Agents, and MCP servers.
+Open it with {#action agent::OpenSettings} (also available from the top-right menu in the [Agent Panel](./agent-panel.md)), which takes you straight to the AI page.
+You can also reach the same page with {#action zed::OpenSettings} and selecting **AI** in the sidebar.
 
-## Model Settings {#model-settings}
+Within the AI page, LLM Providers, External Agents, and MCP Servers each open as their own sub-page under the **General** section.
 
-### Default Model {#default-model}
+| Surface         | Opens with                      | Use it for                                                                  |
+| --------------- | ------------------------------- | --------------------------------------------------------------------------- |
+| Settings Editor | {#action agent::OpenSettings}   | AI settings: LLM providers, External Agents, MCP servers, and related pages |
+| Settings file   | {#action zed::OpenSettingsFile} | Direct JSON edits and settings not exposed in UI                            |
 
-If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
+For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
+
+## LLM Providers {#llm-providers}
+
+The `LLM Providers` section configures model providers for Zed AI features, including Zed Agent, Inline Assistant, Git commit generation, thread summaries, and similar model-backed features.
+
+Use this section to:
+
+- sign in to supported subscription-backed providers
+- enter provider API keys
+- add OpenAI-compatible providers
+- remove providers
+
+For the model-access paths and provider-specific setup, see [LLM Providers](./llm-providers.md).
+
+## Feature-Specific Settings {#feature-specific-settings}
+
+Some Zed AI features have their own model or prompt settings in `settings.json`, including:
+
+- `agent.inline_assistant_model`
+- `agent.commit_message_model`
+- `agent.thread_summary_model`
+- `agent.subagent_model`
+- `agent.commit_message_instructions`
+- `agent.inline_alternatives`
+
+Use `agent.commit_message_instructions` for instructions that apply only to generated Git commit messages:
 
 ```json [settings]
 {
   "agent": {
-    "default_model": {
-      "provider": "openai",
-      "model": "gpt-4o"
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+For feature-specific model examples, see [Feature-specific Models](#feature-specific-models).
+
+## Automatic Compaction {#automatic-compaction}
+
+Zed Agent can automatically compact long threads before they reach the selected model's context window. Compaction summarizes earlier messages and keeps the conversation usable without starting a new thread.
+
+Automatic compaction is enabled by default and runs when the thread reaches `90%` of the model's context window. You can change the threshold or disable automatic compaction in `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "auto_compact": {
+      "enabled": true,
+      "threshold": "90%"
     }
   }
 }
 ```
 
-### Feature-specific Models {#feature-specific-models}
+The `threshold` value can be one of:
 
-You can assign distinct and specific models for the following AI-powered features:
+| Value                           | Meaning                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| Percentage string, like `90%`   | Compact when the thread uses that percentage of the model's context window.    |
+| Positive integer, like `100000` | Compact after that many tokens have been used.                                 |
+| Negative integer, like `-20000` | Compact once fewer than that many tokens remain in the model's context window. |
 
-- Thread summary model: Used for generating thread summaries
-- Inline assistant model: Used for the inline assistant feature
-- Commit message model: Used for generating Git commit messages
+`0` is not a valid threshold. If the threshold is invalid, Zed falls back to `90%`.
+
+You can compact a Zed Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
+
+## External Agents {#external-agents}
+
+The External Agents section configures ACP-integrated agents.
+
+Use `Add Agent` to:
+
+- `Install from Registry`
+- `Add Custom Agent`
+
+For setup details and support boundaries, see [External Agents](./external-agents.md).
+
+## MCP Servers {#mcp-servers}
+
+The `MCP Servers` page configures Model Context Protocol servers connected to Zed.
+
+Use `Add Server` (in the page header) to:
+
+- `Add Local Server`
+- `Add Remote Server`
+- `Install from Extensions`
+
+Each configured server row exposes:
+
+- a `Configure` (gear) button to edit the server
+- an `Uninstall` (trash) button to remove it
+- a toggle to enable or disable it
+
+For MCP setup, auth, server status, and agent-path boundaries, see [MCP](./mcp.md).
+
+## Related Configuration {#related-configuration}
+
+Some AI settings are not configured on the AI settings pages:
+
+| Task                                                         | Go to                                          |
+| ------------------------------------------------------------ | ---------------------------------------------- |
+| Choose which tools are available in a Zed Agent thread       | [Agent Profiles](./agent-profiles.md)          |
+| Control whether tool calls are allowed, denied, or confirmed | [Tool Permissions](./tool-permissions.md)      |
+| Configure reusable task instructions                         | [Skills](./skills.md)                          |
+| Configure always-on personal or project instructions         | [Instructions](./instructions.md)              |
+| Configure edit prediction providers                          | [Edit Prediction](./edit-prediction.md)        |
+| Turn AI off                                                  | [AI Quick Start](./quick-start.md#turn-ai-off) |
+| Edit raw settings JSON                                       | [Configuring Zed](../configuring-zed.md)       |
+
+## Feature-Specific Models {#feature-specific-models}
+
+Zed supports feature-specific model settings for Inline Assistant, Git commit generation, thread summaries, and subagents. Configure these in settings when you need a different model for a specific workflow.
+
+See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
+
+## Model Temperature {#model-temperature}
+
+Most Zed AI features use the selected model's default generation behavior.
+Use `agent.model_parameters` when you need to set a temperature for a provider,
+a model, or a specific provider/model pair.
 
 ```json [settings]
 {
   "agent": {
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-sonnet-4"
-    },
-    "inline_assistant_model": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet"
-    },
-    "commit_message_model": {
-      "provider": "openai",
-      "model": "gpt-4o-mini"
-    },
-    "thread_summary_model": {
-      "provider": "google",
-      "model": "gemini-2.0-flash"
-    }
-  }
-}
-```
-
-> If a custom model isn't set for one of these features, they automatically fall back to using the default model.
-
-### Alternative Models for Inline Assists {#alternative-assists}
-
-With the Inline Assistant in particular, you can send the same prompt to multiple models at once.
-
-Here's how you can customize your `settings.json` to add this functionality:
-
-```json [settings]
-{
-  "agent": {
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-sonnet-4"
-    },
-    "inline_alternatives": [
+    "model_parameters": [
       {
-        "provider": "zed.dev",
-        "model": "gpt-4-mini"
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "temperature": 0.2
       }
     ]
   }
 }
 ```
 
-When multiple models are configured, you'll see in the Inline Assistant UI buttons that allow you to cycle between outputs generated by each model.
+Zed checks matching entries from last to first. An entry can omit `provider` or
+`model` to apply more broadly. For provider-specific model configuration such as
+custom model entries, context windows, or gateway routing, see
+[LLM Providers](./llm-providers.md) and the provider setup pages.
 
-The models you specify here are always used in _addition_ to your [default model](#default-model).
+## Rules, Skills, and Instructions {#rules-skills-instructions}
 
-For example, the following configuration will generate three outputs for every assist.
-One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and another one with Gemini 2.5 Flash.
+Reusable Rules have been replaced by [Skills](./skills.md). Always-on Rules have moved to [Instructions](./instructions.md), including personal `AGENTS.md` and project instruction files.
 
-```json [settings]
-{
-  "agent": {
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-sonnet-4"
-    },
-    "inline_alternatives": [
-      {
-        "provider": "zed.dev",
-        "model": "gpt-4-mini"
-      },
-      {
-        "provider": "zed.dev",
-        "model": "gemini-2.5-flash"
-      }
-    ]
-  }
-}
-```
-
-### Model Temperature
-
-Specify a custom temperature for a provider and/or model:
-
-```json [settings]
-"model_parameters": [
-  // To set parameters for all requests to OpenAI models:
-  {
-    "provider": "openai",
-    "temperature": 0.5
-  },
-  // To set parameters for all requests in general:
-  {
-    "temperature": 0
-  },
-  // To set parameters for a specific provider and model:
-  {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4",
-    "temperature": 1.0
-  }
-],
-```
-
-## Agent Panel Settings {#agent-panel-settings}
-
-Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
-
-### Default View
-
-Use the `default_view` setting to change the default view of the Agent Panel.
-You can choose between `thread` (the default) and `text_thread`:
-
-```json [settings]
-{
-  "agent": {
-    "default_view": "text_thread"
-  }
-}
-```
-
-### Font Size
-
-Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
-
-```json [settings]
-{
-  "agent": {
-    "agent_font_size": 18
-  }
-}
-```
-
-> Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
-
-### Auto-run Commands
-
-Control whether to allow the agent to run commands without asking you for permission.
-The default value is `false`.
-
-```json [settings]
-{
-  "agent": {
-    "always_allow_tool_actions": true
-  }
-}
-```
-
-### Single-file Review
-
-Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `false`.
-
-```json [settings]
-{
-  "agent": {
-    "single_file_review": true
-  }
-}
-```
-
-When set to false, these controls are only available in the multibuffer review tab.
-
-### Sound Notification
-
-Control whether to hear a notification sound when the agent is done generating changes or needs your input.
-The default value is `false`.
-
-```json [settings]
-{
-  "agent": {
-    "play_sound_when_agent_done": true
-  }
-}
-```
-
-### Message Editor Size
-
-Use the `message_editor_min_lines` setting to control the minimum number of lines of height the agent message editor should have.
-It is set to `4` by default, and the max number of lines is always double of the minimum.
-
-```json [settings]
-{
-  "agent": {
-    "message_editor_min_lines": 4
-  }
-}
-```
-
-### Modifier to Send
-
-Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
-This is encouraged for more thoughtful prompt crafting.
-The default value is `false`.
-
-```json [settings]
-{
-  "agent": {
-    "use_modifier_to_send": true
-  }
-}
-```
-
-### Edit Card
-
-Use the `expand_edit_card` setting to control whether edit cards show the full diff in the Agent Panel.
-It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded.
-
-```json [settings]
-{
-  "agent": {
-    "expand_edit_card": false
-  }
-}
-```
-
-### Terminal Card
-
-Use the `expand_terminal_card` setting to control whether terminal cards show the command output in the Agent Panel.
-It is set to `true` by default, but if set to false, the card will be fully collapsed even while the command is running, requiring a click to be expanded.
-
-```json [settings]
-{
-  "agent": {
-    "expand_terminal_card": false
-  }
-}
-```
-
-### Feedback Controls
-
-Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing you to give Zed feedback about the agent's performance.
-The default value is `true`.
-
-```json [settings]
-{
-  "agent": {
-    "enable_feedback": false
-  }
-}
-```
+Older builds or transitional UI may still refer to `Rules`. Use [Skills](./skills.md) for reusable task instructions and [Instructions](./instructions.md) for always-on context.

@@ -15,7 +15,7 @@ use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashMap, HashSet, IndexMap, TypeIdHashMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -38,7 +38,7 @@ use futures::{AsyncBufReadExt as _, SinkExt, StreamExt, TryStreamExt};
 use futures::{FutureExt, future::Shared};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Task, WeakEntity,
+    Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use node_runtime::NodeRuntime;
@@ -48,10 +48,9 @@ use serde_json::Value;
 use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
 use std::collections::{BTreeMap, VecDeque};
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 use std::u64;
 use std::{
@@ -61,10 +60,11 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::TaskContext;
+use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
-use util::command::new_smol_command;
+use util::command::Stdio;
+use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
@@ -209,9 +209,8 @@ impl RunningMode {
             }
         });
 
-        let client = if let Some(client) = parent_session
-            .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-            .flatten()
+        let client = if let Some(client) =
+            parent_session.and_then(|session| cx.update(|cx| session.read(cx).adapter_client()))
         {
             client
                 .create_child_connection(session_id, binary.clone(), message_handler, cx)
@@ -466,7 +465,7 @@ impl RunningMode {
                     })?;
                 initialized_rx.await?;
                 let errors_by_path = cx
-                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
+                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
                     .await;
 
                 dap_store.update(cx, |_, cx| {
@@ -705,14 +704,14 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
-    requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     data_breakpoints: BTreeMap<String, DataBreakpointState>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
-    task_context: TaskContext,
+    task_context: SharedTaskContext,
     memory: memory::Memory,
     quirks: SessionQuirks,
     remote_client: Option<Entity<RemoteClient>>,
@@ -834,7 +833,7 @@ impl Session {
         parent_session: Option<Entity<Session>>,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         quirks: SessionQuirks,
         remote_client: Option<Entity<RemoteClient>>,
         node_runtime: Option<NodeRuntime>,
@@ -877,7 +876,7 @@ impl Session {
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
                 output: circular_buffer::CircularBuffer::boxed(),
-                requests: HashMap::default(),
+                requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,
@@ -898,7 +897,7 @@ impl Session {
         })
     }
 
-    pub fn task_context(&self) -> &TaskContext {
+    pub fn task_context(&self) -> &SharedTaskContext {
         &self.task_context
     }
 
@@ -2188,21 +2187,27 @@ impl Session {
             self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |session, cx| {
+            this.update(cx, |session, cx| {
                 if supports_dap_restart {
-                    session
-                        .request(
-                            RestartCommand {
-                                raw: args.unwrap_or(Value::Null),
-                            },
-                            Self::fallback_to_manual_restart,
-                            cx,
-                        )
-                        .detach();
+                    session.request(
+                        RestartCommand {
+                            raw: args.unwrap_or(Value::Null),
+                        },
+                        Self::fallback_to_manual_restart,
+                        cx,
+                    )
                 } else {
                     cx.emit(SessionStateEvent::Restart);
+                    Task::ready(None)
                 }
-            });
+            })
+            .unwrap_or_else(|_| Task::ready(None))
+            .await;
+
+            this.update(cx, |session, _cx| {
+                session.restart_task = None;
+            })
+            .ok();
         }));
     }
 
@@ -2529,8 +2534,8 @@ impl Session {
                         return
                     };
 
-                    for scope in scopes.iter() {
-                        this.variables(scope.variables_reference, cx);
+                    for scope in scopes.iter().filter(|scope| !scope.expensive) {
+                            this.variables(scope.variables_reference, cx);
                     }
 
                     let entry = this
@@ -2646,9 +2651,39 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                let Some(variables) = variables.log_err() else {
+                let Some(mut variables) = variables.log_err() else {
                     return;
                 };
+
+                if this.adapter.0.as_ref() == "Debugpy" {
+                    for variable in variables.iter_mut() {
+                        if variable.type_ == Some("str".into()) {
+                            // reverse Python repr() escaping
+                            let mut unescaped = String::with_capacity(variable.value.len());
+                            let mut chars = variable.value.chars();
+                            while let Some(c) = chars.next() {
+                                if c != '\\' {
+                                    unescaped.push(c);
+                                } else {
+                                    match chars.next() {
+                                        Some('\\') => unescaped.push('\\'),
+                                        Some('n') => unescaped.push('\n'),
+                                        Some('t') => unescaped.push('\t'),
+                                        Some('r') => unescaped.push('\r'),
+                                        Some('\'') => unescaped.push('\''),
+                                        Some('"') => unescaped.push('"'),
+                                        Some(c) => {
+                                            unescaped.push('\\');
+                                            unescaped.push(c);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                            }
+                            variable.value = unescaped;
+                        }
+                    }
+                }
 
                 this.active_snapshot
                     .variables
@@ -2858,7 +2893,7 @@ impl Session {
         let mut console_output = self.console_output(cx);
         let task = cx.spawn(async move |this, cx| {
             let forward_ports_process = if remote_client
-                .read_with(cx, |client, _| client.shares_network_interface())?
+                .read_with(cx, |client, _| client.shares_network_interface())
             {
                 request.other.insert(
                     "proxyUri".into(),
@@ -2866,7 +2901,7 @@ impl Session {
                 );
                 None
             } else {
-                let port = TcpTransport::unused_port(Ipv4Addr::LOCALHOST)
+                let port = TcpTransport::unused_port(IpAddr::V4(Ipv4Addr::LOCALHOST))
                     .await
                     .context("getting port for DAP")?;
                 request
@@ -2884,13 +2919,13 @@ impl Session {
 
                 let child = remote_client.update(cx, |client, _| {
                     let command = client.build_forward_ports_command(port_forwards)?;
-                    let child = new_smol_command(command.program)
+                    let child = new_command(command.program)
                         .args(command.args)
                         .envs(command.env)
                         .spawn()
                         .context("spawning port forwarding process")?;
                     anyhow::Ok(child)
-                })??;
+                })?;
                 Some(child)
             };
 
@@ -3068,7 +3103,7 @@ struct KillCompanionBrowserParams {
 async fn spawn_companion(
     node_runtime: NodeRuntime,
     cx: &mut AsyncApp,
-) -> Result<(u16, smol::process::Child)> {
+) -> Result<(u16, util::command::Child)> {
     let binary_path = node_runtime
         .binary_path()
         .await
@@ -3090,7 +3125,7 @@ async fn spawn_companion(
         .to_string_lossy()
         .to_string();
 
-    let child = new_smol_command(binary_path)
+    let child = new_command(binary_path)
         .arg(path)
         .args([
             format!("--listen=127.0.0.1:{port}"),
@@ -3110,7 +3145,7 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
-        node.npm_install_packages(temp_dir.path(), &[(PACKAGE_NAME, "latest")])
+        node.npm_install_latest_packages(temp_dir.path(), &[PACKAGE_NAME])
             .await
             .context("installing latest companion package")?;
         let version = node

@@ -1,71 +1,16 @@
 use super::{HoverTarget, HoveredWord, TerminalView};
-use anyhow::{Context as _, Result};
-use editor::Editor;
-use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
-use itertools::Itertools;
-use project::{Entry, Metadata};
+use anyhow::Result;
+use editor::items::open_resolved_target;
+use gpui::{Context, Task, TaskExt, WeakEntity, Window};
 use std::path::PathBuf;
 use terminal::PathLikeTarget;
-use util::{
-    ResultExt, debug_panic,
-    paths::{PathStyle, PathWithPosition},
-    rel_path::RelPath,
+#[cfg(not(test))]
+use workspace::path_link::possible_open_target;
+#[cfg(test)]
+use workspace::path_link::{
+    BackgroundPathChecks, OpenTargetFoundBy, possible_open_target_with_fs_checks,
 };
-use workspace::{OpenOptions, OpenVisible, Workspace};
-
-/// The way we found the open target. This is important to have for test assertions.
-/// For example, remote projects never look in the file system.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum OpenTargetFoundBy {
-    WorktreeExact,
-    WorktreeScan,
-    FileSystemBackground,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum BackgroundFsChecks {
-    Enabled,
-    Disabled,
-}
-
-#[derive(Debug, Clone)]
-enum OpenTarget {
-    Worktree(PathWithPosition, Entry, #[cfg(test)] OpenTargetFoundBy),
-    File(PathWithPosition, Metadata),
-}
-
-impl OpenTarget {
-    fn is_file(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry, ..) => entry.is_file(),
-            OpenTarget::File(_, metadata) => !metadata.is_dir,
-        }
-    }
-
-    fn is_dir(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry, ..) => entry.is_dir(),
-            OpenTarget::File(_, metadata) => metadata.is_dir,
-        }
-    }
-
-    fn path(&self) -> &PathWithPosition {
-        match self {
-            OpenTarget::Worktree(path, ..) => path,
-            OpenTarget::File(path, _) => path,
-        }
-    }
-
-    #[cfg(test)]
-    fn found_by(&self) -> OpenTargetFoundBy {
-        match self {
-            OpenTarget::Worktree(.., found_by) => *found_by,
-            OpenTarget::File(..) => OpenTargetFoundBy::FileSystemBackground,
-        }
-    }
-}
+use workspace::{Workspace, path_link::OpenTarget};
 
 pub(super) fn hover_path_like_target(
     workspace: &WeakEntity<Workspace>,
@@ -84,7 +29,7 @@ pub(super) fn hover_path_like_target(
             hovered_word,
             path_like_target,
             cx,
-            BackgroundFsChecks::Enabled,
+            BackgroundPathChecks::LocalFileSystem,
         )
     }
 }
@@ -94,22 +39,31 @@ fn possible_hover_target(
     hovered_word: HoveredWord,
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
-    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
+    #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<()> {
+    #[cfg(not(test))]
     let file_to_open_task = possible_open_target(
         workspace,
-        path_like_target,
+        &path_like_target.maybe_path,
+        path_like_target.terminal_dir.as_deref(),
         cx,
-        #[cfg(test)]
-        background_fs_checks,
+    );
+    #[cfg(test)]
+    let file_to_open_task = possible_open_target_with_fs_checks(
+        workspace,
+        &path_like_target.maybe_path,
+        path_like_target.terminal_dir.as_deref(),
+        cx,
+        background_path_checks,
     );
     cx.spawn(async move |terminal_view, cx| {
         let file_to_open = file_to_open_task.await;
         terminal_view
             .update(cx, |terminal_view, _| match file_to_open {
-                Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, ..)) => {
+                Some(OpenTarget::Path(path, ..) | OpenTarget::Worktree(path, ..)) => {
                     terminal_view.hover = Some(HoverTarget {
-                        tooltip: path.to_string(|path| path.to_string_lossy().into_owned()),
+                        tooltip: path
+                            .to_string(&|path: &PathBuf| path.to_string_lossy().into_owned()),
                         hovered_word,
                     });
                 }
@@ -118,282 +72,6 @@ fn possible_hover_target(
                 }
             })
             .ok();
-    })
-}
-
-fn possible_open_target(
-    workspace: &WeakEntity<Workspace>,
-    path_like_target: &PathLikeTarget,
-    cx: &App,
-    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
-) -> Task<Option<OpenTarget>> {
-    let Some(workspace) = workspace.upgrade() else {
-        return Task::ready(None);
-    };
-    // We have to check for both paths, as on Unix, certain paths with positions are valid file paths too.
-    // We can be on FS remote part, without real FS, so cannot canonicalize or check for existence the path right away.
-    let mut potential_paths = Vec::new();
-    let cwd = path_like_target.terminal_dir.as_ref();
-    let maybe_path = &path_like_target.maybe_path;
-    let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
-    let path_with_position = PathWithPosition::parse_str(maybe_path);
-    let worktree_candidates = workspace
-        .read(cx)
-        .worktrees(cx)
-        .sorted_by_key(|worktree| {
-            let worktree_root = worktree.read(cx).abs_path();
-            match cwd.and_then(|cwd| worktree_root.strip_prefix(cwd).ok()) {
-                Some(cwd_child) => cwd_child.components().count(),
-                None => usize::MAX,
-            }
-        })
-        .collect::<Vec<_>>();
-    // Since we do not check paths via FS and joining, we need to strip off potential `./`, `a/`, `b/` prefixes out of it.
-    const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
-    for prefix_str in GIT_DIFF_PATH_PREFIXES.iter().chain(std::iter::once(&".")) {
-        if let Some(stripped) = original_path.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition {
-                path: stripped.to_owned(),
-                row: original_path.row,
-                column: original_path.column,
-            });
-        }
-        if let Some(stripped) = path_with_position.path.strip_prefix(prefix_str).ok() {
-            potential_paths.push(PathWithPosition {
-                path: stripped.to_owned(),
-                row: path_with_position.row,
-                column: path_with_position.column,
-            });
-        }
-    }
-
-    let insert_both_paths = original_path != path_with_position;
-    potential_paths.insert(0, original_path);
-    if insert_both_paths {
-        potential_paths.insert(1, path_with_position);
-    }
-
-    // If we won't find paths "easily", we can traverse the entire worktree to look what ends with the potential path suffix.
-    // That will be slow, though, so do the fast checks first.
-    let mut worktree_paths_to_check = Vec::new();
-    let mut is_cwd_in_worktree = false;
-    let mut open_target = None;
-    'worktree_loop: for worktree in &worktree_candidates {
-        let worktree_root = worktree.read(cx).abs_path();
-        let mut paths_to_check = Vec::with_capacity(potential_paths.len());
-        let relative_cwd = cwd
-            .and_then(|cwd| cwd.strip_prefix(&worktree_root).ok())
-            .and_then(|cwd| RelPath::new(cwd, PathStyle::local()).ok())
-            .and_then(|cwd_stripped| {
-                (cwd_stripped.as_ref() != RelPath::empty()).then(|| {
-                    is_cwd_in_worktree = true;
-                    cwd_stripped
-                })
-            });
-
-        for path_with_position in &potential_paths {
-            let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
-                let root_path_with_position = PathWithPosition {
-                    path: worktree_root.to_path_buf(),
-                    row: path_with_position.row,
-                    column: path_with_position.column,
-                };
-                match worktree.read(cx).root_entry() {
-                    Some(root_entry) => {
-                        open_target = Some(OpenTarget::Worktree(
-                            root_path_with_position,
-                            root_entry.clone(),
-                            #[cfg(test)]
-                            OpenTargetFoundBy::WorktreeExact,
-                        ));
-                        break 'worktree_loop;
-                    }
-                    None => root_path_with_position,
-                }
-            } else {
-                PathWithPosition {
-                    path: path_with_position
-                        .path
-                        .strip_prefix(&worktree_root)
-                        .unwrap_or(&path_with_position.path)
-                        .to_owned(),
-                    row: path_with_position.row,
-                    column: path_with_position.column,
-                }
-            };
-
-            if let Ok(relative_path_to_check) =
-                RelPath::new(&path_to_check.path, PathStyle::local())
-                && !worktree.read(cx).is_single_file()
-                && let Some(entry) = relative_cwd
-                    .clone()
-                    .and_then(|relative_cwd| {
-                        worktree
-                            .read(cx)
-                            .entry_for_path(&relative_cwd.join(&relative_path_to_check))
-                    })
-                    .or_else(|| worktree.read(cx).entry_for_path(&relative_path_to_check))
-            {
-                open_target = Some(OpenTarget::Worktree(
-                    PathWithPosition {
-                        path: worktree.read(cx).absolutize(&entry.path),
-                        row: path_to_check.row,
-                        column: path_to_check.column,
-                    },
-                    entry.clone(),
-                    #[cfg(test)]
-                    OpenTargetFoundBy::WorktreeExact,
-                ));
-                break 'worktree_loop;
-            }
-
-            paths_to_check.push(path_to_check);
-        }
-
-        if !paths_to_check.is_empty() {
-            worktree_paths_to_check.push((worktree.clone(), paths_to_check));
-        }
-    }
-
-    #[cfg(not(test))]
-    let enable_background_fs_checks = workspace.read(cx).project().read(cx).is_local();
-    #[cfg(test)]
-    let enable_background_fs_checks = background_fs_checks == BackgroundFsChecks::Enabled;
-
-    if open_target.is_some() {
-        // We we want to prefer open targets found via background fs checks over worktree matches,
-        // however we can return early if either:
-        //   - This is a remote project, or
-        //   - If the terminal working directory is inside of at least one worktree
-        if !enable_background_fs_checks || is_cwd_in_worktree {
-            return Task::ready(open_target);
-        }
-    }
-
-    // Before entire worktree traversal(s), make an attempt to do FS checks if available.
-    let fs_paths_to_check =
-        if enable_background_fs_checks {
-            let fs_cwd_paths_to_check = cwd
-                .iter()
-                .flat_map(|cwd| {
-                    let mut paths_to_check = Vec::new();
-                    for path_to_check in &potential_paths {
-                        let maybe_path = &path_to_check.path;
-                        if path_to_check.path.is_relative() {
-                            paths_to_check.push(PathWithPosition {
-                                path: cwd.join(&maybe_path),
-                                row: path_to_check.row,
-                                column: path_to_check.column,
-                            });
-                        }
-                    }
-                    paths_to_check
-                })
-                .collect::<Vec<_>>();
-            fs_cwd_paths_to_check
-                .into_iter()
-                .chain(
-                    potential_paths
-                        .into_iter()
-                        .flat_map(|path_to_check| {
-                            let mut paths_to_check = Vec::new();
-                            let maybe_path = &path_to_check.path;
-                            if maybe_path.starts_with("~") {
-                                if let Some(home_path) = maybe_path.strip_prefix("~").ok().and_then(
-                                    |stripped_maybe_path| {
-                                        Some(dirs::home_dir()?.join(stripped_maybe_path))
-                                    },
-                                ) {
-                                    paths_to_check.push(PathWithPosition {
-                                        path: home_path,
-                                        row: path_to_check.row,
-                                        column: path_to_check.column,
-                                    });
-                                }
-                            } else {
-                                paths_to_check.push(PathWithPosition {
-                                    path: maybe_path.clone(),
-                                    row: path_to_check.row,
-                                    column: path_to_check.column,
-                                });
-                                if maybe_path.is_relative() {
-                                    for worktree in &worktree_candidates {
-                                        if !worktree.read(cx).is_single_file() {
-                                            paths_to_check.push(PathWithPosition {
-                                                path: worktree.read(cx).abs_path().join(maybe_path),
-                                                row: path_to_check.row,
-                                                column: path_to_check.column,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                            paths_to_check
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-    let fs = workspace.read(cx).project().read(cx).fs().clone();
-    let background_fs_checks_task = cx.background_spawn(async move {
-        for mut path_to_check in fs_paths_to_check {
-            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()
-                && let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten()
-            {
-                if open_target
-                    .as_ref()
-                    .map(|open_target| open_target.path().path != fs_path_to_check)
-                    .unwrap_or(true)
-                {
-                    path_to_check.path = fs_path_to_check;
-                    return Some(OpenTarget::File(path_to_check, metadata));
-                }
-
-                break;
-            }
-        }
-
-        open_target
-    });
-
-    cx.spawn(async move |cx| {
-        background_fs_checks_task.await.or_else(|| {
-            for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-                let found_entry = worktree
-                    .update(cx, |worktree, _| -> Option<OpenTarget> {
-                        let traversal =
-                            worktree.traverse_from_path(true, true, false, RelPath::empty());
-                        for entry in traversal {
-                            if let Some(path_in_worktree) =
-                                worktree_paths_to_check.iter().find(|path_to_check| {
-                                    RelPath::new(&path_to_check.path, PathStyle::local())
-                                        .is_ok_and(|path| entry.path.ends_with(&path))
-                                })
-                            {
-                                return Some(OpenTarget::Worktree(
-                                    PathWithPosition {
-                                        path: worktree.absolutize(&entry.path),
-                                        row: path_in_worktree.row,
-                                        column: path_in_worktree.column,
-                                    },
-                                    entry.clone(),
-                                    #[cfg(test)]
-                                    OpenTargetFoundBy::WorktreeScan,
-                                ));
-                            }
-                        }
-                        None
-                    })
-                    .ok()?;
-                if let Some(found_entry) = found_entry {
-                    return Some(found_entry);
-                }
-            }
-            None
-        })
     })
 }
 
@@ -417,7 +95,7 @@ pub(super) fn open_path_like_target(
             path_like_target,
             window,
             cx,
-            BackgroundFsChecks::Enabled,
+            BackgroundPathChecks::LocalFileSystem,
         )
         .detach_and_log_err(cx)
     }
@@ -429,7 +107,7 @@ fn possibly_open_target(
     path_like_target: &PathLikeTarget,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
-    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
+    #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<Result<Option<OpenTarget>>> {
     if terminal_view.hover.is_none() {
         return Task::ready(Ok(None));
@@ -439,88 +117,50 @@ fn possibly_open_target(
     cx.spawn_in(window, async move |terminal_view, cx| {
         let Some(open_target) = terminal_view
             .update(cx, |_, cx| {
-                possible_open_target(
-                    &workspace,
-                    &path_like_target,
-                    cx,
-                    #[cfg(test)]
-                    background_fs_checks,
-                )
+                #[cfg(not(test))]
+                {
+                    possible_open_target(
+                        &workspace,
+                        &path_like_target.maybe_path,
+                        path_like_target.terminal_dir.as_deref(),
+                        cx,
+                    )
+                }
+                #[cfg(test)]
+                {
+                    possible_open_target_with_fs_checks(
+                        &workspace,
+                        &path_like_target.maybe_path,
+                        path_like_target.terminal_dir.as_deref(),
+                        cx,
+                        background_path_checks,
+                    )
+                }
             })?
             .await
         else {
             return Ok(None);
         };
 
-        let path_to_open = open_target.path();
-        let opened_items = workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path_to_open.path.clone()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::OnlyDirectories),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
-            })
-            .context("workspace update")?
-            .await;
-        if opened_items.len() != 1 {
-            debug_panic!(
-                "Received {} items for one path {path_to_open:?}",
-                opened_items.len(),
-            );
-        }
-
-        if let Some(opened_item) = opened_items.first() {
-            if open_target.is_file() {
-                if let Some(Ok(opened_item)) = opened_item {
-                    if let Some(row) = path_to_open.row {
-                        let col = path_to_open.column.unwrap_or(0);
-                        if let Some(active_editor) = opened_item.downcast::<Editor>() {
-                            active_editor
-                                .downgrade()
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.go_to_singleton_buffer_point(
-                                        language::Point::new(
-                                            row.saturating_sub(1),
-                                            col.saturating_sub(1),
-                                        ),
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err();
-                        }
-                    }
-                    return Ok(Some(open_target));
-                }
-            } else if open_target.is_dir() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.project().update(cx, |_, cx| {
-                        cx.emit(project::Event::ActivateProjectPanel);
-                    })
-                })?;
-                return Ok(Some(open_target));
-            }
-        }
-        Ok(None)
+        let opened = open_resolved_target(&workspace, &open_target, cx).await?;
+        Ok(opened.then_some(open_target))
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{AppContext as _, TestAppContext};
     use project::Project;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use terminal::{HoveredWord, alacritty_terminal::index::Point as AlacPoint};
+    use terminal::{
+        HoveredWord, Point, Range, TerminalBuilder,
+        terminal_settings::{AlternateScroll, CursorShape},
+    };
     use util::path;
-    use workspace::AppState;
+    use util::paths::PathStyle;
+    use workspace::{AppState, MultiWorkspace};
 
     async fn init_test(
         app_cx: &mut TestAppContext,
@@ -529,12 +169,12 @@ mod tests {
     ) -> impl AsyncFnMut(
         HoveredWord,
         PathLikeTarget,
-        BackgroundFsChecks,
+        BackgroundPathChecks,
     ) -> (Option<HoverTarget>, Option<OpenTarget>) {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
         app_cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
 
@@ -549,16 +189,21 @@ mod tests {
         )
         .await;
 
-        let (workspace, cx) =
-            app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) = app_cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-        let cwd = std::env::current_dir().expect("Failed to get working directory");
-        let terminal = project
-            .update(cx, |project: &mut Project, cx| {
-                project.create_terminal_shell(Some(cwd), cx)
-            })
-            .await
-            .expect("Failed to create a terminal");
+        let terminal = app_cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
 
         let workspace_a = workspace.clone();
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {
@@ -574,7 +219,7 @@ mod tests {
 
         async move |hovered_word: HoveredWord,
                     path_like_target: PathLikeTarget,
-                    background_fs_checks: BackgroundFsChecks|
+                    background_path_checks: BackgroundPathChecks|
                     -> (Option<HoverTarget>, Option<OpenTarget>) {
             let workspace_a = workspace.clone();
             terminal_view
@@ -584,7 +229,7 @@ mod tests {
                         hovered_word,
                         &path_like_target,
                         cx,
-                        background_fs_checks,
+                        background_path_checks,
                     )
                 })
                 .await;
@@ -600,7 +245,7 @@ mod tests {
                         &path_like_target,
                         window,
                         cx,
-                        background_fs_checks,
+                        background_path_checks,
                     )
                 })
                 .await
@@ -614,27 +259,27 @@ mod tests {
         test_path_like: &mut impl AsyncFnMut(
             HoveredWord,
             PathLikeTarget,
-            BackgroundFsChecks,
+            BackgroundPathChecks,
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
-        background_fs_checks: BackgroundFsChecks,
-        mut open_target_found_by: OpenTargetFoundBy,
+        background_path_checks: BackgroundPathChecks,
+        open_target_found_by: OpenTargetFoundBy,
         file: &str,
         line: u32,
     ) {
         let (hover_target, open_target) = test_path_like(
             HoveredWord {
                 word: maybe_path.to_string(),
-                word_match: AlacPoint::default()..=AlacPoint::default(),
+                word_match: Range::new(Point::new(0, 0), Point::new(0, 0)),
                 id: 0,
             },
             PathLikeTarget {
                 maybe_path: maybe_path.to_string(),
                 terminal_dir,
             },
-            background_fs_checks,
+            background_path_checks,
         )
         .await;
 
@@ -669,12 +314,6 @@ mod tests {
             "Open target path mismatch at {file}:{line}:"
         );
 
-        if background_fs_checks == BackgroundFsChecks::Disabled
-            && open_target_found_by == OpenTargetFoundBy::FileSystemBackground
-        {
-            open_target_found_by = OpenTargetFoundBy::WorktreeScan;
-        }
-
         assert_eq!(
             open_target.found_by(),
             open_target_found_by,
@@ -704,7 +343,7 @@ mod tests {
                 $maybe_path,
                 $tooltip,
                 $cwd,
-                BackgroundFsChecks::Enabled,
+                BackgroundPathChecks::LocalFileSystem,
                 $found_by
             );
             test_path_like!(
@@ -712,7 +351,7 @@ mod tests {
                 $maybe_path,
                 $tooltip,
                 $cwd,
-                BackgroundFsChecks::Disabled,
+                BackgroundPathChecks::ProjectPathResolution,
                 $found_by
             );
         }};
@@ -779,7 +418,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Enabled,
+                        BackgroundPathChecks::LocalFileSystem,
                         OpenTargetFoundBy::WorktreeExact
                     )
                 };
@@ -789,7 +428,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Enabled,
+                        BackgroundPathChecks::LocalFileSystem,
                         OpenTargetFoundBy::$found_by
                     )
                 }
@@ -804,7 +443,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Disabled,
+                        BackgroundPathChecks::ProjectPathResolution,
                         OpenTargetFoundBy::WorktreeExact
                     )
                 };
@@ -814,7 +453,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Disabled,
+                        BackgroundPathChecks::ProjectPathResolution,
                         OpenTargetFoundBy::$found_by
                     )
                 }
@@ -990,8 +629,6 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
             test_path_likes!(
@@ -1042,17 +679,14 @@ mod tests {
                         "../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339/foo",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                 }
             )
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
-        #[should_panic(expected = "Hover target should not be `None`")]
         async fn issue_28339_remote(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
@@ -1244,7 +878,7 @@ mod tests {
                 vec![path!("/test")],
                 {
                     // Note: Opening a non-worktree file adds that file as a single file worktree.
-                    test_local!("file.txt", "/file.txt", "/", FileSystemBackground);
+                    test_local!("file.txt", "/file.txt", "/", BackgroundPathResolution);
                 }
             )
         }
@@ -1271,8 +905,41 @@ mod tests {
                 vec![path!("/test")],
                 {
                     // Note: Opening a non-worktree file adds that file as a single file worktree.
-                    test_remote!("file.txt", "/test/file.txt", "/");
+                    test_remote!("file.txt", "/file.txt", "/", BackgroundPathResolution);
                     test_remote!("/test/file.txt", "/test/file.txt", "/");
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/39159
+        #[gpui::test]
+        async fn issue_39159_remote_absolute_path_outside_worktree(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![
+                    (
+                        path!("/tmp"),
+                        json!({
+                            "a.txt": "",
+                        }),
+                    ),
+                    (
+                        path!("/code/project"),
+                        json!({
+                            "src": {
+                                "lib.rs": "",
+                            },
+                        }),
+                    ),
+                ],
+                vec![path!("/code/project")],
+                {
+                    test_remote!(
+                        "/tmp/a.txt",
+                        "/tmp/a.txt",
+                        "/code/project",
+                        BackgroundPathResolution
+                    );
                 }
             )
         }

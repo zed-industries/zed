@@ -6,13 +6,27 @@ use gpui::{
     Window,
 };
 use project::search::SearchQuery;
+use settings::SeedQuerySetting;
 
 use crate::{
     ItemHandle,
     item::{Item, WeakItemHandle},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchToken(u64);
+
+impl SearchToken {
+    pub fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn value(&self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
@@ -42,6 +56,7 @@ pub struct SearchOptions {
     /// Specifies whether the  supports search & replace.
     pub replacement: bool,
     pub selection: bool,
+    pub select_all: bool,
     pub find_in_results: bool,
 }
 
@@ -65,6 +80,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             regex: true,
             replacement: true,
             selection: true,
+            select_all: true,
             find_in_results: false,
         }
     }
@@ -89,28 +105,36 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     ) {
     }
 
-    fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Self::Match> {
-        Vec::new()
+    fn get_matches(&self, _window: &mut Window, _: &mut App) -> (Vec<Self::Match>, SearchToken) {
+        (Vec::new(), SearchToken::default())
     }
     fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>);
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String;
+    fn query_suggestion(
+        &mut self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String;
     fn activate_match(
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -118,6 +142,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     );
@@ -125,11 +150,12 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         &mut self,
         matches: &mut dyn Iterator<Item = &Self::Match>,
         query: &SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         for item in matches {
-            self.replace(item, query, window, cx);
+            self.replace(item, query, token, window, cx);
         }
     }
     fn match_index_for_direction(
@@ -138,6 +164,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         current_index: usize,
         direction: Direction,
         count: usize,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) -> usize {
@@ -159,10 +186,22 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>>;
+
+    fn find_matches_with_token(
+        &mut self,
+        query: Arc<SearchQuery>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<(Vec<Self::Match>, SearchToken)> {
+        let matches = self.find_matches(query, window, cx);
+        cx.spawn(async move |_, _| (matches.await, SearchToken::default()))
+    }
+
     fn active_match_index(
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
@@ -184,22 +223,36 @@ pub trait SearchableItemHandle: ItemHandle {
         &self,
         matches: &AnyVec<dyn Send>,
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     );
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String;
     fn activate_match(
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     );
-    fn select_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App);
+    fn select_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        token: SearchToken,
+        window: &mut Window,
+        cx: &mut App,
+    );
     fn replace(
         &self,
         _: any_vec::element::ElementRef<'_, dyn Send>,
         _: &SearchQuery,
+        token: SearchToken,
         _window: &mut Window,
         _: &mut App,
     );
@@ -207,6 +260,7 @@ pub trait SearchableItemHandle: ItemHandle {
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     );
@@ -216,6 +270,7 @@ pub trait SearchableItemHandle: ItemHandle {
         current_index: usize,
         direction: Direction,
         count: usize,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) -> usize;
@@ -225,10 +280,17 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<AnyVec<dyn Send>>;
+    fn find_matches_with_token(
+        &self,
+        query: Arc<SearchQuery>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<(AnyVec<dyn Send>, SearchToken)>;
     fn active_match_index(
         &self,
         direction: Direction,
         matches: &AnyVec<dyn Send>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<usize>;
@@ -275,34 +337,49 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         &self,
         matches: &AnyVec<dyn Send>,
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.update_matches(matches.as_slice(), active_match_index, window, cx)
+            this.update_matches(matches.as_slice(), active_match_index, token, window, cx)
         });
     }
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {
-        self.update(cx, |this, cx| this.query_suggestion(window, cx))
+    fn query_suggestion(
+        &self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> String {
+        self.update(cx, |this, cx| {
+            this.query_suggestion(seed_query_override, window, cx)
+        })
     }
     fn activate_match(
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.activate_match(index, matches.as_slice(), window, cx)
+            this.activate_match(index, matches.as_slice(), token, window, cx)
         });
     }
 
-    fn select_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App) {
+    fn select_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        token: SearchToken,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.select_matches(matches.as_slice(), window, cx)
+            this.select_matches(matches.as_slice(), token, window, cx)
         });
     }
 
@@ -312,6 +389,7 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         current_index: usize,
         direction: Direction,
         count: usize,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) -> usize {
@@ -322,6 +400,7 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
                 current_index,
                 direction,
                 count,
+                token,
                 window,
                 cx,
             )
@@ -346,16 +425,38 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             any_matches
         })
     }
+    fn find_matches_with_token(
+        &self,
+        query: Arc<SearchQuery>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<(AnyVec<dyn Send>, SearchToken)> {
+        let matches_with_token = self.update(cx, |this, cx| {
+            this.find_matches_with_token(query, window, cx)
+        });
+        window.spawn(cx, async |_| {
+            let (matches, token) = matches_with_token.await;
+            let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
+            {
+                let mut any_matches = any_matches.downcast_mut::<T::Match>().unwrap();
+                for mat in matches {
+                    any_matches.push(mat);
+                }
+            }
+            (any_matches, token)
+        })
+    }
     fn active_match_index(
         &self,
         direction: Direction,
         matches: &AnyVec<dyn Send>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
         self.update(cx, |this, cx| {
-            this.active_match_index(direction, matches.as_slice(), window, cx)
+            this.active_match_index(direction, matches.as_slice(), token, window, cx)
         })
     }
 
@@ -363,17 +464,19 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         &self,
         mat: any_vec::element::ElementRef<'_, dyn Send>,
         query: &SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) {
         let mat = mat.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.replace(mat, query, window, cx))
+        self.update(cx, |this, cx| this.replace(mat, query, token, window, cx))
     }
 
     fn replace_all(
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -381,6 +484,7 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.replace_all(
                 &mut matches.map(|m| m.downcast_ref().unwrap()),
                 query,
+                token,
                 window,
                 cx,
             );

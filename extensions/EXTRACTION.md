@@ -30,7 +30,7 @@ cd $LANGNAME
 
 2. Create an expressions.txt file somewhere (e.g. `~/projects/$LANGNAME.txt`)
 
-This file takes the form of `patern==>replacement`, where the replacement is optional.
+This file takes the form of `pattern==>replacement`, where the replacement is optional.
 Note whitespace matters so `ruby: ==>` is removing the `ruby:` prefix from a commit messages and adding a space after `==> ` means the replacement begins with a space. Regex capture groups are numbered `\1`, `\2`, etc.
 
 See: [Git Filter Repo Docs](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html) for more.

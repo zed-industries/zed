@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     debugger_panel::DebugPanel,
     session::running::stack_frame_list::{
@@ -9,7 +10,7 @@ use dap::{
     StackFrame,
     requests::{Scopes, StackTrace, Threads},
 };
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
@@ -17,6 +18,7 @@ use serde_json::json;
 use std::sync::Arc;
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
+use workspace::Item;
 
 #[gpui::test]
 async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
@@ -179,6 +181,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
 
 #[gpui::test]
 async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     init_test(cx);
 
     let fs = FakeFs::new(executor.clone());
@@ -332,7 +335,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             assert_eq!(1, editors.len());
 
             let project_path = editors[0]
-                .update(cx, |editor, cx| editor.project_path(cx))
+                .update(cx, |editor, cx| editor.active_project_path(cx))
                 .unwrap();
             assert_eq!(rel_path("src/test.js"), project_path.path.as_ref());
             assert_eq!(test_file_content, editors[0].read(cx).text(cx));
@@ -342,7 +345,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     let snapshot = editor.snapshot(window, cx);
 
                     editor
-                        .highlighted_rows::<editor::ActiveDebugLine>()
+                        .highlighted_rows::<editor::ActiveDebugLine>(cx)
                         .map(|(range, _)| {
                             let start = range.start.to_point(&snapshot.buffer_snapshot());
                             let end = range.end.to_point(&snapshot.buffer_snapshot());
@@ -395,7 +398,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         assert_eq!(1, editors.len());
 
         let project_path = editors[0]
-            .update(cx, |editor, cx| editor.project_path(cx))
+            .update(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(rel_path("src/module.js"), project_path.path.as_ref());
         assert_eq!(module_file_content, editors[0].read(cx).text(cx));
@@ -405,7 +408,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                 let snapshot = editor.snapshot(window, cx);
 
                 editor
-                    .highlighted_rows::<editor::ActiveDebugLine>()
+                    .highlighted_rows::<editor::ActiveDebugLine>(cx)
                     .map(|(range, _)| {
                         let start = range.start.to_point(&snapshot.buffer_snapshot());
                         let end = range.end.to_point(&snapshot.buffer_snapshot());
@@ -1112,8 +1115,8 @@ async fn test_stack_frame_filter_persistence(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     workspace
-        .update(cx, |workspace, _, _| {
-            workspace.set_random_database_id();
+        .update(cx, |workspace, _, cx| {
+            workspace.set_random_database_id(cx);
         })
         .unwrap();
 
@@ -1210,13 +1213,16 @@ async fn test_stack_frame_filter_persistence(
     cx.run_until_parked();
 
     let workspace_id = workspace
-        .update(cx, |workspace, _window, _cx| workspace.database_id())
+        .update(cx, |workspace, _window, cx| workspace.database_id(cx))
         .ok()
         .flatten()
         .expect("workspace id has to be some for this test to work properly");
 
     let key = stack_frame_filter_key(&adapter_name, workspace_id);
-    let stored_value = KEY_VALUE_STORE.read_kvp(&key).unwrap();
+    let stored_value = cx
+        .update(|_, cx| KeyValueStore::global(cx))
+        .read_kvp(&key)
+        .unwrap();
     assert_eq!(
         stored_value,
         Some(StackFrameFilter::OnlyUserFrames.into()),

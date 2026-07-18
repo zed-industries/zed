@@ -203,22 +203,36 @@ fn find_target(
     let start_offset = start.to_offset(snapshot);
     let end_offset = end.to_offset(snapshot);
 
-    let mut offset = start_offset;
     let mut first_char_is_num = snapshot
-        .chars_at(offset)
+        .chars_at(start_offset)
         .next()
         .map_or(false, |ch| ch.is_ascii_hexdigit());
     let mut pre_char = String::new();
 
-    let next_offset = offset
+    let next_offset = start_offset
         + snapshot
             .chars_at(start_offset)
             .next()
             .map_or(0, |ch| ch.len_utf8());
-    // Backward scan to find the start of the number, but stop at start_offset
+    // Backward scan to find the start of the number, but stop at start_offset.
+    // We track `offset` as the start position of the current character. Initialize
+    // to `next_offset` and decrement at the start of each iteration so that `offset`
+    // always lands on a valid character boundary (not in the middle of a multibyte char).
+    let mut offset = next_offset;
     for ch in snapshot.reversed_chars_at(next_offset) {
+        offset -= ch.len_utf8();
+
         // Search boundaries
         if offset.0 == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
+            break;
+        }
+
+        // vim's ctrl-a/ctrl-x operate on the number at or after the cursor and
+        // do not require it to be whitespace-separated. Stop the backward scan
+        // at a '-' so we keep the number the cursor is on (e.g. `05` in
+        // `2025-05-10`) instead of scanning past the '-' to an earlier number on
+        // the line. vim folds a leading '-' into the number, making it negative.
+        if ch == '-' {
             break;
         }
 
@@ -238,7 +252,15 @@ fn find_target(
         }
 
         pre_char.insert(0, ch);
-        offset -= ch.len_utf8();
+    }
+
+    // The backward scan breaks on whitespace, including newlines. Without this
+    // skip, the forward scan would start on the newline and immediately break
+    // (since it also breaks on newlines), finding nothing on the current line.
+    if let Some(ch) = snapshot.chars_at(offset).next() {
+        if ch == '\n' {
+            offset += ch.len_utf8();
+        }
     }
 
     let mut begin = None;
@@ -271,6 +293,21 @@ fn find_target(
             begin = None;
             target = String::new();
         } else if ch == '.' {
+            // vim treats '.' as a separator, not a decimal point: ctrl-a/ctrl-x
+            // act on the whole digit run, not a float. So when the cursor is on
+            // the current number, terminate the match at the dot regardless of
+            // what follows it, so `ˇ1. item` and version strings like `0.8ˇ1.46`
+            // (-> `0.82.46`) both increment the number under the cursor. When the
+            // cursor is past the number (`111.ˇ.2`), `on_number` is false and we
+            // still reset so the forward scan finds the number after the dots.
+            let on_number =
+                is_num && begin.is_some_and(|begin| begin >= start_offset || start_offset < offset);
+
+            if on_number {
+                end = Some(offset);
+                break;
+            }
+
             is_num = false;
             begin = None;
             target = String::new();
@@ -447,6 +484,11 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             1.ˇ2
             "});
+
+        // '.' is a separator, not a decimal point, so the number the cursor is
+        // on is incremented even without surrounding whitespace.
+        cx.simulate("ctrl-a", "0.8ˇ1.46").await.assert_matches();
+        cx.simulate("ctrl-x", "0.8ˇ1.46").await.assert_matches();
     }
 
     #[gpui::test]
@@ -701,6 +743,7 @@ mod test {
             .assert_matches();
         cx.simulate("ctrl-a", "(ˇ0b10f)").await.assert_matches();
         cx.simulate("ctrl-a", "ˇ-1").await.assert_matches();
+        cx.simulate("ctrl-a", "-ˇ1").await.assert_matches();
         cx.simulate("ctrl-a", "banˇana").await.assert_matches();
     }
 
@@ -747,6 +790,22 @@ mod test {
             18  2
             24
             30"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_negative_numbers(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // vim folds a leading '-' into the number, so ctrl-a on the `05` here
+        // operates on `-05` and decrements the visible digits to `04`.
+        cx.simulate("ctrl-a", "2025-0ˇ5-10").await.assert_matches();
+
+        // Cursor on or just before a trailing '-' (with or without a following
+        // number) must not scan past the '-' into the earlier number.
+        cx.simulate("ctrl-a", "2025-05ˇ-").await.assert_matches();
+        cx.simulate("ctrl-a", "2025-05ˇ- 345")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
@@ -845,5 +904,40 @@ mod test {
         cx.simulate_shared_keystrokes("shift-v y p p ctrl-v k k l ctrl-a")
             .await;
         cx.shared_state().await.assert_eq(indoc! {"ˇ144\n144\n144"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_markdown_list_markers_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("# Title\nˇ1. item\n2. item\n3. item")
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\nˇ2. item\n2. item\n3. item");
+        cx.simulate_shared_keystrokes("j").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ3. item\n3. item");
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_multibyte_characters(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test cursor after a multibyte character - this would panic before the fix
+        // because the backward scan would land in the middle of the Korean character
+        cx.set_state("지ˇ1", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("지ˇ2", Mode::Normal);
     }
 }

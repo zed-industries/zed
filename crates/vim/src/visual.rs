@@ -10,6 +10,7 @@ use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
+use text::TransactionId;
 use util::ResultExt;
 use workspace::searchable::Direction;
 
@@ -218,7 +219,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -228,12 +229,18 @@ impl Vim {
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details)
-                })
+                vim.visual_block_motion(
+                    is_up_or_down,
+                    editor,
+                    window,
+                    cx,
+                    &mut |map, point, goal| {
+                        motion.move_point(map, point, goal, times, &text_layout_details)
+                    },
+                )
             } else {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let was_reversed = selection.reversed;
                         let mut current_head = selection.head();
 
@@ -296,13 +303,13 @@ impl Vim {
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
-        mut move_selection: impl FnMut(
+        move_selection: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        let text_layout_details = editor.text_layout_details(window);
+        let text_layout_details = editor.text_layout_details(window, cx);
         editor.change_selections(Default::default(), window, cx, |s| {
             let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);
@@ -436,7 +443,7 @@ impl Vim {
 
             self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut mut_selection = selection.clone();
 
                         // all our motions assume that the current character is
@@ -552,7 +559,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
@@ -570,7 +577,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
                         SelectionGoal::None,
@@ -593,7 +600,7 @@ impl Vim {
     pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|_, selection| {
+                s.move_with(&mut |_, selection| {
                     selection.reversed = !selection.reversed;
                 });
             })
@@ -609,7 +616,7 @@ impl Vim {
         let mode = self.mode;
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|_, selection| {
+                s.move_with(&mut |_, selection| {
                     selection.reversed = !selection.reversed;
                 });
                 if mode == Mode::VisualBlock {
@@ -619,16 +626,21 @@ impl Vim {
         });
     }
 
-    pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn visual_delete(
+        &mut self,
+        line_mode: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
-        self.update_editor(cx, |vim, editor, cx| {
+        let transaction_id = self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode();
             editor.selections.set_line_mode(false);
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         if line_mode {
                             let mut position = selection.head();
                             if !selection.reversed {
@@ -665,7 +677,7 @@ impl Vim {
 
                 if line_mode && vim.mode != Mode::VisualBlock {
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
+                        s.move_with(&mut |map, selection| {
                             let end = selection.end.to_point(map);
                             let start = selection.start.to_point(map);
                             if end.row < map.buffer_snapshot().max_point().row {
@@ -681,12 +693,13 @@ impl Vim {
                         });
                     });
                 }
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
-                // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, cx);
+                // Fixup cursor position after the deletion. Helix keeps the
+                // cursor on the trailing newline, so only clip in Vim modes.
+                editor.set_clip_at_line_ends(!vim.mode.is_helix(), cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head().to_point(map);
 
                         if let Some(column) = original_columns.get(&selection.id) {
@@ -701,7 +714,9 @@ impl Vim {
                 });
             })
         });
+        let transaction_id = transaction_id.flatten();
         self.switch_mode(Mode::Normal, true, window, cx);
+        transaction_id
     }
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -712,7 +727,7 @@ impl Vim {
             // For visual line mode, adjust selections to avoid yanking the next line when on \n
             if line_mode && vim.mode != Mode::VisualBlock {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let start = selection.start.to_point(map);
                         let end = selection.end.to_point(map);
                         if end.column == 0 && end > start {
@@ -735,7 +750,7 @@ impl Vim {
             };
             vim.yank_selections_content(editor, kind, window, cx);
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     if line_mode {
                         selection.start = start_of_line(map, false, selection.start);
                     };
@@ -782,7 +797,10 @@ impl Vim {
                     {
                         let range = row_range.start.to_offset(&display_map, Bias::Right)
                             ..row_range.end.to_offset(&display_map, Bias::Right);
-                        let text = text.repeat(range.end - range.start);
+                        let grapheme_count = display_map
+                            .buffer_snapshot()
+                            .grapheme_count_for_range(&range);
+                        let text = text.repeat(grapheme_count);
                         edits.push((range, text));
                     }
                 }
@@ -888,6 +906,9 @@ impl Vim {
             }
         });
         if !match_exists {
+            self.update_editor(cx, |_, editor, _| {
+                editor.set_collapse_matches(true);
+            });
             self.clear_operator(window, cx);
             self.stop_replaying(cx);
             return;
@@ -916,7 +937,7 @@ impl Vim {
             Some(Operator::Change) => self.substitute(None, false, window, cx),
             Some(Operator::Delete) => {
                 self.stop_recording(cx);
-                self.visual_delete(false, window, cx)
+                self.visual_delete(false, window, cx);
             }
             Some(Operator::Yank) => self.visual_yank(false, window, cx),
             _ => {} // Ignoring other operators
@@ -1556,6 +1577,38 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_block_insert_after_ctrl_d_scroll(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let shared_state_lines = (1..=10)
+            .map(|line_number| format!("{line_number:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let shared_state = format!("ˇ{shared_state_lines}\n");
+
+        cx.set_scroll_height(5).await;
+        cx.set_shared_state(&shared_state).await;
+
+        cx.simulate_shared_keystrokes("ctrl-v ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("shift-i x escape").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "
+            ˇx01
+            x02
+            x03
+            x04
+            x05
+            06
+            07
+            08
+            09
+            10
+            "
+        });
+    }
+
+    #[gpui::test]
     async fn test_visual_block_wrapping_selection(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1978,5 +2031,22 @@ mod test {
         // The specific behavior of syntax sibling selection in vim mode
         // would depend on the key bindings configured, but the actions
         // are now available for use
+    }
+
+    #[gpui::test]
+    async fn test_visual_replace_uses_graphemes(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("«Hällöˇ» Wörld", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ11111 Wörld", Mode::Normal);
+
+        cx.set_state("«e\u{301}ˇ»", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ1", Mode::Normal);
+
+        cx.set_state("«🙂ˇ»", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ1", Mode::Normal);
     }
 }

@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
@@ -10,9 +12,11 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
-use smol::process::Child;
+use util::command::Child;
 
 pub mod docker;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock;
 pub mod ssh;
 pub mod wsl;
 
@@ -49,6 +53,63 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
     };
 
     Ok(RemotePlatform { os, arch })
+}
+
+/// The command (program + args) used to read a remote host's OS version, given
+/// its detected OS.
+///
+/// The output is parsed by [`parse_os_version`].
+pub(crate) fn os_version_command(os: RemoteOs) -> (&'static str, &'static [&'static str]) {
+    match os {
+        // Matches the `/etc/os-release` parsing in `client::telemetry::os_version`.
+        RemoteOs::Linux => ("cat", &["/etc/os-release"]),
+        RemoteOs::MacOs => ("sw_vers", &["-productVersion"]),
+        // Prints e.g. "Microsoft Windows [Version 10.0.19045.5011]".
+        RemoteOs::Windows => ("cmd.exe", &["/c", "ver"]),
+    }
+}
+
+/// Parses the output of [`os_version_command`] into a human-readable version
+/// string, matching the conventions used by `client::telemetry::os_version`.
+///
+/// For Linux this is `"{ID} {VERSION_ID}"` (e.g. `"ubuntu 24.04"`); for macOS it
+/// is the product version (e.g. `"15.6.1"`); for Windows it is the
+/// `major.minor.build` version (e.g. `"10.0.19045"`). Returns `None` if nothing
+/// usable could be parsed.
+pub(crate) fn parse_os_version(os: RemoteOs, output: &str) -> Option<String> {
+    let output = output.trim();
+    if output.is_empty() {
+        return None;
+    }
+    match os {
+        RemoteOs::Linux => util::parse_os_release(output),
+        RemoteOs::MacOs => {
+            // `sw_vers -productVersion` prints a single version line.
+            output
+                .lines()
+                .next_back()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+        }
+        RemoteOs::Windows => parse_windows_version(output),
+    }
+}
+
+/// Extracts a `major.minor.build` version from the output of `cmd.exe /c ver`,
+/// e.g. `"Microsoft Windows [Version 10.0.19045.5011]"` -> `"10.0.19045"`.
+///
+/// Scans for the first dotted run of integers (rather than relying on the
+/// surrounding, potentially localized, text) and drops the trailing revision so
+/// the format matches `client::telemetry::os_version` on Windows.
+fn parse_windows_version(output: &str) -> Option<String> {
+    output
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .filter_map(|token| {
+            let parts: Vec<&str> = token.split('.').filter(|part| !part.is_empty()).collect();
+            (parts.len() >= 3 && parts.iter().all(|part| part.parse::<u32>().is_ok()))
+                .then(|| parts[..3].join("."))
+        })
+        .next()
 }
 
 /// Parses the output of `echo $SHELL` to determine the remote shell.
@@ -135,7 +196,12 @@ fn handle_rpc_messages_over_child_process_stdio(
                 if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                     record.log(log::logger())
                 } else {
-                    eprintln!("(remote) {}", String::from_utf8_lossy(content));
+                    std::io::stderr()
+                        .write_fmt(format_args!(
+                            "(remote) {}\n",
+                            String::from_utf8_lossy(content)
+                        ))
+                        .ok();
                 }
             }
             stderr_buffer.drain(0..start_ix);
@@ -157,7 +223,14 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-        let status = remote_proxy_process.status().await?.code().unwrap_or(1);
+        let exit_status = remote_proxy_process.status().await?;
+        let status = exit_status.code().unwrap_or_else(|| {
+            #[cfg(unix)]
+            let status = std::os::unix::process::ExitStatusExt::signal(&exit_status).unwrap_or(1);
+            #[cfg(not(unix))]
+            let status = 1;
+            status
+        });
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
@@ -165,29 +238,47 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,
+    binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
-    use smol::process::{Command, Stdio};
     use std::env::VarError;
     use std::path::Path;
-    use util::command::new_smol_command;
+    use util::command::{Command, Stdio, new_command};
+
+    if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return Ok(Some(path));
+        } else {
+            log::warn!(
+                "ZED_COPY_REMOTE_SERVER path does not exist, falling back to ZED_BUILD_REMOTE_SERVER: {}",
+                path.display()
+            );
+        }
+    }
 
     // By default, we make building remote server from source opt-out and we do not force artifact compression
     // for quicker builds.
     let build_remote_server =
         std::env::var("ZED_BUILD_REMOTE_SERVER").unwrap_or("nocompress".into());
 
-    if let "false" | "no" | "off" | "0" = &*build_remote_server {
+    if let "never" = &*build_remote_server {
         return Ok(None);
+    } else if let "false" | "no" | "off" | "0" = &*build_remote_server {
+        if binary_exists_on_server {
+            return Ok(None);
+        }
+        log::warn!("ZED_BUILD_REMOTE_SERVER is disabled, but no server binary exists on the server")
     }
 
     async fn run_cmd(command: &mut Command) -> Result<()> {
         let output = command
             .kill_on_drop(true)
+            .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .output()
             .await?;
@@ -230,17 +321,13 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
                 .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "build",
@@ -270,18 +357,12 @@ async fn build_remote_server_from_source(
             .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(
-            new_smol_command(rustup)
-                .args(["target", "add"])
-                .arg(&triple),
-        )
-        .await?;
+        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
 
         if which("cargo-zigbuild", cx).await?.is_none() {
             delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
             log::info!("installing cargo-zigbuild");
-            run_cmd(new_smol_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
-                .await?;
+            run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
         }
 
         delegate.set_status(
@@ -292,7 +373,8 @@ async fn build_remote_server_from_source(
         );
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "zigbuild",
                     "--package",
@@ -308,7 +390,8 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
+    let bin_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")
@@ -319,32 +402,31 @@ async fn build_remote_server_from_source(
         delegate.set_status(Some("Compressing binary"), cx);
 
         #[cfg(not(target_os = "windows"))]
-        {
-            run_cmd(new_smol_command("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
-        }
+        let archive_path = {
+            run_cmd(new_command("gzip").arg("-f").arg(&bin_path)).await?;
+            bin_path.with_extension("gz")
+        };
 
         #[cfg(target_os = "windows")]
-        {
-            // On Windows, we use 7z to compress the binary
-
-            let seven_zip = which("7z.exe",cx)
-                .await?
-                .context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
-            let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
-            if smol::fs::metadata(&gz_path).await.is_ok() {
-                smol::fs::remove_file(&gz_path).await?;
+        let archive_path = {
+            let zip_path = bin_path.with_extension("zip");
+            if smol::fs::metadata(&zip_path).await.is_ok() {
+                smol::fs::remove_file(&zip_path).await?;
             }
-            run_cmd(new_smol_command(seven_zip).args([
-                "a",
-                "-tgzip",
-                &gz_path,
-                &bin_path.to_string_lossy(),
+            let compress_command = format!(
+                "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                bin_path.display(),
+                zip_path.display(),
+            );
+            run_cmd(new_command("powershell.exe").args([
+                "-NoProfile",
+                "-Command",
+                &compress_command,
             ]))
             .await?;
-        }
+            zip_path
+        };
 
-        let mut archive_path = bin_path;
-        archive_path.set_extension("gz");
         std::env::current_dir()?.join(archive_path)
     } else {
         bin_path
@@ -353,7 +435,7 @@ async fn build_remote_server_from_source(
     Ok(Some(path))
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn which(
     binary_name: impl AsRef<str>,
     cx: &mut AsyncApp,
@@ -420,6 +502,48 @@ mod tests {
 
         assert!(parse_platform("Windows x86_64\n").is_err());
         assert!(parse_platform("Linux armv7l\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_os_version() {
+        // Linux delegates to `util::parse_os_release` (tested there); confirm
+        // the dispatch is wired up.
+        let os_release = "ID=ubuntu\nVERSION_ID=\"24.04\"\n";
+        assert_eq!(
+            parse_os_version(RemoteOs::Linux, os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // macOS `sw_vers -productVersion` prints a bare version, possibly after
+        // shell initialization noise.
+        assert_eq!(
+            parse_os_version(RemoteOs::MacOs, "15.6.1\n"),
+            Some("15.6.1".to_string())
+        );
+        assert_eq!(
+            parse_os_version(RemoteOs::MacOs, "shell noise\n26.0\n"),
+            Some("26.0".to_string())
+        );
+        assert_eq!(parse_os_version(RemoteOs::MacOs, ""), None);
+
+        // Windows `cmd.exe /c ver`, with the trailing revision dropped to match
+        // the `major.minor.build` format used by local Windows telemetry.
+        assert_eq!(
+            parse_os_version(
+                RemoteOs::Windows,
+                "Microsoft Windows [Version 10.0.19045.5011]\n"
+            ),
+            Some("10.0.19045".to_string())
+        );
+        // Localized output: only the version number is relied upon.
+        assert_eq!(
+            parse_os_version(
+                RemoteOs::Windows,
+                "Microsoft Windows [Versione 10.0.22631.1]"
+            ),
+            Some("10.0.22631".to_string())
+        );
+        assert_eq!(parse_os_version(RemoteOs::Windows, "no version here"), None);
     }
 
     #[test]

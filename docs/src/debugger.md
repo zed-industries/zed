@@ -1,3 +1,8 @@
+---
+title: Debugger - Zed
+description: Debug code in Zed with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
+---
+
 # Debugger
 
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
@@ -69,13 +74,13 @@ Populate this file with the same array of objects you would place in `.zed/debug
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+The Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
 When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
 Running unit tests or a debug build of your application is a good use case for launching.
 
-Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
+Compared to launching, attaching to an existing process might seem inferior, but that's far from the truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 
@@ -158,6 +163,14 @@ Some debug adapters (e.g. CodeLLDB and JavaScript) will also _verify_ whether yo
 All breakpoints enabled for a given project are also listed in "Breakpoints" item in your debugging session UI. From "Breakpoints" item in your UI you can also manage exception breakpoints.
 The debug adapter will then stop whenever an exception of a given kind occurs. Which exception types are supported depends on the debug adapter.
 
+## Working with Split Panes
+
+When debugging with multiple split panes open, Zed shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
+
+Once the debugger picks a pane, it continues using that pane for subsequent breakpoints during the session. If you drag the tab with the active debug line to a different split, the debugger tracks the move and uses the new pane.
+
+This ensures the debugger doesn't disrupt your workflow when stepping through code across different files.
+
 ## Settings
 
 The settings for the debugger are grouped under the `debugger` key in `settings.json`:
@@ -198,7 +211,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 1. Statement - The step should allow the program to run until the current statement has finished executing.
    The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
-   For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
+   For example `for(int i = 0; i < 10; i++)` could be considered to have 3 statements `int i = 0`, `i < 10`, and `i++`.
 
 ```json [settings]
 {
@@ -250,7 +263,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 - Description: Whether the button should be displayed in the debugger toolbar.
 - Default: `true`
-- Setting: `debugger.show_button`
+- Setting: `debugger.button`
 
 **Options**
 
@@ -259,7 +272,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 ```json [settings]
 {
   "debugger": {
-    "show_button": true
+    "button": true
   }
 }
 ```

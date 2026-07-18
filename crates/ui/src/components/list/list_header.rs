@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::{Disclosure, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
-use settings::Settings;
-use theme::ThemeSettings;
+use theme::UiDensity;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ListHeader {
@@ -81,7 +80,7 @@ impl Toggleable for ListHeader {
 
 impl RenderOnce for ListHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let ui_density = ThemeSettings::get_global(cx).ui_density;
+        let ui_density = theme::theme_settings(cx).ui_density(cx);
 
         h_flex()
             .id(self.label.clone())
@@ -91,7 +90,7 @@ impl RenderOnce for ListHeader {
             .child(
                 div()
                     .map(|this| match ui_density {
-                        theme::UiDensity::Comfortable => this.h_5(),
+                        UiDensity::Comfortable => this.h_5(),
                         _ => this.h_7(),
                     })
                     .when(self.inset, |this| this.px_2())
@@ -145,74 +144,71 @@ impl Component for ListHeader {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A header component for lists with support for icons, actions, and collapsible sections.",
-        )
+    fn description() -> &'static str {
+        "A header component for lists with support for icons, actions, \
+        and collapsible sections."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Headers",
-                        vec![
-                            single_example(
-                                "Simple",
-                                ListHeader::new("Section Header").into_any_element(),
-                            ),
-                            single_example(
-                                "With Icon",
-                                ListHeader::new("Files")
-                                    .start_slot(Icon::new(IconName::File))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With End Slot",
-                                ListHeader::new("Recent")
-                                    .end_slot(Label::new("5").color(Color::Muted))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Collapsible Headers",
-                        vec![
-                            single_example(
-                                "Expanded",
-                                ListHeader::new("Expanded Section")
-                                    .toggle(Some(true))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Collapsed",
-                                ListHeader::new("Collapsed Section")
-                                    .toggle(Some(false))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Selected",
-                                ListHeader::new("Selected Header")
-                                    .toggle_state(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                ListHeader::new("Inset Header")
-                                    .inset(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Headers",
+                    vec![
+                        single_example(
+                            "Simple",
+                            ListHeader::new("Section Header").into_any_element(),
+                        ),
+                        single_example(
+                            "With Icon",
+                            ListHeader::new("Files")
+                                .start_slot(Icon::new(IconName::File))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With End Slot",
+                            ListHeader::new("Recent")
+                                .end_slot(Label::new("5").color(Color::Muted))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Collapsible Headers",
+                    vec![
+                        single_example(
+                            "Expanded",
+                            ListHeader::new("Expanded Section")
+                                .toggle(Some(true))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Collapsed",
+                            ListHeader::new("Collapsed Section")
+                                .toggle(Some(false))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Selected",
+                            ListHeader::new("Selected Header")
+                                .toggle_state(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Inset",
+                            ListHeader::new("Inset Header")
+                                .inset(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

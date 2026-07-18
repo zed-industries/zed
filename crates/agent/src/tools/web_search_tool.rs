@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream};
-use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use agent_client_protocol::schema::v1 as acp;
+use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
-use gpui::{App, AppContext, Task};
+use futures::FutureExt as _;
+use gpui::{App, Task};
 use language_model::{
     LanguageModelProviderId, LanguageModelToolResultContent, ZED_CLOUD_PROVIDER_ID,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::prelude::*;
+use util::markdown::MarkdownInlineCode;
 use web_search::WebSearchRegistry;
 
 /// Search the web for information using your query.
@@ -23,14 +25,20 @@ pub struct WebSearchToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct WebSearchToolOutput(WebSearchResponse);
+#[serde(untagged)]
+pub enum WebSearchToolOutput {
+    Success(WebSearchResponse),
+    Error { error: String },
+}
 
 impl From<WebSearchToolOutput> for LanguageModelToolResultContent {
     fn from(value: WebSearchToolOutput) -> Self {
-        serde_json::to_string(&value.0)
-            .expect("Failed to serialize WebSearchResponse")
-            .into()
+        match value {
+            WebSearchToolOutput::Success(response) => serde_json::to_string(&response)
+                .unwrap_or_else(|e| format!("Failed to serialize web search response: {e}"))
+                .into(),
+            WebSearchToolOutput::Error { error } => error.into(),
+        }
     }
 }
 
@@ -40,9 +48,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    fn name() -> &'static str {
-        "web_search"
-    }
+    const NAME: &'static str = "search_web";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
@@ -63,27 +69,58 @@ impl AgentTool for WebSearchTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
-        let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
-            return Task::ready(Err(anyhow!("Web search is not available.")));
-        };
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| WebSearchToolOutput::Error {
+                    error: e.to_string(),
+                })?;
 
-        let search_task = provider.search(input.query, cx);
-        cx.background_spawn(async move {
-            let response = match search_task.await {
-                Ok(response) => response,
-                Err(err) => {
-                    event_stream
-                        .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
-                    return Err(err);
+            let authorize = cx.update(|cx| {
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.query.clone()]);
+                event_stream.authorize(
+                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    context,
+                    cx,
+                )
+            });
+            authorize
+                .await
+                .map_err(|e| WebSearchToolOutput::Error { error: e.to_string() })?;
+
+            let search_task = cx.update(|cx| {
+                let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
+                    return Err(WebSearchToolOutput::Error {
+                        error: "Web search is not available.".to_string(),
+                    });
+                };
+                Ok(provider.search(input.query, cx))
+            })?;
+
+            let response = futures::select! {
+                result = search_task.fuse() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(err) => {
+                            event_stream
+                                .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
+                            return Err(WebSearchToolOutput::Error { error: err.to_string() });
+                        }
+                    }
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Err(WebSearchToolOutput::Error { error: "Web search cancelled by user".to_string() });
                 }
             };
 
             emit_update(&response, &event_stream);
-            Ok(WebSearchToolOutput(response))
+            Ok(WebSearchToolOutput::Success(response))
         })
     }
 
@@ -94,7 +131,9 @@ impl AgentTool for WebSearchTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Result<()> {
-        emit_update(&output.0, &event_stream);
+        if let WebSearchToolOutput::Success(response) = &output {
+            emit_update(response, &event_stream);
+        }
         Ok(())
     }
 }
