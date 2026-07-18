@@ -22,7 +22,7 @@ use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCo
 use editor::actions::OpenExcerpts;
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
-use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
+use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
@@ -5795,8 +5795,12 @@ impl Render for TokenUsageTooltip {
                                                 Button::new(
                                                     "open-project-rules",
                                                     format!(
-                                                        "{} project rules",
-                                                        project_rules_count
+                                                        "{} {}",
+                                                        project_rules_count,
+                                                        pluralize(
+                                                            "project rule",
+                                                            project_rules_count
+                                                        )
                                                     ),
                                                 )
                                                 .end_icon(
