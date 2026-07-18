@@ -4,22 +4,20 @@ mod image_viewer_settings;
 use std::path::Path;
 
 use anyhow::Context as _;
-use editor::{EditorSettings, items::entry_git_aware_label_color};
+use editor::{EditorSettings, RevealInFileManager, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use gpui::PinchEvent;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task,
-    WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
+    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
@@ -173,6 +171,18 @@ impl ImageView {
         cx.notify();
     }
 
+    fn reveal_in_file_manager(
+        &mut self,
+        _: &RevealInFileManager,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.image_item.read(cx).abs_path(cx) {
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&path, cx));
+        }
+    }
+
     fn set_zoom(
         &mut self,
         new_zoom: f32,
@@ -263,7 +273,6 @@ impl ImageView {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn handle_pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let zoom_factor = 1.0 + event.delta;
         self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
@@ -577,7 +586,7 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let mut path = image.file.path().clone();
+    let mut path = image.file.path().to_rel_path_buf();
     if project.visible_worktrees(cx).count() > 1
         && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
     {
@@ -681,11 +690,11 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::reset_zoom))
             .on_action(cx.listener(Self::fit_to_view))
             .on_action(cx.listener(Self::zoom_to_actual_size))
+            .on_action(cx.listener(Self::reveal_in_file_manager))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
             .child({
-                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 let container = div()
                     .id("image-container")
                     .size_full()
@@ -697,24 +706,6 @@ impl Render for ImageView {
                     })
                     .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
                     .on_pinch(cx.listener(Self::handle_pinch))
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(ImageContentElement::new(cx.entity()));
-
-                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-                let container = div()
-                    .id("image-container")
-                    .size_full()
-                    .overflow_hidden()
-                    .cursor(if self.is_dragging() {
-                        gpui::CursorStyle::ClosedHand
-                    } else {
-                        gpui::CursorStyle::OpenHand
-                    })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))

@@ -42,6 +42,10 @@ on:
           - immediate
         default: batch
 
+# Both jobs below declare their own `permissions:` blocks, so no job uses this
+# top-level default. Least privilege therefore grants nothing here.
+permissions: {}
+
 env:
   DROID_MODEL: claude-sonnet-4-5-20250929
   SUGGESTIONS_BRANCH: docs/suggestions-pending
@@ -64,7 +68,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -296,7 +300,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || '' }}

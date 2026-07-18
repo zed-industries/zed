@@ -1,25 +1,33 @@
 use buffer_diff::BufferDiff;
-use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
+use cloud_llm_client::PredictEditsRequestTrigger;
+use edit_prediction::{
+    EditPrediction, EditPredictionInputs, EditPredictionRating, EditPredictionStore,
+};
 use editor::{Editor, Inlay, MultiBuffer};
-use feature_flags::FeatureFlag;
+use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
-    Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
+    Length, StyleRefinement, Task, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{Buffer, CodeLabel, LanguageRegistry, Point, ToOffset, language_settings};
+use language::{
+    Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
+    language_settings::{self, InlayHintKind},
+};
 use markdown::{Markdown, MarkdownStyle};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, InlayId,
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, InlayHint,
+    InlayHintLabel, InlayId, ResolveState,
 };
 use settings::Settings as _;
 use std::rc::Rc;
-use std::{fmt::Write, sync::Arc};
-use theme::ThemeSettings;
+use std::{fmt::Write, ops::Range, path::Path, sync::Arc};
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
     Tooltip, prelude::*,
 };
 use workspace::{ModalView, Workspace};
+use zeta_prompt::{ContextSource, FilePosition, RelatedExcerpt, RelatedFile, Zeta3PromptInput};
 
 actions!(
     zeta,
@@ -43,7 +51,9 @@ pub struct PredictEditsRatePredictionsFeatureFlag;
 
 impl FeatureFlag for PredictEditsRatePredictionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(PredictEditsRatePredictionsFeatureFlag);
 
 pub struct RatePredictionsModal {
     ep_store: Entity<EditPredictionStore>,
@@ -60,7 +70,12 @@ pub struct RatePredictionsModal {
 struct ActivePrediction {
     prediction: EditPrediction,
     feedback_editor: Entity<Editor>,
+    expected_buffer: Entity<Buffer>,
+    expected_editor: Entity<Editor>,
+    _expected_buffer_subscription: gpui::Subscription,
     formatted_inputs: Entity<Markdown>,
+    _predicted_diff_task: Task<()>,
+    expected_diff_task: Task<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -126,7 +141,7 @@ impl RatePredictionsModal {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
-            self.ep_store.read(cx).shown_predictions().count(),
+            self.ep_store.read(cx).rateable_predictions().count(),
         );
         cx.notify();
     }
@@ -145,7 +160,7 @@ impl RatePredictionsModal {
         let next_index = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the next item
@@ -160,12 +175,12 @@ impl RatePredictionsModal {
 
     fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut Context<Self>) {
         let ep_store = self.ep_store.read(cx);
-        let completions_len = ep_store.shown_completions_len();
+        let completions_len = ep_store.rateable_predictions_count();
 
         let prev_index = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .rev()
             .skip((completions_len - 1) - self.selected_index)
             .enumerate()
@@ -186,7 +201,7 @@ impl RatePredictionsModal {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_index = self.ep_store.read(cx).shown_completions_len() - 1;
+        self.selected_index = self.ep_store.read(cx).rateable_predictions_count() - 1;
         cx.notify();
     }
 
@@ -202,6 +217,7 @@ impl RatePredictionsModal {
                     &active.prediction,
                     EditPredictionRating::Positive,
                     active.feedback_editor.read(cx).text(cx),
+                    self.expected_patch_for_active(cx),
                     cx,
                 );
             }
@@ -234,6 +250,7 @@ impl RatePredictionsModal {
                     &active.prediction,
                     EditPredictionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
+                    self.expected_patch_for_active(cx),
                     cx,
                 );
             });
@@ -269,7 +286,7 @@ impl RatePredictionsModal {
         let completion = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .take(1)
             .next()
@@ -282,13 +299,256 @@ impl RatePredictionsModal {
         let completion = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .take(1)
             .next()
             .cloned();
 
         self.select_completion(completion, true, window, cx);
+    }
+
+    fn update_buffer_diff(
+        diff: &Entity<BufferDiff>,
+        new_buffer_snapshot: BufferSnapshot,
+        old_buffer_snapshot: BufferSnapshot,
+        cx: &mut App,
+    ) -> Task<()> {
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                Some(old_buffer_snapshot.text().into()),
+                new_buffer_snapshot.text,
+                cx,
+            )
+        })
+    }
+
+    fn insert_editable_region_markers(
+        editor: &Entity<Editor>,
+        buffer: &Entity<Buffer>,
+        marker_range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        editor.update(cx, |editor, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let start_buffer_anchor = buffer_snapshot
+                .anchor_after(buffer_snapshot.clip_offset(marker_range.start, Bias::Left));
+            let end_buffer_anchor = buffer_snapshot
+                .anchor_after(buffer_snapshot.clip_offset(marker_range.end, Bias::Right));
+            let Some(start_anchor) = multibuffer_snapshot.anchor_in_excerpt(start_buffer_anchor)
+            else {
+                return;
+            };
+            let Some(end_anchor) = multibuffer_snapshot.anchor_in_excerpt(end_buffer_anchor) else {
+                return;
+            };
+            let Some((start_hint_position, _)) =
+                multibuffer_snapshot.anchor_to_buffer_anchor(start_anchor)
+            else {
+                return;
+            };
+            let Some((end_hint_position, _)) =
+                multibuffer_snapshot.anchor_to_buffer_anchor(end_anchor)
+            else {
+                return;
+            };
+
+            editor.splice_inlays(
+                &[InlayId::Hint(0), InlayId::Hint(1)],
+                vec![
+                    Inlay::hint(
+                        InlayId::Hint(0),
+                        start_anchor,
+                        &InlayHint {
+                            position: start_hint_position,
+                            label: InlayHintLabel::String("╭─ editable region start\n".into()),
+                            kind: Some(InlayHintKind::Parameter),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        },
+                    ),
+                    Inlay::hint(
+                        InlayId::Hint(1),
+                        end_anchor,
+                        &InlayHint {
+                            position: end_hint_position,
+                            label: InlayHintLabel::String("\n╰─ editable region end".into()),
+                            kind: Some(InlayHintKind::Parameter),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        },
+                    ),
+                ],
+                cx,
+            );
+        });
+    }
+
+    fn expected_patch_for_active(&self, cx: &App) -> Option<String> {
+        let active_prediction = self.active_prediction.as_ref()?;
+        let expected_text = active_prediction.expected_buffer.read(cx).snapshot().text();
+        let original_text = active_prediction.prediction.snapshot.text();
+        let diff_body = language::unified_diff(&original_text, &expected_text);
+
+        if diff_body.is_empty() {
+            return None;
+        }
+
+        let path = active_prediction
+            .prediction
+            .snapshot
+            .file()
+            .map(|file| file.path().as_unix_str());
+        let header = match path {
+            Some(path) => format!("--- a/{path}\n+++ b/{path}\n"),
+            None => String::new(),
+        };
+
+        Some(format!("{header}{diff_body}"))
+    }
+
+    fn write_formatted_inputs(formatted_inputs: &mut String, inputs: &EditPredictionInputs) {
+        match inputs {
+            EditPredictionInputs::V2(inputs) => {
+                Self::write_events(formatted_inputs, &inputs.events);
+                Self::write_related_files(
+                    formatted_inputs,
+                    inputs.related_files.as_deref().unwrap_or_default(),
+                );
+                Self::write_cursor_excerpt(
+                    formatted_inputs,
+                    inputs.cursor_path.as_ref(),
+                    inputs.cursor_excerpt.as_ref(),
+                    inputs.cursor_offset_in_excerpt,
+                );
+            }
+            EditPredictionInputs::V3(inputs) => {
+                Self::write_events(formatted_inputs, &inputs.events);
+                Self::write_related_files(formatted_inputs, &inputs.editable_context);
+                Self::write_zeta3_cursor_excerpt(formatted_inputs, inputs);
+            }
+        }
+    }
+
+    fn write_events(formatted_inputs: &mut String, events: &[Arc<zeta_prompt::Event>]) {
+        write!(formatted_inputs, "## Events\n\n").unwrap();
+
+        for event in events {
+            formatted_inputs.push_str("```diff\n");
+            zeta_prompt::write_event(formatted_inputs, event.as_ref());
+            formatted_inputs.push_str("```\n\n");
+        }
+    }
+
+    fn write_related_files(formatted_inputs: &mut String, included_files: &[RelatedFile]) {
+        write!(formatted_inputs, "## Related files\n\n").unwrap();
+
+        for included_file in included_files {
+            write!(formatted_inputs, "### {}\n\n", included_file.path.display()).unwrap();
+
+            for excerpt in included_file.excerpts.iter() {
+                write!(
+                    formatted_inputs,
+                    "```{}\n{}\n```\n",
+                    included_file.path.display(),
+                    excerpt.text
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    fn write_zeta3_cursor_excerpt(formatted_inputs: &mut String, inputs: &Zeta3PromptInput) {
+        let current_excerpt = inputs
+            .editable_context
+            .iter()
+            .filter(|file| file.path == inputs.cursor_path)
+            .flat_map(|file| file.excerpts.iter())
+            .find_map(|excerpt| {
+                if excerpt.context_source != ContextSource::CurrentFile {
+                    return None;
+                }
+
+                Some((
+                    excerpt,
+                    Self::offset_for_position_in_excerpt(excerpt, inputs.cursor_position)?,
+                ))
+            });
+
+        if let Some((excerpt, cursor_offset)) = current_excerpt {
+            Self::write_cursor_excerpt(
+                formatted_inputs,
+                inputs.cursor_path.as_ref(),
+                excerpt.text.as_ref(),
+                cursor_offset,
+            );
+        } else {
+            write!(formatted_inputs, "## Cursor Excerpt\n\n").unwrap();
+            writeln!(
+                formatted_inputs,
+                "No current-file excerpt found for `{}` at row {}, column {}.",
+                inputs.cursor_path.display(),
+                inputs.cursor_position.row,
+                inputs.cursor_position.column
+            )
+            .unwrap();
+        }
+    }
+
+    fn write_cursor_excerpt(
+        formatted_inputs: &mut String,
+        cursor_path: &Path,
+        cursor_excerpt: &str,
+        cursor_offset: usize,
+    ) {
+        write!(formatted_inputs, "## Cursor Excerpt\n\n").unwrap();
+
+        let mut cursor_offset = cursor_offset.min(cursor_excerpt.len());
+        while !cursor_excerpt.is_char_boundary(cursor_offset) {
+            cursor_offset = cursor_offset.saturating_sub(1);
+        }
+        writeln!(
+            formatted_inputs,
+            "```{}\n{}<CURSOR>{}\n```\n",
+            cursor_path.display(),
+            &cursor_excerpt[..cursor_offset],
+            &cursor_excerpt[cursor_offset..],
+        )
+        .unwrap();
+    }
+
+    fn offset_for_position_in_excerpt(
+        excerpt: &RelatedExcerpt,
+        position: FilePosition,
+    ) -> Option<usize> {
+        if position.row < excerpt.row_range.start {
+            return None;
+        }
+
+        let relative_row = (position.row - excerpt.row_range.start) as usize;
+        let text = excerpt.text.as_ref();
+        let mut row_start = 0;
+
+        for row in 0..=relative_row {
+            if row == relative_row {
+                let row_end = text[row_start..]
+                    .find('\n')
+                    .map_or(text.len(), |offset| row_start + offset);
+                let row_text = &text[row_start..row_end];
+                let column =
+                    row_text.floor_char_boundary((position.column as usize).min(row_text.len()));
+                return Some(row_start + column);
+            }
+
+            row_start += text[row_start..].find('\n')? + 1;
+        }
+
+        None
     }
 
     pub fn select_completion(
@@ -303,7 +563,7 @@ impl RatePredictionsModal {
             self.selected_index = self
                 .ep_store
                 .read(cx)
-                .shown_predictions()
+                .rateable_predictions()
                 .enumerate()
                 .find(|(_, completion_b)| prediction.id == completion_b.id)
                 .map(|(ix, _)| ix)
@@ -319,124 +579,208 @@ impl RatePredictionsModal {
                 return;
             }
 
-            self.diff_editor.update(cx, |editor, cx| {
-                let new_buffer = prediction.edit_preview.build_result_buffer(cx);
-                let new_buffer_snapshot = new_buffer.read(cx).snapshot();
-                let old_buffer_snapshot = prediction.snapshot.clone();
-                let new_buffer_id = new_buffer_snapshot.remote_id();
+            let editable_range = prediction.editable_range.clone().or_else(|| {
+                Some(prediction.edits.first()?.0.start..prediction.edits.last()?.0.end)
+            });
+            let predicted_buffer = prediction.edit_preview.build_result_buffer(cx);
+            let predicted_buffer_snapshot = predicted_buffer.read(cx).snapshot();
+            let visible_range = prediction
+                .edit_preview
+                .compute_visible_range(&prediction.edits)
+                .or_else(|| {
+                    editable_range.as_ref().map(|range| {
+                        range.start.to_point(&prediction.snapshot)
+                            ..range.end.to_point(&prediction.snapshot)
+                    })
+                })
+                .unwrap_or(Point::zero()..Point::zero());
+            let visible_range_with_context =
+                Point::new(visible_range.start.row.saturating_sub(5), 0)
+                    ..Point::new(visible_range.end.row.saturating_add(5), 0)
+                        .min(predicted_buffer_snapshot.max_point());
+            let predicted_diff_task = self.diff_editor.update(cx, |editor, cx| {
+                let predicted_buffer_id = predicted_buffer_snapshot.remote_id();
+                let diff = cx.new(|cx| {
+                    BufferDiff::new(
+                        &predicted_buffer_snapshot.text,
+                        predicted_buffer_snapshot.language().cloned(),
+                        predicted_buffer.read(cx).language_registry(),
+                        cx,
+                    )
+                });
+                let predicted_diff_task = Self::update_buffer_diff(
+                    &diff,
+                    predicted_buffer_snapshot.clone(),
+                    prediction.snapshot.clone(),
+                    cx,
+                );
 
-                let range = prediction
-                    .edit_preview
-                    .compute_visible_range(&prediction.edits)
-                    .unwrap_or(Point::zero()..Point::zero());
-                let start = Point::new(range.start.row.saturating_sub(5), 0);
-                let end = Point::new(range.end.row + 5, 0).min(new_buffer_snapshot.max_point());
-
-                let language = new_buffer_snapshot.language().cloned();
-                let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
-                diff.update(cx, |diff, cx| {
-                    let update = diff.update_diff(
-                        new_buffer_snapshot.text.clone(),
-                        Some(old_buffer_snapshot.text().into()),
-                        Some(true),
-                        language,
+                editor.disable_header_for_buffer(predicted_buffer_id, cx);
+                editor.buffer().update(cx, |multibuffer, cx| {
+                    multibuffer.clear(cx);
+                    multibuffer.set_excerpts_for_buffer(
+                        predicted_buffer.clone(),
+                        [visible_range_with_context],
+                        0,
                         cx,
                     );
-                    cx.spawn(async move |diff, cx| {
-                        let update = update.await;
-                        if let Some(task) = diff
-                            .update(cx, |diff, cx| {
-                                diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-                            })
-                            .ok()
-                        {
-                            task.await;
-                        }
-                    })
-                    .detach();
-                });
-
-                editor.disable_header_for_buffer(new_buffer_id, cx);
-                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
-                    multibuffer.clear(cx);
-                    multibuffer.set_excerpts_for_buffer(new_buffer, [start..end], 0, cx);
                     multibuffer.add_diff(diff, cx);
-                    multibuffer.excerpt_ids().into_iter().next()
                 });
+                predicted_diff_task
+            });
 
-                if let Some((excerpt_id, cursor_position)) =
-                    excerpt_id.zip(prediction.cursor_position.as_ref())
-                {
-                    let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    if let Some(buffer_snapshot) =
-                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
-                    {
-                        let cursor_offset = prediction
+            if let Some(editable_range) = editable_range.as_ref() {
+                Self::insert_editable_region_markers(
+                    &self.diff_editor,
+                    &predicted_buffer,
+                    prediction
+                        .edit_preview
+                        .anchor_to_offset_in_result(editable_range.start)
+                        ..prediction
                             .edit_preview
-                            .anchor_to_offset_in_result(cursor_position.anchor)
-                            + cursor_position.offset;
-                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+                            .anchor_to_offset_in_result(editable_range.end),
+                    cx,
+                );
+            }
 
-                        if let Some(anchor) =
-                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
-                        {
-                            editor.splice_inlays(
-                                &[InlayId::EditPrediction(0)],
-                                vec![Inlay::edit_prediction(0, anchor, "▏")],
-                                cx,
-                            );
-                        }
+            self.diff_editor.update(cx, |editor, cx| {
+                if let Some(cursor_position) = prediction.cursor_position.as_ref() {
+                    let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let cursor_offset = prediction
+                        .edit_preview
+                        .anchor_to_offset_in_result(cursor_position.anchor)
+                        + cursor_position.offset;
+                    let predicted_buffer_snapshot = predicted_buffer.read(cx).snapshot();
+                    let cursor_anchor = predicted_buffer_snapshot.anchor_after(
+                        predicted_buffer_snapshot.clip_offset(cursor_offset, Bias::Right),
+                    );
+
+                    if let Some(anchor) = multibuffer_snapshot.anchor_in_excerpt(cursor_anchor) {
+                        editor.splice_inlays(
+                            &[InlayId::EditPrediction(0)],
+                            vec![Inlay::edit_prediction(0, anchor, "▏")],
+                            cx,
+                        );
                     }
                 }
             });
 
             let mut formatted_inputs = String::new();
+            Self::write_formatted_inputs(&mut formatted_inputs, &prediction.inputs);
 
-            write!(&mut formatted_inputs, "## Events\n\n").unwrap();
-
-            for event in &prediction.inputs.events {
-                formatted_inputs.push_str("```diff\n");
-                zeta_prompt::write_event(&mut formatted_inputs, event.as_ref());
-                formatted_inputs.push_str("```\n\n");
-            }
-
-            write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
-
-            for included_file in prediction
-                .inputs
-                .related_files
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-            {
-                write!(
-                    &mut formatted_inputs,
-                    "### {}\n\n",
-                    included_file.path.display()
+            let current_editable_region = editable_range.as_ref().map(|range| {
+                prediction
+                    .buffer
+                    .read(cx)
+                    .snapshot()
+                    .text_for_range(range.clone())
+                    .collect::<String>()
+            });
+            let expected_buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local(prediction.snapshot.text(), cx);
+                buffer.set_language_async(prediction.snapshot.language().cloned(), cx);
+                buffer
+            });
+            let expected_editable_range = editable_range.as_ref().map(|editable_range| {
+                expected_buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let editable_point_range = editable_range.start.to_point(&prediction.snapshot)
+                        ..editable_range.end.to_point(&prediction.snapshot);
+                    let expected_editable_range = snapshot.anchor_before(editable_point_range.start)
+                        ..snapshot.anchor_after(editable_point_range.end);
+                    if let Some(current_editable_region) = current_editable_region {
+                        buffer.edit(
+                            [(expected_editable_range.clone(), current_editable_region)],
+                            None,
+                            cx,
+                        );
+                    }
+                    expected_editable_range
+                })
+            });
+            let expected_buffer_snapshot = expected_buffer.read(cx).snapshot();
+            let expected_excerpt_range = expected_editable_range
+                .as_ref()
+                .map(|range| {
+                    range.start.to_point(&expected_buffer_snapshot)
+                        ..range.end.to_point(&expected_buffer_snapshot)
+                })
+                .unwrap_or(visible_range);
+            let expected_diff = cx.new(|cx| {
+                BufferDiff::new(
+                    &expected_buffer_snapshot.text,
+                    expected_buffer_snapshot.language().cloned(),
+                    expected_buffer.read(cx).language_registry(),
+                    cx,
                 )
-                .unwrap();
-
-                for excerpt in included_file.excerpts.iter() {
-                    write!(
-                        &mut formatted_inputs,
-                        "```{}\n{}\n```\n",
-                        included_file.path.display(),
-                        excerpt.text
-                    )
-                    .unwrap();
-                }
+            });
+            let expected_diff_task = Self::update_buffer_diff(
+                &expected_diff,
+                expected_buffer_snapshot.clone(),
+                prediction.snapshot.clone(),
+                cx,
+            );
+            let expected_editor = cx.new(|cx| {
+                let multibuffer = cx.new(|cx| {
+                    let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+                    multibuffer.set_excerpts_for_buffer(
+                        expected_buffer.clone(),
+                        [expected_excerpt_range],
+                        0,
+                        cx,
+                    );
+                    multibuffer.add_diff(expected_diff.clone(), cx);
+                    multibuffer
+                });
+                let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+                let expected_buffer_id = expected_buffer.read(cx).remote_id();
+                editor.disable_header_for_buffer(expected_buffer_id, cx);
+                editor.disable_inline_diagnostics();
+                editor.set_expand_all_diff_hunks(cx);
+                editor.set_show_git_diff_gutter(false, cx);
+                editor.set_show_code_actions(false, cx);
+                editor.set_show_runnables(false, cx);
+                editor.set_show_bookmarks(false, cx);
+                editor.set_show_breakpoints(false, cx);
+                editor.set_show_wrap_guides(false, cx);
+                editor.set_show_edit_predictions(Some(false), window, cx);
+                editor
+            });
+            if let Some(expected_editable_range) = expected_editable_range.as_ref() {
+                let expected_buffer_snapshot = expected_buffer.read(cx).snapshot();
+                Self::insert_editable_region_markers(
+                    &expected_editor,
+                    &expected_buffer,
+                    expected_editable_range
+                        .start
+                        .to_offset(&expected_buffer_snapshot)
+                        ..expected_editable_range
+                            .end
+                            .to_offset(&expected_buffer_snapshot),
+                    cx,
+                );
             }
 
-            write!(&mut formatted_inputs, "## Cursor Excerpt\n\n").unwrap();
-
-            writeln!(
-                &mut formatted_inputs,
-                "```{}\n{}<CURSOR>{}\n```\n",
-                prediction.inputs.cursor_path.display(),
-                &prediction.inputs.cursor_excerpt[..prediction.inputs.cursor_offset_in_excerpt],
-                &prediction.inputs.cursor_excerpt[prediction.inputs.cursor_offset_in_excerpt..],
-            )
-            .unwrap();
+            let expected_buffer_subscription = cx.subscribe(&expected_buffer, {
+                let expected_diff = expected_diff.clone();
+                let original_snapshot = prediction.snapshot.clone();
+                move |this, buffer, event, cx| match event {
+                    language::BufferEvent::Edited { .. }
+                    | language::BufferEvent::LanguageChanged(_)
+                    | language::BufferEvent::Reparsed => {
+                        let task = Self::update_buffer_diff(
+                            &expected_diff,
+                            buffer.read(cx).snapshot(),
+                            original_snapshot.clone(),
+                            cx,
+                        );
+                        if let Some(active_prediction) = this.active_prediction.as_mut() {
+                            active_prediction.expected_diff_task = task;
+                        }
+                    }
+                    _ => {}
+                }
+            });
 
             self.active_prediction = Some(ActivePrediction {
                 prediction,
@@ -448,6 +792,7 @@ impl RatePredictionsModal {
                     editor.set_show_git_diff_gutter(false, cx);
                     editor.set_show_code_actions(false, cx);
                     editor.set_show_runnables(false, cx);
+                    editor.set_show_bookmarks(false, cx);
                     editor.set_show_breakpoints(false, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_indent_guides(false, cx);
@@ -459,6 +804,11 @@ impl RatePredictionsModal {
                     }
                     editor
                 }),
+                expected_buffer,
+                expected_editor,
+                _expected_buffer_subscription: expected_buffer_subscription,
+                _predicted_diff_task: predicted_diff_task,
+                expected_diff_task,
                 formatted_inputs: cx.new(|cx| {
                     Markdown::new(
                         formatted_inputs.into(),
@@ -511,15 +861,64 @@ impl RatePredictionsModal {
 
     fn render_suggested_edits(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+        let active_prediction = self.active_prediction.as_ref()?;
+
         Some(
-            div()
+            v_flex()
                 .id("diff")
-                .p_4()
                 .size_full()
                 .bg(bg_color)
-                .overflow_scroll()
-                .whitespace_nowrap()
-                .child(self.diff_editor.clone()),
+                .overflow_hidden()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            h_flex()
+                                .h_8()
+                                .px_2()
+                                .border_b_1()
+                                .border_color(border_color)
+                                .child(Label::new("Predicted Patch").size(LabelSize::Small)),
+                        )
+                        .child(
+                            div()
+                                .id("predicted-patch-diff")
+                                .p_4()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_scroll()
+                                .whitespace_nowrap()
+                                .child(self.diff_editor.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .child(
+                            h_flex()
+                                .h_8()
+                                .px_2()
+                                .gap_2()
+                                .border_b_1()
+                                .border_color(border_color)
+                                .child(Label::new("Expected Patch").size(LabelSize::Small)),
+                        )
+                        .child(
+                            div()
+                                .id("expected-patch")
+                                .p_4()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_scroll()
+                                .whitespace_nowrap()
+                                .child(active_prediction.expected_editor.clone()),
+                        ),
+                ),
         )
     }
 
@@ -814,7 +1213,7 @@ impl RatePredictionsModal {
     fn render_shown_completions(&self, cx: &Context<Self>) -> impl Iterator<Item = ListItem> {
         self.ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .cloned()
             .enumerate()
             .map(|(index, completion)| {
@@ -830,13 +1229,47 @@ impl RatePredictionsModal {
                         (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
                         (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                     };
+                let (trigger_icon, trigger_tooltip) = match completion.trigger {
+                    PredictEditsRequestTrigger::Testing => (IconName::Debug, "Testing"),
+                    PredictEditsRequestTrigger::Diagnostics => {
+                        (IconName::ToolDiagnostics, "Diagnostics")
+                    }
+                    PredictEditsRequestTrigger::DiagnosticNavigation => {
+                        (IconName::ArrowRight, "Diagnostic Navigation")
+                    }
+                    PredictEditsRequestTrigger::Cli => (IconName::Terminal, "CLI"),
+                    PredictEditsRequestTrigger::Explicit => (IconName::Person, "Explicit"),
+                    PredictEditsRequestTrigger::BufferEdit => (IconName::Pencil, "Buffer Edit"),
+                    PredictEditsRequestTrigger::LSPCompletionAccepted => {
+                        (IconName::Code, "LSP Completion Accepted")
+                    }
+                    PredictEditsRequestTrigger::PredictionAccepted => {
+                        (IconName::ZedPredict, "Prediction Accepted")
+                    }
+                    PredictEditsRequestTrigger::PredictionPartiallyAccepted => {
+                        (IconName::CheckDouble, "Prediction Partially Accepted")
+                    }
+                    PredictEditsRequestTrigger::EditorCreated => (IconName::File, "Editor Created"),
+                    PredictEditsRequestTrigger::ProviderChanged => {
+                        (IconName::Settings, "Provider Changed")
+                    }
+                    PredictEditsRequestTrigger::UserInfoChanged => {
+                        (IconName::Person, "User Info Changed")
+                    }
+                    PredictEditsRequestTrigger::VimModeChanged => {
+                        (IconName::Keyboard, "Vim Mode Changed")
+                    }
+                    PredictEditsRequestTrigger::SettingsChanged => {
+                        (IconName::Settings, "Settings Changed")
+                    }
+                    PredictEditsRequestTrigger::Other => (IconName::CircleHelp, "Other"),
+                };
 
                 let file = completion.buffer.read(cx).file();
-                let file_name = file
-                    .as_ref()
-                    .map_or(SharedString::new_static("untitled"), |file| {
-                        file.file_name(cx).to_string().into()
-                    });
+                let file_name = file.as_ref().map_or(
+                    SharedString::new_static(MultiBuffer::DEFAULT_TITLE),
+                    |file| file.file_name(cx).to_string().into(),
+                );
                 let file_path = file.map(|file| file.path().as_unix_str().to_string());
 
                 ListItem::new(completion.id.clone())
@@ -849,6 +1282,11 @@ impl RatePredictionsModal {
                             .id("completion-content")
                             .gap_3()
                             .child(Icon::new(icon_name).color(icon_color).size(IconSize::Small))
+                            .child(
+                                Icon::new(trigger_icon)
+                                    .color(Color::Muted)
+                                    .size(IconSize::XSmall),
+                            )
                             .child(
                                 v_flex().child(
                                     h_flex()
@@ -864,7 +1302,9 @@ impl RatePredictionsModal {
                                 ),
                             ),
                     )
-                    .tooltip(Tooltip::text(tooltip_text))
+                    .tooltip(Tooltip::text(format!(
+                        "{tooltip_text} • Trigger: {trigger_tooltip}"
+                    )))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_completion(Some(completion.clone()), true, window, cx);
                     }))
@@ -991,7 +1431,6 @@ impl FeedbackCompletionProvider {
 impl editor::CompletionProvider for FeedbackCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
@@ -1041,10 +1480,12 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
                 documentation: None,
                 source: CompletionSource::Custom,
                 icon_path: None,
+                icon_color: None,
                 match_start: None,
                 snippet_deduplication_key: None,
                 insert_text_mode: None,
                 confirm: None,
+                group: None,
             })
             .collect();
 

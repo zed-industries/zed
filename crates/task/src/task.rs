@@ -23,8 +23,8 @@ pub use debug_format::{
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
 pub use task_template::{
-    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
-    substitute_variables_in_map, substitute_variables_in_str,
+    DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskHook, TaskTemplate,
+    TaskTemplates, substitute_variables_in_map, substitute_variables_in_str,
 };
 pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;
@@ -69,12 +69,14 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
-    /// Whether to show the task summary line in the task output (sucess/failure).
+    /// Whether to show the task summary line in the task output (success/failure).
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
+    /// Which edited buffers to save before running the task.
+    pub save: SaveStrategy,
 }
 
 impl SpawnInTerminal {
@@ -179,6 +181,20 @@ pub enum VariableName {
     /// Open a Picker to select a process ID to use in place
     /// Can only be used to debug configurations
     PickProcessId,
+    /// An absolute path of the main (original) git worktree for the current repository.
+    /// For normal checkouts, this equals the worktree root. For linked worktrees,
+    /// this is the original repo's working directory.
+    MainGitWorktree,
+    /// Full SHA for the Git commit associated with the task context.
+    GitSha,
+    /// Short SHA for the Git commit associated with the task context.
+    GitShaShort,
+    /// Name of the Git repository associated with the task context.
+    GitRepositoryName,
+    /// Absolute path of the Git repository associated with the task context.
+    GitRepositoryPath,
+    /// Name of the Git ref (branch, remote ref, or tag) associated with the task context.
+    GitRef,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -214,6 +230,12 @@ impl FromStr for VariableName {
             "LANGUAGE" => Self::Language,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
+            "MAIN_GIT_WORKTREE" => Self::MainGitWorktree,
+            "GIT_SHA" => Self::GitSha,
+            "GIT_SHA_SHORT" => Self::GitShaShort,
+            "GIT_REPOSITORY_NAME" => Self::GitRepositoryName,
+            "GIT_REPOSITORY_PATH" => Self::GitRepositoryPath,
+            "GIT_REF" => Self::GitRef,
             _ => {
                 if let Some(custom_name) =
                     without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
@@ -249,6 +271,12 @@ impl std::fmt::Display for VariableName {
             Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
+            Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
+            Self::GitSha => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA"),
+            Self::GitShaShort => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA_SHORT"),
+            Self::GitRepositoryName => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_NAME"),
+            Self::GitRepositoryPath => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_PATH"),
+            Self::GitRef => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REF"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"

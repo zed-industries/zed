@@ -14,18 +14,15 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-async-tar.workspace = true
 collections.workspace = true
 cpal.workspace = true
 crossbeam.workspace = true
 gpui.workspace = true
-denoise = { path = "../denoise" }
 log.workspace = true
 parking_lot.workspace = true
 rodio.workspace = true
 serde.workspace = true
 settings.workspace = true
-smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
 

@@ -40,7 +40,7 @@ impl LineEndingSelector {
     fn toggle(editor: &WeakEntity<Editor>, window: &mut Window, cx: &mut App) {
         let Some((workspace, buffer)) = editor
             .update(cx, |editor, cx| {
-                Some((editor.workspace()?, editor.active_excerpt(cx)?.1))
+                Some((editor.workspace()?, editor.active_buffer(cx)?))
             })
             .ok()
             .flatten()
@@ -72,7 +72,7 @@ impl LineEndingSelector {
 
 impl Render for LineEndingSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -114,6 +114,10 @@ impl LineEndingSelectorDelegate {
 
 impl PickerDelegate for LineEndingSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "line ending selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a line ending…".into()

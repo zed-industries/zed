@@ -205,19 +205,21 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = buffer
-            .buffer_id_for_anchor(anchor)
-            .is_some_and(|buffer_id| {
-                project
-                    .read(cx)
-                    .git_store()
-                    .read(cx)
-                    .repository_and_path_for_buffer_id(buffer_id, cx)
-                    .is_some()
-            });
+        let has_git_repo =
+            buffer
+                .anchor_to_buffer_anchor(anchor)
+                .is_some_and(|(buffer_anchor, _)| {
+                    project
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .repository_and_path_for_buffer_id(buffer_anchor.buffer_id, cx)
+                        .is_some()
+                });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
+        let format_selections = window.is_action_available(&FormatSelections, cx);
         let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
             editor.buffer.read(cx).as_singleton().as_ref(),
             cx,
@@ -254,10 +256,13 @@ pub fn deploy_context_menu(
                     run_to_cursor || (evaluate_selection && has_selections),
                     |builder| builder.separator(),
                 )
-                .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Definition", Box::new(GoToDefinition::default()))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
+                .action(
+                    "Go to Implementation",
+                    Box::new(GoToImplementation::default()),
+                )
                 .action(
                     "Find All References",
                     Box::new(FindAllReferences::default()),
@@ -265,7 +270,7 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
-                .when(has_selections, |cx| {
+                .when(format_selections, |cx| {
                     cx.action("Format Selections", Box::new(FormatSelections))
                 })
                 .action(

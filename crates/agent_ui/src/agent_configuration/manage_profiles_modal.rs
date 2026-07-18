@@ -218,6 +218,11 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        telemetry::event!(
+            "Agent Profile Default Model Configured",
+            profile_id = profile_id.as_str(),
+            is_builtin = builtin_profiles::is_builtin(&profile_id)
+        );
         let fs = self.fs.clone();
         let profile_id_for_closure = profile_id.clone();
 
@@ -267,6 +272,7 @@ impl ManageProfilesModal {
                                         effort: model
                                             .default_effort_level()
                                             .map(|effort| effort.value.to_string()),
+                                        speed: None,
                                     });
                                 }
                             }
@@ -289,7 +295,7 @@ impl ManageProfilesModal {
                 window,
                 cx,
             )
-            .modal(false)
+            .embedded()
         });
 
         let dismiss_subscription = cx.subscribe_in(&model_picker, window, {
@@ -313,6 +319,11 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        telemetry::event!(
+            "Agent Profile MCPs Configured",
+            profile_id = profile_id.as_str(),
+            is_builtin = builtin_profiles::is_builtin(&profile_id)
+        );
         let settings = AgentSettings::get_global(cx);
         let Some(profile) = settings.profiles.get(&profile_id).cloned() else {
             return;
@@ -349,6 +360,11 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        telemetry::event!(
+            "Agent Profile Tools Configured",
+            profile_id = profile_id.as_str(),
+            is_builtin = builtin_profiles::is_builtin(&profile_id)
+        );
         let settings = AgentSettings::get_global(cx);
         let Some(profile) = settings.profiles.get(&profile_id).cloned() else {
             return;
@@ -362,7 +378,10 @@ impl ManageProfilesModal {
                 let supported_by_provider = provider.as_ref().map_or(true, |provider| {
                     agent::tool_supports_provider(name, provider)
                 });
-                supported_by_provider
+                // Don't offer tools the agent can't actually use: tools gated
+                // behind an inactive feature flag are silently dropped before
+                // they reach the model (#56778).
+                supported_by_provider && agent::tool_feature_flag_enabled(name, cx)
             })
             .map(Arc::from)
             .collect();
@@ -397,9 +416,16 @@ impl ManageProfilesModal {
             Mode::ChooseProfile { .. } => {}
             Mode::NewProfile(mode) => {
                 let name = mode.name_editor.read(cx).text(cx);
+                let base_profile_id = mode.base_profile_id.clone();
 
                 let profile_id =
-                    AgentProfile::create(name, mode.base_profile_id.clone(), self.fs.clone(), cx);
+                    AgentProfile::create(name, base_profile_id.clone(), self.fs.clone(), cx);
+                telemetry::event!(
+                    "Agent Profile Created",
+                    profile_id = profile_id.as_str(),
+                    is_fork = base_profile_id.is_some(),
+                    base_profile_id = base_profile_id.as_ref().map(|id| id.as_str())
+                );
                 self.view_profile(profile_id, window, cx);
             }
             Mode::ViewProfile(_) => {}
@@ -419,6 +445,8 @@ impl ManageProfilesModal {
             self.view_profile(profile_id, window, cx);
             return;
         }
+
+        telemetry::event!("Agent Profile Deleted", profile_id = profile_id.as_str());
 
         let fs = self.fs.clone();
 
@@ -991,7 +1019,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure Built-in Tools"),
-                            Some(IconName::Cog),
+                            Some(IconName::Settings),
                         ))
                         .child(ListSeparator)
                         .child(tool_picker.clone())
@@ -1014,7 +1042,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure Default Model"),
-                            Some(IconName::Ai),
+                            Some(IconName::ZedAgent),
                         ))
                         .child(ListSeparator)
                         .child(v_flex().w(rems(34.)).child(model_picker.clone()))

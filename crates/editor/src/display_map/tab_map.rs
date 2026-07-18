@@ -3,7 +3,7 @@ use super::{
     fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
 
-use language::Point;
+use language::{LanguageAwareStyling, Point};
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
@@ -72,6 +72,9 @@ impl TabMap {
             old_snapshot.tab_size = tab_size;
             return (old_snapshot.clone(), vec![]);
         }
+
+        let old_fold_max_point = old_snapshot.fold_snapshot.max_point();
+
         // Expand each edit to include the next tab on the same line as the edit,
         // and any subsequent tabs on that line that moved across the tab expansion
         // boundary.
@@ -89,11 +92,9 @@ impl TabMap {
         // expansion boundary (transitioning between expanded and non-expanded).
         for fold_edit in &mut fold_edits {
             let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-            let old_end_row_successor_offset = cmp::min(
-                FoldPoint::new(old_end.row() + 1, 0),
-                old_snapshot.fold_snapshot.max_point(),
-            )
-            .to_offset(&old_snapshot.fold_snapshot);
+            let old_end_row_successor_offset =
+                cmp::min(FoldPoint::new(old_end.row() + 1, 0), old_fold_max_point)
+                    .to_offset(&old_snapshot.fold_snapshot);
             let new_end = fold_edit.new.end.to_point(&fold_snapshot);
 
             let mut offset_from_edit = 0;
@@ -101,7 +102,10 @@ impl TabMap {
             let mut last_tab_with_changed_expansion_offset = None;
             'outer: for chunk in old_snapshot.fold_snapshot.chunks(
                 fold_edit.old.end..old_end_row_successor_offset,
-                false,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
                 Highlights::default(),
             ) {
                 let mut remaining_tabs = chunk.tabs;
@@ -208,7 +212,7 @@ impl std::ops::Deref for TabSnapshot {
 }
 
 impl TabSnapshot {
-    #[ztracing::instrument(skip_all)]
+    #[inline]
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
@@ -244,7 +248,14 @@ impl TabSnapshot {
             self.max_point()
         };
         let first_line_chars = self
-            .chunks(range.start..line_end, false, Highlights::default())
+            .chunks(
+                range.start..line_end,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            )
             .flat_map(|chunk| chunk.text.chars())
             .take_while(|&c| c != '\n')
             .count() as u32;
@@ -254,7 +265,10 @@ impl TabSnapshot {
         } else {
             self.chunks(
                 TabPoint::new(range.end.row(), 0)..range.end,
-                false,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
                 Highlights::default(),
             )
             .flat_map(|chunk| chunk.text.chars())
@@ -274,7 +288,7 @@ impl TabSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<TabPoint>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
@@ -324,7 +338,10 @@ impl TabSnapshot {
     pub fn text(&self) -> String {
         self.chunks(
             TabPoint::zero()..self.max_point(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
         .map(|chunk| chunk.text)
@@ -489,6 +506,10 @@ pub struct TabPointCursor<'this> {
 }
 
 impl TabPointCursor<'_> {
+    /// No-op; this cursor is stateless. Provided for symmetry with the other
+    /// display-map layer cursors.
+    pub fn reset(&mut self) {}
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: FoldPoint) -> TabPoint {
         self.this.fold_point_to_tab_point(point)
@@ -1170,7 +1191,10 @@ mod tests {
                 tab_snapshot
                     .chunks(
                         TabPoint::new(0, ix as u32)..tab_snapshot.max_point(),
-                        false,
+                        LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
                         Highlights::default(),
                     )
                     .map(|c| c.text)
@@ -1246,8 +1270,14 @@ mod tests {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
-            for chunk in snapshot.chunks(start..snapshot.max_point(), false, Highlights::default())
-            {
+            for chunk in snapshot.chunks(
+                start..snapshot.max_point(),
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            ) {
                 if chunk.is_tab != was_tab {
                     if !text.is_empty() {
                         chunks.push((mem::take(&mut text), was_tab));
@@ -1296,7 +1326,14 @@ mod tests {
 
         // This should not panic.
         let result: String = tab_snapshot
-            .chunks(start..end, false, Highlights::default())
+            .chunks(
+                start..end,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            )
             .map(|c| c.text)
             .collect();
         assert!(!result.is_empty());
@@ -1354,7 +1391,14 @@ mod tests {
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
                 tabs_snapshot
-                    .chunks(start..end, false, Highlights::default())
+                    .chunks(
+                        start..end,
+                        LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
+                        Highlights::default()
+                    )
                     .map(|c| c.text)
                     .collect::<String>(),
                 expected_text,
@@ -1436,7 +1480,10 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);
@@ -1535,6 +1582,10 @@ mod tests {
         let mut all_tab_stops = Vec::new();
         let mut byte_offset = 1;
         let mut char_offset = 1;
+        #[expect(
+            clippy::explicit_counter_loop,
+            reason = "Lint does not account for char_offset being needed after the loop"
+        )]
         for ch in buffer_snapshot.text().chars() {
             if ch == '\t' {
                 all_tab_stops.push(TabStop {
@@ -1598,7 +1649,10 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);

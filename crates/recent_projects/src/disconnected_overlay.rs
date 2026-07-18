@@ -125,7 +125,7 @@ impl DisconnectedOverlay {
                 paths,
                 app_state,
                 OpenOptions {
-                    replace_window: Some(window_handle),
+                    requesting_window: Some(window_handle),
                     ..Default::default()
                 },
                 cx,

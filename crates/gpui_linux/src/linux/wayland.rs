@@ -2,6 +2,7 @@ mod client;
 mod clipboard;
 mod cursor;
 mod display;
+mod popup;
 mod serial;
 mod window;
 
@@ -37,11 +38,5 @@ pub(super) fn to_shape(style: CursorStyle) -> Shape {
         CursorStyle::DragLink => Shape::Alias,
         CursorStyle::DragCopy => Shape::Copy,
         CursorStyle::ContextualMenu => Shape::ContextMenu,
-        CursorStyle::None => {
-            #[cfg(debug_assertions)]
-            panic!("CursorStyle::None should be handled separately in the client");
-            #[cfg(not(debug_assertions))]
-            Shape::Default
-        }
     }
 }

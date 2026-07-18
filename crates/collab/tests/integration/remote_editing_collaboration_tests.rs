@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 
 use dap::{Capabilities, adapters::DebugTaskDefinition, transport::RequestHandling};
 use debugger_ui::debugger_panel::DebugPanel;
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorMode, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBuffer};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
@@ -14,14 +14,17 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, language_settings},
+    language_settings::{Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
 use project::{
     ProjectPath,
     debugger::session::ThreadId,
-    lsp_store::{FormatTrigger, LspFormatTarget},
+    lsp_store::{
+        FormatTrigger, LspFormatTarget,
+        log_store::{self, GlobalLogStore},
+    },
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use remote::RemoteClient;
@@ -91,6 +94,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
             HeadlessAppState {
@@ -121,6 +125,7 @@ async fn test_sharing_an_ssh_remote_project(
 
     // User B joins the project.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let worktree_b = project_b
         .update(cx_b, |project, cx| project.worktree_for_id(worktree_id, cx))
         .unwrap();
@@ -173,9 +178,8 @@ async fn test_sharing_an_ssh_remote_project(
     executor.run_until_parked();
 
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -299,6 +303,7 @@ async fn test_ssh_collaboration_git_branches(
     let new_branch = branches[2];
 
     let branches_b = branches_b
+        .branches
         .into_iter()
         .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
@@ -468,13 +473,15 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 1);
 
-    let worktree_directory = PathBuf::from("/project");
+    let worktree_directory = PathBuf::from("/worktrees");
     cx_b.update(|cx| {
         repo_b.update(cx, |repo, _| {
             repo.create_worktree(
-                "feature-branch".to_string(),
+                git::repository::CreateWorktreeTarget::NewBranch {
+                    branch_name: "feature-branch".to_string(),
+                    base_sha: Some("abc123".to_string()),
+                },
                 worktree_directory.join("feature-branch"),
-                Some("abc123".to_string()),
             )
         })
     })
@@ -491,7 +498,10 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 2);
     assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
-    assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+    assert_eq!(
+        worktrees[1].ref_name,
+        Some("refs/heads/feature-branch".into())
+    );
     assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
     let server_worktrees = {
@@ -532,8 +542,8 @@ async fn test_ssh_collaboration_git_worktrees(
     cx_a.update(|cx| {
         repo_a.update(cx, |repository, _| {
             repository.rename_worktree(
-                PathBuf::from("/project/feature-branch"),
-                PathBuf::from("/project/renamed-branch"),
+                PathBuf::from("/worktrees/feature-branch"),
+                PathBuf::from("/worktrees/renamed-branch"),
             )
         })
     })
@@ -555,7 +565,7 @@ async fn test_ssh_collaboration_git_worktrees(
     );
     assert_eq!(
         host_worktrees[1].path,
-        PathBuf::from("/project/renamed-branch")
+        PathBuf::from("/worktrees/renamed-branch")
     );
 
     let server_worktrees = {
@@ -584,13 +594,13 @@ async fn test_ssh_collaboration_git_worktrees(
     );
     assert_eq!(
         server_worktrees[1].path,
-        PathBuf::from("/project/renamed-branch")
+        PathBuf::from("/worktrees/renamed-branch")
     );
 
     // Host (client A) removes the renamed worktree via SSH
     cx_a.update(|cx| {
         repo_a.update(cx, |repository, _| {
-            repository.remove_worktree(PathBuf::from("/project/renamed-branch"), false)
+            repository.remove_worktree(PathBuf::from("/worktrees/renamed-branch"), false)
         })
     })
     .await
@@ -742,6 +752,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
@@ -753,6 +765,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
                     Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 ));
@@ -828,6 +842,150 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         buffer_text.to_string() + "\n" + prettier_format_suffix + "\n" + prettier_format_suffix,
         "Prettier formatting was not applied to client buffer after host's request"
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_ssh_restarting_language_server_replaces_remote_status(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx_a.set_name("a");
+    server_cx.set_name("server");
+
+    cx_a.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let log_store = cx_a.update(|cx| log_store::init(false, cx));
+
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(path!("/project"), json!({ "a.rs": "fn main() {}" }))
+        .await;
+
+    client_a.language_registry().add(rust_lang());
+
+    server_cx.update(HeadlessProject::init);
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
+    let mut fake_language_servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: Arc::new(BlockedHttpClient),
+                node_runtime: NodeRuntime::unavailable(),
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_ssh_project(path!("/project"), client_ssh, false, cx_a)
+        .await;
+    log_store.update(cx_a, |log_store, cx| log_store.add_project(&project_a, cx));
+
+    let (buffer, _handle) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let first_server = fake_language_servers.next().await.unwrap();
+    let first_server_id = first_server.server.server_id();
+    executor.run_until_parked();
+
+    project_a.read_with(cx_a, |project, cx| {
+        let statuses = project.language_server_statuses(cx).collect::<Vec<_>>();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].0, first_server_id);
+        assert_eq!(statuses[0].1.name.0, "the-language-server");
+    });
+    cx_a.read_global::<GlobalLogStore, _>(|global, cx| {
+        let log_store = global.0.read(cx);
+        let matching_server_ids = log_store
+            .language_servers
+            .iter()
+            .filter_map(|(server_id, state)| {
+                state
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.0 == "the-language-server")
+                    .then_some(*server_id)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matching_server_ids, vec![first_server_id]);
+    });
+
+    project_a.update(cx_a, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+    });
+
+    let restarted_server = fake_language_servers.next().await.unwrap();
+    let restarted_server_id = restarted_server.server.server_id();
+    assert_ne!(restarted_server_id, first_server_id);
+    executor.run_until_parked();
+
+    project_a.read_with(cx_a, |project, cx| {
+        let statuses = project.language_server_statuses(cx).collect::<Vec<_>>();
+        assert_eq!(
+            statuses.len(),
+            1,
+            "restarting a remote language server should replace the previous status entry"
+        );
+        assert_eq!(
+            statuses[0].0, restarted_server_id,
+            "restarting a remote language server should publish the replacement server id"
+        );
+        assert_ne!(
+            statuses[0].0, first_server_id,
+            "restarting a remote language server should remove the previous server id"
+        );
+        assert_eq!(statuses[0].1.name.0, "the-language-server");
+    });
+    cx_a.read_global::<GlobalLogStore, _>(|global, cx| {
+        let log_store = global.0.read(cx);
+        let matching_server_ids = log_store
+            .language_servers
+            .iter()
+            .filter_map(|(server_id, state)| {
+                state
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.0 == "the-language-server")
+                    .then_some(*server_id)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching_server_ids,
+            vec![restarted_server_id],
+            "restarting a remote language server should replace the old log store entry"
+        );
+        assert!(
+            !log_store.language_servers.contains_key(&first_server_id),
+            "restarting a remote language server should remove the previous log store entry"
+        );
+    });
 }
 
 #[gpui::test]
@@ -1281,9 +1439,8 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     let fake_language_server = fake_language_servers.next();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["...".to_string()],
             "remote .zed/settings.json must not sync before trust approval"
         )
@@ -1310,9 +1467,8 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.run_until_parked();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()],
             "remote .zed/settings.json should sync after trust approval"
         )
@@ -1361,4 +1517,261 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         !has_restricted_after,
         "should have no restricted worktrees after trusting both"
     );
+}
+
+#[gpui::test]
+async fn test_ssh_document_links_resolve(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx_a.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
+    });
+
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let document_link_count = Arc::new(AtomicUsize::new(0));
+    let resolve_count = Arc::new(AtomicUsize::new(0));
+
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "main.rs": "// see LICENSE for details\nfn main() {}",
+                "other.rs": "fn other() {}\n",
+            }),
+        )
+        .await;
+
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
+
+    let capabilities = lsp::ServerCapabilities {
+        document_link_provider: Some(lsp::DocumentLinkOptions {
+            resolve_provider: Some(true),
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    let other_path_for_remote = path!("/code/other.rs");
+    let mut fake_language_servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            initializer: Some(Box::new({
+                let document_link_count = document_link_count.clone();
+                let resolve_count = resolve_count.clone();
+                move |fake_server| {
+                    let document_link_count = document_link_count.clone();
+                    fake_server.set_request_handler::<lsp::request::DocumentLinkRequest, _, _>({
+                        move |_params, _| {
+                            let document_link_count = document_link_count.clone();
+                            async move {
+                                document_link_count.fetch_add(1, Ordering::Release);
+                                Ok(Some(vec![lsp::DocumentLink {
+                                    range: lsp::Range {
+                                        start: lsp::Position {
+                                            line: 0,
+                                            character: 7,
+                                        },
+                                        end: lsp::Position {
+                                            line: 0,
+                                            character: 14,
+                                        },
+                                    },
+                                    target: None,
+                                    tooltip: None,
+                                    data: Some(serde_json::json!({"id": 7})),
+                                }]))
+                            }
+                        }
+                    });
+                    let resolve_count = resolve_count.clone();
+                    fake_server.set_request_handler::<lsp::request::DocumentLinkResolve, _, _>({
+                        move |link, _| {
+                            let resolve_count = resolve_count.clone();
+                            async move {
+                                resolve_count.fetch_add(1, Ordering::Release);
+                                Ok(lsp::DocumentLink {
+                                    range: link.range,
+                                    target: Some(
+                                        lsp::Uri::from_file_path(other_path_for_remote).unwrap(),
+                                    ),
+                                    tooltip: Some("Open other.rs".into()),
+                                    data: None,
+                                })
+                            }
+                        }
+                    });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            true,
+            cx,
+        )
+    });
+
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_ssh_project(path!("/code"), client_ssh.clone(), true, cx_a)
+        .await;
+
+    cx_a.run_until_parked();
+    let trusted_worktrees =
+        cx_a.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global"));
+    let worktree_store = project_a.read_with(cx_a, |project, _| project.worktree_store());
+    trusted_worktrees.update(cx_a, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+    cx_a.run_until_parked();
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_links = Some(true);
+            });
+        });
+    });
+
+    project_a.update(cx_a, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities,
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    let (buffer, _registration) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx_a, |buffer, _| buffer.remote_id());
+    cx_a.run_until_parked();
+    let _fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+
+    let (editor, cx_a) = cx_a.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx)),
+            Some(project_a.clone()),
+            window,
+            cx,
+        )
+    });
+    cx_a.executor()
+        .advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    cx_a.run_until_parked();
+
+    let fetched = project_a.read_with(cx_a, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .document_links_for_buffer(buffer_id)
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        fetched.values().map(|links| links.len()).sum::<usize>(),
+        1,
+        "Editor should auto-pull a single document link via SSH"
+    );
+    assert!(
+        document_link_count.load(Ordering::Acquire) >= 1,
+        "Remote LSP should have served the fetch request"
+    );
+
+    let unresolved = fetched
+        .values()
+        .flat_map(|per_server| per_server.values())
+        .next()
+        .expect("local cache should mirror the remote document link");
+    assert!(
+        !unresolved.resolved,
+        "freshly fetched links must come back unresolved"
+    );
+
+    let anchor = buffer.read_with(cx_a, |buffer, _| buffer.anchor_after(10));
+    let resolved = editor
+        .update(cx_a, |editor, cx| {
+            editor.document_links_at(buffer.clone(), anchor, cx)
+        })
+        .expect("editor should expose the cached document link at the cursor")
+        .await;
+    cx_a.run_until_parked();
+
+    assert_eq!(
+        resolved.len(),
+        1,
+        "Editor should surface exactly one resolved link at the cursor"
+    );
+    assert!(
+        resolve_count.load(Ordering::Acquire) >= 1,
+        "Local resolve should be forwarded over SSH and run on the remote LSP"
+    );
+
+    let other_uri = lsp::Uri::from_file_path(path!("/code/other.rs"))
+        .unwrap()
+        .to_string();
+    let links = project_a.read_with(cx_a, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .document_links_for_buffer(buffer_id)
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        1,
+        links.values().map(|m| m.len()).sum::<usize>(),
+        "Local cache should mirror the single document link"
+    );
+    let link = links
+        .values()
+        .flat_map(|per_server| per_server.values())
+        .next()
+        .expect("local cache should contain the mirrored link");
+    assert_eq!(
+        link.target.as_deref(),
+        Some(other_uri.as_str()),
+        "Local should see the file:// target resolved on the remote"
+    );
+    assert_eq!(link.tooltip.as_deref(), Some("Open other.rs"));
+
+    let executor = cx_a.executor();
+    client_ssh.update(cx_a, |a, _| {
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
+    });
 }

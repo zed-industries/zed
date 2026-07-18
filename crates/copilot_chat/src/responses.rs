@@ -52,7 +52,7 @@ pub enum ToolDefinition {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    Any,
+    Required,
     None,
     #[serde(untagged)]
     Other(ToolDefinition),
@@ -139,12 +139,7 @@ pub enum ResponseInputItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
     },
-    Reasoning {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        summary: Vec<ResponseReasoningItem>,
-        encrypted_content: String,
-    },
+    Reasoning(ResponseReasoningInputItem),
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -162,7 +157,17 @@ pub struct IncompleteDetails {
     pub reason: Option<IncompleteReason>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ResponseReasoningInputItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ResponseReasoningItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ResponseReasoningItem {
     #[serde(rename = "type")]
     pub kind: String,
@@ -406,5 +411,28 @@ pub async fn stream_response(
                 Err(anyhow!(error))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_choice_required_serializes_as_required() {
+        // Regression test: ToolChoice::Required must serialize as "required" (not "any")
+        // for OpenAI Responses API. Reverting the rename would break this.
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Required).unwrap(),
+            "\"required\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            "\"none\""
+        );
     }
 }

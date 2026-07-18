@@ -2,9 +2,11 @@ use crate::assemble_excerpts::assemble_excerpt_ranges;
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
-use project::{LocationLink, Project, ProjectPath};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, TaskExt, WeakEntity,
+};
+use language::{Anchor, Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
+use project::{EditPredictionDefinition, Project, ProjectPath};
 use smallvec::SmallVec;
 use std::{
     collections::hash_map,
@@ -18,14 +20,23 @@ use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
+mod bm25_context;
 #[cfg(test)]
 mod edit_prediction_context_tests;
+mod editable_context;
 #[cfg(test)]
 mod fake_definition_lsp;
+mod git_log_context;
 
-pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
+pub use editable_context::{
+    EditHistoryContextEntry, OracleTarget, collect_editable_context,
+    limit_retrieved_context_to_bytes,
+};
+
+pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
+const MAX_CONTEXT_IDENTIFIER_COUNT: usize = 32;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
@@ -67,15 +78,14 @@ struct Identifier {
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
     CacheMiss {
-        definitions: Task<Result<Option<Vec<LocationLink>>>>,
-        type_definitions: Task<Result<Option<Vec<LocationLink>>>>,
+        project: WeakEntity<Project>,
+        task: Task<Result<Vec<EditPredictionDefinition>>>,
     },
 }
 
 #[derive(Debug)]
 struct CacheEntry {
     definitions: SmallVec<[CachedDefinition; 1]>,
-    type_definitions: SmallVec<[CachedDefinition; 1]>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +178,7 @@ impl RelatedExcerptStore {
                     .path
                     .strip_prefix(worktree.root_name().as_unix_str())
                     .ok()?;
-                let relative_path = RelPath::new(relative_path, PathStyle::Posix).ok()?;
+                let relative_path = RelPath::new(relative_path, PathStyle::Unix).ok()?;
                 let project_path = ProjectPath {
                     worktree_id: worktree.id(),
                     path: relative_path.into_owned().into(),
@@ -214,9 +224,25 @@ impl RelatedExcerptStore {
         };
 
         let file = snapshot.file().cloned();
+        let file_extension = file
+            .as_ref()
+            .and_then(|file| file.path().extension())
+            .unwrap_or("")
+            .to_string();
         if let Some(file) = &file {
             log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
         }
+        let (lsp_store, is_via_ssh) = project.read_with(cx, |project, _| {
+            (project.lsp_store(), project.is_via_remote_server())
+        });
+        let lsp_names = lsp_store.update(cx, |lsp_store, cx| {
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.name().to_string())
+                    .collect::<Vec<_>>()
+            })
+        });
 
         this.update(cx, |_, cx| {
             cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
@@ -246,7 +272,13 @@ impl RelatedExcerptStore {
                         (id, distance)
                     })
                     .collect();
-                identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
+                // Only the closest `MAX_CONTEXT_IDENTIFIER_COUNT` identifiers are
+                // used below, so select that prefix instead of fully sorting.
+                util::truncate_to_bottom_n_sorted_by(
+                    &mut identifiers_with_distance,
+                    MAX_CONTEXT_IDENTIFIER_COUNT,
+                    &|(_, a), (_, b)| a.cmp(b),
+                );
 
                 let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
                 let mut current_rank = 0;
@@ -270,86 +302,62 @@ impl RelatedExcerptStore {
         let futures = this.update(cx, |this, cx| {
             identifiers_with_distance
                 .into_iter()
-                .filter_map(|(identifier, _)| {
+                .map(|(identifier, _)| {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
-                        let definitions = this
-                            .project
+                        let project = this.project.clone();
+                        let task = project
                             .update(cx, |project, cx| {
-                                project.definitions(&buffer, identifier.range.start, cx)
+                                // tombi LSP for toml will open a scratch buffer with the JSON schema of
+                                // the toml file when a goto type definition is requested
+                                let include_type_definitions =
+                                    !is_tombi_lsp_in_toml(project, &buffer, cx);
+                                project.edit_prediction_definitions(
+                                    &buffer,
+                                    identifier.range.start,
+                                    include_type_definitions,
+                                    cx,
+                                )
                             })
-                            .ok()?;
-                        let type_definitions = this
-                            .project
-                            .update(cx, |project, cx| {
-                                project.type_definitions(&buffer, identifier.range.start, cx)
-                            })
-                            .ok()?;
-                        DefinitionTask::CacheMiss {
-                            definitions,
-                            type_definitions,
-                        }
+                            .unwrap_or_else(|_| Task::ready(Ok(Vec::new())));
+                        DefinitionTask::CacheMiss { project, task }
                     };
 
                     let cx = async_cx.clone();
-                    let project = project.clone();
-                    Some(async move {
+                    async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry, None))
                             }
-                            DefinitionTask::CacheMiss {
-                                definitions,
-                                type_definitions,
-                            } => {
-                                let (definition_locations, type_definition_locations) =
-                                    futures::join!(definitions, type_definitions);
+                            DefinitionTask::CacheMiss { project, task } => {
+                                let definition_locations = task.await.log_err().unwrap_or_default();
                                 let duration = start_time.elapsed();
 
-                                let definition_locations =
-                                    definition_locations.log_err().flatten().unwrap_or_default();
-                                let type_definition_locations = type_definition_locations
-                                    .log_err()
+                                let definitions: SmallVec<[CachedDefinition; 1]> =
+                                    future::join_all(definition_locations.into_iter().map(
+                                        |definition| {
+                                            let project = project.clone();
+                                            let mut cx = cx.clone();
+                                            async move {
+                                                process_definition(definition, &project, &mut cx)
+                                                    .await
+                                            }
+                                        },
+                                    ))
+                                    .await
+                                    .into_iter()
                                     .flatten()
-                                    .unwrap_or_default();
+                                    .collect();
 
-                                Some(cx.update(|cx| {
-                                    let definitions: SmallVec<[CachedDefinition; 1]> =
-                                        definition_locations
-                                            .into_iter()
-                                            .filter_map(|location| {
-                                                process_definition(location, &project, cx)
-                                            })
-                                            .collect();
-
-                                    let type_definitions: SmallVec<[CachedDefinition; 1]> =
-                                        type_definition_locations
-                                            .into_iter()
-                                            .filter_map(|location| {
-                                                process_definition(location, &project, cx)
-                                            })
-                                            .filter(|type_def| {
-                                                !definitions.iter().any(|def| {
-                                                    def.buffer.entity_id()
-                                                        == type_def.buffer.entity_id()
-                                                        && def.anchor_range == type_def.anchor_range
-                                                })
-                                            })
-                                            .collect();
-
-                                    (
-                                        identifier,
-                                        Arc::new(CacheEntry {
-                                            definitions,
-                                            type_definitions,
-                                        }),
-                                        Some(duration),
-                                    )
-                                }))
+                                Some((
+                                    identifier,
+                                    Arc::new(CacheEntry { definitions }),
+                                    Some(duration),
+                                ))
                             }
                         }
-                    })
+                    }
                 })
                 .collect::<Vec<_>>()
         })?;
@@ -370,10 +378,25 @@ impl RelatedExcerptStore {
                 cache_hit_count += 1;
             }
         }
+        let lsp_fetch_latency_ms = start_time.elapsed().as_millis();
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
         let (new_cache, related_buffers) =
             rebuild_related_files(&project, new_cache, &cursor_distances, cx).await?;
+        let latency_ms = start_time.elapsed().as_millis();
+        let returned_excerpt_count = related_buffers
+            .iter()
+            .map(|related_buffer| related_buffer.anchor_ranges.len())
+            .sum::<usize>();
+        telemetry::event!(
+            "Edit Prediction LSP Context Retrieved",
+            lsp_names,
+            file_extension,
+            latency_ms,
+            lsp_fetch_latency_ms,
+            returned_excerpt_count,
+            is_via_ssh
+        );
 
         if let Some(file) = &file {
             log::debug!(
@@ -407,11 +430,7 @@ async fn rebuild_related_files(
     let mut snapshots = HashMap::default();
     let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
-        for definition in entry
-            .definitions
-            .iter()
-            .chain(entry.type_definitions.iter())
-        {
+        for definition in entry.definitions.iter() {
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
@@ -448,11 +467,7 @@ async fn rebuild_related_files(
                     .get(identifier)
                     .copied()
                     .unwrap_or(usize::MAX);
-                for definition in entry
-                    .definitions
-                    .iter()
-                    .chain(entry.type_definitions.iter())
-                {
+                for definition in entry.definitions.iter() {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
@@ -557,11 +572,12 @@ impl RelatedBuffer {
                     row_range: start.row..end.row,
                     text: buffer.text_for_range(start..end).collect::<String>().into(),
                     order,
+                    context_source: ContextSource::Lsp,
                 }
             })
             .collect::<Vec<_>>();
         self.cached_file = Some(CachedRelatedFile {
-            excerpts: excerpts,
+            excerpts,
             buffer_version: buffer.version().clone(),
         });
         self.cached_file.as_ref().unwrap()
@@ -572,34 +588,37 @@ use language::ToPoint as _;
 
 const MAX_TARGET_LEN: usize = 128;
 
-fn process_definition(
-    location: LocationLink,
-    project: &Entity<Project>,
-    cx: &mut App,
+async fn process_definition(
+    definition: EditPredictionDefinition,
+    project: &WeakEntity<Project>,
+    cx: &mut AsyncApp,
 ) -> Option<CachedDefinition> {
-    let buffer = location.target.buffer.read(cx);
-    let anchor_range = location.target.range;
-    let file = buffer.file()?;
-    let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
-    if worktree.read(cx).is_single_file() {
-        return None;
-    }
+    let EditPredictionDefinition { path, range } = definition;
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+        .ok()?
+        .await
+        .log_err()?;
 
-    // If the target range is large, it likely means we requested the definition of an entire module.
-    // For individual definitions, the target range should be small as it only covers the symbol.
-    let buffer = location.target.buffer.read(cx);
-    let target_len = anchor_range.to_offset(&buffer).len();
-    if target_len > MAX_TARGET_LEN {
-        return None;
-    }
+    cx.update(|cx| {
+        let buffer_snapshot = buffer.read(cx);
+        let target_start = buffer_snapshot.clip_point_utf16(range.start, Bias::Left);
+        let target_end = buffer_snapshot.clip_point_utf16(range.end, Bias::Left);
+        let anchor_range =
+            buffer_snapshot.anchor_after(target_start)..buffer_snapshot.anchor_before(target_end);
 
-    Some(CachedDefinition {
-        path: ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        },
-        buffer: location.target.buffer,
-        anchor_range,
+        // If the target range is large, it likely means we requested the definition of an entire module.
+        // For individual definitions, the target range should be small as it only covers the symbol.
+        let target_len = anchor_range.to_offset(&buffer_snapshot).len();
+        if target_len > MAX_TARGET_LEN {
+            return None;
+        }
+
+        Some(CachedDefinition {
+            path,
+            buffer: buffer.clone(),
+            anchor_range,
+        })
     })
 }
 
@@ -667,6 +686,7 @@ fn identifiers_for_position(
             if let Some(config) = config
                 && config.identifier_capture_indices.contains(&capture.index)
                 && range.contains_inclusive(&node_range)
+                && !is_tsx_tag(&buffer, &capture.node)
                 && Some(&node_range) != last_range.as_ref()
             {
                 let name = buffer.text_for_range(node_range.clone()).collect();
@@ -683,4 +703,60 @@ fn identifiers_for_position(
     }
 
     identifiers
+}
+
+fn is_tsx_tag(buffer: &BufferSnapshot, node: &tree_sitter::Node) -> bool {
+    let Some(language_config) = buffer
+        .language()
+        .and_then(|l| l.config().jsx_tag_auto_close.as_ref())
+    else {
+        return false;
+    };
+    let Some(parent_kind) = node.parent().map(|n| n.kind()) else {
+        return false;
+    };
+
+    if parent_kind != &language_config.open_tag_node_name
+        && parent_kind != &language_config.close_tag_node_name
+        && parent_kind != &language_config.tag_name_node_name
+        && language_config
+            .erroneous_close_tag_name_node_name
+            .as_ref()
+            .is_some_and(|kind| parent_kind != kind)
+        && language_config
+            .erroneous_close_tag_node_name
+            .as_ref()
+            .is_some_and(|kind| parent_kind == kind)
+        && parent_kind != &language_config.jsx_element_node_name
+    {
+        return false;
+    }
+    // do fetch `<Component />`, model probably understands `<div>`, but needs info for user defined components
+    if !buffer
+        .text_for_range(node.byte_range())
+        .all(|str| str.chars().all(|c| c.is_lowercase()))
+    {
+        return false;
+    }
+    true
+}
+
+fn is_tombi_lsp_in_toml(
+    project: &Project,
+    buffer: &Entity<Buffer>,
+    cx: &mut Context<Project>,
+) -> bool {
+    buffer.update(cx, |buffer, cx| {
+        if !buffer.language().is_some_and(|lang| lang.name() == "TOML") {
+            return false;
+        }
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            for (_, lsp) in lsp_store.running_language_servers_for_local_buffer(buffer, cx) {
+                if "tombi".eq_ignore_ascii_case(lsp.name().as_ref()) {
+                    return true;
+                }
+            }
+            false
+        })
+    })
 }

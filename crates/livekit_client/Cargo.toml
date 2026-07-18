@@ -17,7 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "livekit_api/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -47,6 +47,10 @@ util.workspace = true
 libwebrtc.workspace = true
 livekit.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { workspace = true, features = ["time"] }
+webrtc-sys.workspace = true
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true
 
@@ -61,6 +65,7 @@ objc.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform.workspace = true
+livekit_api = { workspace = true, features = ["test-support"] }
 simplelog.workspace = true
 
 [build-dependencies]

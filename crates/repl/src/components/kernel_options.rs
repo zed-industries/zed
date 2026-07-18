@@ -206,6 +206,10 @@ impl KernelPickerDelegate {
 impl PickerDelegate for KernelPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "kernel picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }
@@ -362,7 +366,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                 .child(icon.color(Color::Default).size(IconSize::Medium))
                                 .child(
                                     v_flex()
-                                        .flex_grow()
+                                        .flex_grow_1()
                                         .overflow_x_hidden()
                                         .gap_0p5()
                                         .child(
@@ -371,7 +375,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                                 .child(
                                                     div()
                                                         .overflow_x_hidden()
-                                                        .flex_shrink()
+                                                        .flex_shrink_1()
                                                         .text_ellipsis()
                                                         .child(
                                                             Label::new(spec.name())
@@ -477,14 +481,13 @@ where
         let picker_view = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .width(rems(34.))
-                .max_height(Some(rems(24.).into()))
+                .popover()
         });
 
         PopoverMenu::new("kernel-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
+            .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

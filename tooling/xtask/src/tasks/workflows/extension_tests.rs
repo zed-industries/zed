@@ -3,16 +3,18 @@ use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
-    run_tests::{fetch_ts_query_ls, orchestrate_for_extension, run_ts_query_ls, tests_pass},
+    run_tests::{
+        RunContext, fetch_ts_query_ls, orchestrate_for_extension, run_ts_query_ls, tests_pass,
+    },
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, FluentBuilder, NamedJob,
+        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets, FluentBuilder, NamedJob,
         cache_rust_dependencies_namespace, named,
     },
     vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "9ee3c503a4bbbc6b4a0f8a789acca4871d773223";
 
 // This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
@@ -30,8 +32,8 @@ pub(crate) fn extension_tests() -> Workflow {
 
     let jobs = [
         orchestrate,
-        should_check_rust.guard(check_rust()),
-        should_check_extension.guard(check_extension()),
+        should_check_rust.and_always().then(check_rust()),
+        should_check_extension.and_always().then(check_extension()),
     ];
 
     let tests_pass = tests_pass(&jobs, &[]);
@@ -39,6 +41,7 @@ pub(crate) fn extension_tests() -> Workflow {
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
@@ -146,7 +149,7 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
         .add_step(fetch_ts_query_ls())
-        .add_step(run_ts_query_ls())
+        .add_step(run_ts_query_ls(RunContext::Extension))
         .add_step(check_version_job)
         .add_step(verify_version_did_not_change(version_changed));
 

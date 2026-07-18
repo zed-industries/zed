@@ -4,11 +4,47 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 
+use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
 
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
+
+/// The application name, used to derive platform-specific data, config, cache,
+/// and state directory paths.
+///
+/// Forks should change this to avoid colliding with Zed's user data.
+pub const APP_NAME: &str = "Zed";
+
+/// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
+/// Linux/FreeBSD and the macOS `~/.config` fallback.
+pub const APP_NAME_LOWERCASE: &str = {
+    assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
+    assert!(APP_NAME.as_bytes().is_ascii(), "APP_NAME must be ASCII");
+    const BYTES: [u8; APP_NAME.len()] = {
+        let mut bytes = [0u8; APP_NAME.len()];
+        let mut i = 0;
+        while i < APP_NAME.len() {
+            assert!(
+                APP_NAME.as_bytes()[i] != b'/' && APP_NAME.as_bytes()[i] != b'\\',
+                "APP_NAME must not contain path separators",
+            );
+            assert!(
+                APP_NAME.as_bytes()[i] >= 0x20,
+                "APP_NAME must not contain control characters"
+            );
+            bytes[i] = APP_NAME.as_bytes()[i];
+            i += 1;
+        }
+        bytes.make_ascii_lowercase();
+        bytes
+    };
+    match std::str::from_utf8(&BYTES) {
+        Ok(s) => s,
+        Err(_) => unreachable!(),
+    }
+};
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
 /// This is used to override the default data directory location.
@@ -32,7 +68,7 @@ static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_server").unwrap());
     *CACHED
 }
 
@@ -40,7 +76,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
     *CACHED
 }
 
@@ -71,8 +107,14 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     CUSTOM_DATA_DIR.get_or_init(|| {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path.canonicalize()
-            .expect("failed to canonicalize custom data directory's path to an absolute path")
+        let canonicalized = path
+            .canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path");
+        // On Windows, `canonicalize` produces extended-length paths prefixed
+        // with `\\?\`. Strip that prefix so downstream consumers (e.g.
+        // Node.js language servers) that receive derived paths as arguments
+        // don't choke on the verbatim syntax.
+        SanitizedPath::new(&canonicalized).as_path().to_path_buf()
     })
 }
 
@@ -84,16 +126,16 @@ pub fn config_dir() -> &'static PathBuf {
         } else if cfg!(target_os = "windows") {
             dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
-                .join("Zed")
+                .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
-            .join("zed")
+            .join(APP_NAME_LOWERCASE)
         } else {
-            home_dir().join(".config").join("zed")
+            home_dir().join(".config").join(APP_NAME_LOWERCASE)
         }
     })
 }
@@ -104,18 +146,20 @@ pub fn data_dir() -> &'static PathBuf {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.clone()
         } else if cfg!(target_os = "macos") {
-            home_dir().join("Library/Application Support/Zed")
+            home_dir()
+                .join("Library/Application Support")
+                .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
                 dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
-            .join("zed")
+            .join(APP_NAME_LOWERCASE)
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed")
+                .join(APP_NAME)
         } else {
             config_dir().clone() // Fallback
         }
@@ -126,7 +170,7 @@ pub fn state_dir() -> &'static PathBuf {
     static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
     STATE_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            return home_dir().join(".local").join("state").join("Zed");
+            return home_dir().join(".local").join("state").join(APP_NAME);
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -135,12 +179,12 @@ pub fn state_dir() -> &'static PathBuf {
             } else {
                 dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
             }
-            .join("zed");
+            .join(APP_NAME_LOWERCASE);
         } else {
             // Windows
             return dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed");
+                .join(APP_NAME);
         }
     })
 }
@@ -152,13 +196,13 @@ pub fn temp_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             return dirs::cache_dir()
                 .expect("failed to determine cachesDirectory directory")
-                .join("Zed");
+                .join(APP_NAME);
         }
 
         if cfg!(target_os = "windows") {
             return dirs::cache_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed");
+                .join(APP_NAME);
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -167,10 +211,10 @@ pub fn temp_dir() -> &'static PathBuf {
             } else {
                 dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
             }
-            .join("zed");
+            .join(APP_NAME_LOWERCASE);
         }
 
-        home_dir().join(".cache").join("zed")
+        home_dir().join(".cache").join(APP_NAME_LOWERCASE)
     })
 }
 
@@ -185,7 +229,7 @@ pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     LOGS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            home_dir().join("Library/Logs/Zed")
+            home_dir().join("Library/Logs").join(APP_NAME)
         } else {
             data_dir().join("logs")
         }
@@ -201,13 +245,13 @@ pub fn remote_server_state_dir() -> &'static PathBuf {
 /// Returns the path to the `Zed.log` file.
 pub fn log_file() -> &'static PathBuf {
     static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
-    LOG_FILE.get_or_init(|| logs_dir().join("Zed.log"))
+    LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log", APP_NAME)))
 }
 
 /// Returns the path to the `Zed.log.old` file.
 pub fn old_log_file() -> &'static PathBuf {
     static OLD_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
-    OLD_LOG_FILE.get_or_init(|| logs_dir().join("Zed.log.old"))
+    OLD_LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log.old", APP_NAME)))
 }
 
 /// Returns the path to the database directory.
@@ -272,6 +316,32 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
     DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
+/// Returns the path to the user-global `AGENTS.md` file.
+///
+/// This file holds personal agent instructions that apply to every project the
+/// user opens, and is loaded into the native Zed agent's system prompt.
+pub fn agents_file() -> &'static PathBuf {
+    static AGENTS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    AGENTS_FILE.get_or_init(|| config_dir().join("AGENTS.md"))
+}
+
+/// User-facing display form of the user-global `AGENTS.md` file path —
+/// i.e. what a human should see in messages and prompts, with the
+/// platform's native path separator and home/config directory shorthand.
+///
+/// Windows doesn't recognize `~` as the home directory, so the env-var
+/// form (`%APPDATA%`) is used there instead. Note that this is the
+/// *typical* location: a user with `XDG_CONFIG_HOME` set or running in a
+/// Flatpak sandbox would see a different `agents_file()` at runtime than
+/// this displays. The display string trades that precision for
+/// readability in announcement copy.
+#[cfg(target_os = "windows")]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("%APPDATA%\\", APP_NAME, "\\AGENTS.md");
+#[cfg(not(target_os = "windows"))]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("~/.config/", APP_NAME_LOWERCASE, "/AGENTS.md");
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.
@@ -308,30 +378,6 @@ pub fn themes_dir() -> &'static PathBuf {
 pub fn snippets_dir() -> &'static PathBuf {
     static SNIPPETS_DIR: OnceLock<PathBuf> = OnceLock::new();
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
-}
-
-// Returns old path to contexts directory.
-// Fallback
-fn text_threads_dir_fallback() -> &'static PathBuf {
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("conversations")
-        } else {
-            data_dir().join("conversations")
-        }
-    })
-}
-/// Returns the path to the contexts directory.
-///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
-    let fallback_dir = text_threads_dir_fallback();
-    if fallback_dir.exists() {
-        return fallback_dir;
-    }
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| state_dir().join("conversations"))
 }
 
 /// Returns the path to the contexts directory.
@@ -450,21 +496,21 @@ pub fn local_vscode_folder_name() -> &'static str {
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/settings.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/settings.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/tasks.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/tasks.json").unwrap());
     *CACHED
 }
 
@@ -480,14 +526,14 @@ pub fn task_file_name() -> &'static str {
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/debug.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/debug.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/launch.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/launch.json").unwrap());
     *CACHED
 }
 

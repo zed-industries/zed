@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px};
 use smallvec::SmallVec;
 
-use crate::{Disclosure, GradientFade, prelude::*};
+use crate::{Disclosure, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -12,6 +12,14 @@ pub enum ListItemSpacing {
     Dense,
     ExtraDense,
     Sparse,
+}
+
+#[derive(Default)]
+enum EndSlotVisibility {
+    #[default]
+    Always,
+    OnHover,
+    SwapOnHover(AnyElement),
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -28,12 +36,7 @@ pub struct ListItem {
     /// A slot for content that appears after the children, usually on the other side of the header.
     /// This might be a button, a disclosure arrow, a face pile, etc.
     end_slot: Option<AnyElement>,
-    /// A slot for content that appears on hover after the children
-    /// It will obscure the `end_slot` when visible.
-    end_hover_slot: Option<AnyElement>,
-    /// When true, renders a gradient fade overlay before the `end_hover_slot`
-    /// to smoothly truncate overflowing content.
-    end_hover_gradient_overlay: bool,
+    end_slot_visibility: EndSlotVisibility,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -49,6 +52,12 @@ pub struct ListItem {
     overflow_x: bool,
     focused: Option<bool>,
     docked_right: bool,
+    height: Option<DefiniteLength>,
+    aria_role: Option<Role>,
+    aria_label: Option<SharedString>,
+    aria_keyshortcuts: Option<SharedString>,
+    aria_checked: Option<bool>,
+    aria_active_descendant: bool,
 }
 
 impl ListItem {
@@ -63,8 +72,7 @@ impl ListItem {
             indent_step_size: px(12.),
             start_slot: None,
             end_slot: None,
-            end_hover_slot: None,
-            end_hover_gradient_overlay: false,
+            end_slot_visibility: EndSlotVisibility::default(),
             toggle: None,
             inset: false,
             on_click: None,
@@ -80,7 +88,59 @@ impl ListItem {
             overflow_x: false,
             focused: None,
             docked_right: false,
+            height: None,
+            aria_role: None,
+            aria_label: None,
+            aria_keyshortcuts: None,
+            aria_checked: None,
+            aria_active_descendant: false,
         }
+    }
+
+    /// Sets the accessible role reported to assistive technology (e.g.
+    /// [`Role::MenuItem`] when this item is part of a menu). When unset, the
+    /// item is not reported as a distinct node, matching list defaults.
+    pub fn aria_role(mut self, role: Role) -> Self {
+        self.aria_role = Some(role);
+        self
+    }
+
+    /// Sets the label announced by assistive technology. List items render
+    /// arbitrary children, so this should be set when a meaningful textual
+    /// label exists.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// item, e.g. a menu item's accelerator. Requires [`Self::aria_role`] to be
+    /// set. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"`.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
+    /// Sets the checked state reported to assistive technology, independent of
+    /// the visual disclosure [`Self::toggle`]. Use this for checkable items
+    /// such as a [`Role::MenuItemCheckBox`] entry so screen readers announce
+    /// "checked"/"not checked" accurately.
+    pub fn aria_checked(mut self, checked: bool) -> Self {
+        self.aria_checked = Some(checked);
+        self
+    }
+
+    /// Reports this item as the accessibility focus, overriding the element
+    /// that holds real keyboard focus. Requires [`Self::aria_role`] to be set.
+    ///
+    /// Use this on the selected item of a composite widget (e.g. a menu) that
+    /// keeps keyboard focus on its container. It is honored only while the
+    /// container actually holds focus, so it is safe to set unconditionally on
+    /// the selected item. See [`StatefulInteractiveElement::aria_active_descendant`].
+    pub fn aria_active_descendant(mut self) -> Self {
+        self.aria_active_descendant = true;
+        self
     }
 
     pub fn group_name(mut self, group_name: impl Into<SharedString>) -> Self {
@@ -167,13 +227,14 @@ impl ListItem {
         self
     }
 
-    pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
-        self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
+    pub fn end_slot_on_hover<E: IntoElement>(mut self, end_slot_on_hover: E) -> Self {
+        self.end_slot_visibility =
+            EndSlotVisibility::SwapOnHover(end_slot_on_hover.into_any_element());
         self
     }
 
-    pub fn end_hover_gradient_overlay(mut self, show: bool) -> Self {
-        self.end_hover_gradient_overlay = show;
+    pub fn show_end_slot_on_hover(mut self) -> Self {
+        self.end_slot_visibility = EndSlotVisibility::OnHover;
         self
     }
 
@@ -201,6 +262,11 @@ impl ListItem {
         self.docked_right = docked_right;
         self
     }
+
+    pub fn height(mut self, height: impl Into<DefiniteLength>) -> Self {
+        self.height = Some(height.into());
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -225,34 +291,20 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = cx.theme().colors();
-
-        let base_bg = if self.selected {
-            color.element_active
-        } else {
-            color.panel_background
-        };
-
-        let end_hover_gradient_overlay =
-            GradientFade::new(base_bg, color.element_hover, color.element_active)
-                .width(px(96.0))
-                .when_some(self.group_name.clone(), |fade, group| {
-                    fade.group_name(group)
-                });
-
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
+            .when_some(self.height, |this, height| this.h(height))
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px(DynamicSpacing::Base04.rems(cx))
             })
-            .when(!self.inset && !self.disabled, |this| {
+            .when(!self.inset, |this| {
                 this.when_some(self.focused, |this, focused| {
-                    if focused {
+                    if focused && !self.disabled {
                         this.border_1()
                             .when(self.docked_right, |this| this.border_r_2())
                             .border_color(cx.theme().colors().border_focused)
@@ -260,7 +312,7 @@ impl RenderOnce for ListItem {
                         this.border_1()
                     }
                 })
-                .when(self.selectable, |this| {
+                .when(self.selectable && !self.disabled, |this| {
                     this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                         .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                         .when(self.outlined, |this| this.rounded_sm())
@@ -274,6 +326,30 @@ impl RenderOnce for ListItem {
             .child(
                 h_flex()
                     .id("inner_list_item")
+                    // The accessible role/label live here, alongside the click
+                    // handler, so assistive technology reports one actionable
+                    // node (e.g. a menu item) rather than an inert container.
+                    .when_some(self.aria_role, |this, role| this.role(role))
+                    .when(
+                        self.aria_role.is_some() && self.aria_active_descendant,
+                        |this| this.aria_active_descendant(),
+                    )
+                    .when_some(self.aria_label, |this, label| this.aria_label(label))
+                    .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                        this.aria_keyshortcuts(keyshortcuts)
+                    })
+                    .when(self.aria_role.is_some(), |this| {
+                        this.aria_selected(self.selected).when_some(
+                            self.aria_checked.or(self.toggle),
+                            |this, toggled| {
+                                this.aria_toggled(if toggled {
+                                    gpui::Toggled::True
+                                } else {
+                                    gpui::Toggled::False
+                                })
+                            },
+                        )
+                    })
                     .group("list_item")
                     .w_full()
                     .relative()
@@ -284,27 +360,22 @@ impl RenderOnce for ListItem {
                         ListItemSpacing::ExtraDense => this.py_neg_px(),
                         ListItemSpacing::Sparse => this.py_1(),
                     })
-                    .when(self.inset && !self.disabled, |this| {
-                        this
-                            // TODO: Add focus state
-                            //.when(self.state == InteractionState::Focused, |this| {
-                            .when_some(self.focused, |this, focused| {
-                                if focused {
-                                    this.border_1()
-                                        .border_color(cx.theme().colors().border_focused)
-                                } else {
-                                    this.border_1()
-                                }
-                            })
-                            .when(self.selectable, |this| {
-                                this.hover(|style| {
-                                    style.bg(cx.theme().colors().ghost_element_hover)
-                                })
+                    .when(self.inset, |this| {
+                        this.when_some(self.focused, |this, focused| {
+                            if focused && !self.disabled {
+                                this.border_1()
+                                    .border_color(cx.theme().colors().border_focused)
+                            } else {
+                                this.border_1()
+                            }
+                        })
+                        .when(self.selectable && !self.disabled, |this| {
+                            this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                                 .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                                 .when(self.selected, |this| {
                                     this.bg(cx.theme().colors().ghost_element_selected)
                                 })
-                            })
+                        })
                     })
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
@@ -345,7 +416,7 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_flex()
-                            .flex_grow()
+                            .flex_grow_1()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
                             .gap(DynamicSpacing::Base06.rems(cx))
@@ -359,31 +430,37 @@ impl RenderOnce for ListItem {
                             .children(self.start_slot)
                             .children(self.children),
                     )
-                    .when_some(self.end_slot, |this, end_slot| {
-                        this.justify_between().child(
+                    .when(self.end_slot.is_some(), |this| this.justify_between())
+                    .map(|this| match self.end_slot_visibility {
+                        EndSlotVisibility::Always if let Some(end_slot) = self.end_slot => {
+                            this.child(h_flex().flex_shrink_1().overflow_hidden().child(end_slot))
+                        }
+                        EndSlotVisibility::OnHover if let Some(end_slot) = self.end_slot => this
+                            .child(
+                                h_flex()
+                                    .flex_shrink_1()
+                                    .overflow_hidden()
+                                    .visible_on_hover("list_item")
+                                    .child(end_slot),
+                            ),
+                        EndSlotVisibility::SwapOnHover(hover_slot) => this.child(
                             h_flex()
-                                .flex_shrink()
-                                .overflow_hidden()
-                                .when(self.end_hover_slot.is_some(), |this| {
-                                    this.visible()
-                                        .group_hover("list_item", |this| this.invisible())
-                                })
-                                .child(end_slot),
-                        )
-                    })
-                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
-                        this.child(
-                            h_flex()
-                                .h_full()
-                                .absolute()
-                                .right(DynamicSpacing::Base06.rems(cx))
-                                .top_0()
-                                .visible_on_hover("list_item")
-                                .when(self.end_hover_gradient_overlay, |this| {
-                                    this.child(end_hover_gradient_overlay)
-                                })
-                                .child(end_hover_slot),
-                        )
+                                .relative()
+                                .flex_shrink_1()
+                                .child(h_flex().visible_on_hover("list_item").child(hover_slot))
+                                .when_some(self.end_slot, |this, end_slot| {
+                                    this.child(
+                                        h_flex()
+                                            .absolute()
+                                            .inset_0()
+                                            .justify_end()
+                                            .overflow_hidden()
+                                            .group_hover("list_item", |this| this.invisible())
+                                            .child(end_slot),
+                                    )
+                                }),
+                        ),
+                        _ => this,
                     }),
             )
     }
@@ -394,109 +471,106 @@ impl Component for ListItem {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A flexible list item component with support for icons, actions, disclosure toggles, and hierarchical display.",
-        )
+    fn description() -> &'static str {
+        "A flexible list item component with support for icons, actions, \
+        disclosure toggles, and hierarchical display."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic List Items",
-                        vec![
-                            single_example(
-                                "Simple",
-                                ListItem::new("simple")
-                                    .child(Label::new("Simple list item"))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With Icon",
-                                ListItem::new("with_icon")
-                                    .start_slot(Icon::new(IconName::File))
-                                    .child(Label::new("List item with icon"))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                ListItem::new("selected")
-                                    .toggle_state(true)
-                                    .start_slot(Icon::new(IconName::Check))
-                                    .child(Label::new("Selected item"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "List Item Spacing",
-                        vec![
-                            single_example(
-                                "Dense",
-                                ListItem::new("dense")
-                                    .spacing(ListItemSpacing::Dense)
-                                    .child(Label::new("Dense spacing"))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Extra Dense",
-                                ListItem::new("extra_dense")
-                                    .spacing(ListItemSpacing::ExtraDense)
-                                    .child(Label::new("Extra dense spacing"))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Sparse",
-                                ListItem::new("sparse")
-                                    .spacing(ListItemSpacing::Sparse)
-                                    .child(Label::new("Sparse spacing"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "With Slots",
-                        vec![
-                            single_example(
-                                "End Slot",
-                                ListItem::new("end_slot")
-                                    .child(Label::new("Item with end slot"))
-                                    .end_slot(Icon::new(IconName::ChevronRight))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With Toggle",
-                                ListItem::new("with_toggle")
-                                    .toggle(Some(true))
-                                    .child(Label::new("Expandable item"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Disabled",
-                                ListItem::new("disabled")
-                                    .disabled(true)
-                                    .child(Label::new("Disabled item"))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Non-selectable",
-                                ListItem::new("non_selectable")
-                                    .selectable(false)
-                                    .child(Label::new("Non-selectable item"))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic List Items",
+                    vec![
+                        single_example(
+                            "Simple",
+                            ListItem::new("simple")
+                                .child(Label::new("Simple list item"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Icon",
+                            ListItem::new("with_icon")
+                                .start_slot(Icon::new(IconName::File))
+                                .child(Label::new("List item with icon"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            ListItem::new("selected")
+                                .toggle_state(true)
+                                .start_slot(Icon::new(IconName::Check))
+                                .child(Label::new("Selected item"))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "List Item Spacing",
+                    vec![
+                        single_example(
+                            "Dense",
+                            ListItem::new("dense")
+                                .spacing(ListItemSpacing::Dense)
+                                .child(Label::new("Dense spacing"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Extra Dense",
+                            ListItem::new("extra_dense")
+                                .spacing(ListItemSpacing::ExtraDense)
+                                .child(Label::new("Extra dense spacing"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Sparse",
+                            ListItem::new("sparse")
+                                .spacing(ListItemSpacing::Sparse)
+                                .child(Label::new("Sparse spacing"))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Slots",
+                    vec![
+                        single_example(
+                            "End Slot",
+                            ListItem::new("end_slot")
+                                .child(Label::new("Item with end slot"))
+                                .end_slot(Icon::new(IconName::ChevronRight))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Toggle",
+                            ListItem::new("with_toggle")
+                                .toggle(Some(true))
+                                .child(Label::new("Expandable item"))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Disabled",
+                            ListItem::new("disabled")
+                                .disabled(true)
+                                .child(Label::new("Disabled item"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Non-selectable",
+                            ListItem::new("non_selectable")
+                                .selectable(false)
+                                .child(Label::new("Non-selectable item"))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

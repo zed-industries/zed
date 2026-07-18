@@ -174,11 +174,11 @@ pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
         id: selection.id as u64,
         start: Some(proto::EditorAnchor {
             anchor: Some(serialize_anchor(&selection.start)),
-            excerpt_id: 0,
+            excerpt_id: None,
         }),
         end: Some(proto::EditorAnchor {
             anchor: Some(serialize_anchor(&selection.end)),
-            excerpt_id: 0,
+            excerpt_id: None,
         }),
         reversed: selection.reversed,
     }
@@ -260,7 +260,7 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
             Bias::Left => proto::Bias::Left as i32,
             Bias::Right => proto::Bias::Right as i32,
         },
-        buffer_id: anchor.buffer_id.map(Into::into),
+        buffer_id: Some(anchor.buffer_id.into()),
     }
 }
 
@@ -498,7 +498,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
         timestamp,
         anchor.offset as u32,
         bias,
-        buffer_id,
+        buffer_id?,
     ))
 }
 

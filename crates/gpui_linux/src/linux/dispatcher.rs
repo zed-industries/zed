@@ -3,17 +3,13 @@ use calloop::{
     channel::{self, Sender},
     timer::TimeoutAction,
 };
-use util::ResultExt;
+use gpui_util::ResultExt;
 
-use std::{
-    mem::MaybeUninit,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{mem::MaybeUninit, thread, time::Duration};
 
 use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, profiler,
+    PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
+    profiler,
 };
 
 struct TimerAfter {
@@ -44,27 +40,11 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let start = Instant::now();
-
                             let location = runnable.metadata().location;
-                            let mut timing = TaskTiming {
-                                location,
-                                start,
-                                end: None,
-                            };
-                            profiler::add_task_timing(timing);
-
+                            let spawned = runnable.metadata().spawned;
+                            profiler::update_running_task(spawned, location);
                             runnable.run();
-
-                            let end = Instant::now();
-                            timing.end = Some(end);
-                            profiler::add_task_timing(timing);
-
-                            log::trace!(
-                                "background thread {}: ran runnable. took: {:?}",
-                                i,
-                                start.elapsed()
-                            );
+                            profiler::save_task_timing();
                         }
                     })
                     .unwrap()
@@ -89,20 +69,11 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            let start = Instant::now();
                                             let location = runnable.metadata().location;
-                                            let mut timing = TaskTiming {
-                                                location,
-                                                start,
-                                                end: None,
-                                            };
-                                            profiler::add_task_timing(timing);
-
+                                            let spawned = runnable.metadata().spawned;
+                                            profiler::update_running_task(spawned, location);
                                             runnable.run();
-                                            let end = Instant::now();
-
-                                            timing.end = Some(end);
-                                            profiler::add_task_timing(timing);
+                                            profiler::save_task_timing();
                                         }
                                         TimeoutAction::Drop
                                     },
@@ -129,33 +100,6 @@ impl LinuxDispatcher {
 }
 
 impl PlatformDispatcher for LinuxDispatcher {
-    fn get_all_timings(&self) -> Vec<gpui::ThreadTaskTimings> {
-        let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_timings)
-    }
-
-    fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            gpui::ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
-    }
-
     fn is_main_thread(&self) -> bool {
         thread::current().id() == self.main_thread_id
     }
@@ -183,9 +127,12 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        self.timer_sender
-            .send(TimerAfter { duration, runnable })
-            .ok();
+        if let Err(err) = self.timer_sender.send(TimerAfter { duration, runnable }) {
+            // The timer thread has shut down. Dropping a scheduled runnable cancels its task
+            // and makes the next poll of any awaiter panic. Leaking leaves the task pending,
+            // which is acceptable during shutdown.
+            std::mem::forget(err);
+        }
     }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
@@ -416,20 +363,3 @@ mod tests {
         assert!(data.got_closed);
     }
 }
-
-// running 1 test
-// test linux::dispatcher::tests::tomato ... FAILED
-
-// failures:
-
-// ---- linux::dispatcher::tests::tomato stdout ----
-// [crates/gpui/src/platform/linux/dispatcher.rs:262:9]
-// returning 1 tasks to process
-// [crates/gpui/src/platform/linux/dispatcher.rs:480:75] evt = Msg(
-//     (),
-// )
-// returning 0 tasks to process
-
-// thread 'linux::dispatcher::tests::tomato' (478301) panicked at crates/gpui/src/platform/linux/dispatcher.rs:515:9:
-// assertion failed: data.got_closed
-// note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

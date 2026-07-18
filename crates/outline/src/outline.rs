@@ -4,17 +4,17 @@ use std::{cmp, sync::Arc};
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
-use fuzzy::StringMatch;
+use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, rems,
 };
-use language::{Outline, OutlineItem};
-use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
+use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
 use settings::Settings;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -78,29 +78,39 @@ fn outline_for_editor(
     cx: &mut App,
 ) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
     let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-    let (excerpt_id, _, buffer_snapshot) = multibuffer.as_singleton()?;
+    let buffer_snapshot = multibuffer.as_singleton()?;
     let buffer_id = buffer_snapshot.remote_id();
     let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
 
     Some(cx.background_executor().spawn(async move {
         task.await
             .into_iter()
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text,
-                ),
-                text: item.text,
-                highlight_ranges: item.highlight_ranges,
-                name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
-                annotation_range: item
-                    .annotation_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
+            .filter_map(|item| {
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: multibuffer.anchor_in_buffer(item.range.start)?
+                        ..multibuffer.anchor_in_buffer(item.range.end)?,
+                    selection_range: multibuffer.anchor_in_buffer(item.selection_range.start)?
+                        ..multibuffer.anchor_in_buffer(item.selection_range.end)?,
+                    source_range_for_text: multibuffer
+                        .anchor_in_buffer(item.source_range_for_text.start)?
+                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
+                    text: item.text,
+                    highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
+                    body_range: item.body_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect()
     }))
@@ -133,7 +143,6 @@ impl ModalView for OutlineView {
 impl Render for OutlineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(34.))
             .on_action(cx.listener(
                 |_this: &mut OutlineView,
                  _: &zed_actions::outline::ToggleOutline,
@@ -167,10 +176,20 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> OutlineView {
+        let project = editor.read(cx).project().cloned();
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .max_height(Some(vh(0.75, window)))
+            let picker = if let Some(project) = project {
+                let preview = picker_preview::editor_preview(project, window, cx);
+                Picker::uniform_list_with_preview(delegate, preview, window, cx)
+            } else {
+                Picker::uniform_list(delegate, window, cx)
+            };
+            picker
+                .max_height(Rems::from_pixels(
+                    window.viewport_size().height * 0.75,
+                    window,
+                ))
                 .show_scrollbar(true)
         });
         OutlineView { picker }
@@ -183,7 +202,7 @@ struct OutlineViewDelegate {
     outline: Arc<Outline<Anchor>>,
     selected_match_index: usize,
     prev_scroll_position: Option<Point<ScrollOffset>>,
-    matches: Vec<StringMatch>,
+    matches: Vec<OutlineSearchEntry>,
 }
 
 enum OutlineRowHighlights {}
@@ -222,17 +241,21 @@ impl OutlineViewDelegate {
 
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
+        let Some(selected_match) = self.matches.get(ix) else {
+            self.selected_match_index = self.matches.len();
+            return;
+        };
+
         self.selected_match_index = ix;
 
-        if navigate && !self.matches.is_empty() {
-            let selected_match = &self.matches[self.selected_match_index];
-            let outline_item = &self.outline.items[selected_match.candidate_id];
+        if navigate {
+            let outline_item = &self.outline.items[selected_match.candidate_id()];
 
             self.active_editor.update(cx, |active_editor, cx| {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
-                    cx.theme().colors().editor_highlighted_line_background,
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
                     RowHighlightOptions {
                         autoscroll: true,
                         ..Default::default()
@@ -248,6 +271,10 @@ impl OutlineViewDelegate {
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "outline view"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
     }
@@ -260,6 +287,10 @@ impl PickerDelegate for OutlineViewDelegate {
         self.selected_match_index
     }
 
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        ix < self.matches.len()
+    }
+
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -267,6 +298,30 @@ impl PickerDelegate for OutlineViewDelegate {
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
         self.set_selected_index(ix, true, cx);
+    }
+
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<PreviewUpdate> {
+        let selected_match = self.matches.get(self.selected_match_index)?;
+        let outline_item = self.outline.items.get(selected_match.candidate_id())?;
+        let multi_buffer = self.active_editor.read(cx).buffer().clone();
+        let (buffer, start) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.selection_range.start, cx)?;
+        let (end_buffer, end) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.selection_range.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        let range = (start..end).to_offset(&buffer.read(cx).text_snapshot());
+        Some(PreviewUpdate::from_buffer(
+            buffer,
+            MatchLocation {
+                anchor_range: start..end,
+                range,
+            },
+        ))
     }
 
     fn update_matches(
@@ -287,11 +342,13 @@ impl PickerDelegate for OutlineViewDelegate {
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(index, _)| StringMatch {
-                        candidate_id: index,
-                        score: Default::default(),
-                        positions: Default::default(),
-                        string: Default::default(),
+                    .map(|(index, _)| {
+                        OutlineSearchEntry::Match(StringMatch {
+                            candidate_id: index,
+                            score: Default::default(),
+                            positions: Default::default(),
+                            string: Default::default(),
+                        })
                     })
                     .collect()
             } else {
@@ -316,8 +373,8 @@ impl PickerDelegate for OutlineViewDelegate {
                         .matches
                         .iter()
                         .enumerate()
-                        .filter_map(|(ix, m)| {
-                            let item = &this.delegate.outline.items[m.candidate_id];
+                        .filter_map(|(ix, entry)| {
+                            let item = &this.delegate.outline.items[entry.candidate_id()];
                             let range = item.range.to_offset(&buffer);
                             range.contains(&cursor_offset).then_some((ix, item.depth))
                         })
@@ -329,11 +386,13 @@ impl PickerDelegate for OutlineViewDelegate {
                         .matches
                         .iter()
                         .enumerate()
-                        .max_by(|(ix_a, a), (ix_b, b)| {
-                            OrderedFloat(a.score)
-                                .cmp(&OrderedFloat(b.score))
-                                .then(ix_b.cmp(ix_a))
+                        .filter_map(|(ix, entry)| {
+                            entry
+                                .as_match()
+                                .filter(|m| !m.positions.is_empty())
+                                .map(|m| (ix, m.score))
                         })
+                        .max_by(|(ix_a, a), (ix_b, b)| a.total_cmp(b).then(ix_b.cmp(ix_a)))
                         .map(|(ix, _)| ix)
                         .unwrap_or(0)
                 };
@@ -355,7 +414,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
         self.active_editor.update(cx, |active_editor, cx| {
             let highlight = active_editor
-                .highlighted_rows::<OutlineRowHighlights>()
+                .highlighted_rows::<OutlineRowHighlights>(cx)
                 .next();
             if let Some((rows, _)) = highlight {
                 active_editor.change_selections(
@@ -386,8 +445,9 @@ impl PickerDelegate for OutlineViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = self.matches.get(ix)?;
-        let outline_item = self.outline.items.get(mat.candidate_id)?;
+        let entry = self.matches.get(ix)?;
+        let outline_item = self.outline.items.get(entry.candidate_id())?;
+        let ranges = entry.as_match().into_iter().flat_map(|m| m.ranges());
 
         Some(
             ListItem::new(ix)
@@ -398,7 +458,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     div()
                         .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
-                        .child(render_item(outline_item, mat.ranges(), cx)),
+                        .child(render_item(outline_item, ranges, cx)),
                 ),
         )
     }
@@ -445,13 +505,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::FakeLspAdapter;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, Workspace};
 
@@ -647,7 +707,7 @@ mod tests {
             .update(cx, |outline_view, cx| {
                 let delegate = &outline_view.delegate;
                 let selected_candidate_id =
-                    delegate.matches[delegate.selected_match_index].candidate_id;
+                    delegate.matches[delegate.selected_match_index].candidate_id();
                 let (buffer, cursor_offset) = delegate.active_editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let cursor_offset = editor
@@ -687,12 +747,76 @@ mod tests {
         cx.run_until_parked();
         let selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
             let delegate = &outline_view.delegate;
-            delegate.matches[delegate.selected_match_index].candidate_id
+            delegate.matches[delegate.selected_match_index].candidate_id()
         });
         assert_eq!(
             selected_candidate_id, 0,
             "Empty query should fall back to the first symbol when cursor is outside all symbol ranges"
         );
+    }
+
+    #[gpui::test]
+    async fn test_outline_stale_hover_index_after_matches_shrink(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut source = String::new();
+        for index in 0..69 {
+            source.push_str(&format!("struct Keep{index};\n"));
+        }
+        for index in 69..74 {
+            source.push_str(&format!("struct Drop{index};\n"));
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.rs": source }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 74);
+        });
+
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("Keep".to_string(), window, cx)
+            })
+            .await;
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 69);
+        });
+
+        outline_view.update_in(cx, |outline_view, window, cx| {
+            outline_view.set_selected_index(73, None, false, window, cx);
+        });
     }
 
     #[gpui::test]
@@ -767,11 +891,12 @@ mod tests {
                 let scored_ids = delegate
                     .matches
                     .iter()
+                    .filter_map(|entry| entry.as_match())
                     .filter(|m| m.score > 0.0)
                     .map(|m| m.candidate_id)
                     .collect::<Vec<_>>();
                 (
-                    selected_match.candidate_id,
+                    selected_match.candidate_id(),
                     *scored_ids.first().unwrap(),
                     *scored_ids.last().unwrap(),
                     scored_ids.len(),
@@ -853,14 +978,14 @@ mod tests {
     fn outline_names(
         outline_view: &Entity<Picker<OutlineViewDelegate>>,
         cx: &mut VisualTestContext,
-    ) -> Vec<String> {
+    ) -> Vec<SharedString> {
         outline_view.read_with(cx, |outline_view, _| {
             let items = &outline_view.delegate.outline.items;
             outline_view
                 .delegate
                 .matches
                 .iter()
-                .map(|hit| items[hit.candidate_id].text.clone())
+                .map(|hit| items[hit.candidate_id()].text.clone())
                 .collect::<Vec<_>>()
         })
     }

@@ -42,7 +42,7 @@ fn run_example() {
         let mut bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
 
         cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, None)]);
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
                 cx.quit();
             }

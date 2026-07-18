@@ -1,6 +1,7 @@
 use crate::{
     AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
     WorkspaceSettings,
+    notifications::DetachAndPromptErr,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
@@ -95,6 +96,10 @@ impl PaneGroup {
             Member::Pane(_) => None,
             Member::Axis(axis) => axis.bounding_box_for_pane(pane),
         }
+    }
+
+    pub fn full_height_column_count(&self) -> usize {
+        self.root.full_height_column_count()
     }
 
     pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
@@ -223,11 +228,14 @@ impl PaneGroup {
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx).element
+        self.root
+            .render(0, zoomed, maximized, render_cx, window, cx)
+            .element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -299,6 +307,13 @@ impl Member {
             Member::Pane(entity) => entity.update(cx, |pane, _| {
                 pane.in_center_group = in_center_group;
             }),
+        }
+    }
+
+    fn full_height_column_count(&self) -> usize {
+        match self {
+            Member::Pane(_) => 1,
+            Member::Axis(axis) => axis.full_height_column_count(),
         }
     }
 }
@@ -392,24 +407,24 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                             is_in_unshared_view.then(|| {
                                 Label::new(format!(
                                     "{} is in an unshared pane",
-                                    leader.user.github_login
+                                    leader.user.username
                                 ))
                             })
                         } else {
-                            leader_join_data = Some((leader_project_id, leader.user.id));
+                            leader_join_data = Some((leader_project_id, leader.user.legacy_id));
                             Some(Label::new(format!(
                                 "Follow {} to their active project",
-                                leader.user.github_login,
+                                leader.user.username,
                             )))
                         }
                     }
                     ParticipantLocation::UnsharedProject => Some(Label::new(format!(
                         "{} is viewing an unshared Zed project",
-                        leader.user.github_login
+                        leader.user.username
                     ))),
                     ParticipantLocation::External => Some(Label::new(format!(
                         "{} is viewing a window outside of Zed",
-                        leader.user.github_login
+                        leader.user.username
                     ))),
                 };
                 status_box = leader_status_box.map(|status| {
@@ -427,14 +442,19 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                                 let app_state = self.app_state.clone();
                                 this.cursor_pointer().on_mouse_down(
                                     MouseButton::Left,
-                                    move |_, _, cx| {
+                                    move |_, window, cx| {
                                         crate::join_in_room_project(
                                             leader_project_id,
                                             leader_user_id,
                                             app_state.clone(),
                                             cx,
                                         )
-                                        .detach_and_log_err(cx);
+                                        .detach_and_prompt_err(
+                                            "Failed to join project",
+                                            window,
+                                            cx,
+                                            |error, _, _| Some(format!("{error:#}")),
+                                        );
                                     },
                                 )
                             },
@@ -511,6 +531,7 @@ impl Member {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
@@ -524,35 +545,70 @@ impl Member {
                     };
                 }
 
+                let is_maximized = if let Some(maximized) = maximized {
+                    if maximized.upgrade().as_ref() != Some(pane) {
+                        return PaneRenderResult {
+                            element: div().into_any(),
+                            contains_active_pane: false,
+                        };
+                    }
+                    true
+                } else {
+                    false
+                };
+
                 let decoration = render_cx.decorate(pane, cx);
                 let is_active = pane == render_cx.active_pane();
+
+                let pane = div()
+                    .relative()
+                    .size_full()
+                    .when(is_maximized, |this| {
+                        this.bg(cx.theme().colors().background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .shadow_lg()
+                            .overflow_hidden()
+                    })
+                    .child(
+                        AnyView::from(pane.clone())
+                            .cached(StyleRefinement::default().v_flex().size_full()),
+                    )
+                    .when_some(decoration.border, |this, color| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .size_full()
+                                .left_0()
+                                .top_0()
+                                .border_2()
+                                .border_color(color),
+                        )
+                    })
+                    .children(decoration.status_box);
 
                 PaneRenderResult {
                     element: div()
                         .relative()
                         .flex_1()
                         .size_full()
-                        .child(
-                            AnyView::from(pane.clone())
-                                .cached(StyleRefinement::default().v_flex().size_full()),
-                        )
-                        .when_some(decoration.border, |this, color| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .size_full()
-                                    .left_0()
-                                    .top_0()
-                                    .border_2()
-                                    .border_color(color),
-                            )
-                        })
-                        .children(decoration.status_box)
+                        .when(is_maximized, |this| this.p_2())
+                        .child(pane)
                         .into_any(),
                     contains_active_pane: is_active,
                 }
             }
-            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, maximized, render_cx, window, cx),
+        }
+    }
+
+    pub fn contains_pane(&self, needle: &Entity<Pane>) -> bool {
+        match self {
+            Member::Pane(pane) => pane == needle,
+            Member::Axis(axis) => axis
+                .members
+                .iter()
+                .any(|member| member.contains_pane(needle)),
         }
     }
 
@@ -884,14 +940,49 @@ impl PaneAxis {
         None
     }
 
+    fn full_height_column_count(&self) -> usize {
+        match self.axis {
+            Axis::Horizontal => self
+                .members
+                .iter()
+                .map(Member::full_height_column_count)
+                .sum::<usize>()
+                .max(1),
+            Axis::Vertical => self
+                .members
+                .iter()
+                .map(Member::full_height_column_count)
+                .max()
+                .unwrap_or(1),
+        }
+    }
+
     fn render(
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> PaneRenderResult {
+        if let Some(maximized) = maximized {
+            if let Some(maximized_pane) = maximized.upgrade() {
+                for member in &self.members {
+                    if member.contains_pane(&maximized_pane) {
+                        return member.render(
+                            basis,
+                            zoomed,
+                            Some(maximized),
+                            render_cx,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            }
+        }
+
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
         let mut contains_active_pane = false;
@@ -915,7 +1006,7 @@ impl PaneAxis {
                     }
                 }
 
-                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                let result = member.render((basis + ix) * 10, zoomed, None, render_cx, window, cx);
                 if result.contains_active_pane {
                     contains_active_pane = true;
                 }

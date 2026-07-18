@@ -26,6 +26,7 @@ anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
 ctor.workspace = true
+futures-lite.workspace = true
 buffer_diff.workspace = true
 gpui.workspace = true
 itertools.workspace = true
@@ -34,17 +35,17 @@ log.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 rope.workspace = true
-smol.workspace = true
 settings.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 ztracing.workspace = true
 tracing.workspace = true
 util.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

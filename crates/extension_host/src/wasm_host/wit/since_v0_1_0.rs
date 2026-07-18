@@ -26,17 +26,21 @@ use super::{latest, since_v0_6_0};
 pub const MIN_VERSION: Version = Version::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.1.0",
     with: {
-         "worktree": ExtensionWorktree,
-         "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
-         "zed:extension/slash-command": latest::zed::extension::slash_command,
+        "worktree": ExtensionWorktree,
+        "key-value-store": ExtensionKeyValueStore,
+        "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/nodejs": latest::zed::extension::nodejs,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
+        "zed:extension/slash-command": latest::zed::extension::slash_command,
     },
 });
 
@@ -52,7 +56,11 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<Command> for latest::Command {
@@ -424,7 +432,7 @@ impl ExtensionImports for WasmState {
         self.on_main_thread(|cx| {
             async move {
                 let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
                 });
                 let location = path
                     .as_ref()
@@ -523,7 +531,7 @@ impl ExtensionImports for WasmState {
                 "download failed with status {}",
                 response.status()
             );
-            let body = BufReader::new(response.body_mut());
+            let mut body = BufReader::new(response.body_mut());
 
             match file_type {
                 DownloadedFileType::Uncompressed => {
@@ -542,11 +550,14 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::GzipTar => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
+                    let mut tar_gz_bytes = Vec::new();
+                    body.read_to_end(&mut tar_gz_bytes).await?;
+                    let decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                    futures::pin_mut!(decompressed_bytes);
                     self.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
+                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
                         .await?;
                 }
                 DownloadedFileType::Zip => {

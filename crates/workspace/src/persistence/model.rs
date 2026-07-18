@@ -1,7 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    path_list::PathList,
+    multi_workspace::SerializedProjectGroupState, path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -13,7 +13,10 @@ use db::sqlez::{
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
-use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
+use project::{
+    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    debugger::breakpoint_store::SourceBreakpoint,
+};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{ResultExt, path_list::SerializedPathList};
 use uuid::Uuid;
 
 #[derive(
@@ -36,7 +39,7 @@ pub(crate) enum RemoteConnectionKind {
     Docker,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SerializedWorkspaceLocation {
     Local,
     Remote(RemoteConnectionOptions),
@@ -59,19 +62,66 @@ pub struct SessionWorkspace {
     pub window_id: Option<WindowId>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SerializedProjectGroup {
+    pub path_list: SerializedPathList,
+    pub(crate) location: SerializedWorkspaceLocation,
+    #[serde(default = "default_expanded")]
+    pub expanded: bool,
+}
+
+fn default_expanded() -> bool {
+    true
+}
+
+impl SerializedProjectGroup {
+    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
+        Self {
+            path_list: key.path_list().serialize(),
+            location: match key.host() {
+                Some(host) => SerializedWorkspaceLocation::Remote(host),
+                None => SerializedWorkspaceLocation::Local,
+            },
+            expanded,
+        }
+    }
+
+    pub fn into_restored_state(self) -> SerializedProjectGroupState {
+        let path_list = PathList::deserialize(&self.path_list);
+        let host = match self.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(opts) => Some(opts),
+        };
+        SerializedProjectGroupState {
+            key: ProjectGroupKey::new(host, path_list),
+            expanded: self.expanded,
+        }
+    }
+}
+
+impl From<SerializedProjectGroup> for ProjectGroupKey {
+    fn from(value: SerializedProjectGroup) -> Self {
+        value.into_restored_state().key
+    }
+}
+
 /// Per-window state for a MultiWorkspace, persisted to KVP.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MultiWorkspaceState {
     pub active_workspace_id: Option<WorkspaceId>,
     pub sidebar_open: bool,
+    #[serde(alias = "project_group_keys")]
+    pub project_groups: Vec<SerializedProjectGroup>,
+    #[serde(default)]
+    pub sidebar_state: Option<String>,
 }
 
 /// The serialized state of a single MultiWorkspace window from a previous session:
-/// all workspaces that shared the window, which one was active, and whether the
-/// sidebar was open.
+/// the active workspace to restore plus window-level state (project group keys,
+/// sidebar).
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
-    pub workspaces: Vec<SessionWorkspace>,
+    pub active_workspace: SessionWorkspace,
     pub state: MultiWorkspaceState,
 }
 
@@ -80,12 +130,20 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) paths: PathList,
+    /// The workspace's main worktree paths at the time this workspace was saved.
+    ///
+    /// These paths are used for grouping, deduping, and display in recent-workspace
+    /// UIs. They are not authoritative for reopening the workspace, because they may
+    /// become stale if the repository layout changes after the save. Use `paths` when
+    /// reopening the workspace.
+    pub(crate) identity_paths: Option<PathList>,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,

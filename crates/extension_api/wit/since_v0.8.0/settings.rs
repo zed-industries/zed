@@ -6,6 +6,10 @@ use std::{collections::HashMap, num::NonZeroU32};
 pub struct LanguageSettings {
     /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
+    /// Whether to indent with hard tabs (true) or spaces (false).
+    pub hard_tabs: bool,
+    /// The preferred line length (column at which to wrap).
+    pub preferred_line_length: u32,
 }
 
 /// The settings for a particular language server.

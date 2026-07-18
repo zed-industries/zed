@@ -13,6 +13,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
+use futures::stream::StreamExt;
 use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
@@ -21,7 +22,6 @@ use language::{
 };
 use lsp::{notification, request};
 use project::Project;
-use smol::stream::StreamExt;
 use workspace::{AppState, MultiWorkspace, Workspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};

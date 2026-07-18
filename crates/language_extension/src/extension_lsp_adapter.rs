@@ -79,16 +79,19 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
 
         let mut tasks = Vec::new();
         match &self.lsp_access {
-            LspAccess::ViaLspStore(lsp_store) => lsp_store.update(cx, |lsp_store, cx| {
-                let stop_task = lsp_store.stop_language_servers_for_buffers(
-                    Vec::new(),
-                    HashSet::from_iter([LanguageServerSelector::Name(
-                        language_server_name.clone(),
-                    )]),
-                    cx,
-                );
-                tasks.push(stop_task);
-            }),
+            LspAccess::ViaLspStore(lsp_store) => {
+                if let Ok(stop_task) = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.stop_language_servers_for_buffers(
+                        Vec::new(),
+                        HashSet::from_iter([LanguageServerSelector::Name(
+                            language_server_name.clone(),
+                        )]),
+                        cx,
+                    )
+                }) {
+                    tasks.push(stop_task);
+                }
+            }
             LspAccess::ViaWorkspaces(lsp_store_provider) => {
                 if let Ok(lsp_stores) = lsp_store_provider(cx) {
                     for lsp_store in lsp_stores {
@@ -473,7 +476,7 @@ impl LspAdapter for ExtensionLspAdapter {
                      container_name,
                  }| extension::Symbol {
                     name,
-                    kind: lsp_symbol_kind_to_extension(kind),
+                    kind: symbol_kind_to_extension(kind),
                     container_name,
                 },
             )
@@ -547,15 +550,16 @@ fn build_code_label(
                 text.push_str(code_span);
             }
             extension::CodeLabelSpan::Literal(span) => {
-                let highlight_id = language
+                if let Some(highlight_id) = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
                         grammar.highlight_id_for_name(highlight_name)
                     })
-                    .unwrap_or_default();
-                let ix = text.len();
-                runs.push((ix..ix + span.text.len(), highlight_id));
+                {
+                    let ix = text.len();
+                    runs.push((ix..ix + span.text.len(), highlight_id));
+                }
                 text.push_str(&span.text);
             }
         }
@@ -632,35 +636,34 @@ fn lsp_insert_text_format_to_extension(
     }
 }
 
-fn lsp_symbol_kind_to_extension(value: lsp::SymbolKind) -> extension::SymbolKind {
+fn symbol_kind_to_extension(value: language::SymbolKind) -> extension::SymbolKind {
     match value {
-        lsp::SymbolKind::FILE => extension::SymbolKind::File,
-        lsp::SymbolKind::MODULE => extension::SymbolKind::Module,
-        lsp::SymbolKind::NAMESPACE => extension::SymbolKind::Namespace,
-        lsp::SymbolKind::PACKAGE => extension::SymbolKind::Package,
-        lsp::SymbolKind::CLASS => extension::SymbolKind::Class,
-        lsp::SymbolKind::METHOD => extension::SymbolKind::Method,
-        lsp::SymbolKind::PROPERTY => extension::SymbolKind::Property,
-        lsp::SymbolKind::FIELD => extension::SymbolKind::Field,
-        lsp::SymbolKind::CONSTRUCTOR => extension::SymbolKind::Constructor,
-        lsp::SymbolKind::ENUM => extension::SymbolKind::Enum,
-        lsp::SymbolKind::INTERFACE => extension::SymbolKind::Interface,
-        lsp::SymbolKind::FUNCTION => extension::SymbolKind::Function,
-        lsp::SymbolKind::VARIABLE => extension::SymbolKind::Variable,
-        lsp::SymbolKind::CONSTANT => extension::SymbolKind::Constant,
-        lsp::SymbolKind::STRING => extension::SymbolKind::String,
-        lsp::SymbolKind::NUMBER => extension::SymbolKind::Number,
-        lsp::SymbolKind::BOOLEAN => extension::SymbolKind::Boolean,
-        lsp::SymbolKind::ARRAY => extension::SymbolKind::Array,
-        lsp::SymbolKind::OBJECT => extension::SymbolKind::Object,
-        lsp::SymbolKind::KEY => extension::SymbolKind::Key,
-        lsp::SymbolKind::NULL => extension::SymbolKind::Null,
-        lsp::SymbolKind::ENUM_MEMBER => extension::SymbolKind::EnumMember,
-        lsp::SymbolKind::STRUCT => extension::SymbolKind::Struct,
-        lsp::SymbolKind::EVENT => extension::SymbolKind::Event,
-        lsp::SymbolKind::OPERATOR => extension::SymbolKind::Operator,
-        lsp::SymbolKind::TYPE_PARAMETER => extension::SymbolKind::TypeParameter,
-        _ => extension::SymbolKind::Other(extract_int(value)),
+        language::SymbolKind::File => extension::SymbolKind::File,
+        language::SymbolKind::Module => extension::SymbolKind::Module,
+        language::SymbolKind::Namespace => extension::SymbolKind::Namespace,
+        language::SymbolKind::Package => extension::SymbolKind::Package,
+        language::SymbolKind::Class => extension::SymbolKind::Class,
+        language::SymbolKind::Method => extension::SymbolKind::Method,
+        language::SymbolKind::Property => extension::SymbolKind::Property,
+        language::SymbolKind::Field => extension::SymbolKind::Field,
+        language::SymbolKind::Constructor => extension::SymbolKind::Constructor,
+        language::SymbolKind::Enum => extension::SymbolKind::Enum,
+        language::SymbolKind::Interface => extension::SymbolKind::Interface,
+        language::SymbolKind::Function => extension::SymbolKind::Function,
+        language::SymbolKind::Variable => extension::SymbolKind::Variable,
+        language::SymbolKind::Constant => extension::SymbolKind::Constant,
+        language::SymbolKind::String => extension::SymbolKind::String,
+        language::SymbolKind::Number => extension::SymbolKind::Number,
+        language::SymbolKind::Boolean => extension::SymbolKind::Boolean,
+        language::SymbolKind::Array => extension::SymbolKind::Array,
+        language::SymbolKind::Object => extension::SymbolKind::Object,
+        language::SymbolKind::Key => extension::SymbolKind::Key,
+        language::SymbolKind::Null => extension::SymbolKind::Null,
+        language::SymbolKind::EnumMember => extension::SymbolKind::EnumMember,
+        language::SymbolKind::Struct => extension::SymbolKind::Struct,
+        language::SymbolKind::Event => extension::SymbolKind::Event,
+        language::SymbolKind::Operator => extension::SymbolKind::Operator,
+        language::SymbolKind::TypeParameter => extension::SymbolKind::TypeParameter,
     }
 }
 
@@ -683,7 +686,7 @@ fn test_build_code_label() {
     );
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     let label = build_code_label(
@@ -706,7 +709,7 @@ fn test_build_code_label() {
         marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
     let label_runs = label_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -722,7 +725,7 @@ fn test_build_code_label_with_invalid_ranges() {
     let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     // A span uses a code range that is invalid because it starts inside of

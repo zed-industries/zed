@@ -1,12 +1,14 @@
-use gh_workflow::{ctx::Context, *};
+use gh_workflow::*;
 use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder,
-        NamedJob, cache_rust_dependencies_namespace, checkout_repo, dependant_job, named,
+        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets,
+        DEFAULT_REPOSITORY_OWNER_GUARD, GitHubScriptStep, GitRef, NamedJob, RefSha,
+        RepositoryTarget, cache_rust_dependencies_namespace, checkout_repo, create_ref,
+        dependant_job, generate_token, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
@@ -57,6 +59,7 @@ pub(crate) fn extension_bump() -> Workflow {
     );
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()
@@ -123,7 +126,7 @@ fn create_version_label(
     app_secret: &WorkflowSecret,
 ) -> (NamedJob, StepOutput) {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
+        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
     let (determine_tag_step, tag) = determine_tag(current_version);
     let job = steps::dependant_job(dependencies)
         .defaults(extension_job_defaults())
@@ -144,21 +147,12 @@ fn create_version_label(
 }
 
 fn create_version_tag(tag: &StepOutput, generated_token: StepOutput) -> Step<Use> {
-    named::uses("actions", "github-script", "v7").with(
-        Input::default()
-            .add(
-                "script",
-                formatdoc! {r#"
-                    github.rest.git.createRef({{
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        ref: 'refs/tags/{tag}',
-                        sha: context.sha
-                    }})"#
-                },
-            )
-            .add("github-token", generated_token.to_string()),
+    create_ref(
+        GitRef::Tag(tag.to_string()),
+        RefSha::Context,
+        &generated_token,
     )
+    .into()
 }
 
 fn determine_tag(current_version: &JobOutput) -> (Step<Run>, StepOutput) {
@@ -221,7 +215,7 @@ fn bump_extension_version(
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
+        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
     let (bump_version, _new_version, title, body, branch_name) =
         bump_version(current_version, bump_type);
 
@@ -247,49 +241,6 @@ fn bump_extension_version(
         ));
 
     named::job(job)
-}
-
-pub(crate) fn generate_token(
-    app_id_source: &str,
-    app_secret_source: &str,
-    repository_target: Option<RepositoryTarget>,
-) -> (Step<Use>, StepOutput) {
-    let step = named::uses("actions", "create-github-app-token", "v2")
-        .id("generate-token")
-        .add_with(
-            Input::default()
-                .add("app-id", app_id_source)
-                .add("private-key", app_secret_source)
-                .when_some(
-                    repository_target,
-                    |input,
-                     RepositoryTarget {
-                         owner,
-                         repositories,
-                         permissions,
-                     }| {
-                        input
-                            .when_some(owner, |input, owner| input.add("owner", owner))
-                            .when_some(repositories, |input, repositories| {
-                                input.add("repositories", repositories)
-                            })
-                            .when_some(permissions, |input, permissions| {
-                                permissions
-                                    .into_iter()
-                                    .fold(input, |input, (permission, level)| {
-                                        input.add(
-                                            permission,
-                                            serde_json::to_value(&level).unwrap_or_default(),
-                                        )
-                                    })
-                            })
-                    },
-                ),
-        );
-
-    let generated_token = StepOutput::new(&step, "token");
-
-    (step, generated_token)
 }
 
 fn install_bump_2_version() -> Step<Run> {
@@ -364,22 +315,9 @@ fn create_pull_request(
     generated_token: StepOutput,
     branch_name: StepOutput,
 ) -> Step<Use> {
-    named::uses("peter-evans", "create-pull-request", "v7").with(
-        Input::default()
-            .add("title", title.to_string())
-            .add("body", body.to_string())
-            .add("commit-message", title.to_string())
-            .add("branch", branch_name.to_string())
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("assignees", Context::github().actor().to_string()),
-    )
+    steps::CreatePrStep::new(title.to_string(), branch_name, &generated_token)
+        .with_body(body)
+        .into()
 }
 
 fn trigger_release(
@@ -389,11 +327,10 @@ fn trigger_release(
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
     let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
-    let (generate_token, generated_token) = generate_token(
-        &app_id.to_string(),
-        &app_secret.to_string(),
-        Some(extension_registry),
-    );
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string())
+            .for_repository(extension_registry)
+            .into();
     let (get_extension_id, extension_id) = get_extension_id();
     let (release_action, pull_request_number) = release_action(extension_id, tag, &generated_token);
 
@@ -451,72 +388,69 @@ fn release_action(
 fn enable_automerge_if_staff(
     pull_request_number: StepOutput,
     generated_token: StepOutput,
-) -> Step<Use> {
-    named::uses("actions", "github-script", "v7")
-        .add_with(("github-token", generated_token.to_string()))
-        .add_with((
-            "script",
-            indoc! {r#"
-                const prNumber = process.env.PR_NUMBER;
-                if (!prNumber) {
-                    console.log('No pull request number set, skipping automerge.');
-                    return;
-                }
+) -> GitHubScriptStep {
+    steps::github_script(indoc! {r#"
+        const prNumber = process.env.PR_NUMBER;
+        if (!prNumber) {
+            console.log('No pull request number set, skipping automerge.');
+            return;
+        }
 
-                const author = process.env.GITHUB_ACTOR;
-                let isStaff = false;
-                try {
-                    const response = await github.rest.teams.getMembershipForUserInOrg({
-                        org: 'zed-industries',
-                        team_slug: 'staff',
-                        username: author
-                    });
-                    isStaff = response.data.state === 'active';
-                } catch (error) {
-                    if (error.status !== 404) {
-                        throw error;
-                    }
-                }
+        const author = process.env.GITHUB_ACTOR;
+        let isStaff = false;
+        try {
+            const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: author
+            });
+            isStaff = response.data.state === 'active';
+        } catch (error) {
+            if (error.status !== 404) {
+                throw error;
+            }
+        }
 
-                if (!isStaff) {
-                    console.log(`Actor ${author} is not a staff member, skipping automerge.`);
-                    return;
-                }
+        if (!isStaff) {
+            console.log(`Actor ${author} is not a staff member, skipping automerge.`);
+            return;
+        }
 
-                // Assign staff member responsible for the bump
-                const pullNumber = parseInt(prNumber);
+        // Assign staff member responsible for the bump
+        const pullNumber = parseInt(prNumber);
 
-                await github.rest.issues.addAssignees({
-                    owner: 'zed-industries',
-                    repo: 'extensions',
-                    issue_number: pullNumber,
-                    assignees: [author]
-                });
-                console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
+        await github.rest.issues.addAssignees({
+            owner: 'zed-industries',
+            repo: 'extensions',
+            issue_number: pullNumber,
+            assignees: [author]
+        });
+        console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
 
-                // Get the GraphQL node ID
-                const { data: pr } = await github.rest.pulls.get({
-                    owner: 'zed-industries',
-                    repo: 'extensions',
-                    pull_number: pullNumber
-                });
+        // Get the GraphQL node ID
+        const { data: pr } = await github.rest.pulls.get({
+            owner: 'zed-industries',
+            repo: 'extensions',
+            pull_number: pullNumber
+        });
 
-                await github.graphql(`
-                    mutation($pullRequestId: ID!) {
-                        enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
-                            pullRequest {
-                                autoMergeRequest {
-                                    enabledAt
-                                }
-                            }
+        await github.graphql(`
+            mutation($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                    pullRequest {
+                        autoMergeRequest {
+                            enabledAt
                         }
                     }
-                `, { pullRequestId: pr.node_id });
+                }
+            }
+        `, { pullRequestId: pr.node_id });
 
-                console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
-            "#},
-        ))
-        .add_env(("PR_NUMBER", pull_request_number.to_string()))
+        console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+    "#})
+    .custom_name("enable_automerge_if_staff")
+    .token(generated_token)
+    .env("PR_NUMBER", pull_request_number.to_string())
 }
 
 fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
@@ -525,35 +459,4 @@ fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
         WorkflowSecret::new("app-secret", "The app secret for the corresponding app ID");
 
     (app_id, app_secret)
-}
-
-pub(crate) struct RepositoryTarget {
-    owner: Option<String>,
-    repositories: Option<String>,
-    permissions: Option<Vec<(String, Level)>>,
-}
-
-impl RepositoryTarget {
-    pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
-        Self {
-            owner: Some(owner.to_string()),
-            repositories: Some(repositories.join("\n")),
-            permissions: None,
-        }
-    }
-
-    pub fn current() -> Self {
-        Self {
-            owner: None,
-            repositories: None,
-            permissions: None,
-        }
-    }
-
-    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
-        Self {
-            permissions: Some(permissions.into()),
-            ..self
-        }
-    }
 }

@@ -38,7 +38,7 @@ fn test_add() {
 
     // add item when it equals to current item if it's not the last one
     search_history.add(&mut cursor, "php".to_string());
-    search_history.previous(&mut cursor);
+    search_history.previous(&mut cursor, "");
     assert_eq!(search_history.current(&cursor), Some("rustlang"));
     search_history.add(&mut cursor, "rustlang".to_string());
     assert_eq!(search_history.len(), 3, "Should add item");
@@ -71,13 +71,13 @@ fn test_next_and_previous() {
 
     assert_eq!(search_history.current(&cursor), Some("TypeScript"));
 
-    assert_eq!(search_history.previous(&mut cursor), Some("JavaScript"));
+    assert_eq!(search_history.previous(&mut cursor, ""), Some("JavaScript"));
     assert_eq!(search_history.current(&cursor), Some("JavaScript"));
 
-    assert_eq!(search_history.previous(&mut cursor), Some("Rust"));
+    assert_eq!(search_history.previous(&mut cursor, ""), Some("Rust"));
     assert_eq!(search_history.current(&cursor), Some("Rust"));
 
-    assert_eq!(search_history.previous(&mut cursor), None);
+    assert_eq!(search_history.previous(&mut cursor, ""), None);
     assert_eq!(search_history.current(&cursor), Some("Rust"));
 
     assert_eq!(search_history.next(&mut cursor), Some("JavaScript"));
@@ -103,14 +103,14 @@ fn test_reset_selection() {
     cursor.reset();
     assert_eq!(search_history.current(&cursor), None);
     assert_eq!(
-        search_history.previous(&mut cursor),
+        search_history.previous(&mut cursor, ""),
         Some("TypeScript"),
         "Should start from the end after reset on previous item query"
     );
 
-    search_history.previous(&mut cursor);
+    search_history.previous(&mut cursor, "");
     assert_eq!(search_history.current(&cursor), Some("JavaScript"));
-    search_history.previous(&mut cursor);
+    search_history.previous(&mut cursor, "");
     assert_eq!(search_history.current(&cursor), Some("Rust"));
 
     cursor.reset();
@@ -134,8 +134,11 @@ fn test_multiple_cursors() {
     assert_eq!(search_history.current(&cursor1), Some("TypeScript"));
     assert_eq!(search_history.current(&cursor2), Some("C++"));
 
-    assert_eq!(search_history.previous(&mut cursor1), Some("JavaScript"));
-    assert_eq!(search_history.previous(&mut cursor2), Some("Java"));
+    assert_eq!(
+        search_history.previous(&mut cursor1, ""),
+        Some("JavaScript")
+    );
+    assert_eq!(search_history.previous(&mut cursor2, ""), Some("Java"));
 
     assert_eq!(search_history.next(&mut cursor1), Some("TypeScript"));
     assert_eq!(search_history.next(&mut cursor1), Some("Python"));

@@ -1,6 +1,8 @@
 use ::serde::{Deserialize, Serialize};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use futures::AsyncReadExt;
+use futures::stream::StreamExt;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt,
     channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
@@ -12,7 +14,6 @@ use net::async_net::{UnixListener, UnixStream};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{json, value::RawValue};
-use smol::stream::StreamExt;
 use std::{
     any::TypeId,
     cell::RefCell,
@@ -102,6 +103,7 @@ impl McpServer {
         let registered_tool = RegisteredTool {
             tool: Tool {
                 name: T::NAME.into(),
+                title: None,
                 description,
                 input_schema: input_schema.into(),
                 output_schema: if TypeId::of::<T::Output>() == TypeId::of::<()>() {
@@ -201,7 +203,7 @@ impl McpServer {
         handlers: Rc<RefCell<HashMap<&'static str, RequestHandler>>>,
         cx: &mut AsyncApp,
     ) {
-        let (read, write) = smol::io::split(stream);
+        let (read, write) = stream.split();
         let (incoming_tx, mut incoming_rx) = unbounded();
         let (outgoing_tx, outgoing_rx) = unbounded();
 

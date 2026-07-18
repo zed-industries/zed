@@ -130,6 +130,12 @@ impl PendingOps {
         }
         false
     }
+
+    /// Checks whether the last operation in the pending operations resulted in
+    /// an error.
+    pub fn last_op_errored(&self) -> bool {
+        self.ops.last().is_some_and(PendingOp::error)
+    }
 }
 
 impl PendingOp {

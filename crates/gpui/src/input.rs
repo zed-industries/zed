@@ -71,6 +71,24 @@ pub trait EntityInputHandler: 'static + Sized {
         cx: &mut Context<Self>,
     ) -> Option<usize>;
 
+    /// See [`InputHandler::set_selected_text_range`] for details
+    fn set_selected_text_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
+    /// See [`InputHandler::text_length_utf16`] for details
+    fn text_length_utf16(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+
     /// See [`InputHandler::accepts_text_input`] for details
     fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
         true
@@ -183,7 +201,32 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         })
     }
 
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.view.update(cx, |view, cx| {
+            view.set_selected_text_range(range_utf16, window, cx)
+        })
+    }
+
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        Some(self.element_bounds)
+    }
+
+    fn text_length_utf16(&mut self, window: &mut Window, cx: &mut App) -> Option<usize> {
+        self.view
+            .update(cx, |view, cx| view.text_length_utf16(window, cx))
+    }
+
     fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.view
+            .update(cx, |view, cx| view.accepts_text_input(window, cx))
+    }
+
+    fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.view
             .update(cx, |view, cx| view.accepts_text_input(window, cx))
     }

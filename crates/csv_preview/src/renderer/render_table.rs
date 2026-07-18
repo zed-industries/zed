@@ -1,11 +1,7 @@
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
-use ui::Table;
-use ui::TableColumnWidths;
-use ui::TableResizeBehavior;
-use ui::UncheckedTableRow;
-use ui::{DefiniteLength, div, prelude::*};
+use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -15,44 +11,22 @@ use crate::{
 
 impl CsvPreviewView {
     /// Creates a new table.
-    /// Column number is derived from the `TableColumnWidths` entity.
+    /// Column number is derived from the `ResizableColumnsState` entity.
     pub(crate) fn create_table(
         &self,
-        current_widths: &Entity<TableColumnWidths>,
+        current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cols = current_widths.read(cx).cols();
-        let remaining_col_number = cols - 1;
-        let fraction = if remaining_col_number > 0 {
-            1. / remaining_col_number as f32
-        } else {
-            1. // only column with line numbers is present. Put 100%, but it will be overwritten anyways :D
-        };
-        let mut widths = vec![DefiniteLength::Fraction(fraction); cols];
-        let line_number_width = self.calculate_row_identifier_column_width();
-        widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
-
-        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
-        resize_behaviors[0] = TableResizeBehavior::None;
-
-        self.create_table_inner(
-            self.engine.contents.rows.len(),
-            widths,
-            resize_behaviors,
-            current_widths,
-            cx,
-        )
+        self.create_table_inner(self.engine.contents.rows.len(), current_widths, cx)
     }
 
     fn create_table_inner(
         &self,
         row_count: usize,
-        widths: UncheckedTableRow<DefiniteLength>,
-        resize_behaviors: UncheckedTableRow<TableResizeBehavior>,
-        current_widths: &Entity<TableColumnWidths>,
+        current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cols = widths.len();
+        let cols = current_widths.read(cx).cols();
         // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(cols);
 
@@ -77,11 +51,10 @@ impl CsvPreviewView {
 
         Table::new(cols)
             .interactable(&self.table_interaction_state)
-            .striped()
-            .column_widths(widths)
-            .resizable_columns(resize_behaviors, current_widths, cx)
+            .width_config(ColumnWidthConfig::Resizable(current_widths.clone()))
             .header(headers)
             .disable_base_style()
+            .pin_cols(1)
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
                 match self.settings.rendering_with {
@@ -96,6 +69,7 @@ impl CsvPreviewView {
                                     cols,
                                     display_row,
                                     row_identifier_text_color,
+                                    this.row_height,
                                     cx,
                                 )
                                 .unwrap_or_else(|| panic!("Expected to render a table row"))
@@ -110,6 +84,7 @@ impl CsvPreviewView {
                                     .rendered_indices
                                     .extend(range.clone());
 
+                                let row_height = this.row_height;
                                 range
                                     .filter_map(|display_index| {
                                         Self::render_single_table_row(
@@ -117,6 +92,7 @@ impl CsvPreviewView {
                                             cols,
                                             DisplayRow(display_index),
                                             row_identifier_text_color,
+                                            row_height,
                                             cx,
                                         )
                                     })
@@ -137,6 +113,7 @@ impl CsvPreviewView {
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
+        row_height: Pixels,
         cx: &Context<CsvPreviewView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
@@ -155,15 +132,23 @@ impl CsvPreviewView {
 
             let display_cell_id = DisplayCellId::new(display_row, col);
 
-            let cell = div().size_full().whitespace_nowrap().text_ellipsis().child(
-                CsvPreviewView::create_selectable_cell(
+            let cell = div()
+                .size_full()
+                .when(
+                    !this.settings.multiline_cells_effectively_enabled(),
+                    |div| {
+                        div.whitespace_nowrap()
+                            .text_ellipsis()
+                            .h(row_height)
+                            .overflow_hidden()
+                    },
+                )
+                .child(CsvPreviewView::create_selectable_cell(
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
-                    this.settings.font_type,
                     cx,
-                ),
-            );
+                ));
 
             elements.push(
                 div()
@@ -182,7 +167,6 @@ impl CsvPreviewView {
                             },
                         ))
                     })
-                    .text_ui(cx)
                     .child(cell)
                     .into_any_element(),
             );

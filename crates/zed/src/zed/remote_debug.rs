@@ -1,3 +1,4 @@
+use gpui::TaskExt;
 use workspace::Workspace;
 use zed_actions::remote_debug::{SimulateDisconnect, SimulateTimeout, SimulateTimeoutExhausted};
 

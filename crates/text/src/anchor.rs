@@ -24,7 +24,7 @@ pub struct Anchor {
     /// Whether this anchor stays attached to the character *before* or *after*
     /// the offset.
     pub bias: Bias,
-    pub buffer_id: Option<BufferId>,
+    pub buffer_id: BufferId,
 }
 
 impl Debug for Anchor {
@@ -46,28 +46,7 @@ impl Debug for Anchor {
 }
 
 impl Anchor {
-    pub const MIN: Self = Self {
-        timestamp_replica_id: clock::Lamport::MIN.replica_id,
-        timestamp_value: clock::Lamport::MIN.value,
-        offset: u32::MIN,
-        bias: Bias::Left,
-        buffer_id: None,
-    };
-
-    pub const MAX: Self = Self {
-        timestamp_replica_id: clock::Lamport::MAX.replica_id,
-        timestamp_value: clock::Lamport::MAX.value,
-        offset: u32::MAX,
-        bias: Bias::Right,
-        buffer_id: None,
-    };
-
-    pub fn new(
-        timestamp: clock::Lamport,
-        offset: u32,
-        bias: Bias,
-        buffer_id: Option<BufferId>,
-    ) -> Self {
+    pub fn new(timestamp: clock::Lamport, offset: u32, bias: Bias, buffer_id: BufferId) -> Self {
         Self {
             timestamp_replica_id: timestamp.replica_id,
             timestamp_value: timestamp.value,
@@ -83,7 +62,7 @@ impl Anchor {
             timestamp_value: clock::Lamport::MIN.value,
             offset: u32::MIN,
             bias: Bias::Left,
-            buffer_id: Some(buffer_id),
+            buffer_id,
         }
     }
 
@@ -93,7 +72,7 @@ impl Anchor {
             timestamp_value: clock::Lamport::MAX.value,
             offset: u32::MAX,
             bias: Bias::Right,
-            buffer_id: Some(buffer_id),
+            buffer_id,
         }
     }
 
@@ -171,7 +150,7 @@ impl Anchor {
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if self.is_min() || self.is_max() {
             true
-        } else if self.buffer_id.is_none_or(|id| id != buffer.remote_id) {
+        } else if self.buffer_id != buffer.remote_id {
             false
         } else {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
@@ -207,6 +186,18 @@ impl Anchor {
             value: self.timestamp_value,
         }
     }
+
+    pub fn opaque_id(&self) -> [u8; 20] {
+        let mut bytes = [0u8; 20];
+        let buffer_id: u64 = self.buffer_id.into();
+        bytes[0..8].copy_from_slice(&buffer_id.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.offset.to_le_bytes());
+        bytes[12..16].copy_from_slice(&self.timestamp_value.to_le_bytes());
+        let replica_id = self.timestamp_replica_id.as_u16();
+        bytes[16..18].copy_from_slice(&replica_id.to_le_bytes());
+        bytes[18] = self.bias as u8;
+        bytes
+    }
 }
 
 pub trait OffsetRangeExt {
@@ -237,6 +228,7 @@ where
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
     fn overlaps(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> bool;
+    fn contains_anchor(&self, b: Anchor, buffer: &BufferSnapshot) -> bool;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -249,5 +241,9 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool {
         self.start.cmp(&other.end, buffer).is_lt() && other.start.cmp(&self.end, buffer).is_lt()
+    }
+
+    fn contains_anchor(&self, other: Anchor, buffer: &BufferSnapshot) -> bool {
+        self.start.cmp(&other, buffer).is_le() && self.end.cmp(&other, buffer).is_ge()
     }
 }

@@ -216,6 +216,9 @@ impl ChannelView {
                     })
                 }))
             });
+            editor.set_show_bookmarks(false, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_runnables(false, cx);
             editor
         });
         let _editor_event_subscription =
@@ -321,7 +324,7 @@ impl ChannelView {
             return;
         };
 
-        let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
+        let link = channel.notes_link(closest_heading.map(|heading| heading.text.to_string()), cx);
         cx.write_to_clipboard(ClipboardItem::new_string(link));
         self.workspace
             .update(cx, |workspace, cx| {
