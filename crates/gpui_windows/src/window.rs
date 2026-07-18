@@ -691,77 +691,33 @@ impl PlatformWindow for WindowsWindow {
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail_string = detail.map(|detail| detail.to_string());
-        let handle = self.0.hwnd;
-        let answers = answers.to_vec();
-        self.0
-            .executor
-            .spawn(async move {
-                unsafe {
-                    let mut config = TASKDIALOGCONFIG::default();
-                    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
-                    config.hwndParent = handle;
-                    let title;
-                    let main_icon;
-                    match level {
-                        PromptLevel::Info => {
-                            title = windows::core::w!("Info");
-                            main_icon = TD_INFORMATION_ICON;
-                        }
-                        PromptLevel::Warning => {
-                            title = windows::core::w!("Warning");
-                            main_icon = TD_WARNING_ICON;
-                        }
-                        PromptLevel::Critical => {
-                            title = windows::core::w!("Critical");
-                            main_icon = TD_ERROR_ICON;
-                        }
-                    };
-                    config.pszWindowTitle = title;
-                    config.Anonymous1.pszMainIcon = main_icon;
-                    let instruction = HSTRING::from(msg);
-                    config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
-                    let hints_encoded;
-                    if let Some(ref hints) = detail_string {
-                        hints_encoded = HSTRING::from(hints);
-                        config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
-                    };
-                    let mut button_id_map = Vec::with_capacity(answers.len());
-                    let mut buttons = Vec::new();
-                    let mut btn_encoded = Vec::new();
-                    for (index, btn) in answers.iter().enumerate() {
-                        let encoded = HSTRING::from(btn.label().as_ref());
-                        let button_id = match btn {
-                            PromptButton::Ok(_) => IDOK.0,
-                            PromptButton::Cancel(_) => IDCANCEL.0,
-                            // the first few low integer values are reserved for known buttons
-                            // so for simplicity we just go backwards from -1
-                            PromptButton::Other(_) => -(index as i32) - 1,
-                        };
-                        button_id_map.push(button_id);
-                        buttons.push(TASKDIALOG_BUTTON {
-                            nButtonID: button_id,
-                            pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
-                        });
-                        btn_encoded.push(encoded);
-                    }
-                    config.cButtons = buttons.len() as _;
-                    config.pButtons = buttons.as_ptr();
-
-                    config.pfCallback = None;
-                    let mut res = std::mem::zeroed();
-                    let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")
-                        .log_err();
-
-                    if let Some(clicked) =
-                        button_id_map.iter().position(|&button_id| button_id == res)
-                    {
-                        let _ = done_tx.send(clicked);
-                    }
-                }
+        let detail = detail.map(|detail| detail.to_string());
+        let handle = SafeHwnd::from(self.0.hwnd);
+        let buttons = answers
+            .iter()
+            .enumerate()
+            .map(|(index, button)| {
+                let button_id = match button {
+                    PromptButton::Ok(_) => IDOK.0,
+                    PromptButton::Cancel(_) => IDCANCEL.0,
+                    // The first few low integer values are reserved for known buttons, so use
+                    // negative IDs for custom buttons.
+                    PromptButton::Other(_) => -(index as i32) - 1,
+                };
+                (button.label().as_ref().to_string(), button_id)
             })
-            .detach();
+            .collect::<Vec<_>>();
+        std::thread::spawn(move || {
+            let result = OleInitializer::new("unable to initialize Windows OLE for task dialog")
+                .and_then(|_ole_initializer| task_dialog(level, msg, detail, buttons, handle));
+            match result {
+                Ok(Some(clicked)) => drop(done_tx.send(clicked)),
+                Ok(None) => {}
+                Err(error) => {
+                    Err::<(), _>(error).log_err();
+                }
+            }
+        });
 
         Some(done_rx)
     }
@@ -1217,6 +1173,60 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
         Ok(())
     }
+}
+
+fn task_dialog(
+    level: PromptLevel,
+    msg: String,
+    detail: Option<String>,
+    buttons: Vec<(String, i32)>,
+    handle: SafeHwnd,
+) -> Result<Option<usize>> {
+    let mut config = TASKDIALOGCONFIG {
+        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as _,
+        hwndParent: handle.as_raw(),
+        ..TASKDIALOGCONFIG::default()
+    };
+    let (title, main_icon) = match level {
+        PromptLevel::Info => (windows::core::w!("Info"), TD_INFORMATION_ICON),
+        PromptLevel::Warning => (windows::core::w!("Warning"), TD_WARNING_ICON),
+        PromptLevel::Critical => (windows::core::w!("Critical"), TD_ERROR_ICON),
+    };
+    config.pszWindowTitle = title;
+    config.Anonymous1.pszMainIcon = main_icon;
+
+    let instruction = HSTRING::from(msg);
+    config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
+
+    let detail = detail.map(HSTRING::from);
+    if let Some(detail) = detail.as_ref() {
+        config.pszContent = PCWSTR::from_raw(detail.as_ptr());
+    }
+
+    let mut labels = Vec::with_capacity(buttons.len());
+    let mut task_dialog_buttons = Vec::with_capacity(buttons.len());
+    for (label, button_id) in &buttons {
+        let label = HSTRING::from(label);
+        task_dialog_buttons.push(TASKDIALOG_BUTTON {
+            nButtonID: *button_id,
+            pszButtonText: PCWSTR::from_raw(label.as_ptr()),
+        });
+        labels.push(label);
+    }
+    config.cButtons = task_dialog_buttons.len() as _;
+    config.pButtons = task_dialog_buttons.as_ptr();
+    config.pfCallback = None;
+
+    let mut response = 0;
+    // SAFETY: All `PCWSTR` fields in `config` point into `HSTRING`s and button storage
+    // that are kept alive until `TaskDialogIndirect` returns. The dialog runs on a
+    // dedicated thread after `OleInitialize` has succeeded for that thread.
+    unsafe { TaskDialogIndirect(&config, Some(&mut response), None, None) }
+        .context("unable to create task dialog")?;
+
+    Ok(buttons
+        .iter()
+        .position(|(_, button_id)| *button_id == response))
 }
 
 #[derive(Debug, Clone)]
