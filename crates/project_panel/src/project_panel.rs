@@ -3808,7 +3808,6 @@ impl ProjectPanel {
                         file_path1,
                         file_path2,
                         None,
-                        None,
                         workspace.weak_handle(),
                         window,
                         cx,

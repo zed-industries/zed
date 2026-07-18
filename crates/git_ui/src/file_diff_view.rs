@@ -44,8 +44,7 @@ impl FileDiffView {
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
-        row: Option<u32>,
-        column: Option<u32>,
+        target_position: Option<Point>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -80,12 +79,20 @@ impl FileDiffView {
                     pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
                 });
 
-                if let Some(row) = row {
-                    let row = row.saturating_sub(1);
-                    let column = column.unwrap_or(0).saturating_sub(1);
-                    let rhs_editor = diff_view.read(cx).editor.read(cx).rhs_editor().clone();
+                if let Some(target_position) = target_position {
+                    let (new_buffer, rhs_editor) = {
+                        let diff_view = diff_view.read(cx);
+                        (
+                            diff_view.new_buffer.clone(),
+                            diff_view.editor.read(cx).rhs_editor().clone(),
+                        )
+                    };
+                    let point = new_buffer
+                        .read(cx)
+                        .snapshot()
+                        .point_from_external_input(target_position.row, target_position.column);
                     rhs_editor.update(cx, |editor, cx| {
-                        editor.go_to_singleton_buffer_point(Point::new(row, column), window, cx);
+                        editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 }
 
@@ -449,7 +456,6 @@ mod tests {
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
                     None,
-                    None,
                     workspace.weak_handle(),
                     window,
                     cx,
@@ -600,7 +606,6 @@ mod tests {
                     path!("/test/old_file.rs").into(),
                     path!("/test/new_file.rs").into(),
                     None,
-                    None,
                     workspace.weak_handle(),
                     window,
                     cx,
@@ -671,7 +676,6 @@ mod tests {
                 FileDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
-                    None,
                     None,
                     workspace.weak_handle(),
                     window,

@@ -892,15 +892,10 @@ fn main() {
             .chunks(2)
             .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
 
-        let diff_paths: Vec<cli::DiffPaths> = args
+        let diff_paths: Vec<[String; 2]> = args
             .diff
             .chunks(2)
-            .map(|chunk| cli::DiffPaths {
-                old_path: chunk[0].clone(),
-                new_path: chunk[1].clone(),
-                new_row: None,
-                new_column: None,
-            })
+            .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
             .collect();
 
         #[cfg(target_os = "windows")]

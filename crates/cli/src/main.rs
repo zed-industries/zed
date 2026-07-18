@@ -13,7 +13,7 @@ use crate::completions::Shell;
 
 use anyhow::{Context as _, Result};
 use clap::{CommandFactory, Parser};
-use cli::{CliRequest, CliResponse, DiffPaths, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -202,15 +202,22 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
+/// Returns whether a `--diff` argument refers to an existing path, allowing a
+/// trailing `:line:column` suffix (parsed later by the Zed side, matching how
+/// regular `zed path:line:column` arguments are handled).
+fn diff_path_exists(diff_path: &str) -> bool {
+    Path::new(diff_path).exists() || PathWithPosition::parse_str(diff_path).path.exists()
+}
+
 fn expand_directory_diff_pairs(
-    diff_pairs: Vec<DiffPaths>,
-) -> anyhow::Result<(Vec<DiffPaths>, Vec<TempDir>)> {
+    diff_pairs: Vec<[String; 2]>,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<TempDir>)> {
     let mut expanded = Vec::new();
     let mut temp_dirs = Vec::new();
 
     for pair in diff_pairs {
-        let left = PathBuf::from(&pair.old_path);
-        let right = PathBuf::from(&pair.new_path);
+        let left = PathBuf::from(&pair[0]);
+        let right = PathBuf::from(&pair[1]);
 
         if left.is_dir() && right.is_dir() {
             let (mut pairs, temp_dir) = expand_directory_pair(&left, &right)?;
@@ -229,7 +236,7 @@ fn expand_directory_diff_pairs(
 fn expand_directory_pair(
     left: &Path,
     right: &Path,
-) -> anyhow::Result<(Vec<DiffPaths>, Option<TempDir>)> {
+) -> anyhow::Result<(Vec<[String; 2]>, Option<TempDir>)> {
     let left_files = collect_files(left)?;
     let right_files = collect_files(right)?;
 
@@ -244,32 +251,26 @@ fn expand_directory_pair(
     for rel in rel_paths {
         match (left_files.get(&rel), right_files.get(&rel)) {
             (Some(left_path), Some(right_path)) => {
-                pairs.push(DiffPaths {
-                    old_path: left_path.to_string_lossy().into_owned(),
-                    new_path: right_path.to_string_lossy().into_owned(),
-                    new_row: None,
-                    new_column: None,
-                });
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
             }
             (Some(left_path), None) => {
                 let stub = create_empty_stub(&mut temp_dir, &rel)?;
                 temp_dir_used = true;
-                pairs.push(DiffPaths {
-                    old_path: left_path.to_string_lossy().into_owned(),
-                    new_path: stub.to_string_lossy().into_owned(),
-                    new_row: None,
-                    new_column: None,
-                });
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    stub.to_string_lossy().into_owned(),
+                ]);
             }
             (None, Some(right_path)) => {
                 let stub = create_empty_stub(&mut temp_dir, &rel)?;
                 temp_dir_used = true;
-                pairs.push(DiffPaths {
-                    old_path: stub.to_string_lossy().into_owned(),
-                    new_path: right_path.to_string_lossy().into_owned(),
-                    new_row: None,
-                    new_column: None,
-                });
+                pairs.push([
+                    stub.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
             }
             (None, None) => {}
         }
@@ -644,29 +645,15 @@ fn run() -> Result<()> {
         .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
 
     for path in args.diff.chunks(2) {
-        let old_path = parse_path_with_position(&path[0])?;
-        let (new_path, new_row, new_column) = if Path::new(&path[1]).exists() {
-            (parse_path_with_position(&path[1])?, None, None)
-        } else {
-            let new_path_with_position = PathWithPosition::parse_str(&path[1]);
-            (
-                parse_path_with_position(&new_path_with_position.path.to_string_lossy())?,
-                new_path_with_position.row,
-                new_path_with_position.column,
-            )
-        };
-        for diff_path in [&old_path, &new_path] {
+        let left = parse_path_with_position(&path[0])?;
+        let right = parse_path_with_position(&path[1])?;
+        for diff_path in [&left, &right] {
             anyhow::ensure!(
-                Path::new(diff_path).exists(),
+                diff_path_exists(diff_path),
                 "--diff path does not exist: {diff_path}"
             );
         }
-        diff_paths.push(DiffPaths {
-            old_path,
-            new_path,
-            new_row,
-            new_column,
-        });
+        diff_paths.push([left, right]);
     }
 
     let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;

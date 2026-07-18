@@ -144,12 +144,10 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             let old = std::fs::canonicalize(&path[0]).log_err();
             let new = std::fs::canonicalize(&path[1]).log_err();
             if let Some((old, new)) = old.zip(new) {
-                diff_paths.push(cli::DiffPaths {
-                    old_path: old.to_string_lossy().into_owned(),
-                    new_path: new.to_string_lossy().into_owned(),
-                    new_row: None,
-                    new_column: None,
-                });
+                diff_paths.push([
+                    old.to_string_lossy().into_owned(),
+                    new.to_string_lossy().into_owned(),
+                ]);
             }
         }
 

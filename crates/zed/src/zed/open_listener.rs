@@ -2,7 +2,7 @@ use crate::handle_open_request;
 use crate::restore_or_create_workspace;
 use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
-use cli::{CliRequest, CliResponse, CliResponseSink, DiffPaths};
+use cli::{CliRequest, CliResponse, CliResponseSink};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use db::kvp::KeyValueStore;
@@ -36,7 +36,7 @@ use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWor
 pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
-    pub diff_paths: Vec<DiffPaths>,
+    pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
     pub dev_container: bool,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
@@ -382,7 +382,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 #[derive(Default)]
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
-    pub diff_paths: Vec<DiffPaths>,
+    pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
     pub dev_container: bool,
     pub wsl: Option<String>,
@@ -463,7 +463,7 @@ fn connect_to_cli(
 
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
-    diff_paths: &[DiffPaths],
+    diff_paths: &[[String; 2]],
     diff_all: bool,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
@@ -486,10 +486,17 @@ pub async fn open_paths_with_positions(
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
-        let diff_pairs = diff_paths
-            .iter()
-            .map(|diff_pair| [diff_pair.old_path.clone(), diff_pair.new_path.clone()])
-            .collect::<Vec<_>>();
+        let mut diff_pairs = Vec::with_capacity(diff_paths.len());
+        for diff_pair in diff_paths {
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
+            };
+            diff_pairs.push([
+                old_parsed.path.to_string_lossy().into_owned(),
+                new_parsed.path.to_string_lossy().into_owned(),
+            ]);
+        }
         if let Ok(diff_view) = multi_workspace.update(cx, |multi_workspace, window, cx| {
             multi_workspace.workspace().update(cx, |workspace, cx| {
                 MultiDiffView::open(diff_pairs, workspace, window, cx)
@@ -503,34 +510,41 @@ pub async fn open_paths_with_positions(
         let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
             multi_workspace.workspace().downgrade()
         })?;
-        let canonicalize = async |raw: &str| {
+        let canonicalize = async |parsed: &PathWithPosition| {
             app_state
                 .fs
-                .canonicalize(Path::new(raw))
+                .canonicalize(&parsed.path)
                 .await
-                .with_context(|| format!("opening --diff path {raw:?}"))
+                .with_context(|| format!("opening --diff path {:?}", parsed.path))
         };
         for diff_pair in diff_paths {
-            let (old_path, new_path) = match futures::join!(
-                canonicalize(&diff_pair.old_path),
-                canonicalize(&diff_pair.new_path)
-            ) {
-                (Ok(old), Ok(new)) => (old, new),
-                (old, new) => {
-                    for result in [old, new] {
-                        if let Err(err) = result {
-                            items.push(Some(Err(err)));
-                        }
-                    }
-                    continue;
-                }
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
             };
+            let (old_path, new_path) =
+                match futures::join!(canonicalize(old_parsed), canonicalize(new_parsed)) {
+                    (Ok(old), Ok(new)) => (old, new),
+                    (old, new) => {
+                        for result in [old, new] {
+                            if let Err(err) = result {
+                                items.push(Some(Err(err)));
+                            }
+                        }
+                        continue;
+                    }
+                };
+            let target_position = new_parsed.row.map(|row| {
+                language::Point::new(
+                    row.saturating_sub(1),
+                    new_parsed.column.unwrap_or(0).saturating_sub(1),
+                )
+            });
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
                 FileDiffView::open(
                     old_path,
                     new_path,
-                    diff_pair.new_row,
-                    diff_pair.new_column,
+                    target_position,
                     workspace_weak.clone(),
                     window,
                     cx,
@@ -819,7 +833,7 @@ fn open_behavior_for_default_setting(cx: &App) -> cli::OpenBehavior {
 
 async fn open_workspaces(
     paths: Vec<String>,
-    diff_paths: Vec<DiffPaths>,
+    diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_behavior: cli::OpenBehavior,
     responses: &dyn CliResponseSink,
@@ -936,7 +950,7 @@ async fn open_workspaces(
 
 async fn open_local_workspace(
     mut workspace_paths: Vec<String>,
-    diff_paths: Vec<DiffPaths>,
+    diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
     cwd: Option<PathBuf>,
