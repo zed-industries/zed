@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
-    StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Div, Entity, ImageSource,
+    RenderImage, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -322,6 +322,10 @@ pub(crate) fn render_mermaid_diagram(
     let cached = mermaid_state.cache.get(&parsed.contents);
     let render_result = cached.and_then(|cached| cached.render_image.get());
     let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
+    // Match fenced code blocks: when horizontal overflow is enabled (markdown
+    // preview), keep the diagram at its natural raster size and scroll instead
+    // of crushing wide graphs into the pane via `max_w_full` (see #61051).
+    let allow_overflow_x = style.code_block_overflow_x_scroll;
 
     let code = parsed.contents.contents.clone();
 
@@ -333,16 +337,7 @@ pub(crate) fn render_mermaid_diagram(
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
             } else {
-                div()
-                    .w_full()
-                    .child(
-                        img(ImageSource::Render(render_image.clone()))
-                            .max_w_full()
-                            .with_fallback(|| {
-                                Label::new("Failed to Load Mermaid Diagram").into_any_element()
-                            }),
-                    )
-                    .into_any_element()
+                render_mermaid_image(render_image.clone(), allow_overflow_x)
             };
 
             container
@@ -381,24 +376,13 @@ pub(crate) fn render_mermaid_diagram(
             if let Some(fallback) = cached.and_then(|cached| cached.fallback_image.as_ref()) {
                 container
                     .child(
-                        div()
-                            .w_full()
-                            .child(
-                                img(ImageSource::Render(fallback.clone()))
-                                    .max_w_full()
-                                    .with_fallback(|| {
-                                        div()
-                                            .child(Label::new("Failed to load mermaid diagram"))
-                                            .into_any_element()
-                                    }),
-                            )
-                            .with_animation(
-                                "mermaid-fallback-pulse",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.6, 1.0)),
-                                |element, delta| element.opacity(delta),
-                            ),
+                        render_mermaid_image(fallback.clone(), allow_overflow_x).with_animation(
+                            "mermaid-fallback-pulse",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.6, 1.0)),
+                            |element, delta| element.opacity(delta),
+                        ),
                     )
                     .when(show_interactive, |container| {
                         container.child(render_mermaid_copy_button(
@@ -437,6 +421,32 @@ pub(crate) fn render_mermaid_diagram(
             }
         }
     }
+}
+
+/// Renders a mermaid diagram image.
+///
+/// When `allow_overflow_x` is true (markdown preview), the image keeps its
+/// intrinsic size so large diagrams stay readable and the container scrolls
+/// horizontally. When false (e.g. compact agent UI), the image is capped to the
+/// parent width via `max_w_full`, matching previous fit-to-pane behavior.
+fn render_mermaid_image(render_image: Arc<RenderImage>, allow_overflow_x: bool) -> Div {
+    let image = img(ImageSource::Render(render_image)).with_fallback(|| {
+        Label::new("Failed to Load Mermaid Diagram").into_any_element()
+    });
+
+    div()
+        .w_full()
+        .map(|container| {
+            if allow_overflow_x {
+                // Intrinsic image size + horizontal pan — do not apply max_w_full.
+                // Match fenced code blocks: keep wheel vertical scroll on the parent.
+                let mut scroll = container.overflow_x_scroll();
+                scroll.style().restrict_scroll_to_axis = Some(true);
+                scroll.child(image)
+            } else {
+                container.child(image.max_w_full())
+            }
+        })
 }
 
 fn render_mermaid_tab_header(
