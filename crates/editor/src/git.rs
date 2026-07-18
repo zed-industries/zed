@@ -3356,8 +3356,13 @@ impl EditorSnapshot {
                         .staged_added
                         .iter()
                         .map(|range| {
-                            range.start.to_display_point(&self.display_snapshot).row()
-                                ..range.end.to_display_point(&self.display_snapshot).row()
+                            let start = range.start.to_display_point(&self.display_snapshot);
+                            let end = range.end.to_display_point(&self.display_snapshot);
+                            let mut end_row = end.row();
+                            if end.column() > 0 {
+                                end_row.0 += 1;
+                            }
+                            start.row()..end_row
                         })
                         .collect();
 
