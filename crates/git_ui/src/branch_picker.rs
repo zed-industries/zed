@@ -915,15 +915,25 @@ fn sort_branch_entries(
     matches: &mut [Entry],
     branch_selection_context: Option<&BranchSelectionContext>,
 ) {
+    let selected_branch_is_remote = branch_selection_context
+        .and_then(|context| context.selected_branch.as_ref())
+        .and_then(|selected_branch| {
+            matches.iter().find_map(|entry| {
+                let branch = entry.as_branch()?;
+                branch_matches_ref(branch, selected_branch).then(|| branch.is_remote())
+            })
+        })
+        .unwrap_or(false);
+
     matches.sort_by_key(|entry| {
         let Some(branch) = entry.as_branch() else {
-            return (4, false);
+            return (true, 4);
         };
 
         let priority = branch_selection_context
             .map(|context| context.priority(branch))
             .unwrap_or(0);
-        (priority, branch.is_remote())
+        (branch.is_remote() != selected_branch_is_remote, priority)
     });
 }
 
@@ -2220,6 +2230,7 @@ mod tests {
             ),
             create_test_branch("main", false, Some("origin"), Some(1000)),
             create_test_branch("feature", false, Some("origin"), Some(900)),
+            create_test_branch("topic", false, Some("origin"), Some(850)),
             create_test_branch("main", false, Some("fork"), Some(800)),
         ]);
 
@@ -2263,11 +2274,24 @@ mod tests {
         let ordered_branch_names = entries.iter().map(Entry::name).collect::<Vec<_>>();
         assert_eq!(ordered_branch_names.first(), Some(&"origin/main"));
         assert!(
-            ordered_branch_names.iter().position(|name| *name == "main")
+            entries
+                .windows(2)
+                .filter(|entries| {
+                    entries[0].as_branch().map(Branch::is_remote)
+                        != entries[1].as_branch().map(Branch::is_remote)
+                })
+                .count()
+                <= 1,
+            "local and remote branches should each form a contiguous section"
+        );
+        assert!(
+            ordered_branch_names
+                .iter()
+                .position(|name| *name == "origin/topic")
                 < ordered_branch_names
                     .iter()
                     .position(|name| *name == "fork/main"),
-            "branches on the active branch's remote should be prioritized"
+            "branches on the active branch's remote should be prioritized within their section"
         );
     }
 
