@@ -1512,7 +1512,7 @@ impl PickerDelegate for BranchListDelegate {
                         } else {
                             PickerState::List
                         };
-                        matches.insert(0, entry);
+                        matches.push(entry);
                     } else {
                         picker.delegate.state = PickerState::List;
                     }
@@ -2416,9 +2416,9 @@ mod tests {
                         .iter()
                         .any(|m| m.name() == "feature-ui")
                 );
-                // Verify the first entry is the "create new branch" option
-                let first_match = picker.delegate.matches.first().unwrap();
-                assert!(first_match.is_new_branch());
+                // Verify the last entry is the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_branch());
             })
         });
 
@@ -3032,9 +3032,9 @@ mod tests {
                         .iter()
                         .any(|m| m.name() == "fork/feature-auth")
                 );
-                // Verify the first entry is the "create new branch" option
-                let first_match = picker.delegate.matches.first().unwrap();
-                assert!(first_match.is_new_branch());
+                // Verify the last entry is the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_branch());
             })
         });
     }
@@ -3191,9 +3191,9 @@ mod tests {
 
         branch_list.update_in(cx, |branch_list, window, cx| {
             branch_list.picker.update(cx, |picker, cx| {
-                let first_match = picker.delegate.matches.first().unwrap();
-                assert!(first_match.is_new_branch());
-                assert_eq!(first_match.name(), NEW_BRANCH);
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_branch());
+                assert_eq!(last_match.name(), NEW_BRANCH);
                 // State is NewBranch because no existing branches fuzzy-match the query
                 assert!(matches!(picker.delegate.state, PickerState::NewBranch));
                 picker.delegate.confirm(false, window, cx);
@@ -3258,8 +3258,8 @@ mod tests {
         branch_list
             .update_in(cx, |branch_list, window, cx| {
                 branch_list.picker.update(cx, |picker, cx| {
-                    let first_match = picker.delegate.matches.first().unwrap();
-                    assert!(first_match.is_new_url());
+                    let last_match = picker.delegate.matches.last().unwrap();
+                    assert!(last_match.is_new_url());
                     assert!(matches!(picker.delegate.state, PickerState::NewRemote));
                     picker.delegate.confirm(false, window, cx);
                     assert_eq!(picker.delegate.matches.len(), 0);
@@ -3368,9 +3368,9 @@ mod tests {
                         .iter()
                         .any(|m| m.name() == "main_branch")
                 );
-                // Verify the first entry is the "create new branch" option
-                let first_match = picker.delegate.matches.first().unwrap();
-                assert!(first_match.is_new_branch());
+                // Verify the last entry is the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_branch());
             })
         });
     }
@@ -3414,8 +3414,8 @@ mod tests {
             window.focus(&branch_list.picker_focus_handle, cx);
 
             branch_list.picker.update(cx, |picker, cx| {
-                let first_match = picker.delegate.matches.first().unwrap();
-                assert!(first_match.is_new_url());
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_url());
                 assert!(matches!(picker.delegate.state, PickerState::NewRemote));
 
                 picker.delegate.confirm(false, window, cx);
