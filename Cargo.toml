@@ -129,6 +129,7 @@ members = [
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/mermaid_render",
@@ -151,6 +152,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
+    "crates/path",
     "crates/paths",
     "crates/picker",
     "crates/picker_preview",
@@ -389,6 +391,7 @@ livekit_client = { path = "crates/livekit_client" }
 llama_cpp = { path = "crates/llama_cpp" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }
@@ -414,6 +417,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
+path = { path = "crates/path" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
@@ -504,7 +508,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-accesskit = "0.24.0"
+accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
@@ -530,7 +534,9 @@ async-io = "2.6.0"
 async-lock = "3.4.2"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-async-tar = "0.5.1"
+# `unstable` is required to compile async-tar's Windows symlink support.
+async-std = { version = "1.12", features = ["unstable"] }
+async-tar = "0.6"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
@@ -549,6 +555,7 @@ aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bitflags = "2.6.0"
+block2 = "0.6"
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -566,7 +573,7 @@ cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
 convert_case = "0.11.0"
-core-foundation = "=0.10.0"
+core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
@@ -597,6 +604,7 @@ encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.18.0"
 fork = "0.4.0"
+flume = "0.12"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
@@ -617,7 +625,25 @@ http-body = "1.0"
 httparse = "1.10"
 idna = "1.0"
 ignore = "0.4.22"
-image = "0.25.1"
+# image's default features minus "avif", which only adds an encoder (rav1e);
+# decoding AVIF would additionally need the non-default "avif-native" feature.
+image = { version = "0.25.1", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+] }
 imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
@@ -644,6 +670,7 @@ moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+notify-rust = "4"
 nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
@@ -675,6 +702,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSProcessInfo",
     "NSRange",
     "NSRunLoop",
+    "NSSet",
     "NSString",
     "NSURL",
     "NSUndoManager",
@@ -682,6 +710,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-user-notifications = "0.3"
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -716,6 +745,7 @@ quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
+raw-window-handle = "0.6"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
@@ -744,6 +774,7 @@ rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
+seccompiler = "0.5"
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
@@ -794,7 +825,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.26.9", features = ["wasm"] }
+tree-sitter = "0.26.9"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -853,15 +884,16 @@ yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
 
-
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
+    "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
+    "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Foundation",
@@ -883,6 +915,7 @@ features = [
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",

@@ -858,6 +858,30 @@ List of `string` values
 }
 ```
 
+## Reduce Motion
+
+- Description: Whether to reduce non-essential motion in the UI, such as loading spinners and pulsating labels, by rendering them in a static state.
+- Setting: `reduce_motion`
+- Default: `off`
+
+**Options**
+
+1. Always reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "on"
+}
+```
+
+2. Never reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "off"
+}
+```
+
 ## Snippet Sort Order
 
 - Description: Determines how snippets are sorted relative to other completion items.

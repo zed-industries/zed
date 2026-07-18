@@ -760,6 +760,8 @@ jobs:
     needs:
     - upload_release_assets
     runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions:
+      contents: write
     steps:
     - name: release::validate_release_assets
       run: |

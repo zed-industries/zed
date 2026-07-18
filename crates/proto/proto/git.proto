@@ -512,6 +512,7 @@ message BlameBufferResponse {
 message GetDefaultBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
+  bool include_remote_name = 3;
 }
 
 message GetDefaultBranchResponse {
@@ -681,6 +682,12 @@ message GitWorktreeCreatedAtResponse {
   optional Timestamp created_at = 1;
 }
 
+// Deprecated: newer clients let `git commit` run hooks natively instead of
+// requesting them explicitly.
+//
+// TODO: once all supported peers commit without sending `RunGitHook`, remove
+// this message (and its handlers) and replace its tag in the Envelope payload
+// oneof with `reserved 399;` so the tag is never reused.
 message RunGitHook {
   enum GitHook {
     PRE_COMMIT = 0;
