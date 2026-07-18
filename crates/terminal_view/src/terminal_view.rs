@@ -65,6 +65,11 @@ struct ImeState {
     marked_text: String,
 }
 
+/// Marker type for the toast emitted when a `NewTerminal` action references
+/// a profile name that does not exist in `terminal.profiles`.
+#[derive(Debug)]
+pub struct TerminalProfileWarning;
+
 fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize> {
     let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
     let line = point.line.saturating_add(display_offset);
@@ -144,6 +149,11 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
+    /// When non-`None`, this view was spawned from the named
+    /// `terminal.profiles` entry. Used by `SerializableItem::serialize`
+    /// to persist the profile choice so that workspace reload respawns
+    /// the same profile (D7).
+    pub profile_name: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -298,6 +308,7 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: false,
             custom_title: None,
+            profile_name: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -1887,6 +1898,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let profile_name = self.profile_name.clone();
         self.needs_serialize = false;
 
         let db = TerminalDb::global(cx);
@@ -1896,6 +1908,8 @@ impl SerializableItem for TerminalView {
                     .await?;
             }
             db.save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            db.save_profile_name(item_id, workspace_id, profile_name)
                 .await?;
             Ok(())
         }))
@@ -1913,8 +1927,12 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
+        // Read TerminalSettings synchronously here (where `cx: &App`) so we
+        // can re-resolve a persisted profile name into a `task::Shell`
+        // override before entering the async spawn.
+        let settings = TerminalSettings::get_global(cx).clone();
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, profile_name) = cx
                 .update(|_window, cx| {
                     let db = TerminalDb::global(cx);
                     let from_db = db
@@ -1936,13 +1954,49 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    let profile_name = db
+                        .get_profile_name(item_id, workspace_id)
+                        .log_err()
+                        .flatten()
+                        .filter(|name| !name.trim().is_empty());
+                    (cwd, custom_title, profile_name)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
+
+            // Re-resolve the persisted profile name against the current
+            // TerminalSettings. A profile may disappear after a settings
+            // change; in that case fall back to the default shell with a
+            // log line (D7).
+            let (shell_override, restored_profile_name) = match profile_name
+                .as_deref()
+                .and_then(|name| {
+                    settings
+                        .profiles
+                        .get(name)
+                        .map(|profile| (name, profile))
+                }) {
+                Some((name, profile)) => (
+                    Some(terminal::terminal_settings::profile_to_task_shell(
+                        name, profile,
+                    )),
+                    Some(name.to_string()),
+                ),
+                None => {
+                    if let Some(name) = &profile_name {
+                        log::warn!(
+                            "Persisted terminal profile '{name}' is no longer defined; \
+                             falling back to the default shell"
+                        );
+                    }
+                    (None, None)
+                }
+            };
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell_with(cwd, shell_override, cx)
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -1957,6 +2011,7 @@ impl SerializableItem for TerminalView {
                     if custom_title.is_some() {
                         view.custom_title = custom_title;
                     }
+                    view.profile_name = restored_profile_name;
                     view
                 })
             })

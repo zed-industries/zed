@@ -7,7 +7,7 @@ pub use settings::AlternateScroll;
 
 use settings::{
     IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBell, TerminalBlink,
-    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
+    TerminalDockPosition, TerminalLineHeight, TerminalProfile, VenvSettings, WorkingDirectory,
     merge_from::MergeFrom,
 };
 use task::Shell;
@@ -52,6 +52,8 @@ pub struct TerminalSettings {
     pub path_hyperlink_timeout_ms: u64,
     pub show_count_badge: bool,
     pub bell: TerminalBell,
+    pub profiles: collections::IndexMap<String, TerminalProfile>,
+    pub default_profile: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -78,14 +80,47 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
     }
 }
 
+/// Convert a `TerminalProfile` (settings twin) into the runtime `task::Shell`
+/// used by the spawn path. Implements D6 title promotion: when the profile
+/// does not specify a `title_override`, the profile name is used so the tab
+/// is titled after the profile (matching VSCode's `overrideName` default for
+/// generated profiles). The result is always `Shell::WithArguments`, since
+/// `title_override` is only expressible on that variant.
+pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
+    Shell::WithArguments {
+        program: profile.program.clone(),
+        args: profile.args.clone().unwrap_or_default(),
+        title_override: profile.title_override.clone().or(Some(name.to_string())),
+    }
+}
+
 impl settings::Settings for TerminalSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let user_content = content.terminal.clone().unwrap();
         // Note: we allow a subset of "terminal" settings in the project files.
         let mut project_content = user_content.project.clone();
         project_content.merge_from_option(content.project.terminal.as_ref());
+        let profiles = project_content.profiles.clone().unwrap_or_default();
+        let default_profile = project_content.default_profile.clone();
+        // D3 precedence: default_profile (if it resolves) > terminal.shell > System.
+        // Unknown default_profile name falls through to terminal.shell with a warning,
+        // never silently to System.
+        let shell = if let Some(name) = default_profile.as_deref() {
+            match profiles.get(name) {
+                Some(profile) => profile_to_task_shell(name, profile),
+                None => {
+                    log::warn!(
+                        "terminal.default_profile references unknown profile '{name}'; \
+                         falling back to terminal.shell"
+                    );
+                    settings_shell_to_task_shell(project_content.shell.unwrap())
+                }
+            }
+        } else {
+            settings_shell_to_task_shell(project_content.shell.unwrap())
+        };
         TerminalSettings {
-            shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
+            shell,
             working_directory: project_content.working_directory.unwrap(),
             font_size: user_content.font_size.map(|s| s.into_gpui()),
             font_family: user_content.font_family,
@@ -136,6 +171,8 @@ impl settings::Settings for TerminalSettings {
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
             show_count_badge: user_content.show_count_badge.unwrap(),
             bell: user_content.bell.unwrap(),
+            profiles,
+            default_profile,
         }
     }
 }
@@ -161,6 +198,64 @@ impl From<settings::CursorShapeContent> for CursorShape {
             settings::CursorShapeContent::Underline => CursorShape::Underline,
             settings::CursorShapeContent::Bar => CursorShape::Bar,
             settings::CursorShapeContent::Hollow => CursorShape::Hollow,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use settings::TerminalProfile;
+
+    fn profile(program: &str, args: &[&str], title: Option<&str>) -> TerminalProfile {
+        TerminalProfile {
+            program: program.to_string(),
+            args: Some(args.iter().map(|a| a.to_string()).collect()),
+            title_override: title.map(|t| t.to_string()),
+        }
+    }
+
+    #[test]
+    fn profile_to_shell_promotes_title_to_profile_name_when_unset() {
+        let p = profile("/bin/zsh", &["-l"], None);
+        let shell = profile_to_task_shell("Zsh", &p);
+        match shell {
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => {
+                assert_eq!(program, "/bin/zsh");
+                assert_eq!(args, vec!["-l".to_string()]);
+                assert_eq!(title_override, Some("Zsh".to_string()));
+            }
+            other => panic!("expected WithArguments, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn profile_to_shell_preserves_explicit_title_override() {
+        let p = profile("/bin/zsh", &[], Some("My Shell"));
+        let shell = profile_to_task_shell("Zsh", &p);
+        match shell {
+            Shell::WithArguments { title_override, .. } => {
+                assert_eq!(title_override, Some("My Shell".to_string()));
+            }
+            other => panic!("expected WithArguments, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn profile_to_shell_defaults_empty_args() {
+        let p = TerminalProfile {
+            program: "pwsh".to_string(),
+            args: None,
+            title_override: None,
+        };
+        let shell = profile_to_task_shell("PowerShell", &p);
+        match shell {
+            Shell::WithArguments { args, .. } => assert!(args.is_empty()),
+            other => panic!("expected WithArguments, got {other:?}"),
         }
     }
 }

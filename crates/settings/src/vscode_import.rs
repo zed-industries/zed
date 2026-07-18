@@ -994,6 +994,8 @@ impl VsCodeSettings {
             shell: self
                 .read_string(&format!("terminal.integrated.{platform}Exec"))
                 .map(|s| Shell::Program(s)),
+            profiles: None,
+            default_profile: None,
             working_directory: None,
             env,
             detect_venv: None,
