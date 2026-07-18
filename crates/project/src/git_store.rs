@@ -304,10 +304,7 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
     }
 }
 
-fn selected_rows_in_span(
-    selections: &[ResolvedLineSelection],
-    span: &Range<u32>,
-) -> BTreeSet<u32> {
+fn selected_rows_in_span(selections: &[ResolvedLineSelection], span: &Range<u32>) -> BTreeSet<u32> {
     selections
         .iter()
         .flat_map(|selection| {
