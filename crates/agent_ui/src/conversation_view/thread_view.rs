@@ -6666,28 +6666,26 @@ impl ThreadView {
         let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
             || self.has_pending_request_elicitation(cx);
 
-        if is_generating || needs_confirmation {
+        if is_thread_bottom && (is_generating || needs_confirmation) {
             return Empty.into_any_element();
         }
 
         let copy_response_button = copy_response_index.map(|response_index| {
-            IconButton::new(
-                format!("copy_agent_response-{}", response_index),
-                IconName::Copy,
-            )
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .tooltip(Tooltip::text("Copy This Agent Response"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let entries = this.thread.read(cx).entries();
-                if let Some(text) = Self::get_agent_message_content(entries, response_index, cx) {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
-            }))
+            IconButton::new(("copy_agent_response", entry_ix), IconName::Copy)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Copy This Agent Response"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let entries = this.thread.read(cx).entries();
+                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                }))
         });
 
         let scroll_to_recent_user_prompt = IconButton::new(
-            format!("scroll_to_recent_user_prompt-{}", entry_ix),
+            ("scroll_to_recent_user_prompt", entry_ix),
             IconName::UserArrowUp,
         )
         .icon_size(IconSize::Small)
@@ -6697,14 +6695,13 @@ impl ThreadView {
             this.scroll_to_user_message_index(user_message_index, cx);
         }));
 
-        let scroll_to_top =
-            IconButton::new(format!("scroll_to_top-{}", entry_ix), IconName::ArrowUp)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Scroll to Top"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.scroll_to_top(cx);
-                }));
+        let scroll_to_top = IconButton::new(("scroll_to_top", entry_ix), IconName::ArrowUp)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Scroll to Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
 
         let show_stats = is_thread_bottom && AgentSettings::get_global(cx).show_turn_stats;
 

@@ -6953,6 +6953,16 @@ pub(crate) mod tests {
             let scroll_top = view.list_state.logical_scroll_top();
             // Entries layout is: [User1, Assistant1, User2, Assistant2]
             assert_eq!(scroll_top.item_ix, 2);
+
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(Some(0), cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(scroll_top.item_ix, 0);
+
+            view.scroll_to_top(cx);
+            view.scroll_to_user_message_index(Some(2), cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(scroll_top.item_ix, 2);
         });
     }
 
