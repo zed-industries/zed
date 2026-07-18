@@ -18,7 +18,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    BackgroundExecutor, DismissEvent, KeyBinding, Task, TaskExt, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
@@ -212,6 +212,29 @@ fn test_edit_events(cx: &mut TestAppContext) {
         editor.backspace(&Backspace, window, cx);
     });
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+}
+
+#[gpui::test]
+fn test_modified_pending_keybinding_does_not_insert_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new("alt-g b", SelectAll, Some("Editor")),
+            KeyBinding::new("alt-s k", SelectAll, Some("Editor")),
+        ]);
+    });
+
+    let mut editor = EditorTestContext::new_multibuffer(cx, ["ˇabc"]);
+    editor.simulate_keystroke("alt-g->g");
+    assert_eq!(editor.buffer_text(), "abc");
+    editor.simulate_keystroke("escape");
+    assert_eq!(editor.buffer_text(), "abc");
+
+    let mut editor = EditorTestContext::new_multibuffer(cx, ["ˇabc"]);
+    editor.simulate_keystroke("alt-s->ß");
+    assert_eq!(editor.buffer_text(), "ßabc");
+    editor.simulate_keystroke("escape");
+    assert_eq!(editor.buffer_text(), "ßabc");
 }
 
 #[gpui::test]
