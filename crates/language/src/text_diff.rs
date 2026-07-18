@@ -157,10 +157,7 @@ impl OffsetUnifiedDiffBuilder<'_> {
 /// ranges.
 pub fn line_diff(old_text: &str, new_text: &str) -> Vec<(Range<u32>, Range<u32>)> {
     let mut edits = Vec::new();
-    let input = InternedInput::new(
-        lines(old_text),
-        lines(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
     diff_internal(&input, &mut |_, _, old_rows, new_rows| {
         edits.push((old_rows, new_rows));
     });
@@ -263,10 +260,7 @@ pub fn text_diff_with_options(
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
-    let input = InternedInput::new(
-        lines(old_text),
-        lines(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
     diff_internal(&input, &mut |old_byte_range,
                                 new_byte_range,
                                 old_rows,

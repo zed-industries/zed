@@ -11,10 +11,7 @@ fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)> {
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
-    let input = InternedInput::new(
-        lines(old_text),
-        lines(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
 
     diff_internal(&input, &mut |old_byte_range,
                                 new_byte_range,
