@@ -2307,7 +2307,7 @@ mod tests {
             Default::default(),
             &mut cx.to_async(),
         );
-        let project_uri = Uri::from_str("file:///path/to/my%20project/")
+        let project_uri = Uri::from_file_path(std::env::temp_dir().join("my project"))
             .expect("workspace folder URI should be valid");
         server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
 
