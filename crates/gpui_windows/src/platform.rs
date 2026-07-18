@@ -47,6 +47,9 @@ pub struct WindowsPlatform {
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
+    has_package_identity: bool,
+    app_identity: RefCell<Option<(String, String)>>,
+    system_notifications: RefCell<SystemNotificationState>,
 }
 
 struct WindowsPlatformInner {
@@ -197,8 +200,11 @@ impl WindowsPlatform {
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
+            has_package_identity: has_package_identity(),
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
+            app_identity: RefCell::new(None),
+            system_notifications: RefCell::new(SystemNotificationState::new()),
         })
     }
 
@@ -417,17 +423,6 @@ impl Platform for WindowsPlatform {
 
         self.inner
             .with_callback(|callbacks| &callbacks.quit, |callback| callback());
-
-        // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
-        // aws-lc registers an atexit handler that intentionally acquires a lock without releasing it.
-        // aws-lc also has thread_local objects which acquire this lock in their destructor.
-        // Destructors for thread_locals run under the loader lock, so there is a race condition
-        // where, if a thread exits after atexit handlers have run, the TLS destructors will block
-        // indefinitely on this lock while holding the loader lock. Since ExitProcess also requires
-        // the loader lock, process teardown will deadlock.
-        unsafe {
-            windows::Win32::System::Threading::ExitProcess(0);
-        }
     }
 
     fn quit(&self) {
@@ -644,6 +639,51 @@ impl Platform for WindowsPlatform {
                 .log_err()
             };
         }
+    }
+
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        // If the process has package identity, it's automatally granted an AUMID by the system.
+        if self.has_package_identity {
+            return;
+        }
+
+        let identifier_utf16 = windows::core::HSTRING::from(identifier);
+        // SAFETY: `identifier_utf16` outlives the call and is null-terminated.
+        if let Err(error) = unsafe {
+            windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                windows::core::PCWSTR(identifier_utf16.as_ptr()),
+            )
+        } {
+            log::warn!("failed to set the process AppUserModelID: {error}");
+        }
+        *self.app_identity.borrow_mut() = Some((identifier.to_string(), name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        let app_identity = self.app_identity.borrow().clone();
+        self.system_notifications
+            .borrow_mut()
+            .show(
+                self.has_package_identity,
+                app_identity
+                    .as_ref()
+                    .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
+                notification,
+            )
+            .log_err();
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.system_notifications.borrow_mut().dismiss(tag);
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        self.system_notifications
+            .borrow_mut()
+            .on_response(&self.foreground_executor, callback);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
@@ -1102,6 +1142,24 @@ struct PlatformWindowCreateContext {
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
+}
+
+fn has_package_identity() -> bool {
+    let mut package_full_name_length = 0;
+    let result = unsafe {
+        windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(
+            &mut package_full_name_length,
+            None,
+        )
+    };
+    if result == ERROR_INSUFFICIENT_BUFFER {
+        true
+    } else if result == APPMODEL_ERROR_NO_PACKAGE {
+        false
+    } else {
+        log::warn!("failed to determine whether the process has package identity: {result:?}");
+        false
+    }
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
