@@ -104,6 +104,27 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let intended_repo = workspace.project().read(cx).active_repository(cx);
+        Self::deploy_at_with_repository(workspace, intended_repo, entry, window, cx);
+    }
+
+    pub fn deploy_at_in_repository(
+        workspace: &mut Workspace,
+        repository: Entity<Repository>,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::deploy_at_with_repository(workspace, Some(repository), entry, window, cx);
+    }
+
+    fn deploy_at_with_repository(
+        workspace: &mut Workspace,
+        intended_repo: Option<Entity<Repository>>,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         telemetry::event!(
             "Git Diff Opened",
             source = if entry.is_some() {
@@ -112,7 +133,6 @@ impl ProjectDiff {
                 "Action"
             }
         );
-        let intended_repo = workspace.project().read(cx).active_repository(cx);
 
         let existing = workspace.items_of_type::<Self>(cx).next();
         let project_diff = if let Some(existing) = existing {
@@ -267,6 +287,22 @@ impl ProjectDiff {
     ) {
         self.diff
             .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
+    }
+
+    pub fn move_to_entry_in_repository(
+        &mut self,
+        repository: Entity<Repository>,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let needs_switch = self.repo(cx).map_or(true, |current| {
+            current.read(cx).id != repository.read(cx).id
+        });
+        if needs_switch {
+            self.set_repo(Some(repository), cx);
+        }
+        self.move_to_entry(entry, window, cx);
     }
 
     pub fn move_to_project_path(

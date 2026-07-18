@@ -728,6 +728,11 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub tree_view: Option<bool>,
 
+    /// Whether to show changes from every repository in the current project.
+    ///
+    /// Default: false
+    pub show_all_repositories: Option<bool>,
+
     /// Whether to show the addition/deletion change count next to each file in the Git panel.
     ///
     /// Default: true
