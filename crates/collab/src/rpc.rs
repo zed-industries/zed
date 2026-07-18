@@ -406,6 +406,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::TrashProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::RestoreProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::ExpandAllForProjectEntry>,

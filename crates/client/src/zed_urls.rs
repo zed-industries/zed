@@ -69,6 +69,23 @@ pub fn skills_docs(cx: &App) -> String {
     format!("{docs_url}/ai/skills", docs_url = docs_url(cx))
 }
 
+/// Returns the URL to Zed's Agent sandboxing documentation.
+///
+/// Pass `section` to deep-link to a specific section anchor on the page (for
+/// example, `Some("installing-bubblewrap")`); pass `None` to link to the top of
+/// the page.
+///
+/// Unlike the account/app links above, this targets `zed.dev/docs` (via
+/// [`release_channel::docs_url`]) rather than the configured `server_url`: the
+/// docs are a static site hosted on `zed.dev`, so pointing at a local dev
+/// `server_url` would 404.
+pub fn sandboxing_docs(section: Option<&str>, cx: &App) -> String {
+    let base = release_channel::docs_url("ai/sandboxing", cx);
+    match section {
+        Some(section) => format!("{base}#{section}"),
+        None => base,
+    }
+}
 pub fn llm_provider_docs(cx: &App) -> String {
     format!("{docs_url}/ai/llm-providers", docs_url = docs_url(cx))
 }
