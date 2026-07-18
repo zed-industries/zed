@@ -481,6 +481,8 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 /// Opens a new terminal in the center.
@@ -1779,6 +1781,9 @@ impl Workspace {
         let subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
+                if !window.is_window_active() {
+                    return;
+                }
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
@@ -10809,28 +10814,6 @@ async fn open_remote_project_inner(
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
-    let db = cx.update(|cx| WorkspaceDb::global(cx));
-    let toolchains = db.toolchains(workspace_id).await?;
-    for (toolchain, worktree_path, path) in toolchains {
-        project
-            .update(cx, |this, cx| {
-                let Some(worktree_id) =
-                    this.find_worktree(&worktree_path, cx)
-                        .and_then(|(worktree, rel_path)| {
-                            if rel_path.is_empty() {
-                                Some(worktree.read(cx).id())
-                            } else {
-                                None
-                            }
-                        })
-                else {
-                    return Task::ready(None);
-                };
-
-                this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-            })
-            .await;
-    }
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
@@ -10856,8 +10839,13 @@ async fn open_remote_project_inner(
 
     let workspace = window.update(cx, |multi_workspace, window, cx| {
         let new_workspace = cx.new(|cx| {
-            let mut workspace =
-                Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
+            let mut workspace = Workspace::new(
+                Some(workspace_id),
+                project.clone(),
+                app_state.clone(),
+                window,
+                cx,
+            );
             workspace.update_history(cx);
 
             if let Some(ref serialized) = serialized_workspace {
@@ -10879,6 +10867,29 @@ async fn open_remote_project_inner(
         }
         new_workspace
     })?;
+
+    let db = cx.update(|cx| WorkspaceDb::global(cx));
+    let toolchains = db.toolchains(workspace_id).await?;
+    for (toolchain, worktree_path, path) in toolchains {
+        project
+            .update(cx, |this, cx| {
+                let Some(worktree_id) =
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                else {
+                    return Task::ready(None);
+                };
+
+                this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
+            })
+            .await;
+    }
 
     let items = window
         .update(cx, |_, window, cx| {
@@ -11092,31 +11103,16 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
 
 /// Add client-side decorations (rounded corners, shadows, resize handling) when
 /// appropriate.
-///
-/// The `border_radius_tiling` parameter allows overriding which corners get
-/// rounded, independently of the actual window tiling state. This is used
-/// specifically for the workspace switcher sidebar: when the sidebar is open,
-/// we want square corners on the left (so the sidebar appears flush with the
-/// window edge) but we still need the shadow padding for proper visual
-/// appearance. Unlike actual window tiling, this only affects border radius -
-/// not padding or shadows.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
     cx: &mut App,
-    border_radius_tiling: Tiling,
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
-    };
-    let corner_tiling = Tiling {
-        top: tiling.top || border_radius_tiling.top,
-        bottom: tiling.bottom || border_radius_tiling.bottom,
-        left: tiling.left || border_radius_tiling.left,
-        right: tiling.right || border_radius_tiling.right,
     };
 
     match decorations {
@@ -11133,7 +11129,7 @@ pub fn client_side_decorations(
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { .. } => div
-                .rounded_client_corners(corner_tiling)
+                .rounded_client_corners(tiling)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -11188,7 +11184,7 @@ pub fn client_side_decorations(
                     Decorations::Server => div,
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .rounded_client_corners(corner_tiling)
+                        .rounded_client_corners(tiling)
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
