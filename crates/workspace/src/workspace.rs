@@ -2215,29 +2215,27 @@ impl Workspace {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
-    pub fn capture_dock_state(&self, _window: &Window, cx: &App) -> DockStructure {
+    pub fn capture_dock_state(&self, window: &Window, cx: &App) -> DockStructure {
         let left_dock = self.left_dock.read(cx);
         let left_visible = left_dock.is_open();
         let left_active_panel = left_dock
             .active_panel()
             .map(|panel| panel.persistent_name().to_string());
-        // `zoomed_position` is kept in sync with individual panel zoom state
-        // by the dock code in `Dock::new` and `Dock::add_panel`.
-        let left_dock_zoom = self.zoomed_position == Some(DockPosition::Left);
+        let left_dock_zoom = left_dock.zoomed_panel(window, cx).is_some();
 
         let right_dock = self.right_dock.read(cx);
         let right_visible = right_dock.is_open();
         let right_active_panel = right_dock
             .active_panel()
             .map(|panel| panel.persistent_name().to_string());
-        let right_dock_zoom = self.zoomed_position == Some(DockPosition::Right);
+        let right_dock_zoom = right_dock.zoomed_panel(window, cx).is_some();
 
         let bottom_dock = self.bottom_dock.read(cx);
         let bottom_visible = bottom_dock.is_open();
         let bottom_active_panel = bottom_dock
             .active_panel()
             .map(|panel| panel.persistent_name().to_string());
-        let bottom_dock_zoom = self.zoomed_position == Some(DockPosition::Bottom);
+        let bottom_dock_zoom = bottom_dock.zoomed_panel(window, cx).is_some();
 
         DockStructure {
             left: DockData {
@@ -4487,18 +4485,18 @@ impl Workspace {
             }
         }
 
-        // If another dock is zoomed, hide it.
+        // If another dock's panel is zoomed, drop the zoom overlay but keep the dock
+        // open at its normal size. The panel keeps its zoomed flag so the overlay is
+        // restored when it regains focus (see Dock's on_focus_in).
         let mut focus_center = false;
         for dock in self.all_docks() {
-            dock.update(cx, |dock, cx| {
-                if Some(dock.position()) != dock_to_reveal
-                    && let Some(panel) = dock.active_panel()
-                    && panel.is_zoomed(window, cx)
-                {
-                    focus_center |= panel.panel_focus_handle(cx).contains_focused(window, cx);
-                    dock.set_open(false, window, cx);
-                }
-            });
+            let dock = dock.read(cx);
+            if Some(dock.position()) != dock_to_reveal
+                && let Some(panel) = dock.active_panel()
+                && panel.is_zoomed(window, cx)
+            {
+                focus_center |= panel.panel_focus_handle(cx).contains_focused(window, cx);
+            }
         }
 
         if focus_center {
@@ -13345,18 +13343,8 @@ mod tests {
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
-        // Transfer focus to the center closes the dock
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(window, cx);
-        });
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(!workspace.right_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(window, cx));
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
-        });
-
-        // Transferring focus back to the panel keeps it zoomed
+        // Transfer focus to the center no longer closes the dock; it stays open at
+        // normal size and the fullscreen overlay is dropped.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
@@ -13364,6 +13352,19 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // Transferring focus back to the panel restores the zoomed overlay
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_some());
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
@@ -14923,13 +14924,16 @@ mod tests {
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
         });
 
-        // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
+        // If focus is transferred elsewhere in the workspace, the zoom overlay is
+        // dropped, but the dock stays open and the panel keeps its zoomed flag.
         workspace.update_in(cx, |_workspace, window, cx| {
             cx.focus_self(window);
         });
-        workspace.read_with(cx, |workspace, _| {
+        workspace.update_in(cx, |workspace, window, cx| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel_1.is_zoomed(window, cx));
         });
 
         // If focus is transferred again to another view that's not a panel or a pane, we won't
@@ -14940,8 +14944,11 @@ mod tests {
             assert_eq!(workspace.zoomed_position, None);
         });
 
-        // When the panel is activated, it is zoomed again.
-        cx.dispatch_action(ToggleRightDock);
+        // Focusing the panel again restores the zoom overlay.
+        workspace.update_in(cx, |_workspace, window, cx| {
+            let focus_handle = panel_1.read(cx).focus_handle(cx);
+            window.focus(&focus_handle, cx);
+        });
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
@@ -16872,6 +16879,188 @@ mod tests {
                 "Dock should stay open when its zoomed panel (without pane()) still has focus"
             );
             assert!(panel.is_zoomed(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_zoomed_dock_stays_open_when_other_dock_focused(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (right_panel, left_panel) = workspace.update_in(cx, |workspace, window, cx| {
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(right_panel.clone(), window, cx);
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.activate_panel(0, window, cx);
+                dock.set_open(true, window, cx);
+            });
+
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 101, cx));
+            workspace.add_panel(left_panel.clone(), window, cx);
+            workspace
+                .left_dock()
+                .update(cx, |dock, cx| dock.activate_panel(0, window, cx));
+
+            (right_panel, left_panel)
+        });
+
+        // Zoom the right panel, mirroring shift-escape on the agent panel.
+        right_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        // Focusing another dock (e.g. opening the Project Panel) must not close the
+        // zoomed dock - this is the scenario from issue #61226.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "zoomed dock must stay open when another dock is focused"
+            );
+            assert!(right_panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(
+                left_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+
+            let dock_state = workspace.capture_dock_state(window, cx);
+            assert!(
+                dock_state.right.zoom,
+                "the dormant zoom state must be persisted"
+            );
+        });
+
+        // A stray notify from the still-zoomed, unfocused panel (e.g. a streaming
+        // agent response) must not resurrect the fullscreen overlay.
+        right_panel.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
+            assert!(workspace.zoomed.is_none());
+        });
+
+        // Refocusing the panel restores the overlay.
+        workspace.update_in(cx, |_workspace, window, cx| {
+            let focus_handle = right_panel.read(cx).focus_handle(cx);
+            window.focus(&focus_handle, cx);
+        });
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            assert_eq!(workspace.zoomed, Some(right_panel.to_any().downgrade()));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_moving_dormant_zoomed_panel_does_not_restore_overlay(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.activate_panel(0, window, cx);
+                dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(workspace.zoomed_position.is_none());
+        });
+
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            panel.update(cx, |panel, _| panel.position = DockPosition::Bottom);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(workspace.zoomed_position.is_none());
+        });
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            window.focus(&panel.read(cx).focus_handle(cx), cx);
+        });
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, Some(panel.to_any().downgrade()));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Bottom));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dismiss_keeps_zoomed_dock_open_and_moves_focus(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.activate_panel(0, window, cx);
+                dock.set_open(true, window, cx);
+            });
+            panel
+        });
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(panel.is_zoomed(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert!(workspace.zoomed.is_some());
+            workspace.dismiss_zoomed_items_to_reveal(Some(DockPosition::Right), window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                workspace.bottom_dock().read(cx).is_open(),
+                "dismissing a zoomed panel should keep its dock open"
+            );
+            assert!(panel.is_zoomed(window, cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(
+                !panel.read(cx).focus_handle(cx).contains_focused(window, cx),
+                "focus should move away from the dismissed panel"
+            );
+            assert!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
         });
     }
 

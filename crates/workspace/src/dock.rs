@@ -453,9 +453,18 @@ impl Dock {
                 && let Some(panel) = dock.read(cx).active_panel()
                 && panel.is_zoomed(window, cx)
             {
-                workspace.zoomed = Some(panel.to_any().downgrade());
-                workspace.zoomed_position = Some(position);
-                cx.emit(Event::ZoomChanged);
+                // A zoomed panel can stay open at normal dock size while focus is
+                // elsewhere (see dismiss_zoomed_items_to_reveal), so a stray notify
+                // (e.g. a streaming agent panel) must not resurrect the fullscreen
+                // overlay unless it's already attributed to this dock or the panel
+                // actually has focus.
+                if workspace.zoomed_position == Some(position)
+                    || panel.panel_focus_handle(cx).contains_focused(window, cx)
+                {
+                    workspace.zoomed = Some(panel.to_any().downgrade());
+                    workspace.zoomed_position = Some(position);
+                    cx.emit(Event::ZoomChanged);
+                }
                 return;
             }
             if workspace.zoomed_position == Some(position) {
@@ -596,8 +605,8 @@ impl Dock {
                         return;
                     }
 
-                    let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
-                        if panel.is_zoomed(window, cx) {
+                    let Ok(new_dock) = workspace.update(cx, |workspace, _cx| {
+                        if workspace.zoomed_position == Some(this.position) {
                             workspace.zoomed_position = Some(new_position);
                         }
                         match new_position {
@@ -764,7 +773,26 @@ impl Dock {
             if serialized.zoom
                 && let Some(panel) = self.active_panel()
             {
-                panel.set_zoomed(true, window, cx)
+                panel.set_zoomed(true, window, cx);
+                if serialized.visible {
+                    // The observer in Dock::new only re-derives `workspace.zoomed` from
+                    // state when the overlay is already attributed to this dock or the
+                    // panel has focus, so on startup we need to attribute it explicitly.
+                    // Deferred because `restore_state` runs inside `Workspace::add_panel`,
+                    // which is already updating the workspace.
+                    let workspace = self.workspace.clone();
+                    let panel = panel.to_any().downgrade();
+                    let position = self.position;
+                    window.defer(cx, move |_, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.zoomed = Some(panel);
+                                workspace.zoomed_position = Some(position);
+                                cx.emit(Event::ZoomChanged);
+                            })
+                            .ok();
+                    });
+                }
             }
             self.set_open(serialized.visible, window, cx);
             return true;
