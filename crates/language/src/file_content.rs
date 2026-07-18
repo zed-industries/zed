@@ -111,6 +111,7 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
 // ranges or form unpaired surrogates, which real text almost never contains.
 fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
     let mut suspicious_count = 0usize;
+    let mut word_like_count = 0usize;
     let mut total = 0usize;
 
     let mut i = 0;
@@ -119,6 +120,9 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
 
         match code_unit {
             0x0009 | 0x000A | 0x000C | 0x000D => {}
+            0x0020 | 0x0030..=0x0039 | 0x0041..=0x005A | 0x0061..=0x007A => {
+                word_like_count += 1;
+            }
             // C0/C1 control characters and non-characters
             0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
             0xD800..=0xDBFF => {
@@ -146,7 +150,17 @@ fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
 
     // Real UTF-16 text has near-zero control characters; binary data with
     // small 16-bit values typically exceeds 5%. 2% provides a safe margin.
-    suspicious_count * 100 < total * 2
+    let low_control_ratio = suspicious_count * 100 < total * 2;
+
+    // Binary formats that interleave short ASCII fragments with small
+    // length/type fields (e.g. game asset formats) can dodge the control
+    // character check above while barely containing any real words: most
+    // "characters" land on stray symbol/high-byte values rather than
+    // letters, digits, or spaces. Real UTF-16 text is overwhelmingly made
+    // of those, so require a minimum share of them too.
+    let enough_word_chars = word_like_count * 100 >= total * 30;
+
+    low_control_ratio && enough_word_chars
 }
 
 fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
