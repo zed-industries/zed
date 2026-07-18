@@ -188,20 +188,34 @@ impl Pasteboard {
                         text: String::new(),
                         metadata: None,
                     };
+                    let mut html_content: Option<String> = None;
 
-                    for entry in item.entries {
+                    for entry in &item.entries {
                         match entry {
                             ClipboardEntry::String(text) => {
                                 combined.text.push_str(&text.text());
                                 if combined.metadata.is_none() {
-                                    combined.metadata = text.metadata;
+                                    combined.metadata = text.metadata.clone();
                                 }
+                            }
+                            ClipboardEntry::Html(html) => {
+                                html_content = Some(html.clone());
                             }
                             _ => {}
                         }
                     }
 
                     self.write_plaintext(&combined);
+
+                    if let Some(html) = html_content {
+                        let html_type = ns_string("public.html");
+                        let html_bytes = NSData::dataWithBytes_length_(
+                            nil,
+                            html.as_ptr() as *const c_void,
+                            html.len() as u64,
+                        );
+                        self.inner.setData_forType(html_bytes, html_type);
+                    }
                 }
             }
         }

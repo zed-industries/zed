@@ -740,7 +740,7 @@ prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
 pollster = "0.4.0"
-pulldown-cmark = { version = "0.13.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false, features = ["html"] }
 quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
