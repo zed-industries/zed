@@ -186,7 +186,7 @@ impl ManifestTree {
             .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
             .unwrap_or_else(|| ProjectPath {
                 worktree_id,
-                path: RelPath::empty().into(),
+                path: RelPath::empty_arc(),
             })
     }
 

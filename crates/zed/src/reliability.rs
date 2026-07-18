@@ -2,9 +2,8 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, AppContext as _, SerializedThreadTaskTimings, TaskExt};
-use http_client::{self, AsyncBody, HttpClient, Request};
-use log::info;
+use gpui::{App, AppContext, TaskExt};
+use http_client::{AsyncBody, HttpClient, Request};
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::{
@@ -13,20 +12,20 @@ use reqwest::{
 };
 use serde::Deserialize;
 use smol::stream::StreamExt;
-use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
-use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+use std::{
+    ffi::OsStr,
+    fs,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use util::ResultExt;
 
-use crate::STARTUP_TIME;
-
-const MAX_HANG_TRACES: usize = 3;
+mod hang_detection;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    if cfg!(debug_assertions) {
-        log::info!("Debug assertions enabled, skipping hang monitoring");
-    } else {
-        monitor_hangs(cx);
-    }
+    hang_detection::start(client.clone(), cx);
+    start_memory_usage_logging(cx);
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -89,134 +88,60 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     .detach();
 }
 
-fn monitor_hangs(cx: &App) {
-    let main_thread_id = std::thread::current().id();
+const MEMORY_USAGE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const MEMORY_USAGE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10 * 60);
+const MEMORY_USAGE_MINIMUM_LOGGED_DELTA: u64 = 64 * 1024 * 1024;
 
-    let foreground_executor = cx.foreground_executor();
-    let background_executor = cx.background_executor();
-
-    // 3 seconds hang
-    let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
-    foreground_executor
-        .spawn(async move { while (rx.next().await).is_some() {} })
-        .detach();
-
-    background_executor
-        .spawn({
-            let background_executor = background_executor.clone();
-            async move {
-                cleanup_old_hang_traces();
-
-                let mut hang_time = None;
-
-                let mut hanging = false;
-                loop {
-                    background_executor.timer(Duration::from_secs(1)).await;
-                    match tx.try_send(()) {
-                        Ok(_) => {
-                            hang_time = None;
-                            hanging = false;
-                            continue;
+/// Periodically logs this process' memory usage, so that gradual memory growth can be
+///
+/// Logs on a fixed heartbeat, and additionally whenever resident memory changed
+/// significantly since the last logged value, so that bursts of growth are timestamped
+/// against the surrounding log entries.
+fn start_memory_usage_logging(cx: &App) {
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        let Some(pid) = sysinfo::get_current_pid().log_err() else {
+            return;
+        };
+        let refresh_kind = ProcessRefreshKind::nothing().with_memory();
+        let mut system = System::new();
+        let mut last_logged_resident: Option<u64> = None;
+        let mut last_logged_at = Instant::now();
+        loop {
+            let refreshed = system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                false,
+                refresh_kind,
+            );
+            if refreshed == 1
+                && let Some(process) = system.process(pid)
+            {
+                let resident = process.memory();
+                let significant_change = last_logged_resident.is_none_or(|last| {
+                    resident.abs_diff(last) >= (last / 10).max(MEMORY_USAGE_MINIMUM_LOGGED_DELTA)
+                });
+                if significant_change || last_logged_at.elapsed() >= MEMORY_USAGE_HEARTBEAT_INTERVAL
+                {
+                    const MIB: u64 = 1024 * 1024;
+                    let delta = match last_logged_resident {
+                        Some(last) => {
+                            format!(" ({:+} MiB)", (resident as i64 - last as i64) / MIB as i64)
                         }
-                        Err(e) => {
-                            let is_full = e.into_send_error().is_full();
-                            if is_full && !hanging {
-                                hanging = true;
-                                hang_time = Some(chrono::Local::now());
-                            }
-
-                            if is_full {
-                                save_hang_trace(
-                                    main_thread_id,
-                                    &background_executor,
-                                    hang_time.unwrap(),
-                                );
-                            }
-                        }
-                    }
+                        None => String::new(),
+                    };
+                    log::info!(
+                        "memory usage: resident {} MiB{delta}, virtual {} MiB",
+                        resident / MIB,
+                        process.virtual_memory() / MIB,
+                    );
+                    last_logged_resident = Some(resident);
+                    last_logged_at = Instant::now();
                 }
             }
-        })
-        .detach();
-}
-
-fn cleanup_old_hang_traces() {
-    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
-            })
-            .collect();
-
-        if files.len() > MAX_HANG_TRACES {
-            files.sort_by_key(|entry| entry.file_name());
-            for entry in files.iter().take(files.len() - MAX_HANG_TRACES) {
-                std::fs::remove_file(entry.path()).log_err();
-            }
+            executor.timer(MEMORY_USAGE_POLL_INTERVAL).await;
         }
-    }
-}
-
-fn save_hang_trace(
-    main_thread_id: ThreadId,
-    background_executor: &gpui::BackgroundExecutor,
-    hang_time: chrono::DateTime<chrono::Local>,
-) {
-    let thread_timings = background_executor.dispatcher().get_all_timings();
-    let thread_timings = thread_timings
-        .into_iter()
-        .map(|mut timings| {
-            if timings.thread_id == main_thread_id {
-                timings.thread_name = Some("main".to_string());
-            }
-
-            SerializedThreadTaskTimings::convert(*STARTUP_TIME.get().unwrap(), timings)
-        })
-        .collect::<Vec<_>>();
-
-    let trace_path = paths::hang_traces_dir().join(&format!(
-        "hang-{}.miniprof.json",
-        hang_time.format("%Y-%m-%d_%H-%M-%S")
-    ));
-
-    let Some(timings) = serde_json::to_string(&thread_timings)
-        .context("hang timings serialization")
-        .log_err()
-    else {
-        return;
-    };
-
-    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
-            })
-            .collect();
-
-        if files.len() >= MAX_HANG_TRACES {
-            files.sort_by_key(|entry| entry.file_name());
-            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
-                std::fs::remove_file(entry.path()).log_err();
-            }
-        }
-    }
-
-    std::fs::write(&trace_path, timings)
-        .context("hang trace file writing")
-        .log_err();
-
-    info!(
-        "hang detected, trace file saved at: {}",
-        trace_path.display()
-    );
+    })
+    .detach();
 }
 
 pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()> {
@@ -294,6 +219,21 @@ async fn upload_minidump(
     }
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
+    }
+    if let Some(abort_message) = metadata.abort_message.as_ref() {
+        // Sentry tag values are limited to 200 characters on a single line, so
+        // put a searchable prefix in the tag (which grouping rules also match
+        // on) and the full message in a context.
+        let tag: String = abort_message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect();
+        form = form
+            .text("sentry[tags][abort_message]", tag)
+            .text("sentry[contexts][abort][message]", abort_message.clone());
     }
 
     if let Some(is_staff) = &metadata

@@ -22,7 +22,7 @@ pub use conditional::*;
 mod conditional {
     use super::*;
     use crate::{AnyElement, App, Context, Empty, IntoElement, Render, Window};
-    use collections::FxHashMap;
+    use collections::{FxHashMap, TypeIdHashMap};
     use std::any::{Any, TypeId};
 
     /// `GlobalElementId` qualified by source location of element construction.
@@ -64,14 +64,14 @@ mod conditional {
 
     struct InspectedElement {
         id: InspectorElementId,
-        states: FxHashMap<TypeId, Box<dyn Any>>,
+        states: TypeIdHashMap<Box<dyn Any>>,
     }
 
     impl InspectedElement {
         fn new(id: InspectorElementId) -> Self {
             InspectedElement {
                 id,
-                states: FxHashMap::default(),
+                states: Default::default(),
             }
         }
     }

@@ -220,7 +220,7 @@ impl TerminalToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -230,6 +230,10 @@ impl TerminalToolTest {
                 available_tools: tool_names,
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
+                sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             template.render(&Templates::new())?
         };
@@ -323,7 +327,9 @@ async fn extract_tool_use(
             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
                 if tool_use.is_input_complete && tool_use.name.as_ref() == TerminalTool::NAME =>
             {
-                let input: TerminalToolInput = serde_json::from_value(tool_use.input)
+                let input: TerminalToolInput = tool_use
+                    .input
+                    .parse()
                     .context("Failed to parse tool input as TerminalToolInput")?;
                 return Ok(input);
             }

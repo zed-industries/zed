@@ -3,7 +3,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
+use crate::{
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, SharedString,
+};
 
 /// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,8 +18,6 @@ pub struct ImageSize {
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
     pub source: SharedString,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<ImageSize>,
 }
 
 impl LanguageModelImage {
@@ -30,57 +30,24 @@ impl LanguageModelImage {
     }
 
     pub fn empty() -> Self {
-        Self {
-            source: "".into(),
-            size: None,
-        }
+        Self { source: "".into() }
     }
 
     /// Parse Self from a JSON object with case-insensitive field names
     pub fn from_json(obj: &serde_json::Map<String, serde_json::Value>) -> Option<Self> {
         let mut source = None;
-        let mut size_obj = None;
 
         for (k, v) in obj.iter() {
             match k.to_lowercase().as_str() {
                 "source" => source = v.as_str(),
-                "size" => size_obj = v.as_object(),
                 _ => {}
             }
         }
 
         let source = source?;
-        let size_obj = size_obj?;
-
-        let mut width = None;
-        let mut height = None;
-
-        for (k, v) in size_obj.iter() {
-            match k.to_lowercase().as_str() {
-                "width" => width = v.as_i64().map(|w| w as i32),
-                "height" => height = v.as_i64().map(|h| h as i32),
-                _ => {}
-            }
-        }
-
         Some(Self {
-            size: Some(ImageSize {
-                width: width?,
-                height: height?,
-            }),
             source: SharedString::from(source.to_string()),
         })
-    }
-
-    pub fn estimate_tokens(&self) -> usize {
-        let Some(size) = self.size.as_ref() else {
-            return 0;
-        };
-        let width = size.width.unsigned_abs() as usize;
-        let height = size.height.unsigned_abs() as usize;
-
-        // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
-        (width * height) / 750
     }
 
     pub fn to_base64_url(&self) -> String {
@@ -92,7 +59,6 @@ impl std::fmt::Debug for LanguageModelImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageModelImage")
             .field("source", &format!("<{} bytes>", self.source.len()))
-            .field("size", &self.size)
             .finish()
     }
 }
@@ -296,6 +262,19 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
+    Compaction(CompactionContent),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum CompactionContent {
+    Pending,
+    Summary {
+        content: Option<Arc<str>>,
+    },
+    Encrypted {
+        id: Option<Arc<str>>,
+        encrypted_content: Arc<str>,
+    },
 }
 
 impl MessageContent {
@@ -306,7 +285,8 @@ impl MessageContent {
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Image(_) => false,
+            | MessageContent::Image(_)
+            | MessageContent::Compaction(_) => false,
         }
     }
 }
@@ -329,7 +309,7 @@ pub struct LanguageModelRequestMessage {
     pub content: Vec<MessageContent>,
     pub cache: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<serde_json::Value>,
+    pub reasoning_details: Option<Arc<serde_json::Value>>,
 }
 
 impl LanguageModelRequestMessage {
@@ -352,7 +332,8 @@ impl LanguageModelRequestMessage {
                 }
                 MessageContent::RedactedThinking(_)
                 | MessageContent::ToolUse(_)
-                | MessageContent::Image(_) => {}
+                | MessageContent::Image(_)
+                | MessageContent::Compaction(_) => {}
             }
         }
         buffer
@@ -367,8 +348,52 @@ impl LanguageModelRequestMessage {
 pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
-    pub input_schema: serde_json::Value,
-    pub use_input_streaming: bool,
+    pub input: LanguageModelRequestToolInput,
+}
+
+impl LanguageModelRequestTool {
+    pub fn function(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            input: LanguageModelRequestToolInput::Function {
+                input_schema,
+                use_input_streaming,
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelRequestToolInput {
+    Function {
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    },
+    Custom {
+        format: Option<LanguageModelCustomToolFormat>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCustomToolFormat {
+    Text,
+    Grammar {
+        syntax: LanguageModelCustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageModelCustomToolGrammarSyntax {
+    Lark,
+    Regex,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
@@ -406,6 +431,27 @@ pub struct LanguageModelRequest {
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_at_tokens: Option<u64>,
+}
+
+impl LanguageModelRequest {
+    pub fn contains_custom_tool_input(&self) -> bool {
+        self.tools
+            .iter()
+            .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+            || self.messages.iter().any(|message| {
+                message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            input: LanguageModelToolUseInput::Text(_),
+                            ..
+                        })
+                    )
+                })
+            })
+    }
 }
 
 #[derive(
@@ -474,15 +520,11 @@ mod tests {
         // Test image object
         let json = serde_json::json!({
             "source": "base64encodedimagedata",
-            "size": {"width": 100, "height": 200}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "base64encodedimagedata");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 100);
-                assert_eq!(size.height, 200);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -491,16 +533,12 @@ mod tests {
         let json = serde_json::json!({
             "image": {
                 "source": "wrappedimagedata",
-                "size": {"width": 50, "height": 75}
             }
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "wrappedimagedata");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 50);
-                assert_eq!(size.height, 75);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -508,15 +546,11 @@ mod tests {
         // Test case insensitive
         let json = serde_json::json!({
             "Source": "caseinsensitive",
-            "Size": {"Width": 30, "Height": 40}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "caseinsensitive");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 30);
-                assert_eq!(size.height, 40);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -524,15 +558,11 @@ mod tests {
         // Test direct image object
         let json = serde_json::json!({
             "source": "directimage",
-            "size": {"width": 200, "height": 300}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "directimage");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 200);
-                assert_eq!(size.height, 300);
             }
             _ => panic!("Expected Image variant"),
         }

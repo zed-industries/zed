@@ -5,10 +5,10 @@ use std::path::Path;
 use std::process;
 
 use edit_prediction_metrics::{
-    ClassificationMetrics, DeltaChrFMetrics, KeptRateResult, TokenAnnotation,
-    annotate_kept_rate_tokens, braces_disbalance, compute_kept_rate, count_patch_token_changes,
-    delta_chr_f, exact_lines_match, extract_changed_lines_from_diff,
-    has_isolated_whitespace_changes, is_editable_region_correct,
+    ClassificationMetrics, DeltaChrFMetrics, EditableContextCoverage, Excerpt, KeptRateResult,
+    TokenAnnotation, annotate_kept_rate_tokens, braces_disbalance, compute_kept_rate,
+    count_patch_token_changes, delta_chr_f, editable_context_coverage, exact_lines_match,
+    extract_changed_lines_from_diff, has_isolated_whitespace_changes, is_editable_region_correct,
 };
 use serde::Deserialize;
 
@@ -41,10 +41,18 @@ fn run() -> Result<(), String> {
             let actual_patch = fs::read_to_string(&actual_patch_path)
                 .map_err(|err| format!("failed to read {}: {err}", actual_patch_path.display()))?;
 
-            let expected = apply_patch_to_excerpt(&base, &expected_patch, 0)?;
-            let actual = apply_patch_to_excerpt(&base, &actual_patch, 0)?;
+            let expected = apply_patch_to_excerpt(&base, &expected_patch, 0, None)?;
+            let actual = apply_patch_to_excerpt(&base, &actual_patch, 0, None)?;
+            let context = [];
 
-            EvaluationReport::new(base, expected_patch, actual_patch, expected, actual)
+            EvaluationReport::new(
+                base,
+                expected_patch,
+                actual_patch,
+                expected,
+                actual,
+                &context,
+            )
         }
         CliInput::Json {
             json_path,
@@ -55,31 +63,83 @@ fn run() -> Result<(), String> {
             let example: JsonExample = serde_json::from_str(&json)
                 .map_err(|err| format!("failed to parse {}: {err}", json_path.display()))?;
 
-            let base = example.prompt_inputs.cursor_excerpt;
-            let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
-            let expected_patch = example
-                .expected_patches
-                .into_iter()
-                .next()
-                .ok_or_else(|| "JSON input is missing expected_patches[0]".to_string())?;
-            let actual_patch = example
-                .predictions
-                .into_iter()
-                .nth(prediction_index)
-                .ok_or_else(|| {
-                    format!("JSON input does not contain predictions[{prediction_index}]")
-                })?
-                .actual_patch;
-
-            let expected = apply_patch_to_excerpt(&base, &expected_patch, excerpt_start_row)?;
-            let actual = apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row)?;
-
-            EvaluationReport::new(base, expected_patch, actual_patch, expected, actual)
+            report_from_json_example(example, prediction_index)?
         }
     };
 
     print_report(&report);
     Ok(())
+}
+
+fn get_context_excerpts(example: &JsonExample) -> Vec<Excerpt> {
+    let mut context = vec![get_cursor_excerpt(example)];
+
+    if let Some(related) = &example.prompt_inputs.related_files {
+        context.extend(related.iter().flat_map(|file| {
+            file.excerpts.iter().map(|excerpt| Excerpt {
+                path: file.path.clone(),
+                row_range: excerpt.row_range.clone(),
+                content: excerpt.text.clone(),
+            })
+        }));
+    }
+
+    context
+}
+
+fn get_cursor_excerpt(example: &JsonExample) -> Excerpt {
+    let content = example.prompt_inputs.cursor_excerpt.clone();
+    let start_row = example.prompt_inputs.excerpt_start_row;
+    let rows = content.lines().count() as u32;
+    let row_range = start_row..start_row + rows;
+    Excerpt {
+        path: example.cursor_path.clone(),
+        row_range,
+        content,
+    }
+}
+
+fn report_from_json_example(
+    example: JsonExample,
+    prediction_index: usize,
+) -> Result<EvaluationReport, String> {
+    let context = get_context_excerpts(&example);
+    let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
+    let cursor_path = example.cursor_path;
+    let base = example.prompt_inputs.cursor_excerpt;
+    let expected_patch = example
+        .expected_patches
+        .into_iter()
+        .next()
+        .ok_or_else(|| "JSON input is missing expected_patches[0]".to_string())?;
+    let actual_patch = if example.predictions.is_empty() {
+        String::new()
+    } else {
+        example
+            .predictions
+            .into_iter()
+            .nth(prediction_index)
+            .ok_or_else(|| format!("JSON input does not contain predictions[{prediction_index}]"))?
+            .actual_patch
+    };
+
+    let expected = apply_patch_to_excerpt(
+        &base,
+        &expected_patch,
+        excerpt_start_row,
+        Some(&cursor_path),
+    )?;
+    let actual =
+        apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row, Some(&cursor_path))?;
+
+    Ok(EvaluationReport::new(
+        base,
+        expected_patch,
+        actual_patch,
+        expected,
+        actual,
+        &context,
+    ))
 }
 
 fn print_usage() {
@@ -199,6 +259,7 @@ struct EvaluationReport {
     editable_region_correct: bool,
     expected_braces_disbalance: usize,
     actual_braces_disbalance: usize,
+    editable_context_coverage: EditableContextCoverage,
 }
 
 impl EvaluationReport {
@@ -208,6 +269,7 @@ impl EvaluationReport {
         actual_patch: String,
         expected: String,
         actual: String,
+        context: &[Excerpt],
     ) -> Self {
         let kept_rate = compute_kept_rate(&base, &actual, &expected);
         let exact_lines = exact_lines_match(&expected_patch, &actual_patch);
@@ -223,6 +285,7 @@ impl EvaluationReport {
         let editable_region_correct = is_editable_region_correct(&actual_patch);
         let expected_braces_disbalance = braces_disbalance(&expected);
         let actual_braces_disbalance = braces_disbalance(&actual);
+        let editable_context_coverage = editable_context_coverage(&expected_patch, context);
 
         Self {
             base,
@@ -238,6 +301,7 @@ impl EvaluationReport {
             editable_region_correct,
             expected_braces_disbalance,
             actual_braces_disbalance,
+            editable_context_coverage,
         }
     }
 }
@@ -319,6 +383,27 @@ fn print_report(report: &EvaluationReport) {
     println!();
 
     print_kept_rate_explanation(&report.base, &report.actual, &report.expected);
+
+    println!("Jumps metrics");
+    println!("-------------");
+    println!(
+        "Editable context lines: P={}%, R={}%, F1={}% (tp: {}, fp: {}, fn: {})",
+        (report.editable_context_coverage.lines_precision * 100.0).round(),
+        (report.editable_context_coverage.lines_recall * 100.0).round(),
+        (report.editable_context_coverage.lines_f1 * 100.0).round(),
+        report.editable_context_coverage.lines_tp,
+        report.editable_context_coverage.lines_fp,
+        report.editable_context_coverage.lines_fn
+    );
+    println!(
+        "Editable context files: P={}%, R={}%, F1={}% (tp: {}, fp: {}, fn: {})",
+        (report.editable_context_coverage.files_precision * 100.0).round(),
+        (report.editable_context_coverage.files_recall * 100.0).round(),
+        (report.editable_context_coverage.files_f1 * 100.0).round(),
+        report.editable_context_coverage.files_tp,
+        report.editable_context_coverage.files_fp,
+        report.editable_context_coverage.files_fn
+    );
 }
 
 fn print_kept_rate_explanation(base: &str, actual: &str, expected: &str) {
@@ -373,7 +458,9 @@ fn visualize_whitespace(token: &str) -> String {
 #[derive(Debug, Deserialize)]
 struct JsonExample {
     prompt_inputs: PromptInputs,
+    cursor_path: String,
     expected_patches: Vec<String>,
+    #[serde(default)]
     predictions: Vec<Prediction>,
 }
 
@@ -381,6 +468,20 @@ struct JsonExample {
 struct PromptInputs {
     cursor_excerpt: String,
     excerpt_start_row: u32,
+    pub related_files: Option<Vec<RelatedFile>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct RelatedFile {
+    pub path: String,
+    pub max_row: u32,
+    pub excerpts: Vec<RelatedExcerpt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct RelatedExcerpt {
+    pub row_range: std::ops::Range<u32>,
+    pub text: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -391,6 +492,7 @@ struct Prediction {
 #[derive(Debug, Clone)]
 struct ParsedHunk {
     old_start: u32,
+    filename: Option<String>,
     lines: Vec<HunkLine>,
 }
 
@@ -405,8 +507,20 @@ fn apply_patch_to_excerpt(
     base: &str,
     patch: &str,
     excerpt_start_row: u32,
+    target_path: Option<&str>,
 ) -> Result<String, String> {
     let hunks = parse_diff_hunks(patch);
+    let hunks = if let Some(target_path) = target_path {
+        hunks
+            .into_iter()
+            .filter(|hunk| match hunk.filename.as_deref() {
+                Some(filename) => filename == target_path,
+                None => true,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        hunks
+    };
 
     let result = try_apply_hunks(base, &hunks, excerpt_start_row);
 
@@ -598,6 +712,7 @@ fn filter_hunk_to_excerpt(
 
     Some(ParsedHunk {
         old_start: filtered_old_start.unwrap_or(excerpt_start_row),
+        filename: hunk.filename.clone(),
         lines: filtered_lines,
     })
 }
@@ -605,8 +720,14 @@ fn filter_hunk_to_excerpt(
 fn parse_diff_hunks(diff: &str) -> Vec<ParsedHunk> {
     let mut hunks = Vec::new();
     let mut current_hunk: Option<ParsedHunk> = None;
+    let mut current_filename = None;
 
     for line in diff.lines() {
+        if let Some(filename) = parse_diff_filename(line) {
+            current_filename = Some(filename);
+            continue;
+        }
+
         if let Some((old_start, old_count, _new_start, _new_count)) = parse_hunk_header(line) {
             if let Some(hunk) = current_hunk.take() {
                 hunks.push(hunk);
@@ -614,6 +735,7 @@ fn parse_diff_hunks(diff: &str) -> Vec<ParsedHunk> {
             let _ = old_count;
             current_hunk = Some(ParsedHunk {
                 old_start,
+                filename: current_filename.clone(),
                 lines: Vec::new(),
             });
             continue;
@@ -664,6 +786,27 @@ fn parse_hunk_range(part: &str) -> Option<(u32, u32)> {
     }
 }
 
+fn parse_diff_filename(line: &str) -> Option<String> {
+    let path = line
+        .strip_prefix("--- ")
+        .or_else(|| line.strip_prefix("+++ "))?;
+    normalize_diff_path(path)
+}
+
+fn normalize_diff_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
+
+    if path == "/dev/null" {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,7 +816,7 @@ mod tests {
         let base = "fn main() {\n    println!(\"hello\");\n}\n";
         let patch = "@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"hello\");\n+    println!(\"world\");\n }\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 0).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 0, None).unwrap();
         assert_eq!(actual, "fn main() {\n    println!(\"world\");\n}\n");
     }
 
@@ -682,7 +825,7 @@ mod tests {
         let base = "b\nc\nd\n";
         let patch = "@@ -2,2 +2,2 @@\n-b\n-c\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 1).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 1, None).unwrap();
         assert_eq!(actual, "x\ny\nd\n");
     }
 
@@ -693,7 +836,7 @@ mod tests {
         // even though the excerpt starts at file row 100.
         let patch = "@@ -2,2 +2,2 @@\n-b\n-c\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 100).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 100, None).unwrap();
         assert_eq!(actual, "a\nx\ny\nd\n");
     }
 
@@ -704,7 +847,87 @@ mod tests {
         // hunk targets line 6 (1-based) = row 5 (0-based) = first line.
         let patch = "@@ -6,2 +6,2 @@\n-a\n-b\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 5).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 5, None).unwrap();
         assert_eq!(actual, "x\ny\nc\n");
+    }
+
+    #[test]
+    fn json_patch_application_ignores_unrelated_file_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "--- a/src/other.rs\n+++ b/src/other.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, base);
+    }
+
+    #[test]
+    fn json_patch_application_applies_matching_file_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, "first\nchanged\nthird\n");
+    }
+
+    #[test]
+    fn json_patch_application_applies_headerless_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, "first\nchanged\nthird\n");
+    }
+
+    fn json_example(predictions: Option<&str>) -> String {
+        let predictions = predictions
+            .map(|predictions| {
+                format!(
+                    r#",
+    "predictions": {predictions}"#
+                )
+            })
+            .unwrap_or_default();
+
+        format!(
+            r#"{{
+    "prompt_inputs": {{
+        "cursor_excerpt": "first\nsecond\nthird\n",
+        "excerpt_start_row": 0
+    }},
+    "cursor_path": "src/main.rs",
+    "expected_patches": [
+        "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n"
+    ]{predictions}
+}}"#
+        )
+    }
+
+    fn report_from_json(predictions: Option<&str>) -> EvaluationReport {
+        let example = serde_json::from_str(&json_example(predictions)).unwrap();
+        report_from_json_example(example, 0).unwrap()
+    }
+
+    #[test]
+    fn json_report_with_missing_predictions_uses_expected_patch_for_context_coverage() {
+        let report = report_from_json(None);
+
+        assert_eq!(report.actual, "first\nsecond\nthird\n");
+        assert_eq!(report.actual_changed_lines, 0);
+        assert_eq!(
+            report.editable_context_coverage,
+            EditableContextCoverage::new(3, 0, 0, 1, 0, 0)
+        );
+    }
+
+    #[test]
+    fn json_report_with_empty_predictions_uses_expected_patch_for_context_coverage() {
+        let report = report_from_json(Some("[]"));
+
+        assert_eq!(report.actual, "first\nsecond\nthird\n");
+        assert_eq!(report.actual_changed_lines, 0);
+        assert_eq!(
+            report.editable_context_coverage,
+            EditableContextCoverage::new(3, 0, 0, 1, 0, 0)
+        );
     }
 }

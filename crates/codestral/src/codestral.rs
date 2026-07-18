@@ -2,6 +2,7 @@ use anyhow::Result;
 use edit_prediction::cursor_excerpt;
 use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+    EditPredictionRequestTrigger,
 };
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
@@ -81,9 +82,10 @@ struct CurrentCompletion {
 
 impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
-    /// Returns None if the user's edits conflict with the predicted edits.
+    /// Returns None if no predicted edits remain or the user's edits conflict with the predicted edits.
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction_types::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+            .filter(|edits| !edits.is_empty())
     }
 }
 
@@ -222,6 +224,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         log::debug!("Codestral: Refresh called (debounce: {})", debounce);

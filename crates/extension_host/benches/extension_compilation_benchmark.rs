@@ -4,7 +4,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use extension::{
     ExtensionCapability, ExtensionHostProxy, ExtensionLibraryKind, ExtensionManifest,
     LanguageServerManifestEntry, LibManifestEntry, SchemaVersion,
-    extension_builder::{CompileExtensionOptions, ExtensionBuilder},
+    extension_builder::{CompilationConcurrency, CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
 use fs::{Fs, RealFs};
@@ -76,7 +76,10 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn
         .block_on(extension_builder.compile_extension(
             &path,
             manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                max_concurrency: CompilationConcurrency::Unbounded,
+            },
             fs,
         ))
         .unwrap();
@@ -137,7 +140,6 @@ fn manifest() -> ExtensionManifest {
             .into_iter()
             .collect(),
         context_servers: BTreeMap::default(),
-        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: vec![ExtensionCapability::ProcessExec(

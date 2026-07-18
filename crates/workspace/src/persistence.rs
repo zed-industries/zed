@@ -356,6 +356,13 @@ pub fn read_serialized_multi_workspaces(
             let active_workspace = state
                 .active_workspace_id
                 .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                // If the persisted active workspace can't be matched (e.g. its
+                // pointer was lost or its row was pruned), fall back to the
+                // first workspace that actually has paths rather than blindly
+                // taking index 0, so a stray scratch/empty workspace isn't
+                // restored as the focused window. Only if none have paths do we
+                // fall back to the first entry.
+                .or_else(|| group.iter().position(|ws| !ws.paths.is_empty()))
                 .or(Some(0))
                 .and_then(|index| group.into_iter().nth(index))?;
             Some(model::SerializedMultiWorkspace {
@@ -387,12 +394,13 @@ pub async fn write_default_dock_state(
 #[derive(Debug)]
 pub struct Bookmark {
     pub row: u32,
+    pub label: String,
 }
 
 impl sqlez::bindable::StaticColumnCount for Bookmark {
     fn column_count() -> usize {
-        // row
-        1
+        // row, label
+        2
     }
 }
 
@@ -402,7 +410,8 @@ impl sqlez::bindable::Bind for Bookmark {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        statement.bind(&self.row, start_index)
+        let next_index = statement.bind(&self.row, start_index)?;
+        statement.bind(&self.label, next_index)
     }
 }
 
@@ -413,7 +422,9 @@ impl Column for Bookmark {
             .with_context(|| format!("Failed to read bookmark at index {start_index}"))?
             as u32;
 
-        Ok((Bookmark { row }, start_index + 1))
+        let (label, next_index) = String::column(statement, start_index + 1)?;
+
+        Ok((Bookmark { row, label }, next_index))
     }
 }
 
@@ -1037,6 +1048,9 @@ impl Domain for WorkspaceDb {
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
         ),
+        sql!(
+            ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1298,7 +1312,7 @@ impl WorkspaceDb {
     fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
             .select_bound(sql! {
-                SELECT path, row
+                SELECT path, row, label
                 FROM bookmarks
                 WHERE workspace_id = ?
                 ORDER BY path, row
@@ -1317,7 +1331,10 @@ impl WorkspaceDb {
                     let path: Arc<Path> = path.into();
                     map.entry(path.clone())
                         .or_default()
-                        .push(SerializedBookmark(bookmark.row))
+                        .push(SerializedBookmark {
+                            row: bookmark.row,
+                            label: bookmark.label,
+                        })
                 }
 
                 map
@@ -1418,7 +1435,8 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
-                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                let Some(relative_path) = RelPath::from_unix_str(&relative_worktree_path).log_err()
+                else {
                     continue;
                 };
                 if worktree_root_path != String::default()
@@ -1478,9 +1496,9 @@ impl WorkspaceDb {
                 for (path, bookmarks) in workspace.bookmarks {
                     for bookmark in bookmarks {
                         conn.exec_bound(sql!(
-                            INSERT INTO bookmarks (workspace_id, path, row)
-                            VALUES (?1, ?2, ?3);
-                        ))?((workspace.id, path.as_ref(), bookmark.0)).context("Inserting bookmark")?;
+                            INSERT INTO bookmarks (workspace_id, path, row, label)
+                            VALUES (?1, ?2, ?3, ?4);
+                        ))?((workspace.id, path.as_ref(), bookmark.row, bookmark.label)).context("Inserting bookmark")?;
                     }
                 }
 
@@ -2479,7 +2497,7 @@ impl WorkspaceDb {
                                 as_json: serde_json::Value::from_str(&json).ok()?,
                             },
                            Arc::from(worktree_root_path.as_ref()),
-                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                            RelPath::from_unix_str(&relative_worktree_path).log_err()?.into(),
                         ))
                     },
                 )

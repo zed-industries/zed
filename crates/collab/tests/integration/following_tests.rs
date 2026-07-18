@@ -18,8 +18,8 @@ use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
 use workspace::{
-    CloseWindow, CollaboratorId, MultiWorkspace, ParticipantLocation, SplitDirection, Workspace,
-    item::ItemHandle as _,
+    CloseWindow, CollaboratorId, Item, MultiWorkspace, ParticipantLocation, SplitDirection,
+    Workspace, item::ItemHandle as _,
 };
 
 use super::TestClient;
@@ -154,7 +154,7 @@ async fn test_basic_following(
             .unwrap()
     });
     assert_eq!(
-        cx_b.read(|cx| editor_b2.project_path(cx)),
+        cx_b.read(|cx| editor_b2.read(cx).active_project_path(cx)),
         Some((worktree_id, rel_path("2.txt")).into())
     );
     assert_eq!(
@@ -1866,7 +1866,7 @@ async fn test_following_into_excluded_file(
             .unwrap()
     });
     assert_eq!(
-        cx_b.read(|cx| editor_for_excluded_b.project_path(cx)),
+        cx_b.read(|cx| editor_for_excluded_b.read(cx).active_project_path(cx)),
         Some((worktree_id, rel_path(".git/COMMIT_EDITMSG")).into())
     );
     assert_eq!(

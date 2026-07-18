@@ -33,6 +33,7 @@ agent.workspace = true
 async-channel.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 heapless.workspace = true
@@ -56,11 +57,13 @@ file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+idna.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
@@ -68,6 +71,7 @@ language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
+lru.workspace = true
 lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
@@ -87,8 +91,9 @@ release_channel.workspace = true
 remote.workspace = true
 remote_connection.workspace = true
 rope.workspace = true
-rules_library.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
@@ -103,7 +108,8 @@ theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
 ui.workspace = true
-ui_input.workspace = true
+unicode-script.workspace = true
+unicode-segmentation.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -123,7 +129,6 @@ clock = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
-git_ui.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
@@ -139,8 +144,10 @@ remote_server = { workspace = true, features = ["test-support"] }
 
 search = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true
+terminal = { workspace = true, features = ["test-support"] }

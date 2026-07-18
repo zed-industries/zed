@@ -122,4 +122,11 @@ impl Model {
             Self::Custom { .. } => false,
         }
     }
+
+    pub fn supports_reasoning_effort(&self) -> bool {
+        match self {
+            Self::Grok43 => true,
+            Self::Grok420Reasoning | Self::Grok420NonReasoning | Self::Custom { .. } => false,
+        }
+    }
 }

@@ -297,11 +297,11 @@ These ex commands open Zed's various panels and windows.
 
 These commands navigate diagnostics.
 
-| Command                  | Description                    |
-| ------------------------ | ------------------------------ |
-| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic      |
-| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostics |
-| `:cc` or `:ll`           | Open the errors page           |
+| Command                  | Description                   |
+| ------------------------ | ----------------------------- |
+| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic     |
+| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostic |
+| `:cc` or `:ll`           | Open the errors page          |
 
 ### Git
 
@@ -536,6 +536,17 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   "bindings": {
     "s": "vim::PushSneak",
     "shift-s": "vim::PushSneakBackward"
+  }
+}
+```
+
+The Helix-style jump-to-word action shows jump labels at visible word starts. It has no default binding in Vim mode, but you can enable it by adding a keybinding to your keymap. This example uses `g w`, which matches the default Helix binding, but overrides Vim mode's default rewrap binding.
+
+```json [keymap]
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "g w": "vim::HelixJumpToWord"
   }
 }
 ```

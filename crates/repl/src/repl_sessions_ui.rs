@@ -3,7 +3,8 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, TaskExt, actions,
     prelude::*,
 };
-use project::ProjectItem as _;
+use language::{Buffer, BufferEvent};
+use project::{Project, ProjectItem as _};
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -11,6 +12,31 @@ use workspace::{Workspace, item::Item};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
+
+fn refresh_python_kernelspecs_for_buffer(
+    buffer: &Entity<Buffer>,
+    project: &Entity<Project>,
+    cx: &mut App,
+) {
+    let buffer = buffer.read(cx);
+
+    if buffer
+        .language()
+        .is_none_or(|language| language.name() != "Python")
+    {
+        return;
+    };
+
+    let Some(project_path) = buffer.project_path(cx) else {
+        return;
+    };
+    let store = ReplStore::global(cx);
+    store.update(cx, |store, cx| {
+        store
+            .refresh_python_kernelspecs(project_path.worktree_id, project, cx)
+            .detach_and_log_err(cx);
+    });
+}
 
 actions!(
     repl,
@@ -97,24 +123,21 @@ pub fn init(cx: &mut App) {
 
                 let buffer = editor.buffer().read(cx).as_singleton();
 
-                let language = buffer
-                    .as_ref()
-                    .and_then(|buffer| buffer.read(cx).language());
-
-                let project_path = buffer.and_then(|buffer| buffer.read(cx).project_path(cx));
-
                 let editor_handle = cx.entity().downgrade();
 
-                if let Some(language) = language
-                    && language.name() == "Python"
-                    && let (Some(project_path), Some(project)) = (project_path, project)
-                {
-                    let store = ReplStore::global(cx);
-                    store.update(cx, |store, cx| {
-                        store
-                            .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
-                            .detach_and_log_err(cx);
-                    });
+                // Subscribe to the buffer's `LanguageChanged` events so remote projects,
+                // where language detection can complete after the editor is observed,
+                // still trigger a kernelspec refresh. Without this the REPL UI stays
+                // hidden until something else populates the global kernel list.
+                if let Some((buffer, project)) = buffer.zip(project) {
+                    refresh_python_kernelspecs_for_buffer(&buffer, &project, cx);
+
+                    cx.subscribe(&buffer, move |_editor, buffer, event, cx| {
+                        if let BufferEvent::LanguageChanged(_) = event {
+                            refresh_python_kernelspecs_for_buffer(&buffer, &project, cx);
+                        }
+                    })
+                    .detach();
                 }
 
                 editor
@@ -283,5 +306,150 @@ impl RenderOnce for ReplSessionsContainer {
             .size_full()
             .child(Label::new(self.title).size(LabelSize::Large))
             .children(self.children)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{path::PathBuf, sync::Arc};
+
+    use async_trait::async_trait;
+    use collections::HashMap;
+    use editor::EditorMode;
+    use gpui::TestAppContext;
+    use language::{
+        Language, LanguageConfig, LanguageMatcher, LanguageName, ManifestName, Toolchain,
+        ToolchainList, ToolchainLister, ToolchainMetadata,
+    };
+    use multi_buffer::MultiBuffer;
+    use task::ShellKind;
+    use util::path;
+
+    struct TestPythonToolchainLister;
+
+    #[async_trait]
+    impl ToolchainLister for TestPythonToolchainLister {
+        async fn list(
+            &self,
+            _worktree_root: PathBuf,
+            _subroot_relative_path: Arc<util::rel_path::RelPath>,
+            _project_env: Option<HashMap<String, String>>,
+        ) -> ToolchainList {
+            ToolchainList {
+                toolchains: vec![Toolchain {
+                    name: SharedString::new_static("Test Python"),
+                    path: SharedString::new_static("/test/python"),
+                    language_name: LanguageName::new_static("Python"),
+                    as_json: serde_json::Value::Null,
+                }],
+                ..Default::default()
+            }
+        }
+
+        async fn resolve(
+            &self,
+            _path: PathBuf,
+            _project_env: Option<HashMap<String, String>>,
+        ) -> anyhow::Result<Toolchain> {
+            anyhow::bail!("not implemented")
+        }
+
+        fn activation_script(
+            &self,
+            _toolchain: &Toolchain,
+            _shell: ShellKind,
+            _cx: &App,
+        ) -> futures::future::BoxFuture<'static, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+
+        fn meta(&self) -> ToolchainMetadata {
+            ToolchainMetadata {
+                term: SharedString::new_static("Python"),
+                new_toolchain_placeholder: SharedString::default(),
+                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_refreshes_python_kernelspecs_when_buffer_language_changes(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = project::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            serde_json::json!({
+                "main.txt": "print('hi')",
+            }),
+        )
+        .await;
+
+        let project = project::Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let python = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Python".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["py".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                None,
+            )
+            .with_manifest(Some(ManifestName::from(SharedString::new_static(
+                "pyproject.toml",
+            ))))
+            .with_toolchain_lister(Some(Arc::new(TestPythonToolchainLister))),
+        );
+        project.read_with(cx, |project, _cx| {
+            project.languages().add(python.clone());
+        });
+
+        cx.update(|cx| crate::init(fs, cx));
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.txt"), cx)
+            })
+            .await
+            .expect("failed to open buffer");
+
+        let worktree_id = buffer
+            .read_with(cx, |buffer, cx| {
+                buffer.project_path(cx).map(|path| path.worktree_id)
+            })
+            .expect("buffer should have a project path");
+
+        cx.add_window(|window, cx| {
+            let multi_buffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+            Editor::new(
+                EditorMode::full(),
+                multi_buffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let store = cx.update(|cx| ReplStore::global(cx));
+        assert!(!cx.update(|cx| store.read(cx).has_python_kernelspecs(worktree_id)));
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(python), cx);
+        });
+        cx.run_until_parked();
+
+        assert!(cx.update(|cx| store.read(cx).has_python_kernelspecs(worktree_id)));
     }
 }

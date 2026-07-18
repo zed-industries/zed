@@ -27,7 +27,6 @@ cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
-db.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true
 fs.workspace = true

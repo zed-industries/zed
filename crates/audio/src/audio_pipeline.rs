@@ -19,17 +19,13 @@ mod rodio_ext;
 pub use crate::audio_settings::AudioSettings;
 pub use rodio_ext::RodioExt;
 
-use crate::audio_settings::LIVE_SETTINGS;
-
 use crate::Sound;
 
 use super::{CHANNEL_COUNT, SAMPLE_RATE};
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
     (SAMPLE_RATE.get() as usize / 100) * CHANNEL_COUNT.get() as usize;
 
-pub fn init(cx: &mut App) {
-    LIVE_SETTINGS.initialize(cx);
-}
+pub fn init(_cx: &mut App) {}
 
 // TODO(jk): this is currently cached only once - we should observe and react instead
 pub fn ensure_devices_initialized(cx: &mut App) {

@@ -13,7 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
-pub use action::{ActionName, ActionWithArguments};
+pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
@@ -111,6 +111,33 @@ pub enum HideMouseMode {
     OnTypingAndAction,
 }
 
+/// Determines whether to reduce non-essential motion in the UI, such as
+/// loading spinners and pulsating labels, by rendering them in a static state.
+///
+/// Default: off
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduceMotionMode {
+    /// Always reduce motion
+    On,
+    /// Never reduce motion
+    #[default]
+    Off,
+}
+
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
@@ -178,6 +205,9 @@ pub struct SettingsContent {
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
+    /// The settings for the markdown preview.
+    pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
+
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
@@ -208,13 +238,16 @@ pub struct SettingsContent {
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
-    /// Configuration for the Message Editor
-    pub message_editor: Option<MessageEditorSettings>,
-
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+
+    /// Whether to reduce non-essential motion in the UI, such as loading
+    /// spinners and pulsating labels, by rendering them in a static state.
+    ///
+    /// Default: off
+    pub reduce_motion: Option<ReduceMotionMode>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
@@ -469,17 +502,6 @@ impl strum::VariantNames for BaseKeymapContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Automatically increase or decrease you microphone's volume. This affects how
-    /// loud you sound to others.
-    ///
-    /// Recommended: off (default)
-    /// Microphones are too quite in zed, until everyone is on experimental
-    /// audio and has auto speaker volume on this will make you very loud
-    /// compared to other speakers.
-    #[serde(rename = "experimental.auto_microphone_volume")]
-    pub auto_microphone_volume: Option<bool>,
-    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
-    /// not work well on music.
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
@@ -532,6 +554,11 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+    /// Allow sending requests to Anthropic models that cannot be offered with
+    /// Zero Data Retention.
+    ///
+    /// Default: false
+    pub anthropic_retention: Option<bool>,
 }
 
 impl Default for TelemetrySettingsContent {
@@ -539,6 +566,7 @@ impl Default for TelemetrySettingsContent {
         Self {
             diagnostics: Some(true),
             metrics: Some(true),
+            anthropic_retention: Some(false),
         }
     }
 }
@@ -647,7 +675,7 @@ pub struct GitPanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -680,11 +708,15 @@ pub struct GitPanelSettingsContent {
     /// Default: main
     pub fallback_branch_name: Option<String>,
 
-    /// Whether to sort entries in the panel by path
-    /// or by status (the default).
+    /// How to sort entries in the git panel.
     ///
-    /// Default: false
-    pub sort_by_path: Option<bool>,
+    /// Default: path
+    pub sort_by: Option<GitPanelSortBy>,
+
+    /// How to group entries in the git panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
 
     /// Whether to collapse untracked files in the diff panel.
     ///
@@ -714,8 +746,81 @@ pub struct GitPanelSettingsContent {
     /// Maximum length of the commit message title before a warning is shown.
     /// Set to 0 to disable.
     ///
-    /// Default: 72
+    /// Default: 0
     pub commit_title_max_length: Option<usize>,
+
+    /// Default action when clicking a changed file in the Git panel.
+    ///
+    /// Default: project_diff
+    pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelClickBehavior {
+    /// Open the project diff, showing all changed files.
+    #[default]
+    ProjectDiff,
+    /// Open a single-file diff view.
+    FileDiff,
+    /// Open the file in the editor without a diff view.
+    ViewFile,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelSortBy {
+    #[default]
+    Path,
+    Name,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    None,
+    #[default]
+    Status,
+    Staging,
 }
 
 #[derive(
@@ -756,23 +861,13 @@ pub struct PanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct MessageEditorSettings {
-    /// Whether to automatically replace emoji shortcodes with emoji characters.
-    /// For example: typing `:wave:` gets replaced with `👋`.
-    ///
-    /// Default: false
-    pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1001,7 +1096,7 @@ pub struct OutlinePanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
     /// Whether to show file icons in the outline panel.
     ///
@@ -1099,6 +1194,23 @@ pub enum LineIndicatorFormat {
     Long,
 }
 
+/// The settings for the markdown preview.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct MarkdownPreviewSettingsContent {
+    /// Whether to limit the width of the rendered markdown content. When
+    /// enabled, content is constrained to `max_width` and centered
+    /// horizontally within the preview pane, for optimal readability.
+    ///
+    /// Default: true
+    pub limit_content_width: Option<bool>,
+    /// The maximum width, in pixels, of the rendered markdown content when
+    /// `limit_content_width` is enabled.
+    ///
+    /// Default: 800
+    pub max_width: Option<f32>,
+}
+
 /// The settings for the image viewer.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
@@ -1140,6 +1252,16 @@ pub struct RemoteSettingsContent {
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
     pub use_podman: Option<bool>,
+    /// Whether to build dev container images with BuildKit.
+    ///
+    /// When unset, Zed auto-detects BuildKit by probing for the `buildx` CLI
+    /// plugin. Set to `false` to force the classic Docker builder, which is
+    /// required for Docker-compatible engines that lack an integrated BuildKit
+    /// (e.g. Apple Container via a Docker-API bridge), where BuildKit builds
+    /// cannot resolve locally-built images.
+    ///
+    /// Default: null (auto-detect)
+    pub dev_container_use_buildkit: Option<bool>,
 }
 
 #[with_fallible_options]

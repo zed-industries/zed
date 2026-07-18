@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use ::util::ResultExt;
 use anyhow::{Context, Result};
+use gpui_util::ResultExt;
 use windows::{
     Win32::{
         Foundation::HWND,

@@ -17,6 +17,7 @@ mod manifest;
 pub mod modeline;
 mod outline;
 pub mod proto;
+mod runnable;
 mod syntax_map;
 mod task_context;
 mod text_diff;
@@ -38,7 +39,10 @@ use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity};
 use http_client::HttpClient;
 
-pub use language_core::highlight_map::{HighlightId, HighlightMap};
+pub use language_core::{
+    SymbolKind,
+    highlight_map::{HighlightId, HighlightMap},
+};
 
 use futures::future::FutureExt as _;
 pub use language_core::{
@@ -47,10 +51,10 @@ pub use language_core::{
     DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
     InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
     LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
-    OverrideEntry, PromptResponseContext, RedactionConfig, RunnableCapture, RunnableConfig,
-    SoftWrap, Symbol, TaskListConfig, TextObject, TextObjectConfig, ToLspPosition,
-    WrapCharactersConfig, auto_indent_using_last_non_empty_line_default, deserialize_regex,
-    deserialize_regex_vec, regex_json_schema, regex_vec_json_schema, serialize_regex,
+    OverrideEntry, RedactionConfig, RunnableCapture, RunnableConfig, SoftWrap, Symbol,
+    TaskListConfig, TextObject, TextObjectConfig, WrapCharactersConfig, default_true,
+    deserialize_regex, deserialize_regex_vec, regex_json_schema, regex_vec_json_schema,
+    serialize_regex,
 };
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
@@ -62,6 +66,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
+pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, RunnableResolver};
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
@@ -77,7 +82,7 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
+pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
     text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
@@ -106,7 +111,7 @@ pub use syntax_map::{
     OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
 };
 pub use text::{AnchorRangeExt, LineEnding};
-pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
+pub use tree_sitter::{Node, Parser, QueryCapture, Tree, TreeCursor};
 
 pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings::SoftWrap {
     match value {
@@ -162,6 +167,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
+            autoclose_before: ")]}".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
@@ -213,6 +219,69 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
     ))
 });
 
+pub fn symbol_kind_to_lsp(kind: SymbolKind) -> lsp::SymbolKind {
+    match kind {
+        SymbolKind::File => lsp::SymbolKind::FILE,
+        SymbolKind::Module => lsp::SymbolKind::MODULE,
+        SymbolKind::Namespace => lsp::SymbolKind::NAMESPACE,
+        SymbolKind::Package => lsp::SymbolKind::PACKAGE,
+        SymbolKind::Class => lsp::SymbolKind::CLASS,
+        SymbolKind::Method => lsp::SymbolKind::METHOD,
+        SymbolKind::Property => lsp::SymbolKind::PROPERTY,
+        SymbolKind::Field => lsp::SymbolKind::FIELD,
+        SymbolKind::Constructor => lsp::SymbolKind::CONSTRUCTOR,
+        SymbolKind::Enum => lsp::SymbolKind::ENUM,
+        SymbolKind::Interface => lsp::SymbolKind::INTERFACE,
+        SymbolKind::Function => lsp::SymbolKind::FUNCTION,
+        SymbolKind::Variable => lsp::SymbolKind::VARIABLE,
+        SymbolKind::Constant => lsp::SymbolKind::CONSTANT,
+        SymbolKind::String => lsp::SymbolKind::STRING,
+        SymbolKind::Number => lsp::SymbolKind::NUMBER,
+        SymbolKind::Boolean => lsp::SymbolKind::BOOLEAN,
+        SymbolKind::Array => lsp::SymbolKind::ARRAY,
+        SymbolKind::Object => lsp::SymbolKind::OBJECT,
+        SymbolKind::Key => lsp::SymbolKind::KEY,
+        SymbolKind::Null => lsp::SymbolKind::NULL,
+        SymbolKind::EnumMember => lsp::SymbolKind::ENUM_MEMBER,
+        SymbolKind::Struct => lsp::SymbolKind::STRUCT,
+        SymbolKind::Event => lsp::SymbolKind::EVENT,
+        SymbolKind::Operator => lsp::SymbolKind::OPERATOR,
+        SymbolKind::TypeParameter => lsp::SymbolKind::TYPE_PARAMETER,
+    }
+}
+
+pub fn lsp_to_symbol_kind(kind: lsp::SymbolKind) -> SymbolKind {
+    match kind {
+        lsp::SymbolKind::FILE => SymbolKind::File,
+        lsp::SymbolKind::MODULE => SymbolKind::Module,
+        lsp::SymbolKind::NAMESPACE => SymbolKind::Namespace,
+        lsp::SymbolKind::PACKAGE => SymbolKind::Package,
+        lsp::SymbolKind::CLASS => SymbolKind::Class,
+        lsp::SymbolKind::METHOD => SymbolKind::Method,
+        lsp::SymbolKind::PROPERTY => SymbolKind::Property,
+        lsp::SymbolKind::FIELD => SymbolKind::Field,
+        lsp::SymbolKind::CONSTRUCTOR => SymbolKind::Constructor,
+        lsp::SymbolKind::ENUM => SymbolKind::Enum,
+        lsp::SymbolKind::INTERFACE => SymbolKind::Interface,
+        lsp::SymbolKind::FUNCTION => SymbolKind::Function,
+        lsp::SymbolKind::VARIABLE => SymbolKind::Variable,
+        lsp::SymbolKind::CONSTANT => SymbolKind::Constant,
+        lsp::SymbolKind::STRING => SymbolKind::String,
+        lsp::SymbolKind::NUMBER => SymbolKind::Number,
+        lsp::SymbolKind::BOOLEAN => SymbolKind::Boolean,
+        lsp::SymbolKind::ARRAY => SymbolKind::Array,
+        lsp::SymbolKind::OBJECT => SymbolKind::Object,
+        lsp::SymbolKind::KEY => SymbolKind::Key,
+        lsp::SymbolKind::NULL => SymbolKind::Null,
+        lsp::SymbolKind::ENUM_MEMBER => SymbolKind::EnumMember,
+        lsp::SymbolKind::STRUCT => SymbolKind::Struct,
+        lsp::SymbolKind::EVENT => SymbolKind::Event,
+        lsp::SymbolKind::OPERATOR => SymbolKind::Operator,
+        lsp::SymbolKind::TYPE_PARAMETER => SymbolKind::TypeParameter,
+        _ => SymbolKind::Null,
+    }
+}
+
 /// Commands that the client (editor) handles locally rather than forwarding
 /// to the language server. Servers embed these in code lens and code action
 /// responses when they want the editor to perform a well-known UI action.
@@ -228,6 +297,17 @@ pub enum ClientCommand {
 pub struct Location {
     pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
+}
+
+/// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
+/// This allows adapters to intercept preference selections (like "Always" or "Never")
+/// and potentially persist them to Zed's settings.
+#[derive(Debug, Clone)]
+pub struct PromptResponseContext {
+    /// The original message shown to the user
+    pub message: String,
+    /// The action (button) the user selected
+    pub selected_action: lsp::MessageActionItem,
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
@@ -608,7 +688,7 @@ pub trait LspInstaller {
     type BinaryVersion;
     fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> impl Future<Output = Option<LanguageServerBinary>> {
@@ -617,7 +697,7 @@ pub trait LspInstaller {
 
     fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<Self::BinaryVersion>>;
@@ -684,7 +764,7 @@ where
         delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
         let latest_version = self
-            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
+            .fetch_latest_server_version(delegate, pre_release, cx)
             .await?;
 
         if let Some(binary) = cx
@@ -730,7 +810,7 @@ where
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self
-                    .check_if_user_installed(delegate.as_ref(), toolchain, &mut cx)
+                    .check_if_user_installed(&delegate, toolchain, &mut cx)
                     .await
             {
                 log::info!(
@@ -1236,9 +1316,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.contains(name) {
+        if opt_in_servers.contains(&name.0) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.contains(name)
+                over.opt_into_language_servers.contains(&name.0)
             } else {
                 false
             }
@@ -1400,7 +1480,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -1409,7 +1489,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
