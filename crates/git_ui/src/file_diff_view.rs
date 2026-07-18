@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, HighlightedText};
+use language::{Buffer, HighlightedText, Point};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
@@ -44,6 +44,7 @@ impl FileDiffView {
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
+        target_position: Option<Point>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -77,6 +78,23 @@ impl FileDiffView {
                 pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
                 });
+
+                if let Some(target_position) = target_position {
+                    let (new_buffer, rhs_editor) = {
+                        let diff_view = diff_view.read(cx);
+                        (
+                            diff_view.new_buffer.clone(),
+                            diff_view.editor.read(cx).rhs_editor().clone(),
+                        )
+                    };
+                    let point = new_buffer
+                        .read(cx)
+                        .snapshot()
+                        .point_from_external_input(target_position.row, target_position.column);
+                    rhs_editor.update(cx, |editor, cx| {
+                        editor.go_to_singleton_buffer_point(point, window, cx);
+                    });
+                }
 
                 diff_view
             })
@@ -437,6 +455,7 @@ mod tests {
                 FileDiffView::open(
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
+                    None,
                     workspace.weak_handle(),
                     window,
                     cx,
@@ -586,6 +605,7 @@ mod tests {
                 FileDiffView::open(
                     path!("/test/old_file.rs").into(),
                     path!("/test/new_file.rs").into(),
+                    None,
                     workspace.weak_handle(),
                     window,
                     cx,
@@ -656,6 +676,7 @@ mod tests {
                 FileDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
+                    None,
                     workspace.weak_handle(),
                     window,
                     cx,
