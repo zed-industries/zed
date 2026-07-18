@@ -6047,6 +6047,8 @@ impl ThreadView {
                 .get(entry_ix.saturating_sub(1))
                 .is_none_or(|entry| !entry.is_indented());
 
+        let mut assistant_message_is_blank = false;
+
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -6281,6 +6283,8 @@ impl ThreadView {
                     ))
                     .into_any();
 
+                assistant_message_is_blank = is_blank;
+
                 if is_blank {
                     Empty.into_any()
                 } else {
@@ -6431,17 +6435,55 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
-            || self.has_pending_request_elicitation(cx);
+        let primary = if matches!(entry, AgentThreadEntry::AssistantMessage(_))
+            && !assistant_message_is_blank
+        {
+            let user_message_index = thread
+                .read(cx)
+                .entries()
+                .iter()
+                .take(entry_ix)
+                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)));
+
+            v_flex()
+                .w_full()
+                .child(primary)
+                .child(self.render_thread_controls(
+                    &thread,
+                    entry_ix,
+                    Some(entry_ix),
+                    entry_ix + 1 == total_entries,
+                    user_message_index,
+                    cx,
+                ))
+                .into_any_element()
+        } else {
+            primary
+        };
+
+        let is_assistant = matches!(entry, AgentThreadEntry::AssistantMessage(_));
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
         let primary = if entry_ix + 1 == total_entries {
+            let last_assistant_index = thread
+                .read(cx)
+                .entries()
+                .iter()
+                .rposition(|entry| matches!(entry, AgentThreadEntry::AssistantMessage(_)));
+
             v_flex()
                 .w_full()
                 .child(primary)
-                .when(!needs_confirmation, |this| {
-                    this.child(self.render_thread_controls(&thread, cx))
+                .when(!is_assistant, |this| {
+                    this.child(self.render_thread_controls(
+                        &thread,
+                        entry_ix,
+                        last_assistant_index,
+                        true,
+                        None,
+                        cx,
+                    ))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -6614,52 +6656,57 @@ impl ThreadView {
     fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
+        entry_ix: usize,
+        copy_response_index: Option<usize>,
+        is_thread_bottom: bool,
+        user_message_index: Option<usize>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+        let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
+            || self.has_pending_request_elicitation(cx);
 
-        if is_generating {
+        if is_generating || needs_confirmation {
             return Empty.into_any_element();
         }
 
-        let last_response_index = thread
-            .read(cx)
-            .entries()
-            .iter()
-            .rposition(|entry| matches!(entry, AgentThreadEntry::AssistantMessage(_)));
-
-        let copy_response_button = last_response_index.map(|response_index| {
-            IconButton::new("copy_agent_response", IconName::Copy)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Copy This Agent Response"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let entries = this.thread.read(cx).entries();
-                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
-                    {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
-                }))
-        });
-
-        let scroll_to_recent_user_prompt =
-            IconButton::new("scroll_to_recent_user_prompt", IconName::UserArrowUp)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Scroll to Most Recent User Message"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.scroll_to_most_recent_user_prompt(cx);
-                }));
-
-        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
+        let copy_response_button = copy_response_index.map(|response_index| {
+            IconButton::new(
+                format!("copy_agent_response-{}", response_index),
+                IconName::Copy,
+            )
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
-            .tooltip(Tooltip::text("Scroll to Top"))
+            .tooltip(Tooltip::text("Copy This Agent Response"))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_top(cx);
-            }));
+                let entries = this.thread.read(cx).entries();
+                if let Some(text) = Self::get_agent_message_content(entries, response_index, cx) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }))
+        });
 
-        let show_stats = AgentSettings::get_global(cx).show_turn_stats;
+        let scroll_to_recent_user_prompt = IconButton::new(
+            format!("scroll_to_recent_user_prompt-{}", entry_ix),
+            IconName::UserArrowUp,
+        )
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text("Scroll to User Message"))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.scroll_to_user_message_index(user_message_index, cx);
+        }));
+
+        let scroll_to_top =
+            IconButton::new(format!("scroll_to_top-{}", entry_ix), IconName::ArrowUp)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Scroll to Top"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_top(cx);
+                }));
+
+        let show_stats = is_thread_bottom && AgentSettings::get_global(cx).show_turn_stats;
 
         let last_turn_clock = show_stats
             .then(|| {
@@ -6688,61 +6735,63 @@ impl ThreadView {
             })
             .flatten();
 
-        let feedback_buttons = (self.is_subagent() && self.is_thread_feedback_enabled(cx)).then(
-            || {
-                let feedback = self.thread_feedback.feedback;
-                let tooltip_meta =
-                    "Rating the thread sends all of your current conversation to the Zed team.";
+        let feedback_buttons = is_thread_bottom
+            .then(|| {
+                (self.is_subagent() && self.is_thread_feedback_enabled(cx)).then(|| {
+                    let feedback = self.thread_feedback.feedback;
+                    let tooltip_meta =
+                        "Rating the thread sends all of your current conversation to the Zed team.";
 
-                h_flex()
-                    .child(
-                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Positive) => Color::Accent,
-                                _ => Color::Muted,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Positive) => {
-                                    Tooltip::text("Thanks for your feedback!")(window, cx)
-                                }
-                                _ => Tooltip::with_meta(
-                                    "Helpful Response",
-                                    None,
-                                    tooltip_meta,
-                                    cx,
-                                ),
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                            })),
-                    )
-                    .child(
-                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Negative) => Color::Accent,
-                                _ => Color::Muted,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Negative) => Tooltip::text(
-                                    "We appreciate your feedback and will use it to improve in the future.",
-                                )(
-                                    window, cx
-                                ),
-                                _ => Tooltip::with_meta(
-                                    "Not Helpful Response",
-                                    None,
-                                    tooltip_meta,
-                                    cx,
-                                ),
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                            })),
-                    )
-            },
-        );
+                    h_flex()
+                        .child(
+                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                                .icon_size(IconSize::Small)
+                                .icon_color(match feedback {
+                                    Some(ThreadFeedback::Positive) => Color::Accent,
+                                    _ => Color::Muted,
+                                })
+                                .tooltip(move |window, cx| match feedback {
+                                    Some(ThreadFeedback::Positive) => {
+                                        Tooltip::text("Thanks for your feedback!")(window, cx)
+                                    }
+                                    _ => Tooltip::with_meta(
+                                        "Helpful Response",
+                                        None,
+                                        tooltip_meta,
+                                        cx,
+                                    ),
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                                })),
+                        )
+                        .child(
+                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                                .icon_size(IconSize::Small)
+                                .icon_color(match feedback {
+                                    Some(ThreadFeedback::Negative) => Color::Accent,
+                                    _ => Color::Muted,
+                                })
+                                .tooltip(move |window, cx| match feedback {
+                                    Some(ThreadFeedback::Negative) => Tooltip::text(
+                                        "We appreciate your feedback and will use it to improve in the future.",
+                                    )(
+                                        window, cx
+                                    ),
+                                    _ => Tooltip::with_meta(
+                                        "Not Helpful Response",
+                                        None,
+                                        tooltip_meta,
+                                        cx,
+                                    ),
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                                })),
+                        )
+                })
+            })
+            .flatten();
 
         h_flex()
             .w_full()
@@ -6826,18 +6875,23 @@ impl ThreadView {
             .unwrap_or_default()
     }
 
-    pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn scroll_to_user_message_index(
+        &mut self,
+        user_message_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
         let entries = self.thread.read(cx).entries();
         if entries.is_empty() {
             return;
         }
 
-        // Find the most recent user message and scroll it to the top of the viewport.
+        // Scroll to the provided user message, or fall back to the most recent one.
         // (Fallback: if no user message exists, scroll to the bottom.)
-        if let Some(ix) = entries
-            .iter()
-            .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
-        {
+        if let Some(ix) = user_message_index.or_else(|| {
+            entries
+                .iter()
+                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        }) {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,
                 offset_in_item: px(0.0),
