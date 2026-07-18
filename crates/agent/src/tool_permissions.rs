@@ -282,10 +282,7 @@ impl ToolPermissionDecision {
 
         if tool_name == TerminalTool::NAME
             && !rules.map_or(
-                matches!(
-                    apply_default_override(permissions.default, default_override),
-                    ToolPermissionMode::Allow
-                ),
+                matches!(permissions.default, ToolPermissionMode::Allow),
                 |rules| is_unconditional_allow_all(rules, permissions.default, default_override),
             )
             && inputs.iter().any(|input| {

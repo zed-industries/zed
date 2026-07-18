@@ -320,7 +320,22 @@ async fn create_out_of_project_directory(
         is_local_project,
         platform_supported,
     ) {
-        return Err("Path to create was outside the project".to_string());
+        if !is_local_project {
+            return Err(
+                "Cannot create directories outside the project in remote projects (SSH, dev servers)"
+                    .to_string(),
+            );
+        }
+        if !platform_supported {
+            return Err(
+                "Creating directories outside the project is only supported on Linux and macOS"
+                    .to_string(),
+            );
+        }
+        return Err(
+            "Creating directories outside the project requires either sandboxing or Full Access mode"
+                .to_string(),
+        );
     }
 
     let reason = if full_access {
