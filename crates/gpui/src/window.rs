@@ -5049,7 +5049,9 @@ impl Window {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.pending_input.is_some()
+        self.pending_input
+            .as_ref()
+            .is_some_and(|pending_input| pending_input.focus == self.focus)
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
