@@ -843,6 +843,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 .map(|selection| selection_to_anchor_selection(selection, self.snapshot)),
         );
         self.collection.pending = None;
+        self.collection.select_mode = SelectMode::Character;
         self.selections_changed = true;
     }
 
@@ -995,7 +996,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .collect();
 
         if changed {
-            self.collection.select_mode = SelectMode::Character;
             self.select(selections)
         }
     }
