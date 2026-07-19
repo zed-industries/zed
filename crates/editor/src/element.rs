@@ -4455,34 +4455,28 @@ impl EditorElement {
         };
 
         let can_place_above = {
-            let mut bounds_above = Vec::new();
             let mut current_y = hovered_point.y;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(
                     hovered_point.x + popover.horizontal_offset,
                     current_y - size.height,
                 );
-                bounds_above.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
-            }
-            bounds_above
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         let can_place_below = || {
-            let mut bounds_below = Vec::new();
             let mut current_y = hovered_point.y + line_height;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
-                bounds_below.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
-            }
-            bounds_below
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         if can_place_above {
