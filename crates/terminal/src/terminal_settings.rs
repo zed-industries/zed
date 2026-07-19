@@ -158,6 +158,93 @@ pub fn merge_with_configured_profiles(
     entries
 }
 
+/// Single menu entry for the "+" PopoverMenu (P3). Produced by
+/// [`build_menu_entries`], which filters invalid profiles and applies the
+/// escalation threshold. The view layer converts each `MenuEntry` into a
+/// `ContextMenuItem` (`action` for configured, `entry` callback for
+/// detected).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEntry {
+    /// A configured profile that passed validation. Selecting it dispatches
+    /// `workspace::NewTerminal { profile: Some(name) }`.
+    Configured { name: String },
+    /// A detected shell not shadowed by any configured profile. Selecting it
+    /// constructs a `task::Shell::WithArguments` with the detected label as
+    /// `title_override` and calls `add_terminal_shell_with`.
+    Detected {
+        label: String,
+        program: String,
+        args: Vec<String>,
+    },
+}
+
+/// Above this many entries, the menu collapses into a single "Select Shell…"
+/// submenu entry per the P3 escalation rule (plan item 11).
+pub const MENU_ESCALATION_THRESHOLD: usize = 8;
+
+/// Outcome of [`build_menu_entries`]: either render entries inline, or
+/// collapse into a single "Select Shell…" entry whose submenu holds the
+/// same list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEntryPlan {
+    /// `entries.len() <= MENU_ESCALATION_THRESHOLD` — render each entry
+    /// directly under a separator.
+    Inline { entries: Vec<MenuEntry> },
+    /// `entries.len() > MENU_ESCALATION_THRESHOLD` — render a single
+    /// "Select Shell…" entry; the same `entries` move into its submenu.
+    Collapsed { entries: Vec<MenuEntry> },
+}
+
+/// Pure, fs-free computation of the menu contents. Used both by the menu
+/// UI (terminal_panel.rs) and by unit tests; the latter assert structure
+/// without rendering GPUI elements.
+///
+/// * `profiles` — the user's `terminal.profiles` map (insertion order
+///   preserved).
+/// * `detected` — output of `util::shell_detection::detect_available_shells`.
+/// * `warnings` — output of `validate_configured_profiles`. Any profile
+///   named here is **hidden** from the menu (the user can still spawn it
+///   via keymap with a warning, per P3 spec).
+pub fn build_menu_entries(
+    profiles: &IndexMap<String, TerminalProfile>,
+    detected: Vec<DetectedShell>,
+    warnings: &[ProfileWarning],
+) -> MenuEntryPlan {
+    let hidden: std::collections::HashSet<&str> = warnings
+        .iter()
+        .map(|w| w.profile_name.as_str())
+        .collect();
+
+    // Hide invalid configured profiles by filtering the IndexMap before
+    // merging with detected shells. This also prevents an invalid profile
+    // from shadowing a detected shell at the same path.
+    let visible_profiles: IndexMap<String, TerminalProfile> = profiles
+        .iter()
+        .filter(|(name, _)| !hidden.contains(name.as_str()))
+        .map(|(name, profile)| (name.clone(), profile.clone()))
+        .collect();
+
+    let merged = merge_with_configured_profiles(detected, &visible_profiles);
+
+    let entries: Vec<MenuEntry> = merged
+        .into_iter()
+        .map(|entry| match entry {
+            MergedShellEntry::Configured { name, .. } => MenuEntry::Configured { name },
+            MergedShellEntry::Detected(shell) => MenuEntry::Detected {
+                label: shell.label,
+                program: shell.program.to_string_lossy().into_owned(),
+                args: shell.args,
+            },
+        })
+        .collect();
+
+    if entries.len() > MENU_ESCALATION_THRESHOLD {
+        MenuEntryPlan::Collapsed { entries }
+    } else {
+        MenuEntryPlan::Inline { entries }
+    }
+}
+
 /// A non-blocking warning about a configured profile whose `program` is
 /// neither an existing absolute path nor resolvable on `PATH`. Returned by
 /// [`validate_configured_profiles`]; the caller decides how to surface the
@@ -571,5 +658,186 @@ mod tests {
             collections::IndexMap::default();
         let warnings = validate_configured_profiles_with(&profiles, &|_| false, &|_| None);
         assert!(warnings.is_empty());
+    }
+
+    fn detected_shell(label: &str, program: &str) -> DetectedShell {
+        use util::shell_detection::ShellSource;
+        DetectedShell {
+            label: label.to_string(),
+            program: std::path::PathBuf::from(program),
+            args: Vec::new(),
+            source: ShellSource::EtcShells,
+        }
+    }
+
+    fn build_plan(
+        profiles: &[(&str, &str)],
+        detected: Vec<DetectedShell>,
+        warning_names: &[&str],
+    ) -> MenuEntryPlan {
+        let profile_map: collections::IndexMap<String, TerminalProfile> = profiles
+            .iter()
+            .map(|(name, program)| {
+                (
+                    name.to_string(),
+                    TerminalProfile {
+                        program: program.to_string(),
+                        args: None,
+                        title_override: None,
+                    },
+                )
+            })
+            .collect();
+        let warnings: Vec<ProfileWarning> = warning_names
+            .iter()
+            .map(|name| ProfileWarning {
+                profile_name: name.to_string(),
+                program: String::new(),
+                reason: "test stub".to_string(),
+            })
+            .collect();
+        build_menu_entries(&profile_map, detected, &warnings)
+    }
+
+    fn entry_labels(plan: &MenuEntryPlan) -> Vec<String> {
+        let entries = match plan {
+            MenuEntryPlan::Inline { entries } => entries,
+            MenuEntryPlan::Collapsed { entries } => entries,
+        };
+        entries
+            .iter()
+            .map(|e| match e {
+                MenuEntry::Configured { name } => name.clone(),
+                MenuEntry::Detected { label, .. } => label.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn menu_inline_when_at_threshold() {
+        // Distinct programs so dedup doesn't collapse them.
+        let profiles: Vec<(&str, &str)> = (1..=MENU_ESCALATION_THRESHOLD)
+            .map(|i| {
+                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                (n, p)
+            })
+            .collect();
+        let plan = build_plan(&profiles, Vec::new(), &[]);
+        assert!(
+            matches!(plan, MenuEntryPlan::Inline { .. }),
+            "exactly at threshold should stay inline"
+        );
+    }
+
+    #[test]
+    fn menu_collapses_above_threshold() {
+        let profiles: Vec<(&str, &str)> = (1..=9)
+            .map(|i| {
+                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                (n, p)
+            })
+            .collect();
+        let plan = build_plan(&profiles, Vec::new(), &[]);
+        match plan {
+            MenuEntryPlan::Collapsed { entries } => {
+                assert_eq!(entries.len(), 9, "all entries preserved in submenu");
+            }
+            _ => panic!("9 entries should collapse to submenu"),
+        }
+    }
+
+    #[test]
+    fn menu_places_configured_first_then_detected() {
+        let plan = build_plan(
+            &[("Zsh", "/bin/zsh"), ("Fish", "/usr/bin/fish")],
+            vec![detected_shell("bash", "/bin/bash")],
+            &[],
+        );
+        assert_eq!(entry_labels(&plan), vec!["Zsh", "Fish", "bash"]);
+    }
+
+    #[test]
+    fn menu_hides_invalid_profiles() {
+        let plan = build_plan(
+            &[("Good", "/bin/zsh"), ("Bad", "/nonexistent")],
+            vec![],
+            &["Bad"],
+        );
+        let labels = entry_labels(&plan);
+        assert!(labels.contains(&"Good".to_string()));
+        assert!(
+            !labels.contains(&"Bad".to_string()),
+            "profile named in warnings should be hidden from menu"
+        );
+    }
+
+    #[test]
+    fn menu_lets_detected_surface_when_configured_invalid() {
+        // When a configured profile fails validation, it's filtered out
+        // BEFORE merging — so a detected shell at the same path can surface
+        // in its place (rather than being shadowed by the broken entry).
+        let plan = build_plan(
+            &[("Broken", "/bin/zsh")],
+            vec![detected_shell("zsh", "/bin/zsh")],
+            &["Broken"],
+        );
+        let labels = entry_labels(&plan);
+        assert!(
+            labels.contains(&"zsh".to_string()),
+            "detected zsh should surface after the broken configured profile is hidden"
+        );
+        assert!(!labels.contains(&"Broken".to_string()));
+    }
+
+    #[test]
+    fn menu_handles_empty_inputs() {
+        let plan = build_plan(&[], Vec::new(), &[]);
+        match plan {
+            MenuEntryPlan::Inline { entries } => assert!(entries.is_empty()),
+            _ => panic!("empty input should be inline-empty, not collapsed"),
+        }
+    }
+
+    #[test]
+    fn menu_detected_entry_carries_program_and_args() {
+        let mut detected = detected_shell("wsl-ubuntu", "wsl.exe");
+        detected.args = vec!["-d".to_string(), "Ubuntu".to_string()];
+        let plan = build_plan(&[], vec![detected], &[]);
+        match plan {
+            MenuEntryPlan::Inline { entries } => match &entries[0] {
+                MenuEntry::Detected {
+                    label,
+                    program,
+                    args,
+                } => {
+                    assert_eq!(label, "wsl-ubuntu");
+                    assert_eq!(program, "wsl.exe");
+                    assert_eq!(args, &vec!["-d".to_string(), "Ubuntu".to_string()]);
+                }
+                _ => panic!("expected Detected entry"),
+            },
+            _ => panic!("expected Inline"),
+        }
+    }
+
+    #[test]
+    fn menu_escalation_counts_after_filtering() {
+        // 10 profiles, but 3 are invalid -> 7 visible -> stays inline.
+        let profiles: Vec<(&str, &str)> = (1..=10)
+            .map(|i| {
+                let n: &'static str = Box::leak(format!("P{i}").into_boxed_str());
+                let p: &'static str = Box::leak(format!("/bin/p{i}").into_boxed_str());
+                (n, p)
+            })
+            .collect();
+        let plan = build_plan(&profiles, Vec::new(), &["P1", "P2", "P3"]);
+        match plan {
+            MenuEntryPlan::Inline { entries } => {
+                assert_eq!(entries.len(), 7, "filtered count should drive threshold");
+            }
+            _ => panic!("7 visible entries should stay inline"),
+        }
     }
 }

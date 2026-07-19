@@ -109,6 +109,26 @@ actions!(
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
 
+/// Spawn a terminal running a detected (non-profile) shell program.
+///
+/// Used by the "+" PopoverMenu's "detected shells" section (P3). Detected
+/// shells bypass the `terminal.profiles` lookup — they carry their own
+/// program/args and use the detected label as both the tab title and the
+/// persistence key. The action is registered on the workspace (same pattern
+/// as `workspace::NewTerminal`) and dispatched from the menu via
+/// `ContextMenu::action`.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
+pub struct SpawnDetectedShell {
+    /// Program to launch — typically an absolute path from
+    /// `util::shell_detection::DetectedShell::program`.
+    pub program: String,
+    /// Arguments to pass to the program (e.g. `["-d", "Ubuntu"]` for WSL).
+    pub args: Vec<String>,
+    /// Tab title / persistence key. Usually `DetectedShell::label`.
+    pub label: String,
+}
+
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
 

@@ -1980,6 +1980,18 @@
     //         }
     //     }
     "shell": "system",
+    // Named terminal profiles, selectable from the terminal panel's "+"
+    // menu or via a `workspace::NewTerminal` keybinding:
+    //   "profiles": {
+    //     "Bash": {
+    //       "program": "/bin/bash",
+    //       "args": ["--login"]
+    //     }
+    //   }
+    // "profiles": {},
+    // Name of the profile (a key in `profiles`) to use when no explicit
+    // profile is selected. If unset or not found, `shell` is used.
+    // "default_profile": "Bash",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
     // Whether the terminal panel should open on startup.

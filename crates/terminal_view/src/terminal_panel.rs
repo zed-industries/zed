@@ -20,7 +20,13 @@ use project::{Fs, Project};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{Terminal, terminal_settings::TerminalSettings};
+use terminal::{
+    Terminal,
+    terminal_settings::{
+        MenuEntry, MenuEntryPlan, TerminalSettings, build_menu_entries,
+        validate_configured_profiles,
+    },
+};
 use ui::{
     ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
     SplitButton, Toggleable, Tooltip, prelude::*,
@@ -57,6 +63,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::spawn_detected_shell);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
@@ -154,7 +161,15 @@ impl TerminalPanel {
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                                let plan = {
+                                    let settings = TerminalSettings::get_global(cx).clone();
+                                    let detected =
+                                        util::shell_detection::detect_available_shells().to_vec();
+                                    let warnings =
+                                        validate_configured_profiles(&settings.profiles);
+                                    build_menu_entries(&settings.profiles, detected, &warnings)
+                                };
+                                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
                                         .action(
                                             "New Terminal",
@@ -167,6 +182,8 @@ impl TerminalPanel {
                                             "Spawn Task",
                                             zed_actions::Spawn::modal().boxed_clone(),
                                         )
+                                        .separator()
+                                        .shell_entries(plan)
                                 });
 
                                 Some(menu)
@@ -621,6 +638,37 @@ impl TerminalPanel {
                 panel.add_terminal_shell(
                     action.local,
                     Some(action.working_directory.clone()),
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
+            })
+            .detach_and_log_err(cx);
+    }
+
+    /// Spawn a terminal running a detected (non-profile) shell program —
+    /// the dispatch side of `terminal::SpawnDetectedShell`. Mirrors
+    /// `new_terminal` for the configured-profile path.
+    pub fn spawn_detected_shell(
+        workspace: &mut Workspace,
+        action: &crate::SpawnDetectedShell,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+        let shell = Shell::WithArguments {
+            program: action.program.clone(),
+            args: action.args.clone(),
+            title_override: Some(action.label.clone()),
+        };
+        terminal_panel
+            .update(cx, |panel, cx| {
+                panel.add_terminal_shell_with(
+                    None,
+                    Some(shell),
+                    Some(action.label.clone()),
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -1944,7 +1992,59 @@ impl RenderOnce for InlineAssistTabBarButton {
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
+     }
+}
+
+/// Extend `ContextMenu` with the "+" menu's terminal-shell section.
+///
+/// Lives as a small private trait so the trait method chains naturally
+/// (`.separator().shell_entries(plan)`); the alternative (a free function)
+/// would break the builder chain.
+trait TerminalPanelMenuExt: Sized {
+    fn shell_entries(self, plan: MenuEntryPlan) -> Self;
+}
+
+impl TerminalPanelMenuExt for ContextMenu {
+    fn shell_entries(self, plan: MenuEntryPlan) -> Self {
+        match plan {
+            MenuEntryPlan::Inline { entries } => inline_shell_entries(self, entries),
+            // Escalation: collapse into a submenu. The submenu builder
+            // receives a fresh `ContextMenu` and must be `'static`, so the
+            // entry list is cloned into the closure. Picking a submenu over
+            // a Picker modal here because `ContextMenu::submenu` is already
+            // available in GPUI, requires no new infrastructure, and matches
+            // the existing menu interaction model. The Picker pattern stays
+            // available for future surfacing (e.g. command palette) without
+            // being preemptively wired up.
+            MenuEntryPlan::Collapsed { entries } => self.submenu(
+                "Select Shell…",
+                move |submenu, _window, _cx| inline_shell_entries(submenu, entries.clone()),
+            ),
+        }
     }
+}
+
+fn inline_shell_entries(mut menu: ContextMenu, entries: Vec<MenuEntry>) -> ContextMenu {
+    for entry in entries {
+        match entry {
+            MenuEntry::Configured { name } => {
+                let action = workspace::NewTerminal {
+                    local: false,
+                    profile: Some(name.clone()),
+                };
+                menu = menu.action(name.as_str(), action.boxed_clone());
+            }
+            MenuEntry::Detected { label, program, args } => {
+                let action = crate::SpawnDetectedShell {
+                    program,
+                    args,
+                    label: label.clone(),
+                };
+                menu = menu.action(label.as_str(), action.boxed_clone());
+            }
+        }
+    }
+    menu
 }
 
 #[cfg(test)]
@@ -3548,6 +3648,53 @@ mod tests {
             assert!(
                 view.profile_name.is_none(),
                 "Unknown-profile fallback should not tag the view with a profile name"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_detected_shell_dispatches_add_terminal_shell_with(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        // Dispatch SpawnDetectedShell exactly as the menu's `.action()` would.
+        // Use the existing `/bin/sh` so the spawn actually succeeds on Unix
+        // hosts and we can inspect the resulting terminal.
+        let detected = crate::SpawnDetectedShell {
+            program: if cfg!(unix) {
+                "/bin/sh".to_string()
+            } else {
+                "cmd.exe".to_string()
+            },
+            args: Vec::new(),
+            label: "Detected Shell".to_string(),
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                })
+            })
+            .expect("Failed to dispatch SpawnDetectedShell");
+        cx.run_until_parked();
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView after detected-shell spawn");
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(
+                view.profile_name,
+                Some("Detected Shell".to_string()),
+                "TerminalView should be tagged with the detected label for persistence"
+            );
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Detected Shell",
+                "tab title should come from the detected label (D6-equivalent for detected entries)"
             );
         });
     }

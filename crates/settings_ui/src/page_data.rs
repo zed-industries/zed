@@ -7895,6 +7895,74 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
+    /// `terminal.profiles` is a dynamic map of `{ name: { program, args?,
+    /// title_override? } }`. The Zed settings UI doesn't have a reusable
+    /// dynamic-map editor primitive yet (see `UserSettingsContent.profiles`
+    /// for the same gap), so v1 surfaces both fields as JSON-editor links:
+    /// clicking opens `settings.json` at the given path. P3 plan item 12
+    /// explicitly permits this fallback.
+    fn profiles_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Profiles"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal Profiles",
+                description: "Named shell configurations selectable from the terminal panel \"+\" menu or via the `workspace::NewTerminal` action with a `profile` argument. Each entry needs a `program` (absolute path or basename resolved via PATH) and optional `args` / `title_override`. Edit in JSON: `{ \"Zsh\": { \"program\": \"/bin/zsh\", \"args\": [\"-l\"] } }`.",
+                field: Box::new(
+                    SettingField {
+                        organization_override: None,
+                        json_path: Some("terminal.profiles"),
+                        pick: |settings_content| {
+                            settings_content
+                                .terminal
+                                .as_ref()?
+                                .project
+                                .profiles
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .project
+                                .profiles = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Profile",
+                description: "Name of the profile used when opening a terminal without an explicit selection (e.g. the default ctrl-backtick keybinding). The name must match a key in `terminal.profiles`; if it does not, Zed emits a warning and falls back to `terminal.shell`. Leave unset to use `terminal.shell`.",
+                field: Box::new(
+                    SettingField {
+                        organization_override: None,
+                        json_path: Some("terminal.default_profile"),
+                        pick: |settings_content| {
+                            settings_content
+                                .terminal
+                                .as_ref()?
+                                .project
+                                .default_profile
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .project
+                                .default_profile = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+        ]
+    }
+
     fn scrollbar_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Scrollbar"),
@@ -7934,6 +8002,7 @@ fn terminal_page() -> SettingsPage {
         title: "Terminal",
         items: concat_sections![
             environment_section(),
+            profiles_section(),
             font_section(),
             display_settings_section(),
             behavior_settings_section(),
