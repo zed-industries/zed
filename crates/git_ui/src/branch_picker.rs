@@ -1355,30 +1355,20 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let label = match self.branch_filter {
-            BranchFilter::All => self
-                .matches
-                .first()
-                .and_then(Entry::as_branch)
-                .map(|branch| {
-                    if branch.is_remote() {
-                        "Remote Branches"
-                    } else {
-                        "Local Branches"
-                    }
-                })?,
-            branch_filter => self
+        if self.branch_filter == BranchFilter::All
+            || !self
                 .matches
                 .first()
                 .is_some_and(|entry| entry.as_branch().is_some())
-                .then(|| branch_filter.label())?,
-        };
+        {
+            return None;
+        }
 
         Some(
             div()
                 .pt_1p5()
                 .mb_neg_0p5()
-                .child(ListSubHeader::new(label).inset(true))
+                .child(ListSubHeader::new(self.branch_filter.label()).inset(true))
                 .into_any_element(),
         )
     }
@@ -1945,21 +1935,24 @@ impl PickerDelegate for BranchListDelegate {
                 },
             );
 
-        let section_header = entry.as_branch().and_then(|branch| {
-            let starts_section = ix > 0
-                && self.matches[ix - 1]
-                    .as_branch()
-                    .is_none_or(|previous_branch| {
-                        previous_branch.is_remote() != branch.is_remote()
-                    });
-            starts_section.then(|| {
-                if branch.is_remote() {
-                    "Remote Branches"
-                } else {
-                    "Local Branches"
-                }
-            })
-        });
+        let section_header = (self.branch_filter == BranchFilter::All)
+            .then(|| entry.as_branch())
+            .flatten()
+            .and_then(|branch| {
+                let starts_section = ix == 0
+                    || self.matches[ix - 1]
+                        .as_branch()
+                        .is_none_or(|previous_branch| {
+                            previous_branch.is_remote() != branch.is_remote()
+                        });
+                starts_section.then(|| {
+                    if branch.is_remote() {
+                        "Remote Branches"
+                    } else {
+                        "Local Branches"
+                    }
+                })
+            });
 
         Some(
             v_flex()
