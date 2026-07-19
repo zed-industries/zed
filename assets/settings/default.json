@@ -685,6 +685,9 @@
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
+    // The width, in pixels, of the git diff hunk indicators in the gutter.
+    // When set to null, the width scales with the buffer font size.
+    "git_gutter_width": null,
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.

@@ -483,7 +483,7 @@ pub struct ScrollbarAxesContent {
 
 /// Gutter related settings
 #[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -509,6 +509,11 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+    /// The width, in pixels, of the git diff hunk indicators in the gutter.
+    /// When unset, the width scales with the buffer font size.
+    ///
+    /// Default: null
+    pub git_gutter_width: Option<f32>,
 }
 
 /// Whether to display code lenses from language servers above code elements.
