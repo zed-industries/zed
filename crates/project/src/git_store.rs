@@ -7,6 +7,7 @@ pub mod pending_op;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    debounced_delay::DebouncedDelay,
     project_settings::ProjectSettings,
     trusted_worktrees::{
         PathTrust, TrustedWorktrees, TrustedWorktreesEvent, TrustedWorktreesStore,
@@ -514,6 +515,7 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    status_refresh_debounce: DebounceDelay<Self>,
 }
 
 impl std::ops::Deref for Repository {
@@ -5588,6 +5590,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            status_refresh_debounce: DebouncedDelay::new(),
         };
         repo.respawn_local_worker(project_environment, fs, is_trusted, cx);
         cx.subscribe_self(Self::handle_subscribe_self).detach();
@@ -5637,6 +5640,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            status_refresh_debounce: DebouncedDelay::new(),
         }
     }
 
@@ -9182,8 +9186,20 @@ impl Repository {
             self.paths_needing_status_update.push(paths);
         }
 
+        const STATUS_REFRESH_DEBOUNCE: Duration = Duration::from_millis(50);
+        self.status_refresh_debounce
+            .fire_new(STATUS_REFRESH_DEBOUNCE, cx, move |this, cx| {
+                this.refresh_statuses_now(updates_tx, cx)
+            });
+    }
+
+    fn refresh_statuses_now(
+        &mut self,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let this = cx.weak_entity();
-        let _ = self.send_keyed_job(
+        let job_rx = self.send_keyed_job(
             "paths_changed",
             Some(GitJobKey::RefreshStatuses),
             None,
@@ -9317,6 +9333,9 @@ impl Repository {
                 })
             },
         );
+        cx.spawn(async move |_, _cx| {
+            job_rx.await.ok();
+        })
     }
 
     /// currently running git command and when it started
