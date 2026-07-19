@@ -1106,6 +1106,21 @@ impl Vim {
                         cx,
                     );
                 }
+                operator @ Operator::HelixJump { .. } if keystroke_event.action.is_none() => {
+                    let modifiers = keystroke_event.keystroke.modifiers;
+                    let mut input = keystroke_event.keystroke.key.chars();
+                    if !modifiers.control
+                        && !modifiers.alt
+                        && !modifiers.platform
+                        && !modifiers.function
+                        && let Some(input_char) = input.next()
+                        && input.next().is_none()
+                    {
+                        // Jump overlays use ASCII labels even on non-ASCII keyboard layouts.
+                        self.handle_helix_jump_input(operator, input_char, window, cx);
+                        cx.stop_propagation();
+                    }
+                }
                 _ if !operator.is_waiting(self.mode) => {
                     self.clear_operator(window, cx);
                     self.stop_recording_immediately(Box::new(ClearOperators), cx)
@@ -1400,7 +1415,8 @@ impl Vim {
     fn expects_character_input(&self) -> bool {
         if let Some(operator) = self.operator_stack.last() {
             if operator.is_waiting(self.mode) {
-                return true;
+                // Helix jump labels are commands that need to reach Vim before an active IME.
+                return !matches!(operator, Operator::HelixJump { .. });
             }
         }
         self.editor_input_enabled()

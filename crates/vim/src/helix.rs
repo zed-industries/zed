@@ -1763,7 +1763,10 @@ mod test {
     use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
+    use gpui::{
+        Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
+        PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
+    };
     use indoc::indoc;
     use language::{CursorShape, Point};
     use project::FakeFs;
@@ -1850,6 +1853,36 @@ mod test {
                 Some("vim_mode == normal || vim_mode == visual"),
             )])
         });
+    }
+
+    fn assert_helix_jump_bypasses_text_input(cx: &mut VimTestContext) {
+        let editor = cx.update_editor(|_, _, cx| cx.entity());
+        let mut input_handler = cx.update(|window, cx| {
+            PlatformInputHandler::new(
+                window.to_async(cx),
+                Box::new(ElementInputHandler::new(Bounds::default(), editor)),
+            )
+        });
+        assert!(!input_handler.query_accepts_text_input());
+        assert!(!input_handler.query_prefers_ime_for_printable_keys());
+    }
+
+    fn dispatch_native_printable_key(cx: &mut VimTestContext, key: char) -> DispatchEventResult {
+        let keystroke = Keystroke::parse(&key.to_string())
+            .expect("helix jump labels are valid keystrokes")
+            .with_simulated_ime();
+        let result = cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        result
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -3620,6 +3653,39 @@ mod test {
         cx.set_state("ˇone two three", Mode::Normal);
 
         jump_to_word_with_keystrokes(&mut cx, "g z", "two");
+
+        cx.assert_state("one ˇtwo three", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_consumes_label_keystrokes_before_ime(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "s");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("s");
+        let label = helix_jump_label_for_word(&mut cx, "two");
+        let mut chars = label.chars();
+        let first = chars.next().expect("jump labels are two characters long");
+        let second = chars.next().expect("jump labels are two characters long");
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_helix_jump_bypasses_text_input(&mut cx);
+
+        let result = dispatch_native_printable_key(&mut cx, first);
+        assert!(!result.propagate, "jump label keystroke should be consumed");
+        assert!(matches!(
+            cx.active_operator(),
+            Some(Operator::HelixJump {
+                first_char: Some(input),
+                ..
+            }) if input == first.to_ascii_lowercase()
+        ));
+        assert_helix_jump_bypasses_text_input(&mut cx);
+
+        let result = dispatch_native_printable_key(&mut cx, second);
+        assert!(!result.propagate, "jump label keystroke should be consumed");
 
         cx.assert_state("one ˇtwo three", Mode::Normal);
         assert_eq!(cx.active_operator(), None);
