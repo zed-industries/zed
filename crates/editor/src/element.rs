@@ -2563,13 +2563,10 @@ impl EditorElement {
             return None;
         }
 
-        let buffer_id = row_info.and_then(|info| info.buffer_id);
-        if buffer_id.is_none() {
-            return None;
-        }
+        let buffer_id = row_info.and_then(|info| info.buffer_id)?;
 
         let editor = self.editor.read(cx);
-        if buffer_id.is_some_and(|buffer_id| editor.is_buffer_folded(buffer_id, cx)) {
+        if editor.is_buffer_folded(buffer_id, cx) {
             return None;
         }
 
