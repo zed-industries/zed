@@ -880,7 +880,7 @@ impl ToolCall {
     ) -> Result<Self> {
         let title = if tool_call.kind == acp::ToolKind::Execute {
             tool_call.title
-        } else if tool_call.kind == acp::ToolKind::Edit {
+        } else if matches!(tool_call.kind, acp::ToolKind::Edit | acp::ToolKind::Read) {
             MarkdownEscaped(tool_call.title.as_str()).to_string()
         } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
@@ -996,7 +996,7 @@ impl ToolCall {
             self.label.update(cx, |label, cx| {
                 if self.kind == acp::ToolKind::Execute {
                     label.replace(title, cx);
-                } else if self.kind == acp::ToolKind::Edit {
+                } else if matches!(self.kind, acp::ToolKind::Edit | acp::ToolKind::Read) {
                     label.replace(MarkdownEscaped(&title).to_string(), cx)
                 } else if let Some((first_line, _)) = title.split_once("\n") {
                     label.replace(first_line.to_owned() + "…", cx);
