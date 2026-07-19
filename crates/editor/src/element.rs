@@ -4365,25 +4365,29 @@ impl EditorElement {
         let hovered_point = content_origin + point(x, y);
 
         let mut overall_height = Pixels::ZERO;
-        let mut measured_hover_popovers = Vec::new();
-        for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
-            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let horizontal_offset =
-                (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
-                    .min(Pixels::ZERO);
-            match position {
-                itertools::Position::Middle | itertools::Position::Last => {
-                    overall_height += HOVER_POPOVER_GAP
+
+        let measured_hover_popovers = hover_popovers
+            .into_iter()
+            .with_position()
+            .map(|(position, mut hover_popover)| {
+                let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let horizontal_offset =
+                    (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                        .min(Pixels::ZERO);
+                match position {
+                    itertools::Position::Middle | itertools::Position::Last => {
+                        overall_height += HOVER_POPOVER_GAP
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            overall_height += size.height;
-            measured_hover_popovers.push(MeasuredHoverPopover {
-                element: hover_popover,
-                size,
-                horizontal_offset,
-            });
-        }
+                overall_height += size.height;
+                MeasuredHoverPopover {
+                    element: hover_popover,
+                    size,
+                    horizontal_offset,
+                }
+            })
+            .collect::<Vec<_>>();
 
         fn draw_occluder(
             width: Pixels,
