@@ -445,7 +445,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             .boxed()
         } else {
             disable_response_thinking_for_none_effort(&mut request, &self.model);
-            let request = into_open_ai_response(
+            let request = match into_open_ai_response(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -453,7 +453,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.max_output_tokens(),
                 default_thinking_reasoning_effort(&self.model),
                 supports_none_reasoning_effort(&self.model),
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
@@ -635,7 +638,8 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(
@@ -664,7 +668,8 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized.get("reasoning"), None);

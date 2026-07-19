@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestToolInput,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
@@ -14,13 +14,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    ContextManagement, Request as ResponseRequest, ResponseCompactionItem,
-    ResponseCustomToolCallItem, ResponseCustomToolCallOutputItem, ResponseError,
-    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
-    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
-    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCustomToolCallItem,
+    ResponseCustomToolCallOutputItem, ResponseError, ResponseFunctionCallItem,
+    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
+    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
+    provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
@@ -235,7 +236,7 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
     supports_none_reasoning_effort: bool,
-) -> ResponseRequest {
+) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -267,7 +268,7 @@ pub fn into_open_ai_response(
             &mut tool_use_kinds_by_id,
             &mut provider_items,
             &mut input_items,
-        );
+        )?;
     }
 
     let tools: Vec<_> = tools
@@ -330,7 +331,7 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
-    ResponseRequest {
+    Ok(ResponseRequest {
         model: model_id.into(),
         instructions: None,
         input: crate::responses::ResponseInput::new(provider_items, input_items),
@@ -360,7 +361,7 @@ pub fn into_open_ai_response(
         service_tier,
         context_management: compact_at_tokens
             .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
-    }
+    })
 }
 
 fn append_message_to_response_items(
@@ -370,7 +371,7 @@ fn append_message_to_response_items(
     tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
     provider_items: &mut Vec<serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
-) {
+) -> Result<()> {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     let LanguageModelRequestMessage {
@@ -399,35 +400,17 @@ fn append_message_to_response_items(
                 push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
-            MessageContent::Compaction(CompactionContent::Encrypted {
-                id,
-                encrypted_content,
-            }) => {
-                flush_response_parts(
-                    &role,
-                    index,
-                    phase.as_deref(),
-                    &mut content_parts,
-                    input_items,
-                );
-                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
-                    id,
-                    encrypted_content,
-                }));
+            MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
+                if let Some(items) = provider_compaction_items(&state)? {
+                    content_parts.clear();
+                    input_items.clear();
+                    replayed_reasoning_item_indexes.clear();
+                    tool_use_kinds_by_id.clear();
+                    provider_items.clear();
+                    provider_items.extend(items);
+                }
             }
-            MessageContent::Compaction(CompactionContent::ProviderWindow { items }) => {
-                content_parts.clear();
-                input_items.clear();
-                replayed_reasoning_item_indexes.clear();
-                tool_use_kinds_by_id.clear();
-                provider_items.clear();
-                provider_items.extend(items.iter().cloned());
-            }
-            // Summary compaction blocks come from other providers, and a
-            // Pending block is a streaming-only UI signal; neither is replayed.
-            MessageContent::Compaction(
-                CompactionContent::Summary { .. } | CompactionContent::Pending,
-            ) => {}
+            MessageContent::Compaction(CompactedContext::Summary { .. }) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -525,6 +508,7 @@ fn append_message_to_response_items(
         &mut content_parts,
         input_items,
     );
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -943,7 +927,7 @@ impl OpenAiResponseEventMapper {
                     }
                     ResponseOutputItem::Compaction(_) => {
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
-                            CompactionContent::Pending,
+                            CompactionUpdate::Started,
                         )));
                     }
                     ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
@@ -1125,12 +1109,15 @@ impl OpenAiResponseEventMapper {
                     }
                 }
                 ResponseOutputItem::Compaction(compaction) => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Encrypted {
-                            id: compaction.id,
-                            encrypted_content: compaction.encrypted_content,
-                        },
-                    ))]
+                    match serde_json::to_value(ResponseInputItem::Compaction(compaction))
+                        .map_err(anyhow::Error::from)
+                        .and_then(|item| provider_compaction_state_from_items(vec![item]))
+                    {
+                        Ok(state) => vec![Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::Finished(CompactedContext::ProviderState(state)),
+                        ))],
+                        Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
+                    }
                 }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
@@ -1839,7 +1826,8 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
             false,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
@@ -2022,7 +2010,8 @@ mod tests {
         };
 
         let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+            into_open_ai_response(request, "custom-model", false, false, None, None, false)
+                .unwrap();
         let serialized = serde_json::to_value(response).unwrap();
         assert_eq!(
             serialized,
@@ -2121,7 +2110,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Low),
             false,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2197,7 +2187,8 @@ mod tests {
         };
 
         let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+            into_open_ai_response(request, "custom-model", false, false, None, None, false)
+                .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2261,7 +2252,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
@@ -2297,7 +2289,8 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
+            let response =
+                into_open_ai_response(request, "gpt-5.4", true, true, None, None, true).unwrap();
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -2431,7 +2424,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(serialized["reasoning"], json!({ "effort": "none" }));
@@ -2470,7 +2464,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(
@@ -2521,7 +2516,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2611,7 +2607,8 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2692,7 +2689,8 @@ mod tests {
         };
 
         let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+            into_open_ai_response(request, "custom-model", false, false, None, None, false)
+                .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -4024,11 +4022,12 @@ mod tests {
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
-                    content: vec![MessageContent::Compaction(
-                        CompactionContent::ProviderWindow {
-                            items: provider_input.as_array().unwrap().clone().into(),
-                        },
-                    )],
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            provider_input.as_array().unwrap().clone(),
+                        )
+                        .unwrap(),
+                    ))],
                     cache: false,
                     reasoning_details: None,
                 },
@@ -4042,7 +4041,8 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, false);
+        let response =
+            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false).unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4083,7 +4083,7 @@ mod tests {
         };
 
         let mut response_request =
-            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false);
+            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false).unwrap();
         response_request.instructions = Some("Preserve implementation details.".to_string());
         let compact_request = response_request.into_compact_request();
 
@@ -4119,7 +4119,8 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response =
+            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["context_management"],
@@ -4139,7 +4140,8 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response =
+            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
 
         assert!(
             serde_json::to_value(&response)
@@ -4150,15 +4152,18 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_replays_encrypted_compaction_block() {
+    fn into_open_ai_response_replays_provider_compaction_block() {
+        let state = provider_compaction_state_from_items(vec![json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        })])
+        .unwrap();
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![
-                    MessageContent::Compaction(CompactionContent::Encrypted {
-                        id: Some("cmp_1".into()),
-                        encrypted_content: "encrypted-blob".into(),
-                    }),
+                    MessageContent::Compaction(CompactedContext::ProviderState(state)),
                     MessageContent::Text("Done.".into()),
                 ],
                 cache: false,
@@ -4167,7 +4172,8 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response =
+            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4186,6 +4192,30 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_rejects_malformed_provider_compaction_state() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                    language_model_core::ProviderCompactionState::new(
+                        language_model_core::OPEN_AI_PROVIDER_ID,
+                        crate::responses::COMPACTION_STATE_FORMAT,
+                        "not valid JSON",
+                    ),
+                ))],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let error =
+            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap_err();
+
+        assert!(error.to_string().contains("expected ident"));
     }
 
     #[test]
@@ -4214,11 +4244,17 @@ mod tests {
         assert_eq!(
             mapped,
             vec![
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
-                    id: Some("cmp_1".into()),
-                    encrypted_content: "encrypted-blob".into(),
-                }),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                    CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(vec![json!({
+                            "type": "compaction",
+                            "id": "cmp_1",
+                            "encrypted_content": "encrypted-blob"
+                        })])
+                        .unwrap()
+                    )
+                )),
             ]
         );
     }

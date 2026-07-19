@@ -8,6 +8,11 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+use language_model_core::{
+    CompactedContext, OPEN_AI_PROVIDER_ID, ProviderCompactionState, SharedString,
+};
+
+pub const COMPACTION_STATE_FORMAT: &str = "openai.responses.input-items.v1";
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -78,21 +83,52 @@ pub struct CompactedResponse {
 }
 
 impl CompactedResponse {
-    pub fn into_compaction_items(self) -> Result<Vec<Value>> {
-        if self.output.is_empty() {
-            return Err(anyhow!("OpenAI returned an empty compaction output"));
-        }
-        if !self.output.iter().any(|item| {
-            item.get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|item_type| item_type == "compaction")
-        }) {
-            return Err(anyhow!(
-                "OpenAI compaction output did not contain a compaction item"
-            ));
-        }
-        Ok(self.output)
+    pub fn into_compacted_context(self) -> Result<CompactedContext> {
+        Ok(CompactedContext::ProviderState(
+            provider_compaction_state_from_items(self.output)?,
+        ))
     }
+}
+
+pub fn provider_compaction_state_from_items(items: Vec<Value>) -> Result<ProviderCompactionState> {
+    validate_compaction_items(&items)?;
+    Ok(ProviderCompactionState::new(
+        OPEN_AI_PROVIDER_ID,
+        SharedString::new_static(COMPACTION_STATE_FORMAT),
+        serde_json::to_string(&items)?,
+    ))
+}
+
+pub fn provider_compaction_items(state: &ProviderCompactionState) -> Result<Option<Vec<Value>>> {
+    if state.provider_id() != &OPEN_AI_PROVIDER_ID {
+        return Ok(None);
+    }
+    if state.format() != COMPACTION_STATE_FORMAT {
+        return Err(anyhow!(
+            "unsupported OpenAI compaction state format: {}",
+            state.format()
+        ));
+    }
+
+    let items = serde_json::from_str::<Vec<Value>>(state.payload())?;
+    validate_compaction_items(&items)?;
+    Ok(Some(items))
+}
+
+fn validate_compaction_items(items: &[Value]) -> Result<()> {
+    if items.is_empty() {
+        return Err(anyhow!("OpenAI returned an empty compaction output"));
+    }
+    if !items.iter().any(|item| {
+        item.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|item_type| item_type == "compaction")
+    }) {
+        return Err(anyhow!(
+            "OpenAI compaction output did not contain a compaction item"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -925,12 +961,16 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            response.into_compaction_items().unwrap(),
-            vec![json!({
+            provider_compaction_items(&match response.into_compacted_context().unwrap() {
+                CompactedContext::ProviderState(state) => state,
+                CompactedContext::Summary { .. } => panic!("expected provider state"),
+            })
+            .unwrap(),
+            Some(vec![json!({
                 "type": "compaction",
                 "id": "cmp_manual",
                 "encrypted_content": "opaque-state"
-            })]
+            })])
         );
         let (method, uri, authorization, body) = captured_request.lock().unwrap().take().unwrap();
         assert_eq!(method, Method::POST);
@@ -1040,7 +1080,11 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(response.into_compaction_items().unwrap(), output);
+        let CompactedContext::ProviderState(state) = response.into_compacted_context().unwrap()
+        else {
+            panic!("expected provider state");
+        };
+        assert_eq!(provider_compaction_items(&state).unwrap(), Some(output));
     }
 
     #[test]
@@ -1066,7 +1110,7 @@ mod tests {
 
         assert!(
             response
-                .into_compaction_items()
+                .into_compacted_context()
                 .unwrap_err()
                 .to_string()
                 .contains("compaction item")
@@ -1092,11 +1136,54 @@ mod tests {
 
         assert!(
             response
-                .into_compaction_items()
+                .into_compacted_context()
                 .unwrap_err()
                 .to_string()
                 .contains("empty")
         );
+    }
+
+    #[test]
+    fn provider_compaction_items_ignores_state_owned_by_another_provider() {
+        let items = vec![json!({
+            "type": "compaction",
+            "id": "cmp_manual",
+            "encrypted_content": "opaque-state"
+        })];
+        let mut state = provider_compaction_state_from_items(items).unwrap();
+
+        state = ProviderCompactionState::new(
+            language_model_core::LanguageModelProviderId::new("anthropic"),
+            state.format(),
+            state.payload(),
+        );
+        assert_eq!(provider_compaction_items(&state).unwrap(), None);
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_unknown_open_ai_format() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            "openai.responses.input-items.v2",
+            "[]",
+        );
+        assert!(
+            provider_compaction_items(&state)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported OpenAI compaction state format")
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_malformed_open_ai_state() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            COMPACTION_STATE_FORMAT,
+            "not valid JSON",
+        );
+
+        assert!(provider_compaction_items(&state).is_err());
     }
 
     fn compact_test_request() -> CompactRequest {

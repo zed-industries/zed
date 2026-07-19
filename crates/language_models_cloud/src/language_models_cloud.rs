@@ -19,7 +19,7 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionContent, DisabledReason,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactedContext, DisabledReason,
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
@@ -429,7 +429,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionContent, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
         if !self.supports_explicit_compaction() {
             return async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
@@ -448,7 +448,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 open_ai::ReasoningEffort::from_str(&effort.value)
                     .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
             });
-        let request = into_open_ai_response(
+        let request = match into_open_ai_response(
             request,
             &self.model.id.0,
             self.model.supports_parallel_tool_calls,
@@ -456,7 +456,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             None,
             None,
             supports_none_reasoning_effort,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let compact_request = request.into_compact_request();
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
@@ -493,12 +496,9 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             while let Some(event) = events.next().await {
                 match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
                     CompletionEvent::Event(response) => {
-                        let items = response
-                            .into_compaction_items()
-                            .map_err(LanguageModelCompletionError::Other)?;
-                        return Ok(CompactionContent::ProviderWindow {
-                            items: items.into(),
-                        });
+                        return response
+                            .into_compacted_context()
+                            .map_err(LanguageModelCompletionError::Other);
                     }
                     CompletionEvent::Status(_) => {}
                 }
@@ -676,7 +676,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
                     });
 
-                let mut request = into_open_ai_response(
+                let mut request = match into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -684,7 +684,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     None,
                     None,
                     supports_none_reasoning_effort,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
 
                 if enable_thinking && let Some(effort) = effort {
                     request.reasoning = Some(open_ai::responses::ReasoningConfig {
@@ -1175,16 +1178,16 @@ mod tests {
 
         let content = model.compact(request, &cx.to_async()).await.unwrap();
 
+        let CompactedContext::ProviderState(state) = content else {
+            panic!("expected provider compaction state");
+        };
         assert_eq!(
-            content,
-            CompactionContent::ProviderWindow {
-                items: vec![json!({
-                    "type": "compaction",
-                    "id": "cmp_manual",
-                    "encrypted_content": "opaque-state"
-                })]
-                .into()
-            }
+            open_ai::responses::provider_compaction_items(&state).unwrap(),
+            Some(vec![json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            })])
         );
         let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
             captured_request.lock().unwrap().take().unwrap();

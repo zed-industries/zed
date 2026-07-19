@@ -5,7 +5,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionContent, EnvVar,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactedContext, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -544,7 +544,7 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         mut request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionContent, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
         if !self.supports_explicit_compaction() {
             return async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
@@ -555,7 +555,7 @@ impl LanguageModel for OpenAiLanguageModel {
         }
 
         normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-        let request = into_open_ai_response(
+        let request = match into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
@@ -565,17 +565,17 @@ impl LanguageModel for OpenAiLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&open_ai::ReasoningEffort::None),
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let request = request.into_compact_request();
         let response = self.compact_response(request, cx);
         async move {
             let response = response.await?;
-            let items = response
-                .into_compaction_items()
-                .map_err(LanguageModelCompletionError::Other)?;
-            Ok(CompactionContent::ProviderWindow {
-                items: items.into(),
-            })
+            response
+                .into_compacted_context()
+                .map_err(LanguageModelCompletionError::Other)
         }
         .boxed()
     }
@@ -619,7 +619,7 @@ impl LanguageModel for OpenAiLanguageModel {
         }
         if self.model.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-            let request = into_open_ai_response(
+            let request = match into_open_ai_response(
                 request,
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
@@ -629,7 +629,10 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model
                     .supported_reasoning_efforts()
                     .contains(&open_ai::ReasoningEffort::None),
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();

@@ -1466,7 +1466,7 @@ impl LanguageModel for BedrockMantleModel {
 
         match self.model.protocol() {
             MantleProtocol::Responses => {
-                let request = into_open_ai_response(
+                let request = match into_open_ai_response(
                     request,
                     &model_id,
                     self.model.supports_tools(),
@@ -1474,7 +1474,10 @@ impl LanguageModel for BedrockMantleModel {
                     max_output_tokens,
                     mantle_default_reasoning_effort(&self.model),
                     self.model.supports_thinking(),
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let completions = self.stream_response(request, cx);
                 async move {
                     let mapper = OpenAiResponseEventMapper::new();
@@ -2693,7 +2696,8 @@ mod tests {
             Some(MantleModel::Grok4_3.max_output_tokens()),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
             MantleModel::Grok4_3.supports_thinking(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&request).unwrap()["reasoning"],
@@ -2744,7 +2748,8 @@ mod tests {
             Some(128_000),
             Some(ReasoningEffort::Medium),
             false,
-        );
+        )
+        .unwrap();
 
         assert!(request.context_management.is_some());
         strip_unsupported_mantle_response_fields(&mut request);

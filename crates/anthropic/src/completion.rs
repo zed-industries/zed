@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelProviderName, LanguageModelRequest, LanguageModelRequestToolInput,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
     LanguageModelToolUseInput, MessageContent, Role, StopReason, TokenUsage,
@@ -159,19 +159,13 @@ fn to_anthropic_content(content: MessageContent) -> Result<Option<RequestContent
                 cache_control: None,
             }))
         }
-        MessageContent::Compaction(CompactionContent::Summary { content }) => {
+        MessageContent::Compaction(CompactedContext::Summary { content }) => {
             Ok(Some(RequestContent::Compaction {
-                content,
+                content: Some(content),
                 cache_control: None,
             }))
         }
-        // Provider-native compaction blocks come from other providers, and a
-        // Pending block is a streaming-only UI signal; neither is replayed.
-        MessageContent::Compaction(
-            CompactionContent::Encrypted { .. }
-            | CompactionContent::ProviderWindow { .. }
-            | CompactionContent::Pending,
-        ) => Ok(None),
+        MessageContent::Compaction(CompactedContext::ProviderState(_)) => Ok(None),
     }
 }
 
@@ -360,6 +354,7 @@ pub fn into_anthropic(
 
 pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
+    compaction_summaries_by_index: HashMap<usize, String>,
     usage: Usage,
     stop_reason: StopReason,
     provider_name: LanguageModelProviderName,
@@ -369,6 +364,7 @@ impl AnthropicEventMapper {
     pub fn new(provider_name: LanguageModelProviderName) -> Self {
         Self {
             tool_uses_by_index: HashMap::default(),
+            compaction_summaries_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
             provider_name,
@@ -424,9 +420,19 @@ impl AnthropicEventMapper {
                     Vec::new()
                 }
                 ResponseContent::Compaction { content } => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Summary { content },
-                    ))]
+                    let mut events = vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionUpdate::Started,
+                    ))];
+                    let summary = self.compaction_summaries_by_index.entry(index).or_default();
+                    if let Some(content) = content
+                        && !content.is_empty()
+                    {
+                        summary.push_str(&content);
+                        events.push(Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::SummaryDelta(content),
+                        )));
+                    }
+                    events
                 }
             },
             Event::ContentBlockDelta { index, delta } => match delta {
@@ -446,8 +452,17 @@ impl AnthropicEventMapper {
                     })]
                 }
                 ContentDelta::CompactionDelta { content } => {
+                    let Some(content) = content.filter(|content| !content.is_empty()) else {
+                        return Vec::new();
+                    };
+                    let Some(summary) = self.compaction_summaries_by_index.get_mut(&index) else {
+                        return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                            "Anthropic streamed a compaction delta before starting its content block"
+                        )))];
+                    };
+                    summary.push_str(&content);
                     vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Summary { content },
+                        CompactionUpdate::SummaryDelta(content),
                     ))]
                 }
                 ContentDelta::InputJsonDelta { partial_json } => {
@@ -477,7 +492,18 @@ impl AnthropicEventMapper {
                 }
             },
             Event::ContentBlockStop { index } => {
-                if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
+                if let Some(summary) = self.compaction_summaries_by_index.remove(&index) {
+                    if summary.is_empty() {
+                        return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                            "Anthropic returned an empty compaction summary"
+                        )))];
+                    }
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionUpdate::Finished(CompactedContext::Summary {
+                            content: summary.into(),
+                        }),
+                    ))]
+                } else if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
                     let input_json = tool_use.input_json.trim();
                     let event_result = match parse_tool_arguments(input_json) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
@@ -1023,8 +1049,8 @@ mod tests {
     #[test]
     fn test_compaction_content_replayed_as_compaction_block() {
         let result = request_with_assistant_content(vec![
-            MessageContent::Compaction(CompactionContent::Summary {
-                content: Some("Summary of the conversation so far.".into()),
+            MessageContent::Compaction(CompactedContext::Summary {
+                content: "Summary of the conversation so far.".into(),
             }),
             MessageContent::Text("Response".to_string()),
         ]);
@@ -1051,19 +1077,32 @@ mod tests {
         let start_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_start",
             "index": 0,
-            "content_block": { "type": "compaction", "content": null }
+            "content_block": { "type": "compaction", "content": "Summary " }
         }))
         .unwrap();
         let delta_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_delta",
             "index": 0,
-            "delta": { "type": "compaction_delta", "content": "Summary chunk" }
+            "delta": { "type": "compaction_delta", "content": "in " }
+        }))
+        .unwrap();
+        let second_delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "compaction_delta", "content": "chunks" }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
         }))
         .unwrap();
 
         let mut events = Vec::new();
         events.extend(mapper.map_event(start_event));
         events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(second_delta_event));
+        events.extend(mapper.map_event(stop_event));
         let events = events
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
@@ -1072,13 +1111,70 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
-                    content: None
-                }),
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
-                    content: Some("Summary chunk".into())
-                }),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(
+                    "Summary ".into()
+                )),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(
+                    "in ".into()
+                )),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(
+                    "chunks".into()
+                )),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                    CompactedContext::Summary {
+                        content: "Summary in chunks".into()
+                    }
+                )),
             ]
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_rejects_empty_compaction_summary() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": null }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        assert_eq!(
+            mapper
+                .map_event(start_event)
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started
+            )]
+        );
+        let error = mapper.map_event(stop_event).pop().unwrap().unwrap_err();
+        assert!(error.to_string().contains("empty compaction summary"));
+    }
+
+    #[test]
+    fn test_event_mapper_rejects_compaction_delta_before_start() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "compaction_delta", "content": "Summary chunk" }
+        }))
+        .unwrap();
+
+        let error = mapper.map_event(delta_event).pop().unwrap().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("compaction delta before starting")
         );
     }
 

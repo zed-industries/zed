@@ -519,7 +519,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
-        let mut responses_request = into_open_ai_response(
+        let mut responses_request = match into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
@@ -529,7 +529,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&ReasoningEffort::None),
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         responses_request.store = Some(false);
 
         // The Codex backend requires system messages to be in the top-level

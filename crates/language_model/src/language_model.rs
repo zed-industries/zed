@@ -139,7 +139,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         _request: LanguageModelRequest,
         _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactionContent, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
         let provider = self.provider_name();
         async move {
             Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
