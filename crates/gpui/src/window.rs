@@ -3835,7 +3835,7 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
-        self.next_frame.scene.insert_primitive(Quad {
+        let quad = Quad {
             order: 0,
             bounds: snapped_bounds,
             content_mask: self.snapped_content_mask(),
@@ -3844,7 +3844,76 @@ impl Window {
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
-        });
+        };
+
+        if !quad.background.is_transparent() {
+            self.next_frame.scene.insert_primitive(quad);
+            return;
+        }
+
+        // We're drawing a quad with a border but no fill color. Painting this quad would run the quad shader for every
+        // transparent interior pixel, which is especially costly when the quad is large.
+        // Instead, split it into four non-overlapping strips that cover the regions where borders are painted:
+        // the side strips own the straight left and right edges, while the top and bottom strips own the horizontal
+        // edges and the rounded corners.
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+
+        let antialias_slack = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        let top_left_inset = point(
+            widths.left,
+            widths.top.max(radii.top_left).max(radii.top_right),
+        ) + antialias_slack;
+        let bottom_right_inset = point(
+            widths.right,
+            widths.bottom.max(radii.bottom_left).max(radii.bottom_right),
+        ) + antialias_slack;
+
+        let outer_bounds = quad.bounds;
+        let inner_bounds = Bounds::from_corners(
+            outer_bounds.origin + top_left_inset,
+            outer_bounds.bottom_right() - bottom_right_inset,
+        );
+
+        if inner_bounds.is_empty() {
+            self.next_frame.scene.insert_primitive(quad);
+            return;
+        }
+
+        let strips = [
+            // Top
+            Bounds::from_corners(
+                outer_bounds.origin,
+                point(outer_bounds.right(), inner_bounds.top()),
+            ),
+            // Bottom
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.bottom()),
+                outer_bounds.bottom_right(),
+            ),
+            // Left
+            Bounds::from_corners(
+                point(outer_bounds.left(), inner_bounds.top()),
+                inner_bounds.bottom_left(),
+            ),
+            // Right
+            Bounds::from_corners(
+                inner_bounds.top_right(),
+                point(outer_bounds.right(), inner_bounds.bottom()),
+            ),
+        ];
+
+        for strip in strips {
+            let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
+            if !content_mask_bounds.is_empty() {
+                self.next_frame.scene.insert_primitive(Quad {
+                    content_mask: ContentMask {
+                        bounds: content_mask_bounds,
+                    },
+                    ..quad
+                });
+            }
+        }
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
