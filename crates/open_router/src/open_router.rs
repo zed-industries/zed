@@ -3,6 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::DataCollection;
@@ -81,9 +82,11 @@ pub struct Model {
     #[serde(default)]
     pub mode: ModelMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub supported_efforts: Vec<String>,
+    pub supported_efforts: Vec<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_effort: Option<String>,
+    pub default_effort: Option<ReasoningEffort>,
+    pub supports_max_tokens: bool,
+    pub mandatory_reasoning: bool,
     pub provider: Option<Provider>,
 }
 
@@ -98,6 +101,7 @@ impl Model {
             Some(ModelMode::Default),
             None,
             None,
+            false,
             None,
         )
     }
@@ -109,8 +113,9 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
-        supported_efforts: Option<Vec<String>>,
-        default_effort: Option<&str>,
+        supported_efforts: Option<Vec<ReasoningEffort>>,
+        default_effort: Option<ReasoningEffort>,
+        supports_max_tokens: bool,
         provider: Option<Provider>,
     ) -> Self {
         Self {
@@ -121,7 +126,9 @@ impl Model {
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
             supported_efforts: supported_efforts.unwrap_or_default(),
-            default_effort: default_effort.map(|s| s.to_owned()),
+            default_effort,
+            supports_max_tokens,
+            mandatory_reasoning: false,
             provider,
         }
     }
@@ -209,7 +216,7 @@ pub struct FunctionDefinition {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Reasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub effort: Option<ReasoningEffort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -496,13 +503,15 @@ pub struct ModelArchitecture {
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelReasoning {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_effort: Option<String>,
+    pub default_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mandatory: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub supported_efforts: Vec<String>,
+    pub supported_efforts: Vec<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_max_tokens: Option<bool>,
 }
 
 pub async fn stream_completion(
@@ -662,16 +671,9 @@ pub async fn list_models(
                 ),
                 mode: if entry
                     .supported_parameters
-                    .contains(&"reasoning_effort".to_string())
-                {
-                    ModelMode::Adaptive
-                } else if entry
-                    .supported_parameters
                     .contains(&"reasoning".to_string())
                 {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
+                    ModelMode::Adaptive
                 } else {
                     ModelMode::Default
                 },
@@ -679,11 +681,24 @@ pub async fn list_models(
                     .reasoning
                     .as_ref()
                     .map(|r| r.supported_efforts.clone())
-                    .unwrap_or_default(),
+                    .unwrap_or_default()
+                    .into_iter()
+                    .rev()
+                    .collect(),
                 default_effort: entry
                     .reasoning
                     .as_ref()
                     .and_then(|r| r.default_effort.clone()),
+                supports_max_tokens: entry
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.supports_max_tokens)
+                    .unwrap_or(false),
+                mandatory_reasoning: entry
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.mandatory)
+                    .unwrap_or(false),
                 provider: None,
             })
             .collect();

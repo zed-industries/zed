@@ -14,7 +14,8 @@ use language_model::{
     TokenUsage, env_var,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
+    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ReasoningEffort,
+    ResponseStreamEvent, list_models,
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
@@ -222,15 +223,27 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         let mut settings_models = Vec::new();
 
         for model in &Self::settings(cx).available_models {
+            let mode = model.mode.unwrap_or_default();
+            let (supported_efforts, default_effort) =
+                if matches!(mode, OpenRouterModelMode::Adaptive) {
+                    (
+                        model.reasoning_effort.into_iter().collect(),
+                        model.reasoning_effort,
+                    )
+                } else {
+                    (Vec::new(), None)
+                };
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
-                mode: model.mode.unwrap_or_default(),
-                supported_efforts: model.supported_efforts.clone().unwrap_or_default(),
-                default_effort: model.default_effort.clone(),
+                mode,
+                supported_efforts,
+                default_effort,
+                supports_max_tokens: false,
+                mandatory_reasoning: false,
                 provider: model.provider.clone(),
             });
         }
@@ -359,23 +372,29 @@ impl LanguageModel for OpenRouterLanguageModel {
         )
     }
 
+    fn supports_disabling_thinking(&self) -> bool {
+        !self.model.mandatory_reasoning
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        self.model
-            .supported_efforts
+        let efforts: &[ReasoningEffort] = if !self.model.supported_efforts.is_empty() {
+            &self.model.supported_efforts
+        } else if self.model.supports_max_tokens {
+            &ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
+        } else {
+            return Vec::new();
+        };
+        let default_effort = self.model.default_effort.or_else(|| {
+            self.model
+                .supports_max_tokens
+                .then_some(ReasoningEffort::Medium)
+        });
+        efforts
             .iter()
-            .map(|effort| LanguageModelEffortLevel {
-                name: match effort.as_str() {
-                    "minimal" => "Minimal",
-                    "low" => "Low",
-                    "medium" => "Medium",
-                    "high" => "High",
-                    "xhigh" => "Extra High",
-                    "max" => "Max",
-                    _ => effort.as_str(),
-                }
-                .into(),
-                value: effort.clone().into(),
-                is_default: self.model.default_effort.as_deref() == Some(effort.as_str()),
+            .map(|&effort| LanguageModelEffortLevel {
+                name: effort.label().into(),
+                value: effort.value().into(),
+                is_default: Some(effort) == default_effort,
             })
             .collect()
     }
@@ -599,29 +618,38 @@ pub fn into_open_router(
         parallel_tool_calls: (!request.tools.is_empty() && !model.supports_parallel_tool_calls())
             .then_some(false),
         usage: open_router::RequestUsage { include: true },
-        reasoning: request
-            .thinking_allowed
-            .then(|| match model.mode {
-                OpenRouterModelMode::Adaptive => Some(open_router::Reasoning {
+        reasoning: match model.mode {
+            OpenRouterModelMode::Adaptive if request.thinking_allowed => {
+                Some(open_router::Reasoning {
+                    enabled: Some(true),
                     effort: request
                         .thinking_effort
                         .as_deref()
-                        .filter(|e| model.supported_efforts.iter().any(|s| s == e))
-                        .or(model.default_effort.as_deref())
-                        .map(|e| e.to_string()),
+                        .and_then(|e| e.parse::<ReasoningEffort>().ok()),
                     max_tokens: None,
-                    exclude: Some(false),
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
+                Some(open_router::Reasoning {
                     enabled: Some(true),
-                }),
-                OpenRouterModelMode::Thinking { budget_tokens } => Some(open_router::Reasoning {
                     effort: None,
                     max_tokens: budget_tokens,
-                    exclude: Some(false),
-                    enabled: Some(true),
-                }),
-                OpenRouterModelMode::Default => None,
-            })
-            .flatten(),
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Adaptive | OpenRouterModelMode::Thinking { .. }
+                if !model.mandatory_reasoning =>
+            {
+                Some(open_router::Reasoning {
+                    enabled: Some(false),
+                    effort: None,
+                    max_tokens: None,
+                    exclude: None,
+                })
+            }
+            _ => None,
+        },
         tools: request
             .tools
             .into_iter()
@@ -1158,6 +1186,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             None,
         );
         let expected_session_id = "a".repeat(MAX_OPEN_ROUTER_SESSION_ID_LENGTH);
@@ -1233,6 +1262,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             None,
         );
 
@@ -1386,6 +1416,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             None,
         );
 
@@ -1451,6 +1482,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             None,
         );
 
@@ -1514,8 +1546,12 @@ mod tests {
             Some(true),
             Some(false),
             Some(OpenRouterModelMode::Adaptive),
-            Some(vec!["xhigh".to_string(), "high".to_string()]),
-            Some("high"),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
             None,
         );
         let request = LanguageModelRequest {
@@ -1532,17 +1568,17 @@ mod tests {
 
         let result = into_open_router(request, &model, None).unwrap();
         let reasoning = result.reasoning.expect("reasoning should be set");
-        assert_eq!(reasoning.effort.as_deref(), Some("xhigh"));
+        assert_eq!(reasoning.effort, Some(open_router::ReasoningEffort::XHigh));
         assert_eq!(
             reasoning.max_tokens, None,
             "max_tokens should not be sent when effort is used"
         );
-        assert_eq!(reasoning.exclude, Some(false));
+        assert_eq!(reasoning.exclude, None);
         assert_eq!(reasoning.enabled, Some(true));
     }
 
     #[gpui::test]
-    async fn test_into_open_router_falls_back_to_default_effort() {
+    async fn test_into_open_router_disables_reasoning_when_thinking_not_allowed() {
         let model = open_router::Model::new(
             "z-ai/glm-5.2",
             Some("GLM 5.2"),
@@ -1550,8 +1586,12 @@ mod tests {
             Some(true),
             Some(false),
             Some(OpenRouterModelMode::Adaptive),
-            Some(vec!["xhigh".to_string(), "high".to_string()]),
-            Some("high"),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
             None,
         );
         let request = LanguageModelRequest {
@@ -1561,17 +1601,17 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
-            thinking_allowed: true,
-            thinking_effort: None,
+            thinking_allowed: false,
+            thinking_effort: Some("high".to_string()),
             ..Default::default()
         };
 
         let result = into_open_router(request, &model, None).unwrap();
         let reasoning = result.reasoning.expect("reasoning should be set");
+        assert_eq!(reasoning.enabled, Some(false));
         assert_eq!(
-            reasoning.effort.as_deref(),
-            Some("high"),
-            "should fall back to the model's default_effort when none is requested"
+            reasoning.effort, None,
+            "effort should not be sent when reasoning is disabled"
         );
         assert_eq!(reasoning.max_tokens, None);
     }
