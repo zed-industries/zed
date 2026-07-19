@@ -13,6 +13,18 @@ pub enum TruncateFrom {
     Middle,
 }
 
+/// Controls how soft-wrapped continuation lines are indented.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IndentAdjustment {
+    /// No indent - continuation lines start at column 0.
+    NoIndent,
+    /// Match the original line's leading whitespace.
+    #[default]
+    SameIndent,
+    /// Add N extra columns of indent (in space-character widths).
+    ExtraColumns(u32),
+}
+
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
     text_system: Arc<TextSystem>,
@@ -41,6 +53,7 @@ impl LineWrapper {
         &'a mut self,
         fragments: &'a [LineFragment],
         wrap_width: Pixels,
+        indent_adjustment: IndentAdjustment,
     ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
@@ -107,9 +120,15 @@ impl LineWrapper {
                 if width > wrap_width && ix > last_wrap_ix {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
-                        indent = Some(
-                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32),
-                        );
+                        let base_indent =
+                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32);
+                        indent = Some(match indent_adjustment {
+                            IndentAdjustment::NoIndent => 0,
+                            IndentAdjustment::SameIndent => base_indent,
+                            IndentAdjustment::ExtraColumns(extra) => {
+                                Self::MAX_INDENT.min(base_indent + extra)
+                            }
+                        });
                     }
 
                     if last_candidate_ix > 0 {
@@ -715,7 +734,11 @@ mod tests {
 
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("aa bbb cccc ddddd eeee")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -725,7 +748,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+                .wrap_line(
+                    &[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")],
+                    px(72.0),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(4, 0),
@@ -735,7 +762,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("     aaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 5),
@@ -758,7 +789,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("          aaaaaaaaaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -1284,7 +1319,11 @@ mod tests {
 
         // The truncated text, when wrapped, must fit within max_lines lines.
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(
@@ -1349,7 +1388,11 @@ mod tests {
         );
 
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(
