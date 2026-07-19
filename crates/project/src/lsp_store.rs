@@ -1905,7 +1905,17 @@ impl LocalLspStore {
                             format!("Failed to format buffer via external command: {}", command)
                         })?;
                 let Some(diff) = diff else {
-                    zlog::trace!(logger => "No changes");
+                    zlog::debug!(logger => "External formatter produced no output; buffer left unchanged");
+                    lsp_store
+                        .update(cx, |_, cx| {
+                            cx.emit(LspStoreEvent::Notification(format!(
+                                "External formatter `{command}` produced no output on stdout, \
+                                so the buffer was left unchanged. Formatters that rewrite files \
+                                in place (such as `cargo fmt`) may still have formatted the file \
+                                on disk."
+                            )))
+                        })
+                        .ok();
                     return Ok(());
                 };
 
@@ -2613,6 +2623,13 @@ impl LocalLspStore {
         );
 
         let stdout = String::from_utf8(output.stdout)?;
+        if stdout.is_empty() && !text.is_empty() {
+            // Some formatters (e.g. `cargo fmt`) rewrite files on disk instead of
+            // printing the formatted contents to stdout. Treating empty stdout as the
+            // new buffer contents would erase the buffer, so leave it untouched.
+            return Ok(None);
+        }
+
         Ok(Some(
             buffer
                 .handle
