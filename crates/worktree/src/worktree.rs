@@ -5402,13 +5402,12 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if self.should_scan_directory(&state, entry) {
-                    job_ix += 1;
-                } else {
+                if !self.should_scan_directory(&state, entry) {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
-                    new_jobs.remove(job_ix);
+                    new_jobs[job_ix] = None;
                 }
+                job_ix += 1;
             }
             if entry.is_always_included {
                 state
