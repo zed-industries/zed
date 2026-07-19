@@ -98,8 +98,9 @@ pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -2415,16 +2416,6 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, |editor, window, cx| {
-                            let active = window.is_window_active();
-                            editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
-                                    blink_manager.enable(cx);
-                                } else {
-                                    blink_manager.disable(cx);
-                                }
-                            });
-                        }),
                     ]
                 })
                 .unwrap_or_default(),
@@ -8659,19 +8650,30 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let start_line = selection.start.row + 1;
-        let end_line = selection.end.row + 1;
+        if let Some(file_location) = maybe!({
+            let (buffer, range) = multi_buffer_snapshot
+                .range_to_buffer_range(selection.range())
+                .or_else(|| {
+                    // A selection that spans multiple buffers has no single location,
+                    // so fall back to the buffer the latest cursor is in.
+                    let (buffer, point) =
+                        multi_buffer_snapshot.point_to_buffer_point(selection.head())?;
+                    Some((buffer, point..point))
+                })?;
 
-        let end_line = if selection.end.column == 0 && end_line > start_line {
-            end_line - 1
-        } else {
-            end_line
-        };
+            let start_line = range.start.row + 1;
+            let end_line = range.end.row + 1;
 
-        if let Some(file_location) = self.active_buffer(cx).and_then(|buffer| {
+            let end_line = if range.end.column == 0 && end_line > start_line {
+                end_line - 1
+            } else {
+                end_line
+            };
+
             let project = self.project()?.read(cx);
-            let file = buffer.read(cx).file()?;
+            let file = buffer.file()?;
             let path = file.path().display(project.path_style(cx));
 
             let location = if start_line == end_line {
@@ -9759,7 +9761,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;

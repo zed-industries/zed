@@ -4214,6 +4214,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
+        tag_names: Default::default(),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),

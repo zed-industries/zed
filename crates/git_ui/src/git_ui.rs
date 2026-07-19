@@ -36,6 +36,7 @@ use crate::{
 mod askpass_modal;
 pub mod branch_diff;
 pub mod branch_picker;
+mod commit_context_menu;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
