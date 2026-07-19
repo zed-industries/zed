@@ -336,11 +336,33 @@ impl NotebookEditor {
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = self.kernel_specification.clone().or_else(|| {
-            ReplStore::global(cx)
-                .read(cx)
-                .active_kernelspec(self.worktree_id, None, cx)
-        });
+        let spec = self
+            .kernel_specification
+            .clone()
+            .or_else(|| {
+                ReplStore::global(cx)
+                    .read(cx)
+                    .active_kernelspec(self.worktree_id, None, cx)
+            })
+            .or_else(|| {
+                // Honor `jupyter.kernel_selections` for the notebook's language
+                // before falling back to a bare `python3` from PATH.
+                let language_name = self
+                    .notebook_item
+                    .read(cx)
+                    .language_name()
+                    .unwrap_or_else(|| "python".to_string())
+                    .to_lowercase();
+                let selected_name = crate::JupyterSettings::get_global(cx)
+                    .kernel_selections
+                    .get(&language_name)
+                    .cloned()?;
+                ReplStore::global(cx)
+                    .read(cx)
+                    .kernel_specifications_for_worktree(self.worktree_id)
+                    .find(|spec| spec.name().eq_ignore_ascii_case(&selected_name))
+                    .cloned()
+            });
 
         let spec = spec.unwrap_or_else(|| {
             KernelSpecification::Jupyter(LocalKernelSpecification {
@@ -466,6 +488,29 @@ impl NotebookEditor {
 
         self.kernel = Kernel::StartingKernel(pending_kernel);
         cx.notify();
+
+        // The connection setup can hang forever if the kernel process dies
+        // before binding its sockets (e.g. ipykernel is not installed), which
+        // would leave the notebook reporting "the kernel is still starting"
+        // indefinitely. Surface an actionable error instead.
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(30))
+                .await;
+            this.update(cx, |editor, cx| {
+                if matches!(editor.kernel, Kernel::StartingKernel(_)) {
+                    editor.kernel = Kernel::ErroredLaunch(
+                        "the kernel did not become ready within 30 seconds; check that \
+                         `ipykernel` is installed for the selected interpreter \
+                         (pip install ipykernel), or pick another kernel"
+                            .to_string(),
+                    );
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     // Note: Python environments are only detected as kernels if ipykernel is installed.
