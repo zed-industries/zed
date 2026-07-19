@@ -8,7 +8,7 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    AtlasTile, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
@@ -4165,9 +4165,14 @@ impl Window {
     /// This method will panic if the frame_index is not valid
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    /// Paint an image into `bounds`, positioning and scaling it according to `image_bounds`.
+    ///
+    /// The visible region rendered is `bounds.intersect(&image_bounds)`, with `corner_radii`
+    /// applied to `bounds`.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         data: Arc<RenderImage>,
         frame_index: usize,
@@ -4175,7 +4180,14 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.snap_bounds(bounds);
+        let visible_bounds = bounds.intersect(&image_bounds);
+        if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
+            return Ok(());
+        }
+        if image_bounds.size.width <= Pixels::ZERO || image_bounds.size.height <= Pixels::ZERO {
+            return Ok(());
+        }
+
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -4193,6 +4205,46 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
+
+        let visible_bounds_snapped = self.snap_bounds(visible_bounds);
+
+        let sub_tile = if visible_bounds == image_bounds {
+            tile
+        } else {
+            let x_offset_ratio =
+                (visible_bounds.origin.x - image_bounds.origin.x) / image_bounds.size.width;
+            let y_offset_ratio =
+                (visible_bounds.origin.y - image_bounds.origin.y) / image_bounds.size.height;
+            let width_ratio = visible_bounds.size.width / image_bounds.size.width;
+            let height_ratio = visible_bounds.size.height / image_bounds.size.height;
+
+            let tile_origin_x = tile.bounds.origin.x.0;
+            let tile_origin_y = tile.bounds.origin.y.0;
+            let tile_width = tile.bounds.size.width.0;
+            let tile_height = tile.bounds.size.height.0;
+
+            let sub_origin_x = tile_origin_x + (x_offset_ratio * tile_width as f32).round() as i32;
+            let sub_origin_y = tile_origin_y + (y_offset_ratio * tile_height as f32).round() as i32;
+            let sub_width = (width_ratio * tile_width as f32).round() as i32;
+            let sub_height = (height_ratio * tile_height as f32).round() as i32;
+
+            let max_x = tile_origin_x + tile_width;
+            let max_y = tile_origin_y + tile_height;
+
+            let clamped_origin_x = sub_origin_x.clamp(tile_origin_x, max_x);
+            let clamped_origin_y = sub_origin_y.clamp(tile_origin_y, max_y);
+            let clamped_width = sub_width.min(max_x - clamped_origin_x).max(0);
+            let clamped_height = sub_height.min(max_y - clamped_origin_y).max(0);
+
+            AtlasTile {
+                bounds: Bounds {
+                    origin: point(DevicePixels(clamped_origin_x), DevicePixels(clamped_origin_y)),
+                    size: size(DevicePixels(clamped_width), DevicePixels(clamped_height)),
+                },
+                ..tile
+            }
+        };
+
         let content_mask = self.snapped_content_mask();
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
@@ -4201,10 +4253,10 @@ impl Window {
             order: 0,
             pad: 0,
             grayscale: grayscale.into(),
-            bounds,
+            bounds: visible_bounds_snapped,
             content_mask,
             corner_radii,
-            tile,
+            tile: sub_tile,
             opacity,
         });
         Ok(())

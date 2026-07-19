@@ -487,12 +487,10 @@ impl Element for Img {
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
-                    let corner_radii = style
-                        .corner_radii
-                        .to_pixels(window.rem_size())
-                        .clamp_radii_for_quad_size(new_bounds.size);
+                    let corner_radii = style.corner_radii.to_pixels(window.rem_size());
                     window
                         .paint_image(
+                            bounds,
                             new_bounds,
                             corner_radii,
                             data,
@@ -858,6 +856,23 @@ mod tests {
         window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
             img(ImageSource::Render(test_image(1)))
                 .id(TEST_IMG_ID)
+                .into_any_element()
+        });
+    }
+
+    fn test_image_sized(width: u32, height: u32) -> Arc<RenderImage> {
+        let frame = Frame::new(ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0])));
+        Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1)))
+    }
+
+    #[gpui::test]
+    fn image_object_fit_cover_rounded_corners(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(test_image_sized(200, 100)))
+                .size_full()
+                .rounded(px(10.))
+                .object_fit(ObjectFit::Cover)
                 .into_any_element()
         });
     }
