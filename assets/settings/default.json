@@ -2590,6 +2590,10 @@
     //
     // Default rules are viewable via the "zed: show default semantic token rules" action.
     "semantic_token_rules": [],
+    // Whether to enable horizontal scrolling for code blocks in hover popovers,
+    // signature help, and code context menus instead of wrapping text.
+    // Default: false
+    "code_block_horizontal_scroll": false,
   },
   // Jupyter settings
   "jupyter": {
