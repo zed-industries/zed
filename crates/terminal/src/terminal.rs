@@ -2,6 +2,7 @@ mod mappings;
 
 mod alacritty;
 mod pty_info;
+mod semantic;
 pub mod terminal_settings;
 
 #[cfg(not(windows))]
@@ -18,8 +19,10 @@ use futures::{
 use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
-    scroll_report,
+    scroll_report, sgr_mouse_press_report,
 };
+use parking_lot::Mutex;
+use semantic::{ClickMode, SemanticPromptState};
 
 use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
@@ -1004,6 +1007,7 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            semantic_prompt: Arc::new(Mutex::new(SemanticPromptState::default())),
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -1145,6 +1149,11 @@ impl TerminalBuilder {
                 alternate_scroll,
             );
 
+            // Shared OSC 133 phase state. On the PTY path the event loop tees the
+            // stream into it; on other paths it stays `Idle`, so the click gate is
+            // closed.
+            let semantic_prompt = Arc::new(Mutex::new(SemanticPromptState::default()));
+
             // When `no_pty` is set (headless hosts), run the task as a plain
             // subprocess and pump its piped output into the same emulator the
             // PTY path would feed.
@@ -1214,9 +1223,16 @@ impl TerminalBuilder {
 
                 let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
 
-                //And connect them together
-                let pty_tx =
-                    spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+                //And connect them together. The event loop tees the PTY stream
+                //into `semantic_prompt` (Unix) so we can track OSC 133 phases the
+                //vte parser drops.
+                let pty_tx = spawn_event_loop(
+                    term.clone(),
+                    events_tx,
+                    pty,
+                    pty_options.drain_on_exit,
+                    semantic_prompt.clone(),
+                )?;
 
                 (
                     TerminalType::Pty {
@@ -1277,6 +1293,7 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                semantic_prompt,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
                 #[cfg(any(test, feature = "test-support"))]
@@ -1446,6 +1463,12 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    /// Live OSC 133 prompt/input/output phase, teed from the PTY byte stream
+    /// (see [`semantic`]). Consulted by `mouse_up` to gate click-to-move-cursor,
+    /// and updated by the PTY reader thread as marks arrive. Stays `Idle`/`None`
+    /// for shells without shell integration and on non-Unix platforms, so the
+    /// gate is simply closed there.
+    semantic_prompt: Arc<Mutex<SemanticPromptState>>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
     #[cfg(any(test, feature = "test-support"))]
@@ -2467,6 +2490,81 @@ impl Terminal {
         Some(scroll_lines.clamp(-3, 3))
     }
 
+    /// Reposition the shell's own cursor to a plain click, using OSC 133 shell
+    /// integration. This fires only when the shell has told us — via
+    /// `OSC 133 ; A ; click_events=…` — that the cursor is inside an editable
+    /// prompt input region; in every other case it is a no-op. That is what makes
+    /// the feature correct rather than a guess: a click during command output, in
+    /// a REPL, in a full-screen program, or in any shell without shell
+    /// integration injects nothing.
+    ///
+    /// The caller (`mouse_up`) has already established that this is a plain single
+    /// left click that did not drag into a selection and does not land on a
+    /// hyperlink, so drag-to-select, copy-on-select and link clicks are untouched.
+    ///
+    /// For `click_events` shells (fish, nushell) we report the click and the
+    /// shell moves its own cursor, which is correct for wide characters,
+    /// combining marks and multi-line input alike. The `cl` arrow-synthesis
+    /// fallback for shells without `click_events`, and `click_events=2`'s
+    /// prompt-relative coordinates, both need prompt-position tracking and are
+    /// left to a later phase; they no-op here rather than send wrong bytes.
+    fn move_shell_cursor_to_click(&mut self, position: GpuiPoint<Pixels>) {
+        // Full-screen programs (vim, less, htop, …) drive their own cursor and
+        // never open an OSC 133 input region; leave them alone. The gate below
+        // already excludes them, but this keeps the intent explicit.
+        if self.last_content.mode.contains(Modes::ALT_SCREEN) {
+            return;
+        }
+
+        // The gate: only while the user is editing a command line whose shell
+        // asked us to report clicks.
+        let click_mode = {
+            let state = self.semantic_prompt.lock();
+            if !state.accepts_click() {
+                return;
+            }
+            state.click
+        };
+
+        // `click_events=1` is absolute screen coordinates (fish). Anything else
+        // needs prompt-position tracking we do not yet keep, so no-op.
+        match click_mode {
+            ClickMode::ClickEvents(1) => {}
+            ClickMode::ClickEvents(_) | ClickMode::Cl | ClickMode::None => return,
+        }
+
+        // The click must land on the visible screen (not scrolled-back history)
+        // for its coordinate to be a valid absolute mouse position.
+        if self.last_content.display_offset != 0 {
+            return;
+        }
+
+        let clicked = grid_point(
+            position,
+            self.last_content.terminal_bounds,
+            self.last_content.display_offset,
+        );
+        if clicked.line < 0 {
+            return;
+        }
+
+        // One SGR left-button press at the clicked cell. The shell reads it on
+        // its private prompt-click channel and moves its own cursor there. We
+        // send it regardless of the terminal's mouse-reporting mode, since
+        // `click_events` is independent of DECSET 1000/1006 (unlike
+        // `mouse_button_report`, which is mode-gated).
+        //
+        // This goes through `write_to_pty`, not `input`, to match the other
+        // mouse-report paths (`mouse_button_report`, scroll reports). A synthetic
+        // mouse press is not keyboard input, so it must not set
+        // `keyboard_input_sent` or complete the init-command handshake; `input`'s
+        // scroll-to-bottom and clear-selection side effects are likewise
+        // unwanted (and would only ever be no-ops here thanks to the
+        // `display_offset == 0` gate above).
+        let report = sgr_mouse_press_report(clicked);
+        self.write_to_pty(report);
+    }
+
     pub fn mouse_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         let point = grid_point(
@@ -2601,6 +2699,25 @@ impl Terminal {
                 } else if e.modifiers.secondary() {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
+                } else if e.button == MouseButton::Left
+                    && e.click_count == 1
+                    && !e.modifiers.alt
+                    && !e.modifiers.shift
+                    && !e.modifiers.control
+                    && !e.modifiers.platform
+                    && setting.click_moves_cursor
+                {
+                    // A plain single left click that did not drag into a
+                    // selection asks the shell to move its cursor to the click,
+                    // the way iTerm2/Ghostty do. We reach this branch only when
+                    // `selection_phase == Ended` (no drag past the threshold
+                    // started a selection) and the clicked cell has no hyperlink,
+                    // so drag-to-select, copy-on-select, shift-click-extend and
+                    // link clicks are all untouched. Detecting on mouse-up — not
+                    // mouse-down — is what lets us tell a click (press+release in
+                    // place) from a drag. The handler is a no-op unless the shell
+                    // has advertised an OSC 133 click-events prompt.
+                    self.move_shell_cursor_to_click(position);
                 }
             }
         }
@@ -3757,6 +3874,202 @@ mod tests {
                 "a deliberate drag should start a selection"
             );
             assert!(terminal.selection_phase == SelectionPhase::Selecting);
+        });
+    }
+
+    fn enable_click_moves_cursor(cx: &mut TestAppContext) {
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().click_moves_cursor = Some(true);
+            });
+        });
+    }
+
+    /// A plain single left click at a cell, no drag.
+    fn click_cell(
+        terminal: &mut Terminal,
+        col: usize,
+        row: usize,
+        cx: &mut Context<Terminal>,
+    ) -> Vec<u8> {
+        let bounds = terminal.last_content.terminal_bounds;
+        let pos = point(
+            col as f32 * bounds.cell_width + bounds.cell_width / 2.0,
+            row as f32 * bounds.line_height + bounds.line_height / 2.0,
+        );
+        terminal.take_pty_write_log();
+        left_mouse_down_at(terminal, pos, cx);
+        left_mouse_up_at(terminal, pos, cx);
+        terminal.take_pty_write_log().concat()
+    }
+
+    /// With `click_moves_cursor` on and the shell in an OSC 133 `click_events`
+    /// input region, a plain click reports exactly one SGR left-press at the
+    /// clicked cell — `ESC [ < 0 ; col+1 ; row+1 M` — and nothing else, so the
+    /// shell moves its own cursor there.
+    #[gpui::test]
+    async fn test_osc133_click_events_reports_click(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"echo hi");
+        enable_click_moves_cursor(cx);
+
+        terminal.update(cx, |terminal, cx| {
+            *terminal.semantic_prompt.lock() = SemanticPromptState {
+                phase: semantic::Phase::Input,
+                click: ClickMode::ClickEvents(1),
+            };
+
+            let writes = click_cell(terminal, 3, 2, cx);
+            assert_eq!(
+                writes,
+                b"\x1b[<0;4;3M".to_vec(),
+                "click at (col 3, row 2) must report exactly one SGR left-press, got {writes:?}"
+            );
+        });
+    }
+
+    /// The anti-misfire guarantee: once the shell has emitted command-start
+    /// (`OSC 133 ; C`) the phase is `Output`, so a click during a running command
+    /// — a REPL, `cat`, a pager on the primary screen — must write nothing, even
+    /// with the setting on and `click_events` still negotiated.
+    #[gpui::test]
+    async fn test_click_in_output_phase_writes_nothing(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"some output");
+        enable_click_moves_cursor(cx);
+
+        terminal.update(cx, |terminal, cx| {
+            *terminal.semantic_prompt.lock() = SemanticPromptState {
+                phase: semantic::Phase::Output,
+                click: ClickMode::ClickEvents(1),
+            };
+
+            let writes = click_cell(terminal, 3, 2, cx);
+            assert!(
+                writes.is_empty(),
+                "a click during command output must not move the cursor, got {writes:?}"
+            );
+        });
+    }
+
+    /// Without any OSC 133 shell integration the phase stays `Idle`, so even with
+    /// the setting on a click writes nothing — this is the whole-fleet fix for the
+    /// naive implementation's misfire.
+    #[gpui::test]
+    async fn test_click_without_shell_integration_writes_nothing(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"echo hi");
+        enable_click_moves_cursor(cx);
+
+        terminal.update(cx, |terminal, cx| {
+            // Default state: Idle / ClickMode::None.
+            let writes = click_cell(terminal, 3, 2, cx);
+            assert!(
+                writes.is_empty(),
+                "a click with no OSC 133 input region must write nothing, got {writes:?}"
+            );
+        });
+    }
+
+    /// The `cl` arrow-synthesis mode (non-`click_events` shells) is deferred to a
+    /// later phase: it must no-op for now rather than emit anything, even in the
+    /// input region.
+    #[gpui::test]
+    async fn test_cl_mode_is_noop_in_phase_one(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"echo hi");
+        enable_click_moves_cursor(cx);
+
+        terminal.update(cx, |terminal, cx| {
+            *terminal.semantic_prompt.lock() = SemanticPromptState {
+                phase: semantic::Phase::Input,
+                click: ClickMode::Cl,
+            };
+
+            let writes = click_cell(terminal, 3, 2, cx);
+            assert!(
+                writes.is_empty(),
+                "cl mode must no-op in phase 1, got {writes:?}"
+            );
+        });
+    }
+
+    /// The setting still gates everything: with `click_events` negotiated and the
+    /// cursor in the input region, a click writes nothing while the setting is off
+    /// (its default).
+    #[gpui::test]
+    async fn test_click_moves_cursor_setting_off_writes_nothing(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"echo hi");
+        // Setting left at its default (false).
+
+        terminal.update(cx, |terminal, cx| {
+            *terminal.semantic_prompt.lock() = SemanticPromptState {
+                phase: semantic::Phase::Input,
+                click: ClickMode::ClickEvents(1),
+            };
+
+            let writes = click_cell(terminal, 3, 2, cx);
+            assert!(
+                writes.is_empty(),
+                "with the setting off, a click must write nothing, got {writes:?}"
+            );
+        });
+    }
+
+    /// A drag is a selection, not a click, so even in a `click_events` input
+    /// region it must NOT report a click: no bytes reach the PTY even though the
+    /// release lands on a different column than the press.
+    #[gpui::test]
+    async fn test_drag_selection_does_not_report_click(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"echo hi");
+        enable_click_moves_cursor(cx);
+
+        terminal.update(cx, |terminal, cx| {
+            *terminal.semantic_prompt.lock() = SemanticPromptState {
+                phase: semantic::Phase::Input,
+                click: ClickMode::ClickEvents(1),
+            };
+
+            let bounds = terminal.last_content.terminal_bounds;
+            let row_y = 2.0 * bounds.line_height + bounds.line_height / 2.0;
+            let col_x = |col: usize| col as f32 * bounds.cell_width + bounds.cell_width / 2.0;
+
+            let start = point(col_x(0), row_y);
+            let end = point(col_x(5), row_y);
+
+            terminal.take_pty_write_log();
+            left_mouse_down_at(terminal, start, cx);
+            left_mouse_drag_to(terminal, end, cx); // well past the 2px threshold
+            left_mouse_up_at(terminal, end, cx);
+
+            assert!(
+                terminal.selection_phase == SelectionPhase::Selecting
+                    || terminal
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "a drag should be a selection"
+            );
+            let writes = terminal.take_pty_write_log().concat();
+            assert!(
+                writes.is_empty(),
+                "a drag-selection must not report a click, got {writes:?}"
+            );
+        });
+    }
+
+    /// Regression: feeding OSC 133 through the normal vte parse path (as
+    /// `write_output` does) must NOT update the semantic state — vte 0.15 silently
+    /// drops OSC 133, which is exactly why the PTY-tee scanner exists. If a future
+    /// vte upgrade starts surfacing OSC 133, this assertion flips and the tee can
+    /// be reconsidered.
+    #[gpui::test]
+    async fn test_vte_drops_osc133_so_scanner_is_required(cx: &mut TestAppContext) {
+        let terminal =
+            init_ctrl_click_hyperlink_test(cx, b"\x1b]133;A;click_events=1\x07$ \x1b]133;B\x07");
+
+        terminal.update(cx, |terminal, _cx| {
+            assert_eq!(
+                *terminal.semantic_prompt.lock(),
+                SemanticPromptState::default(),
+                "OSC 133 routed through vte must leave the semantic state untouched"
+            );
         });
     }
 

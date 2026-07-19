@@ -231,6 +231,22 @@ By default, text stays selected after copying. To clear the selection:
 }
 ```
 
+## Click to Move Cursor
+
+By default a plain click in the terminal only focuses it. If you enable `click_moves_cursor`, a plain (no-modifier) single click at a shell prompt instead moves the shell cursor to the clicked position, the way iTerm2 and Ghostty do.
+
+This relies on OSC 133 shell integration: the shell tells Zed where its prompt input begins, and Zed reports the click so the shell repositions its own cursor. It therefore works with shells that advertise click support — currently fish and nushell — and is a safe no-op everywhere else: for shells without OSC 133, during a running command's output, and on the alternate screen (e.g. vim, less). Because the shell does the move, wide (CJK) characters and multi-line input are handled correctly.
+
+Only a click that does not drag into a selection moves the cursor, so drag-to-select and `copy_on_select` still work, and `Cmd+Click`/`Ctrl+Click` still opens links:
+
+```json [settings]
+{
+  "terminal": {
+    "click_moves_cursor": true
+  }
+}
+```
+
 ## Search
 
 Search terminal content with `Cmd+F` (macOS) or `Ctrl+Shift+F` (Linux/Windows). This opens the same search bar used in the editor.

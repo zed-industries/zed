@@ -30,10 +30,24 @@ use alacritty_terminal::{
 };
 use anyhow::{Context as _, Result};
 use futures::channel::mpsc::UnboundedSender;
+use parking_lot::Mutex;
 use util::paths::PathStyle;
 use vte::ansi::Handler;
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
+
+#[cfg(unix)]
+use crate::semantic::Osc133Scanner;
+use crate::semantic::SemanticPromptState;
+#[cfg(unix)]
+use alacritty_terminal::{
+    event::OnResize,
+    tty::{ChildEvent, EventedPty, EventedReadWrite},
+};
+#[cfg(unix)]
+use polling::{Event as PollingEvent, PollMode, Poller};
+#[cfg(unix)]
+use std::fs::File;
 
 use crate::{
     Cell, Color, Content, Cursor, CursorShape, Hyperlink, HyperlinkData, IndexedCell, Modes, Point,
@@ -202,7 +216,19 @@ pub(super) fn spawn_event_loop(
     events_tx: UnboundedSender<PtyEvent>,
     pty: AlacrittyPty,
     drain_on_exit: bool,
+    semantic_prompt: Arc<Mutex<SemanticPromptState>>,
 ) -> Result<PtySender> {
+    // On Unix we tee the PTY read path through an OSC 133 scanner so Zed can
+    // track the shell's prompt/input/output phases (vte 0.15 drops OSC 133). The
+    // wrapper only observes bytes; the stream the terminal parser sees is
+    // unchanged. Windows keeps the plain pty for now, so the phase stays `Idle`
+    // and click-to-move is inert there.
+    #[cfg(unix)]
+    let pty = ScanningPty::new(pty, semantic_prompt)
+        .context("failed to dup pty fd for the OSC 133 scanner")?;
+    #[cfg(not(unix))]
+    let _ = semantic_prompt;
+
     let event_loop = EventLoop::new(term, ZedListener(events_tx), pty, drain_on_exit, false)
         .context("failed to create event loop")?;
     let pty_tx = event_loop.channel();
@@ -211,6 +237,126 @@ pub(super) fn spawn_event_loop(
     Ok(PtySender {
         notifier: Notifier(pty_tx),
     })
+}
+
+/// A [`tty::Pty`] whose reads are teed into an [`Osc133Scanner`] so Zed can
+/// recover the shell's OSC 133 prompt/input/output phases even though vte drops
+/// those sequences. Every method except the read path delegates straight to the
+/// wrapped pty; the scanner only observes a copy of the bytes and never alters
+/// the stream the terminal parser consumes.
+#[cfg(unix)]
+pub(super) struct ScanningPty {
+    inner: tty::Pty,
+    reader: ScanningReader,
+}
+
+#[cfg(unix)]
+impl ScanningPty {
+    fn new(mut inner: tty::Pty, state: Arc<Mutex<SemanticPromptState>>) -> io::Result<Self> {
+        // `try_clone()` is a `dup(2)` of the master PTY fd: a second `File` over
+        // the *same* open file description, so its reads are byte-identical to
+        // the pty's own and it closes only its own descriptor on drop. The
+        // scanner reads through this owned clone, which is why the tee needs no
+        // `unsafe` and cannot double-close the master fd.
+        let reader = ScanningReader::new(inner.reader().try_clone()?, state);
+        Ok(Self { inner, reader })
+    }
+}
+
+/// Reads a `dup(2)` of the master PTY fd (the same open file description the
+/// wrapped [`tty::Pty`] reads) and feeds a copy of each read into the OSC 133
+/// scanner before returning it unchanged.
+#[cfg(unix)]
+pub(super) struct ScanningReader {
+    reader: File,
+    scanner: Osc133Scanner,
+    state: Arc<Mutex<SemanticPromptState>>,
+}
+
+#[cfg(unix)]
+impl ScanningReader {
+    fn new(reader: File, state: Arc<Mutex<SemanticPromptState>>) -> Self {
+        Self {
+            reader,
+            scanner: Osc133Scanner::new(),
+            state,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl io::Read for ScanningReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // Reads from our owned `dup` of the master fd: byte-for-byte the same
+        // `read(2)` the pty would have made (a `File` does no user-space
+        // buffering), so the terminal parser sees an identical stream — we merely
+        // observe a copy on the way through.
+        let n = io::Read::read(&mut self.reader, buf)?;
+        if n > 0 {
+            let mut state = self.state.lock();
+            self.scanner.feed(&buf[..n], &mut state);
+        }
+        Ok(n)
+    }
+}
+
+#[cfg(unix)]
+impl EventedReadWrite for ScanningPty {
+    type Reader = ScanningReader;
+    type Writer = <tty::Pty as EventedReadWrite>::Writer;
+
+    #[inline]
+    unsafe fn register(
+        &mut self,
+        poll: &Arc<Poller>,
+        interest: PollingEvent,
+        poll_opts: PollMode,
+    ) -> io::Result<()> {
+        // SAFETY: same contract as the wrapped pty's `register`; we forward the
+        // exact arguments to it.
+        unsafe { self.inner.register(poll, interest, poll_opts) }
+    }
+
+    #[inline]
+    fn reregister(
+        &mut self,
+        poll: &Arc<Poller>,
+        interest: PollingEvent,
+        poll_opts: PollMode,
+    ) -> io::Result<()> {
+        self.inner.reregister(poll, interest, poll_opts)
+    }
+
+    #[inline]
+    fn deregister(&mut self, poll: &Arc<Poller>) -> io::Result<()> {
+        self.inner.deregister(poll)
+    }
+
+    #[inline]
+    fn reader(&mut self) -> &mut Self::Reader {
+        &mut self.reader
+    }
+
+    #[inline]
+    fn writer(&mut self) -> &mut Self::Writer {
+        self.inner.writer()
+    }
+}
+
+#[cfg(unix)]
+impl EventedPty for ScanningPty {
+    #[inline]
+    fn next_child_event(&mut self) -> Option<ChildEvent> {
+        self.inner.next_child_event()
+    }
+}
+
+#[cfg(unix)]
+impl OnResize for ScanningPty {
+    #[inline]
+    fn on_resize(&mut self, window_size: WindowSize) {
+        self.inner.on_resize(window_size)
+    }
 }
 
 pub(super) fn resize(term: &mut AlacrittyTerm, bounds: TerminalBounds) {
@@ -1100,5 +1246,55 @@ mod tests {
                 is_block: true,
             }
         );
+    }
+
+    /// The tee seam itself: a [`ScanningReader`] over a pipe must hand the
+    /// terminal parser a byte-identical stream while advancing the shared
+    /// semantic state from the OSC 133 marks inside that stream. The
+    /// `terminal.rs` click tests set `semantic_prompt` directly and never touch
+    /// this read path, so this is the one test that exercises it end to end.
+    #[cfg(unix)]
+    #[test]
+    fn scanning_reader_is_transparent_and_advances_state() {
+        use crate::semantic::{ClickMode, Phase};
+        use std::io::{Read as _, Write as _};
+        use std::os::fd::OwnedFd;
+
+        let (reader, mut writer) = std::io::pipe().expect("create pipe");
+        // The scanner reads through an owned `File`, exactly as it does over the
+        // dup of the master PTY fd in production.
+        let reader = File::from(OwnedFd::from(reader));
+
+        let state = Arc::new(Mutex::new(SemanticPromptState::default()));
+        let mut scanning = ScanningReader::new(reader, state.clone());
+
+        // A fish-style prompt: prompt-start advertising click_events, ordinary
+        // bytes, then input-start.
+        let written: &[u8] = b"\x1b]133;A;click_events=1\x07$ echo hi\x1b]133;B\x07";
+        writer.write_all(written).expect("write to pipe");
+        drop(writer); // signal EOF so the reads below terminate
+
+        // Drain through the scanning reader with a deliberately small buffer, so
+        // the OSC marks straddle read boundaries — the split case the streaming
+        // scanner must survive on the real read path.
+        let mut readback = Vec::new();
+        let mut buf = [0u8; 7];
+        loop {
+            match scanning.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => readback.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => panic!("read failed: {e}"),
+            }
+        }
+
+        // (a) The terminal parser sees exactly the bytes that were written.
+        assert_eq!(readback, written, "the tee must not alter the byte stream");
+
+        // (b) The shared semantic state advanced from the marks in that stream.
+        let final_state = *state.lock();
+        assert_eq!(final_state.phase, Phase::Input);
+        assert_eq!(final_state.click, ClickMode::ClickEvents(1));
+        assert!(final_state.accepts_click());
     }
 }

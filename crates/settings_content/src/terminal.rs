@@ -124,6 +124,18 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub keep_selection_on_copy: Option<bool>,
+    /// Whether a plain (no-modifier) single click at a shell prompt moves the
+    /// shell cursor to the clicked position (the way iTerm2 and Ghostty do).
+    ///
+    /// This relies on OSC 133 shell integration: it works with shells that
+    /// advertise click support (e.g. fish, nushell) and is a no-op for shells
+    /// without it, during command output, and on the alternate screen (vim,
+    /// less), so it never injects stray input. Only a click that does not drag
+    /// into a selection moves the cursor, so drag-to-select and copy-on-select
+    /// are unaffected.
+    ///
+    /// Default: false
+    pub click_moves_cursor: Option<bool>,
     /// Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
     /// when the terminal application has enabled mouse reporting (e.g. vim with
     /// mouse=a, htop). When false, these clicks are forwarded to the application

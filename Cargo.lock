@@ -18516,6 +18516,7 @@ dependencies = [
  "log",
  "parking_lot",
  "percent-encoding",
+ "polling",
  "rand 0.9.4",
  "regex",
  "release_channel",

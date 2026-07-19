@@ -47,6 +47,14 @@ vte.workspace = true
 parking_lot.workspace = true
 percent-encoding.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Used to name the `polling` types in alacritty's `EventedReadWrite` trait when
+# wrapping the PTY to tee OSC 133 (see `alacritty::ScanningPty`). This must
+# resolve to the same major version as the alacritty fork's `polling` dependency;
+# otherwise the `Poller`/`Event`/`PollMode` types here differ from the ones in the
+# fork's trait signatures and `ScanningPty` stops compiling.
+polling.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 

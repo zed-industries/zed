@@ -7143,7 +7143,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 6] {
+    fn behavior_settings_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7202,6 +7202,29 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Click Moves Cursor",
+                description: "Whether a plain (no-modifier) single click at a shell prompt moves the shell cursor to the clicked position. Relies on OSC 133 shell integration, so it works with shells that advertise click support (e.g. fish, nushell) and is a no-op otherwise. Only a click that does not drag into a selection moves the cursor.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.click_moves_cursor"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .click_moves_cursor
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .click_moves_cursor = value;
                     },
                 }),
                 metadata: None,

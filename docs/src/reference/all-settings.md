@@ -4202,6 +4202,7 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "keep_selection_on_copy": true,
+    "click_moves_cursor": false,
     "open_links_in_mouse_mode": true,
     "dock": "bottom",
     "default_width": 640,
@@ -4393,6 +4394,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "keep_selection_on_copy": false
+  }
+}
+```
+
+### Terminal: Click Moves Cursor
+
+- Description: Whether a plain (no-modifier) single click at a shell prompt moves the shell cursor to the clicked position (the way iTerm2 and Ghostty do). Relies on OSC 133 shell integration, so it works with shells that advertise click support (e.g. fish, nushell) and is a no-op otherwise — for shells without it, during command output, and on the alternate screen (e.g. vim, less). Only a click that does not drag into a selection moves the cursor, so drag-to-select and copy-on-select are unaffected.
+- Setting: `click_moves_cursor`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json [settings]
+{
+  "terminal": {
+    "click_moves_cursor": true
   }
 }
 ```
