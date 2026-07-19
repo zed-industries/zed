@@ -1523,11 +1523,29 @@ impl project::ProjectItem for NotebookItem {
                 let file_content = buffer.read_with(cx, |buffer, _| buffer.text());
 
                 let notebook = if file_content.trim().is_empty() {
-                    nbformat::v4::Notebook {
-                        nbformat: 4,
-                        nbformat_minor: 5,
-                        cells: vec![],
-                        metadata: serde_json::from_str("{}").unwrap(),
+                    // Start new notebooks with one empty code cell, like
+                    // Jupyter, so the editor doesn't render an empty pane.
+                    let empty_notebook = serde_json::json!({
+                        "cells": [{
+                            "cell_type": "code",
+                            "id": Uuid::new_v4().to_string(),
+                            "metadata": {},
+                            "execution_count": null,
+                            "outputs": [],
+                            "source": []
+                        }],
+                        "metadata": {},
+                        "nbformat": 4,
+                        "nbformat_minor": 5
+                    });
+                    match nbformat::parse_notebook(&empty_notebook.to_string())? {
+                        nbformat::Notebook::V4(notebook) => notebook,
+                        nbformat::Notebook::Legacy(legacy_notebook) => {
+                            nbformat::upgrade_legacy_notebook(legacy_notebook)?
+                        }
+                        nbformat::Notebook::V3(v3_notebook) => {
+                            nbformat::upgrade_v3_notebook(v3_notebook)?
+                        }
                     }
                 } else {
                     let notebook = match nbformat::parse_notebook(&file_content) {
