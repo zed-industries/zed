@@ -11,7 +11,7 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde::Deserialize;
-use smol::{future::yield_now, stream::StreamExt};
+use smol::stream::StreamExt;
 use std::{
     collections::HashSet,
     ffi::OsStr,
