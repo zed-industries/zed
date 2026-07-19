@@ -202,3 +202,129 @@ fn render_comment(
         .child(MarkdownElement::new(body.clone(), markdown_style))
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PullRequestCommentsAddon, register_editor};
+    use crate::pull_request_store::test_support::{
+        comment, pull_request, register_provider, set_enabled, setup_project,
+    };
+    use editor::Editor;
+    use gpui::{Entity, TestAppContext};
+    use project::Project;
+    use util::rel_path::rel_path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        crate::pull_request_store::test_support::init_test(cx);
+        cx.update(|cx| {
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    fn block_count(editor: &Entity<Editor>, cx: &mut TestAppContext) -> usize {
+        editor.read_with(cx, |editor, _| {
+            editor
+                .addon::<PullRequestCommentsAddon>()
+                .map_or(0, |addon| addon.block_ids.len())
+        })
+    }
+
+    async fn open_editor(
+        project: &Entity<Project>,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> Entity<Editor> {
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+
+        let window = cx
+            .add_window(|window, cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
+        let editor = window.root(cx).unwrap();
+        editor.update(cx, |editor, cx| register_editor(editor, cx));
+        cx.run_until_parked();
+        editor
+    }
+
+    #[gpui::test]
+    async fn test_inserts_blocks_for_comments_on_open_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        register_provider(
+            Some(pull_request()),
+            vec![
+                comment("src/main.rs", Some(1)),
+                comment("src/main.rs", Some(3)),
+                comment("src/main.rs", None),   // no line: skipped
+                comment("src/lib.rs", Some(1)), // different file: not shown here
+            ],
+            cx,
+        );
+        set_enabled(true, cx);
+        let project = setup_project(cx).await;
+
+        let editor = open_editor(&project, "src/main.rs", cx).await;
+
+        assert_eq!(block_count(&editor, cx), 2);
+    }
+
+    #[gpui::test]
+    async fn test_no_blocks_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        register_provider(
+            Some(pull_request()),
+            vec![comment("src/main.rs", Some(1))],
+            cx,
+        );
+        // Setting left at its default (disabled).
+        let project = setup_project(cx).await;
+
+        let editor = open_editor(&project, "src/main.rs", cx).await;
+
+        assert_eq!(block_count(&editor, cx), 0);
+    }
+
+    #[gpui::test]
+    async fn test_blocks_appear_when_setting_enabled_after_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        register_provider(
+            Some(pull_request()),
+            vec![comment("src/main.rs", Some(1))],
+            cx,
+        );
+        // Setting left at its default (disabled).
+        let project = setup_project(cx).await;
+
+        let editor = open_editor(&project, "src/main.rs", cx).await;
+        assert_eq!(block_count(&editor, cx), 0);
+
+        set_enabled(true, cx);
+        cx.run_until_parked();
+        assert_eq!(block_count(&editor, cx), 1);
+    }
+
+    #[gpui::test]
+    async fn test_blocks_removed_when_setting_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        register_provider(
+            Some(pull_request()),
+            vec![comment("src/main.rs", Some(1))],
+            cx,
+        );
+        set_enabled(true, cx);
+        let project = setup_project(cx).await;
+
+        let editor = open_editor(&project, "src/main.rs", cx).await;
+        assert_eq!(block_count(&editor, cx), 1);
+
+        set_enabled(false, cx);
+        cx.run_until_parked();
+        assert_eq!(block_count(&editor, cx), 0);
+    }
+}
