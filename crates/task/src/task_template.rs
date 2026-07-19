@@ -1211,9 +1211,9 @@ mod tests {
 
     #[test]
     fn test_filter_for_other_platform() {
-        let other = match Platform::current(){
+        let other = match Platform::current() {
             Platform::Linux | Platform::Darwin => Platform::Windows,
-            Platform::Windows => Platform::Linux
+            Platform::Windows => Platform::Linux,
         };
 
         let template = TaskTemplate {
