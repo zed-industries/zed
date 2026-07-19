@@ -4629,6 +4629,23 @@ impl ThreadView {
         let input_tokens_label = crate::humanize_token_count(usage.input_tokens);
         let output_tokens_label = crate::humanize_token_count(usage.output_tokens);
 
+        let cache_label = if usage.cache_read_input_tokens > 0 || usage.cache_creation_input_tokens > 0 {
+                let total = usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
+                let hit_rate = if total > 0 {
+                    usage.cache_read_input_tokens as f64 / total as f64 * 100.0
+                } else {
+                    0.0
+                };
+                let read = crate::humanize_token_count(usage.cache_read_input_tokens);
+                let create = crate::humanize_token_count(usage.cache_creation_input_tokens);
+                Some(format!(
+                    "{:.2}% hit ({} read + {} create)",
+                    hit_rate, read, create
+                ))
+            } else {
+                None
+            };
+
         let progress_ratio = if usage.max_tokens > 0 {
             usage.used_tokens as f32 / usage.max_tokens as f32
         } else {
@@ -4684,6 +4701,7 @@ impl ThreadView {
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
                 let cost_label = cost_label.clone();
+                let cache_label = cache_label.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -4693,6 +4711,7 @@ impl ThreadView {
                     input_max: input_max_label,
                     output_max: output_max_label,
                     show_split,
+                    cache_label,
                     cost_label,
                     separator_color: tooltip_separator_color,
                     global_agents_md_loaded,
@@ -5638,6 +5657,7 @@ struct TokenUsageTooltip {
     input_max: String,
     output_max: String,
     show_split: bool,
+    cache_label: Option<String>,
     cost_label: Option<String>,
     separator_color: Color,
     global_agents_md_loaded: bool,
@@ -5657,6 +5677,7 @@ impl Render for TokenUsageTooltip {
         let input_max = self.input_max.clone();
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
+        let cache_label = self.cache_label.clone();
         let cost_label = self.cost_label.clone();
         let global_agents_md_loaded = self.global_agents_md_loaded;
         let project_rules_count = self.project_rules_count;
@@ -5702,6 +5723,22 @@ impl Render for TokenUsageTooltip {
                                     .child(Label::new("/").color(separator_color))
                                     .child(Label::new(output_max).color(Color::Muted)),
                             ),
+                    )
+                })
+                .when_some(cache_label, |this, cache_label| {
+                    this.child(
+                        v_flex()
+                            .mt_1p5()
+                            .pt_1p5()
+                            .gap_0p5()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Cache")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(Label::new(cache_label)),
                     )
                 })
                 .when_some(cost_label, |this, cost_label| {
