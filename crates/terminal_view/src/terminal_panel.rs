@@ -24,7 +24,6 @@ use terminal::{
     Terminal,
     terminal_settings::{
         MenuEntry, MenuEntryPlan, TerminalSettings, build_menu_entries,
-        validate_configured_profiles,
     },
 };
 use ui::{
@@ -132,6 +131,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self.assistant_enabled;
+        let workspace = self.workspace.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
@@ -149,6 +149,7 @@ impl TerminalPanel {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
+                let workspace = workspace.clone();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -165,10 +166,30 @@ impl TerminalPanel {
                                     let settings = TerminalSettings::get_global(cx).clone();
                                     let detected =
                                         util::shell_detection::detect_available_shells().to_vec();
-                                    let warnings =
-                                        validate_configured_profiles(&settings.profiles);
-                                    build_menu_entries(&settings.profiles, detected, &warnings)
+                                    // Fix #4: read cached warnings off
+                                    // TerminalSettings instead of re-running
+                                    // validate_configured_profiles (which
+                                    // already ran in from_settings).
+                                    build_menu_entries(
+                                        &settings.profiles,
+                                        detected,
+                                        &settings.profile_warnings,
+                                    )
                                 };
+                                // Fix #2/#3: in remote projects, configured
+                                // profiles and detected shells reference
+                                // local executables — spawn them with
+                                // force_local=true so the override is
+                                // honored (D9 drop never triggers).
+                                let is_remote = workspace
+                                    .upgrade()
+                                    .is_some_and(|workspace| {
+                                        workspace
+                                            .read(cx)
+                                            .project()
+                                            .read(cx)
+                                            .is_via_remote_server()
+                                    });
                                 let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
                                         .action(
@@ -183,7 +204,7 @@ impl TerminalPanel {
                                             zed_actions::Spawn::modal().boxed_clone(),
                                         )
                                         .separator()
-                                        .shell_entries(plan)
+                                        .shell_entries(plan, is_remote)
                                 });
 
                                 Some(menu)
@@ -665,14 +686,32 @@ impl TerminalPanel {
         };
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal_shell_with(
-                    None,
-                    Some(shell),
-                    Some(action.label.clone()),
-                    RevealStrategy::Always,
-                    window,
-                    cx,
-                )
+                if action.local {
+                    // Bypass `add_terminal_shell_with` (which hard-codes
+                    // `force_local=false`) so the override survives the
+                    // remote-drop in `create_terminal_shell_internal`.
+                    // `profile_name` is None: detected shells don't
+                    // round-trip through persistence (the detected set
+                    // varies per host).
+                    panel.add_terminal_shell_internal(
+                        true,
+                        None,
+                        Some(shell),
+                        None,
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
+                } else {
+                    panel.add_terminal_shell_with(
+                        None,
+                        Some(shell),
+                        None,
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
+                }
             })
             .detach_and_log_err(cx);
     }
@@ -1998,38 +2037,44 @@ impl RenderOnce for InlineAssistTabBarButton {
 /// Extend `ContextMenu` with the "+" menu's terminal-shell section.
 ///
 /// Lives as a small private trait so the trait method chains naturally
-/// (`.separator().shell_entries(plan)`); the alternative (a free function)
-/// would break the builder chain.
+/// (`.separator().shell_entries(plan, is_remote)`); the alternative (a free
+/// function) would break the builder chain.
 trait TerminalPanelMenuExt: Sized {
-    fn shell_entries(self, plan: MenuEntryPlan) -> Self;
+    fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self;
 }
 
 impl TerminalPanelMenuExt for ContextMenu {
-    fn shell_entries(self, plan: MenuEntryPlan) -> Self {
+    fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self {
         match plan {
-            MenuEntryPlan::Inline { entries } => inline_shell_entries(self, entries),
+            MenuEntryPlan::Inline { entries } => inline_shell_entries(self, entries, is_remote),
             // Escalation: collapse into a submenu. The submenu builder
             // receives a fresh `ContextMenu` and must be `'static`, so the
-            // entry list is cloned into the closure. Picking a submenu over
-            // a Picker modal here because `ContextMenu::submenu` is already
-            // available in GPUI, requires no new infrastructure, and matches
-            // the existing menu interaction model. The Picker pattern stays
-            // available for future surfacing (e.g. command palette) without
-            // being preemptively wired up.
+            // entry list + `is_remote` are cloned into the closure. Picking
+            // a submenu over a Picker modal here because `ContextMenu::submenu`
+            // is already available in GPUI, requires no new infrastructure,
+            // and matches the existing menu interaction model. The Picker
+            // pattern stays available for future surfacing (e.g. command
+            // palette) without being preemptively wired up.
             MenuEntryPlan::Collapsed { entries } => self.submenu(
                 "Select Shell…",
-                move |submenu, _window, _cx| inline_shell_entries(submenu, entries.clone()),
+                move |submenu, _window, _cx| {
+                    inline_shell_entries(submenu, entries.clone(), is_remote)
+                },
             ),
         }
     }
 }
 
-fn inline_shell_entries(mut menu: ContextMenu, entries: Vec<MenuEntry>) -> ContextMenu {
+fn inline_shell_entries(
+    mut menu: ContextMenu,
+    entries: Vec<MenuEntry>,
+    is_remote: bool,
+) -> ContextMenu {
     for entry in entries {
         match entry {
             MenuEntry::Configured { name } => {
                 let action = workspace::NewTerminal {
-                    local: false,
+                    local: is_remote,
                     profile: Some(name.clone()),
                 };
                 menu = menu.action(name.as_str(), action.boxed_clone());
@@ -2039,6 +2084,7 @@ fn inline_shell_entries(mut menu: ContextMenu, entries: Vec<MenuEntry>) -> Conte
                     program,
                     args,
                     label: label.clone(),
+                    local: is_remote,
                 };
                 menu = menu.action(label.as_str(), action.boxed_clone());
             }
@@ -3670,6 +3716,7 @@ mod tests {
             },
             args: Vec::new(),
             label: "Detected Shell".to_string(),
+            local: false,
         };
         window_handle
             .update(cx, |multi_workspace, window, cx| {
@@ -3686,10 +3733,12 @@ mod tests {
             .and_then(|item| item.downcast::<TerminalView>())
             .expect("active panel item should be a TerminalView after detected-shell spawn");
         terminal_view.update(cx, |view, cx| {
-            assert_eq!(
+            // Fix #1 lock: detected shells don't tag the view with a
+            // profile_name (they don't round-trip through persistence).
+            assert!(
+                view.profile_name.is_none(),
+                "detected-shell spawn must NOT set profile_name (would mislead deserialize into a default-shell fallback). Got: {:?}",
                 view.profile_name,
-                Some("Detected Shell".to_string()),
-                "TerminalView should be tagged with the detected label for persistence"
             );
             let title = view.terminal().read(cx).title(false);
             assert_eq!(
@@ -3697,6 +3746,64 @@ mod tests {
                 "tab title should come from the detected label (D6-equivalent for detected entries)"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_detected_shell_with_local_routes_through_force_local(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        // Fix #2 lock: when local=true, spawn_detected_shell must route
+        // through the force_local branch (add_terminal_shell_internal with
+        // force_local=true) so the override survives any remote-drop. In a
+        // local project the spawn should still succeed and produce a
+        // terminal with the requested program.
+        let detected = crate::SpawnDetectedShell {
+            program: if cfg!(unix) {
+                "/bin/sh".to_string()
+            } else {
+                "cmd.exe".to_string()
+            },
+            args: Vec::new(),
+            label: "Local Detected".to_string(),
+            local: true,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                })
+            })
+            .expect("Failed to dispatch SpawnDetectedShell with local=true");
+        cx.run_until_parked();
+
+        let count = terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(count, 1, "force_local branch should still spawn a terminal");
+
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, cx| {
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Local Detected",
+                "force_local spawn should still apply the title override"
+            );
+        });
+    }
+
+    #[test]
+    fn spawn_detected_shell_default_local_is_false() {
+        // Fix #2 lock: backcompat — keymap dispatch without `local` must
+        // default to false (non-force_local path).
+        let action = crate::SpawnDetectedShell::default();
+        assert!(!action.local, "default SpawnDetectedShell.local must be false");
     }
 
     pub fn init_test(cx: &mut TestAppContext) {

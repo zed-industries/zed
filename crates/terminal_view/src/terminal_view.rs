@@ -113,10 +113,13 @@ pub struct RenameTerminal;
 ///
 /// Used by the "+" PopoverMenu's "detected shells" section (P3). Detected
 /// shells bypass the `terminal.profiles` lookup — they carry their own
-/// program/args and use the detected label as both the tab title and the
-/// persistence key. The action is registered on the workspace (same pattern
-/// as `workspace::NewTerminal`) and dispatched from the menu via
-/// `ContextMenu::action`.
+/// program/args. The `label` is used as the tab title (via the
+/// `title_override` field on the constructed `task::Shell::WithArguments`),
+/// NOT as a persistence key — detected shells don't round-trip through
+/// `SerializableItem::deserialize` because the detected set is
+/// machine/session-specific. The action is registered on the workspace
+/// (same pattern as `workspace::NewTerminal`) and dispatched from the menu
+/// via `ContextMenu::action`.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = terminal)]
 pub struct SpawnDetectedShell {
@@ -125,8 +128,14 @@ pub struct SpawnDetectedShell {
     pub program: String,
     /// Arguments to pass to the program (e.g. `["-d", "Ubuntu"]` for WSL).
     pub args: Vec<String>,
-    /// Tab title / persistence key. Usually `DetectedShell::label`.
+    /// Tab title. Usually `DetectedShell::label`.
     pub label: String,
+    /// If true, spawn a LOCAL terminal even in remote projects. The menu
+    /// sets this to `true` when the project is remote so detected shells
+    /// (which reference local executables) actually spawn locally instead
+    /// of falling through to the remote shell.
+    #[serde(default)]
+    pub local: bool,
 }
 
 pub fn init(cx: &mut App) {

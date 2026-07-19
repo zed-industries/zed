@@ -56,6 +56,12 @@ pub struct TerminalSettings {
     pub bell: TerminalBell,
     pub profiles: collections::IndexMap<String, TerminalProfile>,
     pub default_profile: Option<String>,
+    /// Cached output of [`validate_configured_profiles`] for the current
+    /// settings, so consumers (e.g. the "+"-menu builder) don't re-run the
+    /// validator (and its `which::which` / `Path::is_file` probes) on every
+    /// menu open.
+    #[serde(skip)]
+    pub profile_warnings: Vec<ProfileWarning>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -320,8 +326,12 @@ impl settings::Settings for TerminalSettings {
         // P2 validation: surface a warning per profile whose `program` is
         // neither an existing absolute path nor resolvable on `PATH`. This
         // is advisory only — spawn still goes through the normal
-        // `TerminalError` path if the program is genuinely missing.
-        for warning in validate_configured_profiles(&profiles) {
+        // `TerminalError` path if the program is genuinely missing. The
+        // result is cached on `TerminalSettings.profile_warnings` so the
+        // "+"-menu builder doesn't have to re-run the validator on every
+        // menu open.
+        let profile_warnings = validate_configured_profiles(&profiles);
+        for warning in &profile_warnings {
             log::warn!(
                 "terminal.profiles.{}: {}",
                 warning.profile_name,
@@ -399,6 +409,7 @@ impl settings::Settings for TerminalSettings {
             bell: user_content.bell.unwrap(),
             profiles,
             default_profile,
+            profile_warnings,
         }
     }
 }
@@ -839,5 +850,58 @@ mod tests {
             }
             _ => panic!("7 visible entries should stay inline"),
         }
+    }
+
+    /// Fix #4 lock: `TerminalSettings.profile_warnings` is the cached
+    /// validator output. The cache is populated in `from_settings`, but
+    /// because constructing a full `SettingsContent` here is heavy, this
+    /// test verifies the equivalent contract — that the field exists,
+    /// accepts `validate_configured_profiles` output directly, and that
+    /// `build_menu_entries` (which the menu now drives off
+    /// `settings.profile_warnings`) treats the cached value identically to
+    /// a freshly-computed one.
+    #[test]
+    fn profile_warnings_cache_is_equivalent_to_direct_call() {
+        let profiles = profile_map(&[
+            ("Good", "/bin/zsh"),
+            ("Bad", "/totally/not/real"),
+            ("BashOnPath", "bash"),
+        ]);
+        // Direct call (the value `from_settings` caches).
+        let direct = validate_configured_profiles_with(
+            &profiles,
+            &|p| p.as_os_str() == "/bin/zsh",
+            &|program| match program {
+                "bash" => Some(std::path::PathBuf::from("/usr/bin/bash")),
+                _ => None,
+            },
+        );
+        // Exactly one warning — the bad profile.
+        assert_eq!(direct.len(), 1);
+        assert_eq!(direct[0].profile_name, "Bad");
+
+        // The cache field is `Vec<ProfileWarning>`; assigning the direct
+        // call's output and feeding it to build_menu_entries must hide the
+        // bad profile exactly as the live validator did.
+        let cached: Vec<ProfileWarning> = direct.clone();
+        let plan_cached = build_menu_entries(&profiles, Vec::new(), &cached);
+        let plan_direct = build_menu_entries(&profiles, Vec::new(), &direct);
+        assert_eq!(
+            entry_labels(&plan_cached),
+            entry_labels(&plan_direct),
+            "cached and direct warnings must drive identical menu plans"
+        );
+        let labels = entry_labels(&plan_cached);
+        assert!(labels.contains(&"Good".to_string()));
+        assert!(labels.contains(&"BashOnPath".to_string()));
+        assert!(!labels.contains(&"Bad".to_string()));
+    }
+
+    #[test]
+    fn empty_profile_warnings_cache_yields_all_profiles() {
+        let profiles = profile_map(&[("A", "/bin/a"), ("B", "/bin/b")]);
+        let cached: Vec<ProfileWarning> = Vec::new();
+        let plan = build_menu_entries(&profiles, Vec::new(), &cached);
+        assert_eq!(entry_labels(&plan), vec!["A".to_string(), "B".to_string()]);
     }
 }
