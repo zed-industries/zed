@@ -99,7 +99,7 @@ use lsp::{
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
     LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType, OneOf,
     RenameFilesParams, TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles,
-    WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
+    WorkDoneProgressCancelParams, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -984,10 +984,7 @@ impl LocalLspStore {
                         let root = server.workspace_folders();
                         Ok(Some(
                             root.into_iter()
-                                .map(|uri| WorkspaceFolder {
-                                    uri,
-                                    name: Default::default(),
-                                })
+                                .map(lsp::workspace_folder_for_uri)
                                 .collect(),
                         ))
                     }

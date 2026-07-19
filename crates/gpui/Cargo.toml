@@ -73,7 +73,7 @@ proptest = { workspace = true, optional = true }
 chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
-raw-window-handle = "0.6"
+raw-window-handle.workspace = true
 regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
@@ -210,6 +210,11 @@ path = "examples/pattern.rs"
 [[example]]
 name = "set_menus"
 path = "examples/set_menus.rs"
+
+[[example]]
+name = "system_notifications"
+path = "examples/system_notifications.rs"
+
 
 [[example]]
 name = "shadow"
