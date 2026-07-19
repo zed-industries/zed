@@ -184,11 +184,16 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
+            // Breakpoints and bookmarks are keyed by absolute file path, so the
+            // gutter button would be a no-op for buffers without a worktree file
+            // (e.g. untitled buffers). Hide it there.
             if position_map
                 .snapshot
                 .buffer_snapshot()
                 .anchor_to_buffer_anchor(buffer_anchor)
-                .is_some()
+                .is_some_and(|(_, buffer_snapshot)| {
+                    project::File::from_dyn(buffer_snapshot.file()).is_some()
+                })
             {
                 let is_visible = editor
                     .gutter_hover_button
