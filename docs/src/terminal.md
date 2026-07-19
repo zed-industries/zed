@@ -124,6 +124,20 @@ Use the {#action workspace::NewTerminal} action with a `profile` argument to spa
 
 If the named profile does not exist, Zed emits a warning and opens a terminal with the default shell instead.
 
+### Picking a Shell from the Menu {#picking-from-menu}
+
+Click the terminal panel's **"+"** button to see all available shells:
+
+- **New Terminal** and **Spawn Task** entries (always present).
+- One entry per configured profile (in `terminal.profiles` order).
+- One entry per detected shell not already covered by a configured profile. Detected shells come from `/etc/shells` (Unix) or a small set of well-known Windows locations (PowerShell, Command Prompt, Git Bash).
+
+Selecting a configured profile dispatches {#action workspace::NewTerminal} with that profile. Selecting a detected shell spawns a terminal running its program directly; the tab title is set to the detected shell's label (for example, `bash`, `zsh`, or `pwsh`).
+
+If your `terminal.profiles` map plus the detected list exceeds eight entries, the menu collapses into a single **"Select Shell…"** submenu to keep the dropdown manageable.
+
+Profiles whose `program` cannot be resolved (neither an existing absolute path nor found on `PATH`) are **hidden from the menu** but still spawnable via keymap; Zed emits a warning and routes actual spawn failures through the normal terminal-error notification path.
+
 > **Note:** Profiles are honored only for local terminals. In SSH remote projects the profile is ignored (the shell comes from the remote server) and a warning is logged. Use `NewTerminal` with `"local": true` to spawn a local terminal that does honor the profile.
 
 ## Working Directory
