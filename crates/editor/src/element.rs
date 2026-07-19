@@ -7099,7 +7099,7 @@ impl LineWithInvisibles {
                         &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                     };
                     let shaped_line = window.text_system().shape_line(
-                        line.clone().into(),
+                        line.as_str().into(),
                         font_size,
                         text_runs,
                         None,
