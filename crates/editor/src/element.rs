@@ -3907,7 +3907,7 @@ impl EditorElement {
                 } else {
                     None
                 };
-                vec![edit_prediction, context_menu]
+                [edit_prediction, context_menu]
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>()
@@ -4504,7 +4504,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - total_width - HOVER_POPOVER_GAP,
@@ -4844,7 +4844,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - actual_size.width - HOVER_POPOVER_GAP,
