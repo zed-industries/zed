@@ -828,7 +828,9 @@ impl ProjectPanel {
                     if project_panel_settings.sort_order != new_settings.sort_order {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
-                    if project_panel_settings.fold_single_file_dirs != new_settings.fold_single_file_dirs {
+                    if project_panel_settings.fold_single_file_dirs
+                        != new_settings.fold_single_file_dirs
+                    {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -1279,6 +1281,8 @@ impl ProjectPanel {
             if let Some(child) = child_entries.next()
                 && child_entries.next().is_none()
                 && child.kind.is_file()
+                && (!settings.hide_gitignore || !child.is_ignored)
+                && (!settings.hide_hidden || !child.is_hidden)
             {
                 return true;
             }
@@ -1313,6 +1317,8 @@ impl ProjectPanel {
                     settings.auto_fold_dirs
                 } else {
                     settings.fold_single_file_dirs
+                        && (!settings.hide_gitignore || !child.is_ignored)
+                        && (!settings.hide_hidden || !child.is_hidden)
                 };
             }
         }
