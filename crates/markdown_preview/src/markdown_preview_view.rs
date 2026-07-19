@@ -26,13 +26,19 @@ use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
+use url::Url;
 use util::markdown::split_local_url_fragment;
+use util::paths::PathWithPosition;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
-use workspace::notifications::NotifyResultExt;
+use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
+use workspace::path_link::possible_open_target;
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{ItemId, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items};
+use workspace::{
+    ItemId, OpenOptions, OpenVisible, Pane, SaveIntent, Workspace, WorkspaceId,
+    delete_unloaded_items,
+};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
@@ -1053,6 +1059,19 @@ fn open_preview_url(
     // URL-decode the path for proper handling of encoded characters
     let decoded_path = urlencoding::decode(path_text).unwrap_or_else(|_| Cow::Borrowed(path_text));
 
+    if Url::parse(&decoded_path).is_err()
+        && PathWithPosition::parse_str(&decoded_path).row.is_some()
+    {
+        open_preview_path_with_position(
+            decoded_path.into_owned(),
+            base_directory,
+            workspace,
+            window,
+            cx,
+        );
+        return;
+    }
+
     if let Some(workspace) = workspace.upgrade() {
         workspace.update(cx, |workspace, cx| {
             workspace.open_url_or_file(&decoded_path, base_directory.as_deref(), window, cx);
@@ -1060,6 +1079,64 @@ fn open_preview_url(
     } else {
         cx.open_url(url.as_ref());
     }
+}
+
+fn open_preview_path_with_position(
+    path: String,
+    base_directory: Option<PathBuf>,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let open_target = possible_open_target(workspace, &path, base_directory.as_deref(), cx);
+    let workspace = workspace.clone();
+    let workspace_for_error = workspace.clone();
+    let task = window.spawn(cx, async move |cx| {
+        let Some(open_target) = open_target.await else {
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.open_url_or_file(&path, base_directory.as_deref(), window, cx);
+            })?;
+            return anyhow::Ok(());
+        };
+
+        let path_with_position = open_target.path().clone();
+        let is_file = open_target.is_file();
+        let opened_item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    path_with_position.path.clone(),
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?
+            .await
+            .context("opening Markdown preview link")?;
+
+        if is_file
+            && let Some(row) = path_with_position.row
+            && let Some(editor) = opened_item.downcast::<Editor>()
+        {
+            editor.update_in(cx, |editor, window, cx| {
+                let row = row.saturating_sub(1);
+                let column = path_with_position.column.unwrap_or(0).saturating_sub(1);
+                let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                    return;
+                };
+                let point = buffer
+                    .read(cx)
+                    .snapshot()
+                    .point_from_external_input(row, column);
+                editor.go_to_singleton_buffer_point(point, window, cx);
+            })?;
+        }
+
+        Ok(())
+    });
+    task.detach_and_notify_err(workspace_for_error, window, cx);
 }
 
 fn split_preview_url(url: &str) -> (&str, Option<&str>) {
@@ -1681,7 +1758,7 @@ mod tests {
         AppState, ItemId, MultiWorkspace, SaveIntent, Workspace, WorkspaceId, open_paths,
     };
 
-    use super::MarkdownPreviewView;
+    use super::{MarkdownPreviewView, open_preview_url};
 
     #[test]
     fn resolves_workspace_absolute_preview_image_path_and_rejects_missing() {
@@ -1708,6 +1785,180 @@ mod tests {
             Some(workspace_directory),
         );
         assert!(missing.is_none());
+    }
+
+    async fn open_markdown_link_test_workspace(
+        files: serde_json::Value,
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<MultiWorkspace> {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), files)
+            .await;
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let open_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let worktree_id = workspace
+                        .project()
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .unwrap()
+                        .read(cx)
+                        .id();
+                    workspace.open_path(
+                        (worktree_id, rel_path("docs/readme.md")),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+        open_task.await.unwrap();
+        multi_workspace
+    }
+
+    fn open_markdown_link(
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        url: &'static str,
+        cx: &mut TestAppContext,
+    ) {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().downgrade();
+                open_preview_url(
+                    url.into(),
+                    Some(PathBuf::from(path!("/root/docs"))),
+                    &workspace,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+    }
+
+    fn active_editor(
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        cx: &TestAppContext,
+    ) -> Entity<Editor> {
+        multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap()
+            })
+            .unwrap()
+    }
+
+    fn editor_text(editor: &Entity<Editor>, cx: &TestAppContext) -> String {
+        editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text())
+    }
+
+    #[gpui::test]
+    async fn opens_relative_preview_links_at_positions(cx: &mut TestAppContext) {
+        let scala_text = (1..=45)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        let files = json!({
+            "docs": {
+                "readme.md": "[source](../src/Foo.scala:42)\n"
+            },
+            "src": {
+                "Foo.scala": scala_text,
+                "Bar.scala": "first\naéøbc\nlast\n"
+            },
+            "tel": "not a phone number\n"
+        });
+        #[cfg(not(target_os = "windows"))]
+        let files = {
+            let mut files = files;
+            assert!(
+                files
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("tel:123".to_string(), json!("literal filename\n"))
+                    .is_none()
+            );
+            files
+        };
+        let multi_workspace = open_markdown_link_test_workspace(files, cx).await;
+
+        open_markdown_link(&multi_workspace, "tel:123", cx);
+        assert_eq!(cx.opened_url(), Some("tel:123".to_string()));
+        assert_eq!(
+            editor_source_path(cx, &active_editor(&multi_workspace, cx)).as_ref(),
+            rel_path("docs/readme.md")
+        );
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            open_markdown_link(&multi_workspace, "../tel:123", cx);
+            cx.run_until_parked();
+            assert_eq!(
+                editor_source_path(cx, &active_editor(&multi_workspace, cx)).as_ref(),
+                rel_path("tel:123")
+            );
+        }
+
+        open_markdown_link(&multi_workspace, "../src/Foo.scala:42", cx);
+        cx.run_until_parked();
+
+        let editor = active_editor(&multi_workspace, cx);
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.handle_input("selected ", window, cx)
+                })
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor_source_path(cx, &editor).as_ref(),
+            rel_path("src/Foo.scala")
+        );
+        assert!(editor_text(&editor, cx).contains("line 41\nselected line 42\nline 43"));
+
+        open_markdown_link(&multi_workspace, "../src/Bar.scala:2:4", cx);
+        cx.run_until_parked();
+
+        let editor = active_editor(&multi_workspace, cx);
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.handle_input("selected ", window, cx)
+                })
+            })
+            .unwrap();
+        assert!(editor_text(&editor, cx).contains("aéøselected bc"));
+
+        open_markdown_link(&multi_workspace, "../src/Bar.scala:2:999", cx);
+        cx.run_until_parked();
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| editor.handle_input(" end", window, cx))
+            })
+            .unwrap();
+
+        assert!(editor_text(&editor, cx).contains("aéøselected bc end\n"));
     }
 
     #[gpui::test]
