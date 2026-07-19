@@ -1,7 +1,7 @@
 use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled, Task};
 use ui::{
     ActiveTheme, AnyElement, App, Button, Clickable, Color, Context, DynamicSpacing, Headline,
     HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
@@ -17,6 +17,7 @@ pub(crate) struct AskPassModal {
     prompt: SharedString,
     editor: Entity<Editor>,
     tx: Option<oneshot::Sender<EncryptedPassword>>,
+    _cancellation_task: Task<()>,
 }
 
 impl EventEmitter<DismissEvent> for AskPassModal {}
@@ -32,6 +33,7 @@ impl AskPassModal {
         operation: SharedString,
         prompt: SharedString,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -44,11 +46,16 @@ impl AskPassModal {
             }
             editor
         });
+        let cancellation_task = cx.spawn(async move |this, cx| {
+            cancellation.await.ok();
+            this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+        });
         Self {
             operation,
             prompt,
             editor,
             tx: Some(tx),
+            _cancellation_task: cancellation_task,
         }
     }
 
@@ -143,5 +150,55 @@ impl Render for AskPassModal {
                     .child(self.editor.clone()),
             )
             .children(self.render_hint(cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    use super::*;
+
+    #[gpui::test]
+    fn dismisses_when_password_request_is_cancelled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let (response_sender, _response_receiver) = oneshot::channel();
+        let (cancellation_sender, cancellation) = oneshot::channel();
+        let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        let modal = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    AskPassModal::new(
+                        "git fetch".into(),
+                        "Confirm user presence".into(),
+                        response_sender,
+                        cancellation,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("test window should remain open");
+        let dismissed = Arc::new(AtomicBool::new(false));
+        let _subscription = cx.update(|cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&modal, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        });
+
+        drop(cancellation_sender);
+        cx.run_until_parked();
+
+        assert!(dismissed.load(std::sync::atomic::Ordering::SeqCst));
     }
 }
