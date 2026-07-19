@@ -3187,13 +3187,13 @@ impl EditorElement {
                 }
                 let align_to = block_start.to_display_point(snapshot);
                 let x_and_width = |layout: &LineWithInvisibles| {
-                    Some((
+                    (
                         text_x + layout.x_for_index(align_to.column() as usize),
                         text_x + layout.width,
-                    ))
+                    )
                 };
                 let line_ix = align_to.row().0.checked_sub(rows.start.0);
-                x_position =
+                let custom_block_x_position =
                     if let Some(layout) = line_ix.and_then(|ix| line_layouts.get(ix as usize)) {
                         x_and_width(layout)
                     } else {
@@ -3208,7 +3208,8 @@ impl EditorElement {
                         ))
                     };
 
-                let anchor_x = x_position.unwrap().0;
+                let anchor_x = custom_block_x_position.0;
+                x_position = Some(custom_block_x_position);
 
                 let selected = selections
                     .binary_search_by(|selection| {
