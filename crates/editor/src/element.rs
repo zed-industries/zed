@@ -3084,7 +3084,7 @@ impl EditorElement {
                         ..Default::default()
                     };
                     let line = window.text_system().shape_line(
-                        line.to_string().into(),
+                        SharedString::new(line),
                         font_size,
                         &[run],
                         None,
@@ -6614,7 +6614,7 @@ impl EditorElement {
                             is_newest: false,
                             is_local: false,
                             active_rows: start.row()..end.row(),
-                            user_name: Some(SharedString::new(debug_range.value.clone())),
+                            user_name: Some(SharedString::from(debug_range.value.clone())),
                         };
                         Some((player_color, vec![selection_layout]))
                     })
