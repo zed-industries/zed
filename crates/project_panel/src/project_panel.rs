@@ -828,6 +828,9 @@ impl ProjectPanel {
                     if project_panel_settings.sort_order != new_settings.sort_order {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.fold_single_file_dirs != new_settings.fold_single_file_dirs {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }

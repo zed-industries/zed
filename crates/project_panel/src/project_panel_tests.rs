@@ -853,6 +853,74 @@ async fn test_fold_single_file_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fold_single_file_dirs_live_setting_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "single": {
+                "only.txt": "",
+            },
+            "top.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > single", "      top.txt"],
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .fold_single_file_dirs = Some(true);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "      single/only.txt", "      top.txt"],
+        "Enabling fold_single_file_dirs at runtime should refresh the panel without any other event"
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .fold_single_file_dirs = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > single", "      top.txt"],
+        "Disabling it at runtime should restore the directory row"
+    );
+}
+
+#[gpui::test]
 async fn test_fold_single_file_dirs_keeps_dir_with_hidden_child(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -1037,7 +1105,10 @@ async fn test_fold_single_file_dirs_with_auto_fold_dirs(cx: &mut gpui::TestAppCo
     let (file_id, dir_ids) = panel.update(cx, |panel, cx| {
         let project = panel.project.read(cx);
         let worktree = project.visible_worktrees(cx).next().unwrap().read(cx);
-        let file_id = worktree.entry_for_path(rel_path("a/b/file.txt")).unwrap().id;
+        let file_id = worktree
+            .entry_for_path(rel_path("a/b/file.txt"))
+            .unwrap()
+            .id;
         let dir_ids = [
             worktree.entry_for_path(rel_path("a")).unwrap().id,
             worktree.entry_for_path(rel_path("a/b")).unwrap().id,
