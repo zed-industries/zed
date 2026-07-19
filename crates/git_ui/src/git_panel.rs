@@ -6213,6 +6213,7 @@ impl GitPanel {
             self.focus_handle.clone(),
             Some(repository.downgrade()),
             self.workspace.clone(),
+            false,
             window,
             cx,
         );

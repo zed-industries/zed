@@ -6,7 +6,7 @@ use editor::{
     SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::repository::{CommitDetails, CommitDiff, CommitFile, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
@@ -15,8 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptLevel, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -237,6 +237,89 @@ impl CommitView {
                     .log_err()
             })
             .detach();
+    }
+
+    pub fn open_comparison(
+        base_sha: String,
+        head_sha: String,
+        path: RepoPath,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let revision_texts = repo
+            .update(cx, |repo, _| {
+                repo.load_revision_texts(base_sha.clone(), head_sha.clone(), path.clone())
+            })
+            .ok();
+        let workspace_for_notification = workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let revision_texts = revision_texts.context("repository is no longer available")?;
+                let (old_text, new_text) = revision_texts.await??;
+                anyhow::ensure!(
+                    old_text.is_some() || new_text.is_some(),
+                    "file does not contain text at either revision"
+                );
+
+                let repo = repo.upgrade().context("repository is no longer available")?;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let project = workspace.project();
+                        let workspace_entity = cx.entity();
+                        let workspace_handle = cx.weak_entity();
+                        let short_base_sha = base_sha.get(0..7).unwrap_or(&base_sha);
+                        let short_head_sha = head_sha.get(0..7).unwrap_or(&head_sha);
+                        let path_display = path.display(PathStyle::local()).to_string();
+                        let commit_sha = format!("{short_base_sha}..{short_head_sha}");
+                        let commit_view = cx.new(|cx| {
+                            let mut commit_view = CommitView::new(
+                                CommitDetails {
+                                    sha: commit_sha.clone().into(),
+                                    message: format!(
+                                        "Diff {path_display} between {short_base_sha} and {short_head_sha}"
+                                    )
+                                    .into(),
+                                    commit_timestamp: time::OffsetDateTime::now_utc()
+                                        .unix_timestamp(),
+                                    author_email: SharedString::default(),
+                                    author_name: SharedString::default(),
+                                },
+                                CommitDiff {
+                                    files: vec![CommitFile {
+                                        path,
+                                        old_text,
+                                        new_text,
+                                        is_binary: false,
+                                    }],
+                                },
+                                repo,
+                                project.clone(),
+                                workspace_entity,
+                                workspace_handle,
+                                None,
+                                window,
+                                cx,
+                            );
+                            commit_view.remote = None;
+                            commit_view
+                        });
+
+                        workspace.add_item_to_active_pane(
+                            Box::new(commit_view),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
+                    .context("workspace is no longer available")?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_for_notification, window, cx);
     }
 
     fn new(

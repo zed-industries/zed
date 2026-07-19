@@ -497,7 +497,9 @@ message Envelope {
     TrashProjectEntry trash_project_entry = 466;
     TrashProjectEntryResponse trash_project_entry_response = 467;
     RestoreProjectEntry restore_project_entry = 468;
-    RestoreProjectEntryResponse restore_project_entry_response = 469; // current max
+    RestoreProjectEntryResponse restore_project_entry_response = 469;
+    LoadRevisionTexts load_revision_texts = 470;
+    LoadRevisionTextsResponse load_revision_texts_response = 471; // current max
   }
 
   reserved 87 to 88;

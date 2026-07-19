@@ -779,6 +779,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
+        client.add_entity_request_handler(Self::handle_load_revision_texts);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -3834,6 +3835,31 @@ impl GitStore {
         })
     }
 
+    async fn handle_load_revision_texts(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LoadRevisionTexts>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::LoadRevisionTextsResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = RepoPath::from_proto(&envelope.payload.path)?;
+
+        let (base_text, head_text) = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.load_revision_texts(
+                    envelope.payload.base_revision,
+                    envelope.payload.head_revision,
+                    path,
+                )
+            })
+            .await??;
+
+        Ok(proto::LoadRevisionTextsResponse {
+            base_text,
+            head_text,
+        })
+    }
+
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -6163,6 +6189,46 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn load_revision_texts(
+        &mut self,
+        base_revision: String,
+        head_revision: String,
+        path: RepoPath,
+    ) -> oneshot::Receiver<Result<(Option<String>, Option<String>)>> {
+        let id = self.id;
+        self.send_job(
+            "load_revision_texts",
+            None,
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        let revisions = vec![
+                            format!("{base_revision}:{}", path.as_unix_str()),
+                            format!("{head_revision}:{}", path.as_unix_str()),
+                        ];
+                        let mut loaded_revisions =
+                            backend.load_revisions(revisions).await?.into_iter();
+                        let base_text = loaded_revisions.next().flatten();
+                        let head_text = loaded_revisions.next().flatten();
+                        Ok((base_text, head_text))
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        let response = client
+                            .request(proto::LoadRevisionTexts {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                base_revision,
+                                head_revision,
+                                path: path.as_unix_str().to_owned(),
+                            })
+                            .await?;
+                        Ok((response.base_text, response.head_text))
+                    }
+                }
+            },
+        )
     }
 
     pub fn file_history_changed_files(
