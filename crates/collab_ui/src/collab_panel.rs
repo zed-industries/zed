@@ -14,10 +14,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, KeyContext, ListOffset,
-    ListState, MouseDownEvent, Pixels, Point, PromptLevel, SharedString, Subscription, Task,
-    TextStyle, WeakEntity, Window, actions, anchored, canvas, deferred, div, fill, list, point,
-    prelude::*, px,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, KeyContext, MouseDownEvent,
+    Pixels, Point, PromptLevel, ScrollStrategy, SharedString, Subscription, Task, TextStyle,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, canvas, deferred, div, fill,
+    point, prelude::*, px, size, uniform_list,
 };
 
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
@@ -30,13 +30,14 @@ use rpc::{
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{mem, sync::Arc, time::Duration};
+use std::{mem, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton, Facepile,
-    HighlightedLabel, IconButtonShape, Indicator, ListHeader, ListItem, Tab, TintColor, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
+    DecoratedIcon, Facepile, HighlightedLabel, IconButtonShape, IconDecoration, IconDecorationKind,
+    IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor, Tooltip, prelude::*,
+    tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -257,7 +258,7 @@ pub struct CollabPanel {
     pending_favorites_serialization: Task<Option<()>>,
     pending_filter_serialization: Task<Option<()>>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    list_state: ListState,
+    scroll_handle: UniformListScrollHandle,
     filter_editor: Entity<Editor>,
     channel_name_editor: Entity<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
@@ -396,7 +397,7 @@ impl CollabPanel {
                 pending_favorites_serialization: Task::ready(None),
                 pending_filter_serialization: Task::ready(None),
                 context_menu: None,
-                list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
+                scroll_handle: UniformListScrollHandle::new(),
                 channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
@@ -572,7 +573,8 @@ impl CollabPanel {
     }
 
     fn scroll_to_item(&mut self, ix: usize) {
-        self.list_state.scroll_to_reveal_item(ix)
+        self.scroll_handle
+            .scroll_to_item(ix, ScrollStrategy::Nearest)
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut Context<Self>) {
@@ -1068,52 +1070,79 @@ impl CollabPanel {
             });
         }
 
-        let old_scroll_top = self.list_state.logical_scroll_top();
-        self.list_state.reset(self.entries.len());
-
         if scroll_to_top {
-            self.list_state.scroll_to(ListOffset::default());
-        } else {
-            // Attempt to maintain the same scroll position.
-            if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-                let new_scroll_top = self
+            let state = self.scroll_handle.0.borrow();
+            state.base_handle.set_offset(Point::default());
+        } else if let Some(row_height) = self.row_height(old_entries.len()) {
+            // Attempt to maintain the same scroll position. Since every row has
+            // the same height, the scroll offset can be translated to and from a
+            // logical entry index plus a pixel remainder.
+            let old_scroll_y = -self.scroll_handle.0.borrow().base_handle.offset().y;
+            let old_top_ix = (old_scroll_y / row_height) as usize;
+            let offset_in_item = old_scroll_y - row_height * old_top_ix as f32;
+
+            if let Some(old_top_entry) = old_entries.get(old_top_ix) {
+                let new_scroll_y = self
                     .entries
                     .iter()
                     .position(|entry| entry == old_top_entry)
-                    .map(|item_ix| ListOffset {
-                        item_ix,
-                        offset_in_item: old_scroll_top.offset_in_item,
-                    })
+                    .map(|item_ix| row_height * item_ix as f32 + offset_in_item)
                     .or_else(|| {
-                        let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+                        let entry_after_old_top = old_entries.get(old_top_ix + 1)?;
                         let item_ix = self
                             .entries
                             .iter()
                             .position(|entry| entry == entry_after_old_top)?;
-                        Some(ListOffset {
-                            item_ix,
-                            offset_in_item: Pixels::ZERO,
-                        })
+                        Some(row_height * item_ix as f32)
                     })
                     .or_else(|| {
-                        let entry_before_old_top =
-                            old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+                        let entry_before_old_top = old_entries.get(old_top_ix.saturating_sub(1))?;
                         let item_ix = self
                             .entries
                             .iter()
                             .position(|entry| entry == entry_before_old_top)?;
-                        Some(ListOffset {
-                            item_ix,
-                            offset_in_item: Pixels::ZERO,
-                        })
-                    });
+                        Some(row_height * item_ix as f32)
+                    })
+                    .unwrap_or(old_scroll_y);
 
-                self.list_state
-                    .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+                let state = self.scroll_handle.0.borrow();
+                let mut offset = state.base_handle.offset();
+                offset.y = -new_scroll_y;
+                state.base_handle.set_offset(offset);
             }
         }
 
         cx.notify();
+    }
+
+    /// The height of a single row, derived from the last layout of the list.
+    /// Returns `None` before the first layout or when the list is empty.
+    fn row_height(&self, item_count: usize) -> Option<Pixels> {
+        if item_count == 0 {
+            return None;
+        }
+        let state = self.scroll_handle.0.borrow();
+        let height = state.last_item_size?.contents.height / item_count as f32;
+        (height > px(0.)).then_some(height)
+    }
+
+    /// Computes the bounds of the item at the given index, based on the list's
+    /// last layout. `uniform_list` doesn't track per-item bounds like the
+    /// `list` element does, but since all rows share the same height they can
+    /// be derived arithmetically.
+    fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        let row_height = self.row_height(self.entries.len())?;
+        let state = self.scroll_handle.0.borrow();
+        let list_bounds = state.base_handle.bounds();
+        let origin = list_bounds.origin
+            + point(
+                px(0.),
+                state.base_handle.offset().y + row_height * ix as f32,
+            );
+        Some(Bounds::new(
+            origin,
+            size(list_bounds.size.width, row_height),
+        ))
     }
 
     fn render_call_participant(
@@ -2354,10 +2383,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(bounds) = self
-            .selection
-            .and_then(|ix| self.list_state.bounds_for_item(ix))
-        else {
+        let Some(bounds) = self.selection.and_then(|ix| self.bounds_for_item(ix)) else {
             return;
         };
 
@@ -2817,11 +2843,30 @@ impl CollabPanel {
                     }),
             )
             .child(
-                list(
-                    self.list_state.clone(),
-                    cx.processor(Self::render_list_entry),
+                uniform_list(
+                    "collab-panel-entries",
+                    self.entries.len(),
+                    cx.processor(|this, range: Range<usize>, window, cx| {
+                        range
+                            .map(|ix| this.render_list_entry(ix, window, cx))
+                            .collect()
+                    }),
                 )
-                .size_full(),
+                .size_full()
+                .track_scroll(&self.scroll_handle)
+                .with_decoration(
+                    ui::indent_guides(px(20.), IndentGuideColors::panel(cx))
+                        .with_left_offset(px(18.) + ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET)
+                        .with_compute_indents_fn(cx.entity(), |this, range, _, _| {
+                            range
+                                .map(|ix| match this.entries.get(ix) {
+                                    Some(ListEntry::Channel { depth, .. })
+                                    | Some(ListEntry::ChannelEditor { depth }) => *depth,
+                                    _ => 0,
+                                })
+                                .collect()
+                        }),
+                ),
             )
     }
 
@@ -3294,6 +3339,36 @@ impl CollabPanel {
 
         let height = rems_from_px(24.);
 
+        let icon_name = if is_public {
+            IconName::Web
+        } else {
+            IconName::Lock
+        };
+        let notification_decoration = IconDecoration::new(
+            IconDecorationKind::Dot,
+            cx.theme().colors().panel_background,
+            cx,
+        )
+        .color(cx.theme().colors().text_accent)
+        .position(Point {
+            x: px(-3.),
+            y: px(6.),
+        });
+        let icon = if has_notes_notification {
+            Icon::new(icon_name)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        } else {
+            DecoratedIcon::new(
+                Icon::new(icon_name)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+                Some(notification_decoration),
+            )
+            .into_any_element()
+        };
+
         h_flex()
             .id(ix)
             .group("")
@@ -3359,27 +3434,7 @@ impl CollabPanel {
                             .id(format!("inside-{}", channel_id.0))
                             .w_full()
                             .gap_1()
-                            .child(
-                                div()
-                                    .relative()
-                                    .child(
-                                        Icon::new(if is_public {
-                                            IconName::Public
-                                        } else {
-                                            IconName::Hash
-                                        })
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                    )
-                                    .children(has_notes_notification.then(|| {
-                                        div()
-                                            .w_1p5()
-                                            .absolute()
-                                            .right(px(-1.))
-                                            .top(px(-1.))
-                                            .child(Indicator::dot().color(Color::Info))
-                                    })),
-                            )
+                            .child(icon)
                             .child(
                                 h_flex()
                                     .id(channel_id.0 as usize)
