@@ -6443,8 +6443,9 @@ impl ThreadView {
         };
 
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
-        let is_turn_end =
-            Self::entry_is_finalized_turn_end(thread.read(cx).entries(), entry_ix, is_generating);
+
+        let is_turn_end = Self::entry_is_finalized_turn_end(thread.read(cx).entries(), entry_ix)
+            .unwrap_or(!is_generating);
 
         let primary = if is_turn_end && !assistant_message_is_blank {
             let user_message_index = thread
@@ -6662,33 +6663,28 @@ impl ThreadView {
             )
     }
 
-    /// A turn ends when no further assistant output (message
-    /// or tool call) follows before the next user message, and it's finalized
-    /// once a user message follows it or generation has stopped. This keeps
-    /// per-turn controls off the in-progress turn while streaming.
-    fn entry_is_finalized_turn_end(
-        entries: &[AgentThreadEntry],
-        entry_ix: usize,
-        is_generating: bool,
-    ) -> bool {
+    /// A turn ends when no further assistant output (message or tool call)
+    /// follows before the next user message, and it's finalized once a user
+    /// message follows it.
+    fn entry_is_finalized_turn_end(entries: &[AgentThreadEntry], entry_ix: usize) -> Option<bool> {
         if !matches!(
             entries.get(entry_ix),
             Some(AgentThreadEntry::AssistantMessage(_))
         ) {
-            return false;
+            return Some(false);
         }
 
         for entry in &entries[entry_ix + 1..] {
             match entry {
-                AgentThreadEntry::UserMessage(_) => return true,
+                AgentThreadEntry::UserMessage(_) => return Some(true),
                 AgentThreadEntry::AssistantMessage(_) | AgentThreadEntry::ToolCall(_) => {
-                    return false;
+                    return Some(false);
                 }
                 _ => {}
             }
         }
 
-        !is_generating
+        None
     }
 
     fn render_thread_controls(
