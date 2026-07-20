@@ -6011,10 +6011,15 @@ impl EditorElement {
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             let show_git_diff_markers = scrollbar_settings.git_diff
                 && (is_singleton || editor.allow_git_diff_scrollbar_markers);
-            if (!is_singleton && !show_git_diff_markers)
-                || !editor
-                    .scrollbar_marker_state
-                    .should_refresh(scrollbar_layout.hitbox.size)
+            if !is_singleton && !show_git_diff_markers {
+                editor.scrollbar_marker_state.dirty = true;
+                editor.scrollbar_marker_state.markers = Default::default();
+                editor.scrollbar_marker_state.pending_refresh = None;
+                return;
+            }
+            if !editor
+                .scrollbar_marker_state
+                .should_refresh(scrollbar_layout.hitbox.size)
             {
                 return;
             }
