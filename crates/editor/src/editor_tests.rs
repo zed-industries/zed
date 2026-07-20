@@ -6681,6 +6681,24 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
             + fooˇ bar
         "});
 
+        cx.set_state(indoc! {"
+            fooˇ
+            *bar*
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            fooˇ *bar*
+        "});
+
+        cx.set_state(indoc! {"
+            * ˇfoo
+            *
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            * fooˇ
+        "});
+
         // No-whitespace join also strips the list marker.
         cx.set_state(indoc! {"
             - ˇfoo

@@ -676,7 +676,7 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_preview_button(self.workspace.clone(), cx))
+            .children(self.render_preview_button(cx))
             .children(search_button)
             .when(
                 AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,

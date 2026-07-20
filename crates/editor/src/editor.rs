@@ -5552,24 +5552,36 @@ impl Editor {
                                 .documentation_comment()
                                 .map(|c| c.prefix.as_ref())
                                 .filter(|p| !p.is_empty());
-                            let all_prefixes = language_scope
+                            let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefix)
                                 .chain(doc_prefix)
-                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+                                .map(|prefix| (prefix, false));
+                            let all_prefixes = comment_prefixes.chain(
+                                language_scope
+                                    .unordered_list()
+                                    .iter()
+                                    .map(|prefix| (prefix.as_ref(), true)),
+                            );
 
                             let mut longest_prefix_len = None;
-                            for prefix in all_prefixes {
+                            for (prefix, is_unordered_list) in all_prefixes {
                                 let trimmed = prefix.trim_end();
-                                if line_text_after_indent.starts_with(trimmed) {
-                                    let candidate_len =
-                                        if line_text_after_indent.starts_with(prefix) {
-                                            prefix.len()
-                                        } else {
-                                            trimmed.len()
-                                        };
+                                let matches_full_prefix =
+                                    line_text_after_indent.starts_with(prefix);
+                                let nextline_is_bare_prefix = line_text_after_indent == trimmed;
+                                if matches_full_prefix
+                                    || (!is_unordered_list
+                                        && line_text_after_indent.starts_with(trimmed))
+                                    || nextline_is_bare_prefix
+                                {
+                                    let candidate_len = if matches_full_prefix {
+                                        prefix.len()
+                                    } else {
+                                        trimmed.len()
+                                    };
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
@@ -11586,15 +11598,12 @@ impl EditorSnapshot {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                         const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
-                        /// The number of characters to dedicate to gaps and margins.
-                        const SPACING_WIDTH: usize = 4;
-
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
-                            + SPACING_WIDTH;
+                            + MAX_RELATIVE_TIMESTAMP.len();
 
                         ch_advance * max_char_count
+                            + renderer.blame_entry_non_text_width(window, cx)
                     });
 
             let is_singleton = self.buffer_snapshot().is_singleton();
