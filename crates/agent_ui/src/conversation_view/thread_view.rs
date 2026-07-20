@@ -3215,7 +3215,7 @@ impl ThreadView {
                                     .size(IconSize::Small)
                             });
 
-                        let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+                        let file_stats = DiffStats::single_file(diff.read(cx));
 
                         let buttons = self.render_edited_files_buttons(
                             index,
@@ -6442,9 +6442,12 @@ impl ThreadView {
             primary
         };
 
-        let primary = if matches!(entry, AgentThreadEntry::AssistantMessage(_))
-            && !assistant_message_is_blank
-        {
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+
+        let is_turn_end = Self::entry_is_finalized_turn_end(thread.read(cx).entries(), entry_ix)
+            .unwrap_or(!is_generating);
+
+        let primary = if is_turn_end && !assistant_message_is_blank {
             let user_message_index = thread
                 .read(cx)
                 .entries()
@@ -6660,6 +6663,30 @@ impl ThreadView {
             )
     }
 
+    /// A turn ends when no further assistant output (message or tool call)
+    /// follows before the next user message, and it's finalized once a user
+    /// message follows it.
+    fn entry_is_finalized_turn_end(entries: &[AgentThreadEntry], entry_ix: usize) -> Option<bool> {
+        if !matches!(
+            entries.get(entry_ix),
+            Some(AgentThreadEntry::AssistantMessage(_))
+        ) {
+            return Some(false);
+        }
+
+        for entry in &entries[entry_ix + 1..] {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return Some(true),
+                AgentThreadEntry::AssistantMessage(_) | AgentThreadEntry::ToolCall(_) => {
+                    return Some(false);
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
@@ -6702,13 +6729,15 @@ impl ThreadView {
             this.scroll_to_user_message_index(user_message_index, cx);
         }));
 
-        let scroll_to_top = IconButton::new(("scroll_to_top", entry_ix), IconName::ArrowUp)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .tooltip(Tooltip::text("Scroll to Top"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_top(cx);
-            }));
+        let scroll_to_top = is_thread_bottom.then(|| {
+            IconButton::new(("scroll_to_top", entry_ix), IconName::ArrowUp)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Scroll to Top"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_top(cx);
+                }))
+        });
 
         let show_stats = is_thread_bottom && AgentSettings::get_global(cx).show_turn_stats;
 
@@ -6797,6 +6826,13 @@ impl ThreadView {
             })
             .flatten();
 
+        let separator_dots = || {
+            Label::new("•")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .alpha(0.5)
+        };
+
         h_flex()
             .w_full()
             .py_1p5()
@@ -6812,21 +6848,18 @@ impl ThreadView {
                             .px_1()
                             .gap_1()
                             .when_some(last_turn_tokens_label, |this, label| {
-                                this.child(label).child(
-                                    Label::new("•")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .alpha(0.5),
-                                )
+                                this.child(label).child(separator_dots())
                             })
-                            .when_some(last_turn_clock, |this, label| this.child(label)),
+                            .when_some(last_turn_clock, |this, label| {
+                                this.child(label).child(separator_dots())
+                            }),
                     )
                 },
             )
             .when_some(feedback_buttons, |this, buttons| this.child(buttons))
             .when_some(copy_response_button, |this, button| this.child(button))
             .child(scroll_to_recent_user_prompt)
-            .child(scroll_to_top)
+            .when_some(scroll_to_top, |this, button| this.child(button))
             .into_any_element()
     }
 
