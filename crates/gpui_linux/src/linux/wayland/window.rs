@@ -676,6 +676,7 @@ impl WaylandWindowState {
 enum FrameLoop {
     Unconfigured,
     Ticking,
+    RescheduleRequested,
     AwaitingCallback,
     Scheduled,
     RetryScheduled,
@@ -866,13 +867,36 @@ impl WaylandWindowStatePtr {
         let require_presentation = state.present_failed;
         drop(state);
 
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(fun) = cb.request_frame.as_mut() {
-            fun(RequestFrameOptions {
-                force_render,
-                require_presentation,
-            });
-            self.update_ime_enabled();
+        let mut callbacks = self.callbacks.borrow_mut();
+        let Some(request_frame_callback) = callbacks.request_frame.as_mut() else {
+            self.frame_loop.set(FrameLoop::Parked);
+            return;
+        };
+        request_frame_callback(RequestFrameOptions {
+            force_render,
+            require_presentation,
+        });
+        self.update_ime_enabled();
+        drop(callbacks);
+
+        self.complete_frame();
+    }
+
+    fn complete_frame(&self) {
+        let mut state = self.state.borrow_mut();
+
+        let presented = std::mem::take(&mut state.renderer_presented);
+        if presented {
+            return;
+        }
+
+        let reschedule_requested = self.frame_loop.get() == FrameLoop::RescheduleRequested;
+        if reschedule_requested || state.force_render_after_recovery || state.present_failed {
+            self.frame_loop.set(FrameLoop::RetryScheduled);
+            let surface_id = state.surface.id();
+            let client = state.client.clone();
+            drop(state);
+            client.schedule_frame_retry(&surface_id);
         } else {
             self.frame_loop.set(FrameLoop::Parked);
         }
@@ -900,13 +924,19 @@ impl WaylandWindowStatePtr {
         self.frame_loop.get() != FrameLoop::Unconfigured
     }
 
-    /// Re-arm a parked render loop because the window has work again.
     pub fn schedule_frame(&self) {
-        if self.frame_loop.get() != FrameLoop::Parked {
-            return;
+        match self.frame_loop.get() {
+            FrameLoop::Parked => {
+                self.frame_loop.set(FrameLoop::Scheduled);
+                self.frame_ping.ping();
+            }
+            FrameLoop::Ticking => {
+                self.frame_loop.set(FrameLoop::RescheduleRequested);
+            }
+            // A wake is already armed: a ping or retry timer is in flight, or a
+            // presented buffer guarantees a compositor frame callback.
+            _ => {}
         }
-        self.frame_loop.set(FrameLoop::Scheduled);
-        self.frame_ping.ping();
     }
 
     fn update_ime_enabled(&self) {
@@ -1797,25 +1827,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn schedule_frame(&self) {
         self.0.schedule_frame();
-    }
-
-    fn completed_frame(&self, request_next_frame: bool) {
-        let mut state = self.borrow_mut();
-
-        let presented = std::mem::take(&mut state.renderer_presented);
-        if presented {
-            return;
-        }
-
-        if request_next_frame || state.force_render_after_recovery || state.present_failed {
-            self.0.frame_loop.set(FrameLoop::RetryScheduled);
-            let surface_id = state.surface.id();
-            let client = state.client.clone();
-            drop(state);
-            client.schedule_frame_retry(&surface_id);
-        } else {
-            self.0.frame_loop.set(FrameLoop::Parked);
-        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

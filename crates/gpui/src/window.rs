@@ -1498,7 +1498,9 @@ impl Window {
                     {
                         // Deferred by throttling: ask demand-driven platforms to retry.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame(true))
+                            .update(&mut cx, |_, window, _| {
+                                window.platform_window.schedule_frame();
+                            })
                             .log_err();
                         return;
                     }
@@ -1544,11 +1546,13 @@ impl Window {
                         .log_err();
                 }
 
-                let request_next_frame =
-                    invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty();
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame(request_next_frame);
+                        if window.invalidator.is_dirty()
+                            || !window.next_frame_callbacks.borrow().is_empty()
+                        {
+                            window.platform_window.schedule_frame();
+                        }
                     })
                     .log_err();
             }
@@ -2211,9 +2215,7 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
-        if self.invalidator.not_drawing() {
-            self.platform_window.schedule_frame();
-        }
+        self.platform_window.schedule_frame();
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -2669,10 +2671,6 @@ impl Window {
     /// The current state of the keyboard's capslock
     pub fn capslock(&self) -> Capslock {
         self.capslock
-    }
-
-    fn complete_frame(&self, request_next_frame: bool) {
-        self.platform_window.completed_frame(request_next_frame);
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -6490,11 +6488,64 @@ pub fn outline(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        AppContext as _, Bounds, Context, Empty, FocusHandle, InteractiveElement as _, IntoElement,
         ParentElement as _, Pixels, Render, Styled as _, TestAppContext, Window, canvas, div, px,
         size,
     };
     use std::{cell::Cell, rc::Rc};
+
+    #[gpui::test]
+    fn queued_frame_callback_wakes_a_parked_render_loop(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        // A fresh test window was drawn inline by `open_window` and has parked.
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, _| {
+            window.active.set(true);
+            window.on_next_frame(|_, _| {});
+        })
+        .unwrap();
+        assert!(
+            test_window.frame_scheduled(),
+            "queuing work on a parked window must wake the render loop"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(
+            !test_window.frame_scheduled(),
+            "an idle window must let the render loop park again"
+        );
+    }
+
+    #[gpui::test]
+    fn callback_queued_during_a_frame_requests_a_follow_up(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update_window(window.into(), |_, window, _| {
+            // Inactive windows are frame-rate throttled, which would defer the
+            // ticks this test drives manually.
+            window.active.set(true);
+            let callback_ran = callback_ran.clone();
+            window.on_next_frame(move |window, _| {
+                window.on_next_frame(move |_, _| callback_ran.set(true));
+            });
+        })
+        .unwrap();
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!callback_ran.get());
+        assert!(
+            test_window.frame_scheduled(),
+            "a callback queued mid-frame must schedule a follow-up before the loop parks"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(callback_ran.get());
+    }
 
     struct RootView {
         explicit_size: bool,
