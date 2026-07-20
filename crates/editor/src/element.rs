@@ -1315,9 +1315,6 @@ impl EditorElement {
             ShowScrollbar::Auto => {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
-                // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
-                ||
                 // Buffer Search Results
                 (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
                 ||
