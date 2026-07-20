@@ -547,6 +547,7 @@ impl VsCodeSettings {
     fn default_language_settings_content(&self) -> LanguageSettingsContent {
         LanguageSettingsContent {
             allow_rewrap: None,
+            soft_wrap_indent: None,
             always_treat_brackets_as_autoclosed: None,
             auto_indent: None,
             auto_indent_on_paste: self.read_bool("editor.formatOnPaste"),

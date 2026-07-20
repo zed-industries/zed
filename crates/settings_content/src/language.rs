@@ -506,6 +506,33 @@ impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
     }
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumString,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftWrapIndent {
+    /// Continuation lines start at column 0.
+    None,
+    /// Continuation lines match the original line's indentation.
+    #[default]
+    Same,
+    /// Continuation lines get 1 extra indent level beyond the original.
+    ExtraOne,
+    /// Continuation lines get 2 extra indent levels beyond the original.
+    ExtraTwo,
+}
 /// The settings for a particular language.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -524,6 +551,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: none
     pub soft_wrap: Option<SoftWrap>,
+    /// How to indent soft-wrapped continuation lines.
+    ///
+    /// Default: same
+    pub soft_wrap_indent: Option<SoftWrapIndent>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     ///
