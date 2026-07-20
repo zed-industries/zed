@@ -380,39 +380,55 @@ fn possible_open_target_internal(
     };
 
     cx.spawn(async move |cx| {
-        background_resolution_task.await.or_else(|| {
-            for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-                if let Some(found_entry) =
-                    worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
-                        let traversal =
-                            worktree.traverse_from_path(true, true, false, RelPath::empty());
-                        for entry in traversal {
-                            if let Some(path_in_worktree) =
-                                worktree_paths_to_check.iter().find(|path_to_check| {
-                                    RelPath::new(&path_to_check.path, PathStyle::local())
-                                        .is_ok_and(|path| entry.path.ends_with(&path))
-                                })
-                            {
-                                return Some(OpenTarget::Worktree(
-                                    PathWithPosition {
-                                        path: worktree.absolutize(&entry.path),
-                                        row: path_in_worktree.row,
-                                        column: path_in_worktree.column,
-                                    },
-                                    entry.clone(),
-                                    #[cfg(any(test, feature = "test-support"))]
-                                    OpenTargetFoundBy::WorktreeScan,
-                                ));
-                            }
-                        }
-                        None
+        if let Some(open_target) = background_resolution_task.await {
+            return Some(open_target);
+        }
+
+        let worktree_paths_to_check = worktree_paths_to_check
+            .into_iter()
+            .map(|(worktree, paths_to_check)| {
+                let paths_to_check = paths_to_check
+                    .into_iter()
+                    .filter_map(|path_with_position| {
+                        let path = RelPath::new(&path_with_position.path, PathStyle::local())
+                            .ok()?
+                            .into_owned();
+                        Some((path_with_position, path))
                     })
-                {
-                    return Some(found_entry);
+                    .collect::<Vec<_>>();
+                (
+                    worktree.read_with(cx, |worktree, _| worktree.snapshot()),
+                    paths_to_check,
+                )
+            })
+            .collect::<Vec<_>>();
+        cx.background_spawn(async move {
+            for (snapshot, paths_to_check) in worktree_paths_to_check {
+                let traversal = snapshot.traverse_from_path(true, true, false, RelPath::empty());
+                for entry in traversal {
+                    if let Some(path_with_position) =
+                        paths_to_check
+                            .iter()
+                            .find_map(|(path_with_position, path)| {
+                                entry.path.ends_with(path).then_some(path_with_position)
+                            })
+                    {
+                        return Some(OpenTarget::Worktree(
+                            PathWithPosition {
+                                path: snapshot.absolutize(&entry.path),
+                                row: path_with_position.row,
+                                column: path_with_position.column,
+                            },
+                            entry.clone(),
+                            #[cfg(any(test, feature = "test-support"))]
+                            OpenTargetFoundBy::WorktreeScan,
+                        ));
+                    }
                 }
             }
             None
         })
+        .await
     })
 }
 

@@ -12372,16 +12372,28 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -12410,11 +12422,18 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
@@ -12423,11 +12442,21 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -12465,6 +12494,11 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
                 diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
+                staged_diff_stat: None,
+                unstaged_diff_stat: Some(DiffStat {
                     added: 0,
                     deleted: 1,
                 }),
@@ -12516,6 +12550,8 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
                 repo_path: repo_path("ci2/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
                 diff_stat: None,
+                staged_diff_stat: None,
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12558,6 +12594,8 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
                 repo_path: repo_path("ci3/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
                 diff_stat: None,
+                staged_diff_stat: None,
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12719,6 +12757,11 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                 }
                 .into(),
                 diff_stat: None,
+                staged_diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         )
     });
@@ -12925,6 +12968,11 @@ async fn test_repository_pending_ops_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -13035,6 +13083,11 @@ async fn test_repository_pending_ops_long_running_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -13160,11 +13213,15 @@ async fn test_repository_pending_ops_stage_all(
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
             ]
         );
@@ -16080,4 +16137,202 @@ mod disable_ai_settings_tests {
             );
         });
     }
+}
+
+/// Regression test for https://github.com/zed-industries/zed/issues/60424.
+///
+/// The committed text contains repeated `end\n\n` line runs, so the deletion
+/// hunks have ambiguous placements. Before hunk placement was canonicalized,
+/// the uncommitted diff (HEAD vs worktree) and the recomputed unstaged diff
+/// (index vs worktree) could anchor the same logical deletion at different
+/// rows after a partial stage. The mismatched hunk then rendered as staged
+/// while git still had it unstaged, and unstaging it inserted a duplicate
+/// copy of its contents into the index on every click.
+#[gpui::test]
+async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = concat!(
+        "function is_empty(str)\n",
+        "    assert(type(str) == string)\n",
+        "    return str == nil or str == \"\"\n",
+        "end\n",
+        "\n",
+        "function string:starts_with(str)\n",
+        "    return self:sub(1, #str) == str\n",
+        "end\n",
+        "\n",
+        "function string:ends_with(str)\n",
+        "    return self:sub(-#str) == str\n",
+        "end\n",
+        "\n",
+        "function table:append(other)\n",
+        "    for _, val in ipairs(other) do table.insert(self, val) end\n",
+        "end\n",
+        "\n",
+        "function table:contains(elem)\n",
+        "    assert(type(self) == \"table\")\n",
+        "\n",
+        "    for _, val in ipairs(self) do\n",
+        "        if val == elem then return true end\n",
+        "    end\n",
+        "    return false\n",
+        "end\n",
+        "\n",
+        "function table:keys()\n",
+        "    local keys = {}\n",
+        "    for key, _ in pairs(self) do\n",
+        "        table.insert(keys, key)\n",
+        "    end\n",
+        "    return keys\n",
+        "end\n",
+        "\n",
+        "function has_class(el, class) return el.classes[0] == class end\n",
+    )
+    .to_string();
+    let file_contents = concat!(
+        "function table:append(other)\n",
+        "    for _, val in ipairs(other) do table.insert(self, val) end\n",
+        "end\n",
+        "\n",
+        "function table:keys()\n",
+        "    local keys = {}\n",
+        "    for key, _ in pairs(self) do\n",
+        "        table.insert(keys, key)\n",
+        "    end\n",
+        "    return keys\n",
+        "end\n",
+        "\n",
+        "function has_class(el, class) return el.classes:includes(class) end\n",
+    )
+    .to_string();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "test.txt": file_contents.clone()
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("test.txt", committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/test.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    fn hunk_states(
+        uncommitted_diff: &Entity<BufferDiff>,
+        snapshot: &language::BufferSnapshot,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<(Range<Point>, DiffHunkSecondaryStatus)> {
+        uncommitted_diff.read_with(cx, |diff, cx| {
+            diff.snapshot(cx)
+                .hunks(&snapshot.text)
+                .map(|hunk| (hunk.range.clone(), hunk.secondary_status))
+                .collect()
+        })
+    }
+
+    fn index_text(fs: &FakeFs) -> String {
+        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+            state
+                .index_contents
+                .get(&repo_path("test.txt"))
+                .cloned()
+                .expect("file is present in the index")
+        })
+        .unwrap()
+    }
+
+    use DiffHunkSecondaryStatus::*;
+    let row = |start: u32, end: u32| Point::new(start, 0)..Point::new(end, 0);
+
+    // Two deletions and one modification, all unstaged.
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), HasSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
+
+    // Stage the first deletion (the three string functions).
+    let hunks = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot.text).collect::<Vec<_>>()
+    });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(
+                buffer.clone(),
+                unstaged_diff,
+                vec![hunks[0].buffer_range.clone()],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Only the first hunk is staged; the other hunks must not be affected,
+    // even though the unstaged diff was recomputed against a new index text
+    // in which the remaining deletion has an ambiguous placement.
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), NoSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
+    let table_contains_offset = committed_contents
+        .find("function table:append")
+        .expect("committed text contains table:append");
+    let expected_index = &committed_contents[table_contains_offset..];
+    assert_eq!(index_text(&fs), expected_index);
+
+    // Unstaging the second deletion is a no-op, since it isn't staged. Before
+    // the fix, each such request inserted another copy of the deleted content
+    // into the index.
+    for _ in 0..3 {
+        let hunks = uncommitted_diff.read_with(cx, |diff, cx| {
+            diff.snapshot(cx).hunks(&snapshot.text).collect::<Vec<_>>()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.unstage_uncommitted_hunks(
+                    buffer.clone(),
+                    uncommitted_diff.clone(),
+                    vec![hunks[1].buffer_range.clone()],
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(index_text(&fs), expected_index);
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), NoSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
 }
