@@ -597,6 +597,87 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_project_symbols_deduplication(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "test.rs": "" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        )));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    workspace_symbol_provider: Some(OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let fake_symbol = symbol("foo", path!("/dir/test.rs"));
+        let fake_server = fake_servers.next().await.unwrap();
+        fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+            move |_params: lsp::WorkspaceSymbolParams, _cx| {
+                let symbol = fake_symbol.clone();
+                async move {
+                    Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+                        symbol.clone(),
+                        symbol,
+                    ])))
+                }
+            },
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let symbols = cx.new_window_entity(|window, cx| {
+            Picker::uniform_list(
+                ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
+                window,
+                cx,
+            )
+        });
+
+        symbols.update_in(cx, |p, window, cx| {
+            p.update_matches("foo".to_string(), window, cx);
+        });
+
+        cx.run_until_parked();
+        symbols.read_with(cx, |symbols, _| {
+            assert_eq!(
+                symbols.delegate.matches.len(),
+                1,
+                "duplicate symbols should be deduplicated"
+            );
+            assert_eq!(symbols.delegate.matches[0].string, "foo");
+        });
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
