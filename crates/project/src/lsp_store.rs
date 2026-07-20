@@ -9333,6 +9333,16 @@ impl LspStore {
             let abs_path = abs_path
                 .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
+
+            let fs = lsp_store
+                .update(cx, |lsp_store, _cx| {
+                    lsp_store.as_local().map(|local| local.fs.clone())
+                })?;
+            let abs_path = if let Some(fs) = fs {
+                fs.canonicalize(&abs_path).await.unwrap_or(abs_path)
+            } else {
+                abs_path
+            };
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
