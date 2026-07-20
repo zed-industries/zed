@@ -26,7 +26,7 @@ serde.workspace = true
 smallvec.workspace = true
 telemetry.workspace = true
 text.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 util.workspace = true
 zeta_prompt.workspace = true
 
@@ -43,4 +43,3 @@ serde_json.workspace = true
 settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-

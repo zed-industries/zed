@@ -151,13 +151,21 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            this.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
+            let result = this.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
                 button,
                 position,
                 modifiers,
                 click_count,
                 first_mouse: false,
             }));
+
+            // The browser fires `contextmenu` after this event; remember whether
+            // the app claimed the right-click (e.g. opened its own menu) so the
+            // contextmenu listener cancels the native menu only in that case.
+            if button == MouseButton::Right {
+                let claimed = result.is_some_and(|result| !result.propagate);
+                this.app_claimed_right_click.set(claimed);
+            }
         })
     }
 
@@ -271,9 +279,12 @@ impl WebWindowInner {
     }
 
     fn register_context_menu(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
         self.listen("contextmenu", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
-            event.prevent_default();
+            if this.app_claimed_right_click.replace(false) {
+                event.prevent_default();
+            }
         })
     }
 
