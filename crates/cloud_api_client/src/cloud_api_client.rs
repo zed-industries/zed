@@ -87,7 +87,7 @@ impl CloudApiClient {
         *self.credentials.write() = None;
     }
 
-    fn cloud_host(&self) -> String {
+    pub fn cloud_host(&self) -> String {
         self.http_client
             .build_zed_cloud_url("/")
             .ok()
