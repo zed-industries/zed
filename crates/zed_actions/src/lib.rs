@@ -393,15 +393,26 @@ pub mod command_palette {
 }
 
 pub mod text_finder {
-    use gpui::actions;
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
-    actions!(
-        text_finder,
-        [
-            /// Opens the Project Search Picker.
-            Toggle,
-        ]
-    );
+    /// Opens the Project Search Picker.
+    #[derive(Default, PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = text_finder)]
+    #[serde(deny_unknown_fields)]
+    pub struct Toggle {
+        pub seed: SeedQuery,
+    }
+
+    /// The seed query to use when opening the text finder.
+    #[derive(Default, PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+    #[serde(rename_all = "snake_case")]
+    pub enum SeedQuery {
+        #[default]
+        UnderCursor,
+        LastQuery,
+    }
 }
 
 pub mod project_panel {

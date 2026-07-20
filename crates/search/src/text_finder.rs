@@ -26,6 +26,7 @@ mod delegate;
 mod render;
 use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
+use zed_actions::text_finder::SeedQuery;
 
 use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
 
@@ -130,9 +131,9 @@ impl TextFinder {
         _: &mut Context<Workspace>,
     ) {
         pub use zed_actions::text_finder::Toggle;
-        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+        workspace.register_action(|workspace, toggle: &Toggle, window, cx| {
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
-                let seed_query = Self::seed_query(workspace, window, cx);
+                let seed_query = Self::seed_query(workspace, window, cx, &toggle.seed);
                 Self::open(seed_query, window, cx).detach();
                 return;
             };
@@ -321,14 +322,26 @@ impl TextFinder {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        seed: &SeedQuery,
     ) -> Option<SearchSeed> {
-        let last_search = load_last_search(workspace.database_id(), cx);
-        let options = last_search.as_ref().and_then(|seed| seed.options);
-
-        let query = Self::active_item_query(workspace, window, cx)
-            .or_else(|| last_search.map(|seed| seed.query))?;
-
-        Some(SearchSeed { query, options })
+        match seed {
+            SeedQuery::LastQuery => {
+                let last_search = load_last_search(workspace.database_id(), cx);
+                let options = last_search.as_ref().and_then(|seed| seed.options);
+                let query =
+                    Self::active_item_query(workspace, window, cx, SeedQuerySetting::Selection)
+                        .or_else(|| last_search.map(|seed| seed.query))?;
+                Some(SearchSeed { query, options })
+            }
+            SeedQuery::UnderCursor => {
+                let query =
+                    Self::active_item_query(workspace, window, cx, SeedQuerySetting::Always)?;
+                Some(SearchSeed {
+                    query,
+                    options: None,
+                })
+            }
+        }
     }
 
     /// The query to seed from the active item, if any.
@@ -341,6 +354,7 @@ impl TextFinder {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        seed_setting: SeedQuerySetting,
     ) -> Option<String> {
         let item = workspace.active_item(cx)?;
 
@@ -358,7 +372,7 @@ impl TextFinder {
         }
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
-            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
+            let query = editor.query_suggestion(Some(seed_setting), window, cx);
             if !query.is_empty() {
                 return Some(query);
             }
@@ -451,6 +465,7 @@ impl ModalView for TextFinder {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
+        // Always store the last search query in the database in case the user wants to restore it later
         let picker = self.picker.read(cx);
         let query = picker.query(cx);
         if !query.is_empty() {
