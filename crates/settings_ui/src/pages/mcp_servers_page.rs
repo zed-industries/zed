@@ -163,19 +163,18 @@ fn render_context_server(
     let server_configuration = store.read(cx).configuration_for_server(context_server_id);
 
     let is_running = matches!(server_status, ContextServerStatus::Running);
-    let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
-    // Extension-provided MCP servers are enabled by default until settings override them.
-    let is_enabled = store
-        .read(cx)
-        .settings_for_server(context_server_id)
-        .map(|s| s.enabled())
-        .unwrap_or(provided_by_extension);
+    let is_enabled = store.read(cx).is_server_enabled(context_server_id, cx);
     let is_transitioning = matches!(
         server_status,
         ContextServerStatus::Starting | ContextServerStatus::Authenticating
     );
     let item_id = SharedString::from(context_server_id.0.to_string());
 
+    // Determine the source from the configured settings rather than the runtime
+    // configuration: a custom (Stdio/HTTP) server that is disabled or not yet
+    // started has no runtime configuration, and must not be mistaken for an
+    // extension-provided server.
+    let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
     let display_name = if provided_by_extension {
         resolve_extension_display_name(context_server_id, cx).unwrap_or_else(|| item_id.clone())
     } else {
