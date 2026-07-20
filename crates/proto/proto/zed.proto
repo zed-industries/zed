@@ -497,7 +497,9 @@ message Envelope {
     TrashProjectEntry trash_project_entry = 466;
     TrashProjectEntryResponse trash_project_entry_response = 467;
     RestoreProjectEntry restore_project_entry = 468;
-    RestoreProjectEntryResponse restore_project_entry_response = 469; // current max
+    RestoreProjectEntryResponse restore_project_entry_response = 469;
+    GitAddPathToGitignore git_add_path_to_gitignore = 470;
+    GitAddPathToGitInfoExclude git_add_path_to_git_info_exclude = 471; // current max
   }
 
   reserved 87 to 88;

@@ -1442,14 +1442,20 @@ impl Editor {
             let selections = self
                 .selections
                 .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+            // `select` below resets the selections' granularity to `Character`, since it's the
+            // funnel every wholesale selection replacement goes through. When extending, the
+            // granularity established by the selection gesture that started the extension must
+            // survive that reset instead of being overwritten by `pending_mode`.
+            let select_mode = if self.selections.is_extending() {
+                self.selections.select_mode().clone()
+            } else {
+                pending_mode
+            };
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select(selections);
                 s.clear_pending();
-                if s.is_extending() {
-                    s.set_is_extending(false);
-                } else {
-                    s.set_select_mode(pending_mode);
-                }
+                s.set_is_extending(false);
+                s.set_select_mode(select_mode);
             });
         }
     }

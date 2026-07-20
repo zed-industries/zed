@@ -685,11 +685,12 @@ pub(crate) fn render_buffer_header(
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();
-    // On transparent windows `editor_subheader_background` stacks over the
-    // editor background into a darker bar (and the sticky shadow becomes a halo),
-    // so skip both unless the window is opaque.
+    // On transparent windows, only render an opaque `editor_subheader_background` so it masks
+    // the editor content beneath it without creating a darker bar. Sticky shadows still require
+    // an opaque window to avoid rendering as a halo.
     let opaque_window =
         cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
+    let show_header_background = opaque_window || colors.editor_subheader_background.is_opaque();
 
     let show_open_file_button =
         can_open_excerpts && relative_path.is_some() && (is_selected || header_hovered);
@@ -727,7 +728,9 @@ pub(crate) fn render_buffer_header(
                     border.border_color(border_color)
                 })
                 .when(is_sticky && opaque_window, |s| s.shadow_md())
-                .when(opaque_window, |s| s.bg(colors.editor_subheader_background))
+                .when(show_header_background, |s| {
+                    s.bg(colors.editor_subheader_background)
+                })
                 .hover(|s| s.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
