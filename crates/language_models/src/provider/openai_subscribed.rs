@@ -3,7 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
     http::{HeaderName, HeaderValue},
@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, ProviderConfigurationView, RateLimiter,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -157,10 +157,6 @@ impl OpenAiSubscribedProvider {
         });
     }
 
-    fn sign_out(&self, cx: &mut App) -> Task<Result<()>> {
-        do_sign_out(&self.state.downgrade(), cx)
-    }
-
     fn create_language_model(&self, model: ChatGptModel) -> Arc<dyn LanguageModel> {
         Arc::new(OpenAiSubscribedLanguageModel {
             id: LanguageModelId::from(model.id().to_string()),
@@ -198,9 +194,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        // No GPT-5.5 Mini exists yet; per the OpenAI Codex docs, gpt-5.4-mini
-        // is the recommended fast/cheap default alongside gpt-5.5.
-        Some(self.create_language_model(ChatGptModel::Gpt54Mini))
+        Some(self.create_language_model(ChatGptModel::Gpt56Luna))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -243,71 +237,48 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-        cx.new(|_cx| ConfigurationView {
-            state,
-            http_client,
-            compact: false,
-        })
-        .into()
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|_cx| ConfigurationView {
-                    state,
-                    http_client,
-                    compact: true,
-                })
-                .into(),
-        }
-    }
-
-    fn inline_title(&self, cx: &App) -> Option<SharedString> {
-        if self.state.read(cx).is_authenticated() {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated();
+        let title = if is_authenticated {
             None
         } else {
             Some("Configure ChatGPT".into())
-        }
-    }
-
-    fn inline_description(&self, cx: &App) -> Option<InlineDescription> {
-        if self.state.read(cx).is_authenticated() {
+        };
+        let description = if is_authenticated {
             None
         } else {
             Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
-        }
-    }
+        };
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.sign_out(cx)
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                create_view: Arc::new({
+                    let state = self.state.clone();
+                    let http_client = self.http_client.clone();
+                    move |_window, cx| {
+                        cx.new(|_cx| ConfigurationView {
+                            state: state.clone(),
+                            http_client: http_client.clone(),
+                            compact: true,
+                        })
+                        .into()
+                    }
+                }),
+            },
+        ))
     }
 
     fn authentication_error_message(&self) -> SharedString {
         "Your ChatGPT subscription session is invalid or has expired. \
-        Sign in again via the Agent Panel settings to continue."
+        Sign in again via Settings > AI > LLM Providers to continue."
             .into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
         "You are not signed in to your ChatGPT account. \
-        Sign in via the Agent Panel settings to continue."
+        Sign in via Settings > AI > LLM Providers to continue."
             .into()
     }
 
@@ -338,6 +309,9 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 // approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
 enum ChatGptModel {
+    Gpt56Sol,
+    Gpt56Terra,
+    Gpt56Luna,
     Gpt55,
     Gpt54,
     Gpt54Mini,
@@ -345,11 +319,21 @@ enum ChatGptModel {
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
-        vec![Self::Gpt55, Self::Gpt54, Self::Gpt54Mini]
+        vec![
+            Self::Gpt56Sol,
+            Self::Gpt56Terra,
+            Self::Gpt56Luna,
+            Self::Gpt55,
+            Self::Gpt54,
+            Self::Gpt54Mini,
+        ]
     }
 
     fn id(&self) -> &str {
         match self {
+            Self::Gpt56Sol => "gpt-5.6-sol",
+            Self::Gpt56Terra => "gpt-5.6-terra",
+            Self::Gpt56Luna => "gpt-5.6-luna",
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
@@ -358,6 +342,9 @@ impl ChatGptModel {
 
     fn display_name(&self) -> &str {
         match self {
+            Self::Gpt56Sol => "GPT-5.6 Sol",
+            Self::Gpt56Terra => "GPT-5.6 Terra",
+            Self::Gpt56Luna => "GPT-5.6 Luna",
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
@@ -365,11 +352,10 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        // All Codex-supported models use a 272K context window in the Codex
-        // backend, even when the raw model exposes a larger context window via the
-        // public API (e.g. gpt-5.4 has max_context_window 1M, but Codex uses
-        // context_window 272K). Source: openai/codex models-manager/models.json.
-        272_000
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+        }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
@@ -383,18 +369,30 @@ impl ChatGptModel {
     }
 
     fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
-        // Codex bundled models all default to Medium reasoning effort.
-        Some(ReasoningEffort::Medium)
+        match self {
+            Self::Gpt56Sol => Some(ReasoningEffort::Low),
+            Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
+                Some(ReasoningEffort::Medium)
+            }
+        }
     }
 
     fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
-        // The Codex backend's supported_reasoning_levels for every model in this list is low/medium/high/xhigh
-        &[
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-            ReasoningEffort::XHigh,
-        ]
+        match self {
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
+            Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+        }
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -407,7 +405,7 @@ impl ChatGptModel {
 
     fn supports_priority(&self) -> bool {
         match self {
-            Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 => true,
             Self::Gpt54Mini => false,
         }
     }
@@ -476,7 +474,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
+                    ReasoningEffort::Max => ("Max", "max"),
                 };
 
                 Some(LanguageModelEffortLevel {
@@ -787,10 +785,12 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair(
-            "scope",
-            "openid profile email offline_access api.connectors.read api.connectors.invoke",
-        )
+        // Deliberately excludes `api.connectors.read api.connectors.invoke`
+        // (which Codex CLI requests): extra scopes inflate the
+        // access-token JWT, and the serialized credentials must fit within
+        // Windows Credential Manager's 2560-byte blob limit
+        // (CRED_MAX_CREDENTIAL_BLOB_SIZE). See #58541.
+        .append_pair("scope", "openid profile email offline_access")
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")

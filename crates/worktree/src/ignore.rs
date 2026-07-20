@@ -85,12 +85,12 @@ impl IgnoreStack {
             IgnoreStackEntry::Global { ignore } => {
                 let combined_path;
                 let abs_path = if let Some(repo_root) = self.repo_root.as_ref() {
-                    combined_path = ignore.path().join(
+                    if let Ok(relative_path) = abs_path.strip_prefix(repo_root) {
+                        combined_path = ignore.path().join(relative_path);
+                        &combined_path
+                    } else {
                         abs_path
-                            .strip_prefix(repo_root)
-                            .expect("repo root should be a parent of matched path"),
-                    );
-                    &combined_path
+                    }
                 } else {
                     abs_path
                 };

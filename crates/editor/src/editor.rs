@@ -98,21 +98,25 @@ pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-    render_breadcrumb_text,
+    file_status_label_color, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
+pub use git::{
+    DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
+    RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
+    set_blame_renderer,
+};
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{
-    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, render_diff_hunk_controls,
-    update_uncommitted_diff_for_buffer,
+    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, update_uncommitted_diff_for_buffer,
 };
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
-pub use git::{RenderDiffHunkControlsFn, set_blame_renderer};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -124,7 +128,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleSplitDiff};
+pub use split::{DiffStyleControls, SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -186,6 +190,7 @@ use language::{
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
+use language_detection::detect_language;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -254,9 +259,8 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
-    utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
+    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -293,6 +297,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
+const MIN_LANGUAGE_DETECTION_CONFIDENCE: f32 = 0.5;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -974,7 +980,6 @@ pub struct Editor {
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     delegate_expand_excerpts: bool,
-    delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
     enable_lsp_data: bool,
     needs_initial_data_update: bool,
@@ -1075,11 +1080,11 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
-    render_diff_hunk_controls: RenderDiffHunkControlsFn,
     buffer_serialization: Option<BufferSerialization>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    pending_blame_hover_observation: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1129,12 +1134,7 @@ pub struct Editor {
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
-    /// Whether we are temporarily displaying a diff other than git's
-    temporary_diff_override: bool,
-    /// Whether to render all diff hunks with the "unstaged" appearance,
-    /// regardless of whether they have a secondary hunk. Used by views whose
-    /// diffs aren't related to the git index (e.g. agent diffs).
-    render_diff_hunks_as_unstaged: bool,
+    diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1635,6 +1635,97 @@ pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
     pub line_length: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GutterButtonIntent {
+    SetBookmark,
+    SetBreakpoint,
+}
+
+impl GutterButtonIntent {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::SetBookmark => "Set Bookmark",
+            Self::SetBreakpoint => "Set Breakpoint",
+        }
+    }
+
+    fn icon(&self) -> ui::IconName {
+        match self {
+            Self::SetBookmark => ui::IconName::Bookmark,
+            Self::SetBreakpoint => ui::IconName::DebugBreakpoint,
+        }
+    }
+
+    fn color(&self) -> Color {
+        match self {
+            Self::SetBookmark => Color::Info,
+            Self::SetBreakpoint => Color::Hint,
+        }
+    }
+
+    fn action(&self) -> &'static dyn Action {
+        match self {
+            Self::SetBookmark => &ToggleBookmark,
+            Self::SetBreakpoint => &ToggleBreakpoint,
+        }
+    }
+}
+
+struct GutterButtonTooltip {
+    primary: GutterButtonIntent,
+    secondary: GutterButtonIntent,
+    focus_handle: FocusHandle,
+}
+
+impl GutterButtonTooltip {
+    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
+        if modifiers.secondary() {
+            self.secondary
+        } else {
+            self.primary
+        }
+    }
+
+    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+        const RIGHT_CLICK_HINT: &str = "right-click for more options";
+
+        if self.primary == self.secondary {
+            return RIGHT_CLICK_HINT.to_string();
+        }
+        let modifier_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let other = match intent {
+            GutterButtonIntent::SetBookmark => "breakpoint",
+            GutterButtonIntent::SetBreakpoint => "bookmark",
+        };
+        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+    }
+}
+
+impl Render for GutterButtonTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let intent = self.active_intent(window.modifiers());
+        let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
+        let meta_text = self.meta_text(intent);
+
+        tooltip_container(cx, move |this, _| {
+            this.child(
+                h_flex()
+                    .justify_between()
+                    .child(intent.as_str())
+                    .child(key_binding),
+            )
+            .child(
+                Label::new(meta_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+    }
 }
 
 impl Editor {
@@ -2194,7 +2285,6 @@ impl Editor {
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
             delegate_expand_excerpts: false,
-            delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
             enable_lsp_data: full_mode,
             needs_initial_data_update: full_mode,
@@ -2299,7 +2389,6 @@ impl Editor {
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame.enabled,
-            render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             buffer_serialization: is_minimap.not().then(|| {
                 BufferSerialization::new(
                     ProjectSettings::get_global(cx)
@@ -2309,6 +2398,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            pending_blame_hover_observation: None,
 
             bookmark_store,
             breakpoint_store,
@@ -2329,16 +2419,6 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, |editor, window, cx| {
-                            let active = window.is_window_active();
-                            editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
-                                    blink_manager.enable(cx);
-                                } else {
-                                    blink_manager.disable(cx);
-                                }
-                            });
-                        }),
                     ]
                 })
                 .unwrap_or_default(),
@@ -2368,8 +2448,7 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
-            temporary_diff_override: false,
-            render_diff_hunks_as_unstaged: false,
+            diff_hunk_delegate: None,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -4404,61 +4483,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        #[derive(Clone, Copy)]
-        enum Intent {
-            SetBookmark,
-            SetBreakpoint,
-        }
-
-        impl Intent {
-            fn as_str(&self) -> &'static str {
-                match self {
-                    Intent::SetBookmark => "Set bookmark",
-                    Intent::SetBreakpoint => "Set breakpoint",
-                }
-            }
-
-            fn icon(&self) -> ui::IconName {
-                match self {
-                    Intent::SetBookmark => ui::IconName::Bookmark,
-                    Intent::SetBreakpoint => ui::IconName::DebugBreakpoint,
-                }
-            }
-
-            fn color(&self) -> Color {
-                match self {
-                    Intent::SetBookmark => Color::Info,
-                    Intent::SetBreakpoint => Color::Hint,
-                }
-            }
-
-            fn secondary_and_options(&self) -> String {
-                let alt_as_text = gpui::Keystroke {
-                    modifiers: Modifiers::secondary_key(),
-                    ..Default::default()
-                };
-                match self {
-                    Intent::SetBookmark => format!(
-                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
-                    ),
-                    Intent::SetBreakpoint => format!(
-                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
-                    ),
-                }
-            }
-        }
-
         let gutter_settings = EditorSettings::get_global(cx).gutter;
         let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
-            [true, true] => [Intent::SetBreakpoint, Intent::SetBookmark],
-            [true, false] => [Intent::SetBreakpoint; 2],
-            [false, true] => [Intent::SetBookmark; 2],
+            [true, true] => [
+                GutterButtonIntent::SetBreakpoint,
+                GutterButtonIntent::SetBookmark,
+            ],
+            [true, false] => [GutterButtonIntent::SetBreakpoint; 2],
+            [false, true] => [GutterButtonIntent::SetBookmark; 2],
             [false, false] => {
                 log::error!("Trying to place gutter_hover without anything enabled!!");
-                [Intent::SetBookmark; 2]
+                [GutterButtonIntent::SetBookmark; 2]
             }
         };
 
@@ -4485,8 +4523,8 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
-                        Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
+                        GutterButtonIntent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        GutterButtonIntent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
@@ -4500,13 +4538,12 @@ impl Editor {
             }))
             .when(!has_context_menu, |button| {
                 button.tooltip(move |_window, cx| {
-                    Tooltip::with_meta_in(
-                        intent.as_str(),
-                        Some(&ToggleBreakpoint),
-                        intent.secondary_and_options(),
-                        &focus_handle,
-                        cx,
-                    )
+                    cx.new(|_| GutterButtonTooltip {
+                        primary,
+                        secondary,
+                        focus_handle: focus_handle.clone(),
+                    })
+                    .into()
                 })
             })
     }
@@ -5518,24 +5555,36 @@ impl Editor {
                                 .documentation_comment()
                                 .map(|c| c.prefix.as_ref())
                                 .filter(|p| !p.is_empty());
-                            let all_prefixes = language_scope
+                            let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefix)
                                 .chain(doc_prefix)
-                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+                                .map(|prefix| (prefix, false));
+                            let all_prefixes = comment_prefixes.chain(
+                                language_scope
+                                    .unordered_list()
+                                    .iter()
+                                    .map(|prefix| (prefix.as_ref(), true)),
+                            );
 
                             let mut longest_prefix_len = None;
-                            for prefix in all_prefixes {
+                            for (prefix, is_unordered_list) in all_prefixes {
                                 let trimmed = prefix.trim_end();
-                                if line_text_after_indent.starts_with(trimmed) {
-                                    let candidate_len =
-                                        if line_text_after_indent.starts_with(prefix) {
-                                            prefix.len()
-                                        } else {
-                                            trimmed.len()
-                                        };
+                                let matches_full_prefix =
+                                    line_text_after_indent.starts_with(prefix);
+                                let nextline_is_bare_prefix = line_text_after_indent == trimmed;
+                                if matches_full_prefix
+                                    || (!is_unordered_list
+                                        && line_text_after_indent.starts_with(trimmed))
+                                    || nextline_is_bare_prefix
+                                {
+                                    let candidate_len = if matches_full_prefix {
+                                        prefix.len()
+                                    } else {
+                                        trimmed.len()
+                                    };
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
@@ -7664,16 +7713,21 @@ impl Editor {
         let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+        let (head_buffer, head_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
-        if tail_buffer != cursor_buffer {
+        if tail_buffer != cursor_buffer || head_buffer != cursor_buffer {
             return None;
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let head_buffer_offset = head_buffer_position.to_offset(&snapshot);
         let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
         let prepare_rename = provider.range_for_rename(&cursor_buffer, cursor_buffer_position, cx);
         drop(snapshot);
@@ -7686,7 +7740,9 @@ impl Editor {
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
                         cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-                    let cursor_offset_in_rename_range_end =
+                    let head_offset_in_rename_range =
+                        head_buffer_offset.saturating_sub(rename_buffer_range.start);
+                    let tail_offset_in_rename_range =
                         cursor_buffer_offset_end.saturating_sub(rename_buffer_range.start);
 
                     this.take_rename(false, window, cx);
@@ -7727,24 +7783,23 @@ impl Editor {
                                 cx,
                             )
                         });
-                        let cursor_offset_in_rename_range =
-                            MultiBufferOffset(cursor_offset_in_rename_range);
-                        let cursor_offset_in_rename_range_end =
-                            MultiBufferOffset(cursor_offset_in_rename_range_end);
-                        let rename_selection_range = match cursor_offset_in_rename_range
-                            .cmp(&cursor_offset_in_rename_range_end)
-                        {
-                            Ordering::Equal => {
-                                editor.select_all(&SelectAll, window, cx);
-                                return editor;
-                            }
-                            Ordering::Less => {
-                                cursor_offset_in_rename_range..cursor_offset_in_rename_range_end
-                            }
-                            Ordering::Greater => {
-                                cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
-                            }
-                        };
+                        let head_offset_in_rename_range =
+                            MultiBufferOffset(head_offset_in_rename_range);
+                        let tail_offset_in_rename_range =
+                            MultiBufferOffset(tail_offset_in_rename_range);
+                        let rename_selection_range =
+                            match head_offset_in_rename_range.cmp(&tail_offset_in_rename_range) {
+                                Ordering::Equal => {
+                                    editor.select_all(&SelectAll, window, cx);
+                                    return editor;
+                                }
+                                Ordering::Less => {
+                                    head_offset_in_rename_range..tail_offset_in_rename_range
+                                }
+                                Ordering::Greater => {
+                                    tail_offset_in_rename_range..head_offset_in_rename_range
+                                }
+                            };
                         if rename_selection_range.end.0 > old_name.len() {
                             editor.select_all(&SelectAll, window, cx);
                         } else {
@@ -8610,19 +8665,30 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let start_line = selection.start.row + 1;
-        let end_line = selection.end.row + 1;
+        if let Some(file_location) = maybe!({
+            let (buffer, range) = multi_buffer_snapshot
+                .range_to_buffer_range(selection.range())
+                .or_else(|| {
+                    // A selection that spans multiple buffers has no single location,
+                    // so fall back to the buffer the latest cursor is in.
+                    let (buffer, point) =
+                        multi_buffer_snapshot.point_to_buffer_point(selection.head())?;
+                    Some((buffer, point..point))
+                })?;
 
-        let end_line = if selection.end.column == 0 && end_line > start_line {
-            end_line - 1
-        } else {
-            end_line
-        };
+            let start_line = range.start.row + 1;
+            let end_line = range.end.row + 1;
 
-        if let Some(file_location) = self.active_buffer(cx).and_then(|buffer| {
+            let end_line = if range.end.column == 0 && end_line > start_line {
+                end_line - 1
+            } else {
+                end_line
+            };
+
             let project = self.project()?.read(cx);
-            let file = buffer.read(cx).file()?;
+            let file = buffer.file()?;
             let path = file.path().display(project.path_style(cx));
 
             let location = if start_line == end_line {
@@ -9491,8 +9557,9 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = buffer.read(cx).remote_id();
+
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -9500,6 +9567,8 @@ impl Editor {
                             cx,
                         );
                     }
+
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -9519,6 +9588,9 @@ impl Editor {
                 ranges,
                 path_key,
             } => {
+                if let Some(hovered_link_state) = self.hovered_link_state.as_mut() {
+                    hovered_link_state.symbol_range = None;
+                }
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
@@ -9707,7 +9779,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -10744,6 +10822,46 @@ impl Editor {
         self.refresh_document_symbols(for_buffer, cx);
     }
 
+    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+
+        let buffer = buffer_entity.read(cx);
+        if buffer.file().is_some() {
+            return;
+        }
+
+        let buffer_snapshot = buffer.snapshot();
+        if buffer_snapshot.len() < MIN_LANGUAGE_DETECTION_LEN {
+            return;
+        }
+
+        let Some(language_registry) = buffer.language_registry() else {
+            return;
+        };
+        let buffer_version = buffer_snapshot.version().clone();
+        let detected_language = detect_language(buffer_snapshot, language_registry, cx);
+
+        cx.spawn(async move |_, cx| {
+            if let Some((detected_language, confidence)) = detected_language.await {
+                if confidence < MIN_LANGUAGE_DETECTION_CONFIDENCE {
+                    return;
+                }
+                buffer_entity.update(cx, |buffer, cx| {
+                    if buffer.file().is_none() && !buffer.version().changed_since(&buffer_version) {
+                        buffer.set_language(Some(detected_language), cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
         if !self.lsp_data_enabled() {
             return;
@@ -10853,7 +10971,7 @@ impl Editor {
                         if multibuffer.is_singleton() {
                             multibuffer.title(cx).to_string()
                         } else {
-                            "untitled".to_string()
+                            MultiBuffer::DEFAULT_TITLE.to_string()
                         }
                     })
             });
@@ -11526,15 +11644,12 @@ impl EditorSnapshot {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                         const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
-                        /// The number of characters to dedicate to gaps and margins.
-                        const SPACING_WIDTH: usize = 4;
-
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
-                            + SPACING_WIDTH;
+                            + MAX_RELATIVE_TIMESTAMP.len();
 
                         ch_advance * max_char_count
+                            + renderer.blame_entry_non_text_width(window, cx)
                     });
 
             let is_singleton = self.buffer_snapshot().is_singleton();
@@ -11732,16 +11847,9 @@ pub enum EditorEvent {
         lines: u32,
         direction: ExpandExcerptDirection,
     },
-    StageOrUnstageRequested {
-        stage: bool,
-        hunks: Vec<MultiBufferDiffHunk>,
-    },
     OpenExcerptsRequested {
         selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
         split: bool,
-    },
-    RestoreRequested {
-        hunks: Vec<MultiBufferDiffHunk>,
     },
     /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,

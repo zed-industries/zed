@@ -15,6 +15,8 @@ use icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+pub type CreateProviderSettingsView = Arc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
+
 pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
@@ -320,13 +322,11 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(
-        &self,
-        target_agent: ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView;
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView>;
+
+    fn set_api_key(&self, _key: Option<String>, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
 
     /// Copy shown when this provider rejects a request as unauthenticated
     /// (HTTP 401). The default assumes API-key authentication; providers using
@@ -335,7 +335,7 @@ pub trait LanguageModelProvider: 'static {
     fn authentication_error_message(&self) -> SharedString {
         format!(
             "The API key for {} is invalid or has expired. \
-            Update your key via the Agent Panel settings to continue.",
+            Update your key in Settings > AI > LLM Providers to continue.",
             self.name().0
         )
         .into()
@@ -348,43 +348,10 @@ pub trait LanguageModelProvider: 'static {
     fn missing_credentials_error_message(&self) -> SharedString {
         format!(
             "No API key is configured for {}. \
-            Add your key via the Agent Panel settings to continue.",
+            Add your key in Settings > AI > LLM Providers to continue.",
             self.name().0
         )
         .into()
-    }
-
-    /// Returns the provider's configuration UI together with how it prefers to
-    /// be presented: [`ProviderConfigurationView::Inline`] for a compact control
-    /// that can sit in a list row (e.g. a single API-key field), or
-    /// [`ProviderConfigurationView::SubPage`] for a richer view that needs its
-    /// own surface.
-    ///
-    /// The default reuses [`Self::configuration_view`] as a sub-page, so
-    /// providers only override this when they have a compact inline form.
-    fn configuration_view_v2(
-        &self,
-        target_agent: ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        ProviderConfigurationView::SubPage(self.configuration_view(target_agent, window, cx))
-    }
-
-    fn inline_title(&self, _cx: &App) -> Option<SharedString> {
-        None
-    }
-
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        None
-    }
-
-    fn api_key_configuration(&self, _cx: &App) -> Option<ApiKeyConfiguration> {
-        None
-    }
-
-    fn set_api_key(&self, _key: String, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
     }
 
     /// Copy shown the first time a user enables fast mode for a model from
@@ -395,11 +362,55 @@ pub trait LanguageModelProvider: 'static {
     }
 }
 
-/// How a provider's configuration UI prefers to be presented by the settings UI.
+/// A provider's settings UI, modeled as mutually exclusive presentation modes.
 #[derive(Clone)]
-pub enum ProviderConfigurationView {
-    Inline { view: AnyView },
-    SubPage(AnyView),
+pub enum ProviderSettingsView {
+    ApiKey(ApiKeyConfiguration),
+    Inline(InlineProviderSettings),
+    SubPage(SubPageProviderSettings),
+}
+
+#[derive(Clone)]
+pub struct InlineProviderSettings {
+    pub title: Option<SharedString>,
+    pub description: Option<InlineDescription>,
+    pub create_view: CreateProviderSettingsView,
+}
+
+#[derive(Clone)]
+pub struct SubPageProviderSettings {
+    pub description: Option<InlineDescription>,
+    pub create_view: CreateProviderSettingsView,
+}
+
+impl SubPageProviderSettings {
+    pub fn new(create_view: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        Self {
+            description: None,
+            create_view: Arc::new(create_view),
+        }
+    }
+
+    pub fn description(mut self, description: InlineDescription) -> Self {
+        self.description = Some(description);
+        self
+    }
+}
+
+impl ApiKeyConfiguration {
+    pub fn new(
+        has_key: bool,
+        is_from_env_var: bool,
+        env_var_name: SharedString,
+        api_key_url: SharedString,
+    ) -> Self {
+        Self {
+            has_key,
+            is_from_env_var,
+            env_var_name,
+            api_key_url,
+        }
+    }
 }
 
 /// A live snapshot of a single-API-key provider's credential state, used by the
@@ -428,13 +439,6 @@ pub enum InlineDescription {
 pub struct FastModeConfirmation {
     pub title: SharedString,
     pub message: SharedString,
-}
-
-#[derive(Default, Clone, PartialEq, Eq)]
-pub enum ConfigurationViewTargetAgent {
-    #[default]
-    ZedAgent,
-    Other(SharedString),
 }
 
 pub trait LanguageModelProviderState: 'static {
