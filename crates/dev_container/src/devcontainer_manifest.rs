@@ -142,7 +142,15 @@ impl DevContainerManifest {
         content: &str,
     ) -> Result<serde_json_lenient::Value, DevContainerError> {
         let mut value = deserialize_devcontainer_json_to_value(content)?;
-        let mut to_visit = vec![&mut value];
+        self.substitute_nonremote_vars_in_value(&mut value)?;
+        Ok(value)
+    }
+
+    fn substitute_nonremote_vars_in_value(
+        &self,
+        value: &mut serde_json_lenient::Value,
+    ) -> Result<(), DevContainerError> {
+        let mut to_visit = vec![value];
 
         while let Some(value) = to_visit.pop() {
             use serde_json_lenient::Value;
@@ -185,7 +193,7 @@ impl DevContainerManifest {
             }
         }
 
-        Ok(value)
+        Ok(())
     }
 
     fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
@@ -801,32 +809,40 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let mut security_opt = Vec::new();
         let mut privileged = false;
         let mut init = false;
+        let mut metadata_entries = base_image
+            .config
+            .labels
+            .metadata
+            .clone()
+            .unwrap_or_default();
+        for entry in &mut metadata_entries {
+            for value in entry.values_mut() {
+                self.substitute_nonremote_vars_in_value(value)?;
+            }
+        }
 
-        if let Some(metadata_entries) = &base_image.config.labels.metadata {
-            for entry in metadata_entries {
-                if let Some(serde_json_lenient::Value::Array(metadata_mounts)) = entry.get("mounts")
-                {
-                    for mount in metadata_mounts {
-                        if let Some(mount) = mount_definition_from_metadata(mount) {
-                            append_mount_with_target_override(&mut mounts, mount);
-                        }
+        for entry in &metadata_entries {
+            if let Some(serde_json_lenient::Value::Array(metadata_mounts)) = entry.get("mounts") {
+                for mount in metadata_mounts {
+                    if let Some(mount) = mount_definition_from_metadata(mount) {
+                        append_mount_with_target_override(&mut mounts, mount);
                     }
                 }
-                if entry.get("privileged").and_then(|value| value.as_bool()) == Some(true) {
-                    privileged = true;
+            }
+            if entry.get("privileged").and_then(|value| value.as_bool()) == Some(true) {
+                privileged = true;
+            }
+            if entry.get("init").and_then(|value| value.as_bool()) == Some(true) {
+                init = true;
+            }
+            if let Some(serde_json_lenient::Value::Array(caps)) = entry.get("capAdd") {
+                for cap in caps.iter().filter_map(|cap| cap.as_str()) {
+                    push_unique_string(&mut cap_add, cap);
                 }
-                if entry.get("init").and_then(|value| value.as_bool()) == Some(true) {
-                    init = true;
-                }
-                if let Some(serde_json_lenient::Value::Array(caps)) = entry.get("capAdd") {
-                    for cap in caps.iter().filter_map(|cap| cap.as_str()) {
-                        push_unique_string(&mut cap_add, cap);
-                    }
-                }
-                if let Some(serde_json_lenient::Value::Array(opts)) = entry.get("securityOpt") {
-                    for opt in opts.iter().filter_map(|opt| opt.as_str()) {
-                        push_unique_string(&mut security_opt, opt);
-                    }
+            }
+            if let Some(serde_json_lenient::Value::Array(opts)) = entry.get("securityOpt") {
+                for opt in opts.iter().filter_map(|opt| opt.as_str()) {
+                    push_unique_string(&mut security_opt, opt);
                 }
             }
         }
@@ -881,14 +897,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         };
 
         let mut container_env = HashMap::new();
-        if let Some(metadata_entries) = &base_image.config.labels.metadata {
-            for entry in metadata_entries {
-                if let Some(serde_json_lenient::Value::Object(env_map)) = entry.get("containerEnv")
-                {
-                    for (k, v) in env_map {
-                        if let Some(s) = v.as_str() {
-                            container_env.insert(k.clone(), s.to_string());
-                        }
+        for entry in &metadata_entries {
+            if let Some(serde_json_lenient::Value::Object(env_map)) = entry.get("containerEnv") {
+                for (k, v) in env_map {
+                    if let Some(s) = v.as_str() {
+                        container_env.insert(k.clone(), s.to_string());
                     }
                 }
             }
@@ -3828,6 +3841,88 @@ mod test {
     }
 
     #[gpui::test]
+    async fn should_substitute_nonremote_variables_in_image_metadata(cx: &mut TestAppContext) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu"
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let metadata = serde_json_lenient::from_str(
+            r#"[
+                {
+                    "id": "ghcr.io/devcontainers/features/docker-in-docker:2",
+                    "mounts": [
+                        {
+                            "source": "dind-var-lib-docker-${devcontainerId}",
+                            "target": "/var/lib/docker",
+                            "type": "volume"
+                        }
+                    ]
+                },
+                {
+                    "containerEnv": {
+                        "PATH": "/custom/bin:${PATH}"
+                    }
+                }
+            ]"#,
+        )
+        .unwrap();
+        let base_image = DockerInspect {
+            id: "base-image-id".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels {
+                    metadata: Some(metadata),
+                },
+                image_user: None,
+                env: vec!["PATH=/usr/local/bin:/usr/bin".to_string()],
+            },
+            mounts: None,
+            state: None,
+        };
+
+        let resources = devcontainer_manifest
+            .build_merged_resources(base_image, "mcr.microsoft.com/devcontainers/base:ubuntu")
+            .unwrap();
+
+        assert_eq!(
+            resources.additional_mounts,
+            vec![MountDefinition {
+                source: Some(format!(
+                    "dind-var-lib-docker-{}",
+                    devcontainer_manifest.devcontainer_id()
+                )),
+                target: "/var/lib/docker".to_string(),
+                mount_type: Some("volume".to_string()),
+            }]
+        );
+        assert_eq!(
+            resources.container_env.get("PATH").map(String::as_str),
+            Some("/custom/bin:${PATH}")
+        );
+        let persisted_mount_source = resources
+            .image
+            .config
+            .labels
+            .metadata
+            .as_ref()
+            .and_then(|entries| entries.first())
+            .and_then(|entry| entry.get("mounts"))
+            .and_then(|mounts| mounts.as_array())
+            .and_then(|mounts| mounts.first())
+            .and_then(|mount| mount.get("source"))
+            .and_then(|source| source.as_str());
+        assert_eq!(
+            persisted_mount_source,
+            Some("dind-var-lib-docker-${devcontainerId}")
+        );
+    }
+
+    #[gpui::test]
     async fn should_use_devcontainer_cli_post_start_marker_for_started_container(
         cx: &mut TestAppContext,
     ) {
@@ -4659,7 +4754,9 @@ chmod +x ./install.sh
             "ghcr.io/devcontainers/features/docker-in-docker:2"
         );
         assert_eq!(metadata[1]["privileged"], true);
+        assert!(metadata[1].get("containerEnv").is_none());
         assert_eq!(metadata[2]["id"], "ghcr.io/devcontainers/features/go:1");
+        assert!(metadata[2].get("containerEnv").is_none());
         assert!(
             metadata[2]["capAdd"]
                 .as_array()
