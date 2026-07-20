@@ -10029,7 +10029,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 9] {
+    fn lsp_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -10129,6 +10129,20 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.go_to_definition_scroll_strategy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "LSP Results Location",
+                description: "Where to show LSP results that can contain multiple locations (Go to Definition, Go to Implementation, Find All References).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("lsp_results_location"),
+                    pick: |settings_content| settings_content.editor.lsp_results_location.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.editor.lsp_results_location = value;
                     },
                 }),
                 metadata: None,

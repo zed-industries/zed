@@ -98,8 +98,9 @@ pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -189,6 +190,7 @@ use language::{
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
+use language_detection::detect_language;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -295,6 +297,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
+const MIN_LANGUAGE_DETECTION_CONFIDENCE: f32 = 0.5;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -2415,16 +2419,6 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, |editor, window, cx| {
-                            let active = window.is_window_active();
-                            editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
-                                    blink_manager.enable(cx);
-                                } else {
-                                    blink_manager.disable(cx);
-                                }
-                            });
-                        }),
                     ]
                 })
                 .unwrap_or_default(),
@@ -5561,24 +5555,36 @@ impl Editor {
                                 .documentation_comment()
                                 .map(|c| c.prefix.as_ref())
                                 .filter(|p| !p.is_empty());
-                            let all_prefixes = language_scope
+                            let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefix)
                                 .chain(doc_prefix)
-                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+                                .map(|prefix| (prefix, false));
+                            let all_prefixes = comment_prefixes.chain(
+                                language_scope
+                                    .unordered_list()
+                                    .iter()
+                                    .map(|prefix| (prefix.as_ref(), true)),
+                            );
 
                             let mut longest_prefix_len = None;
-                            for prefix in all_prefixes {
+                            for (prefix, is_unordered_list) in all_prefixes {
                                 let trimmed = prefix.trim_end();
-                                if line_text_after_indent.starts_with(trimmed) {
-                                    let candidate_len =
-                                        if line_text_after_indent.starts_with(prefix) {
-                                            prefix.len()
-                                        } else {
-                                            trimmed.len()
-                                        };
+                                let matches_full_prefix =
+                                    line_text_after_indent.starts_with(prefix);
+                                let nextline_is_bare_prefix = line_text_after_indent == trimmed;
+                                if matches_full_prefix
+                                    || (!is_unordered_list
+                                        && line_text_after_indent.starts_with(trimmed))
+                                    || nextline_is_bare_prefix
+                                {
+                                    let candidate_len = if matches_full_prefix {
+                                        prefix.len()
+                                    } else {
+                                        trimmed.len()
+                                    };
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
@@ -9551,8 +9557,9 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = buffer.read(cx).remote_id();
+
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -9560,6 +9567,8 @@ impl Editor {
                             cx,
                         );
                     }
+
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -9770,7 +9779,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -10807,6 +10822,46 @@ impl Editor {
         self.refresh_document_symbols(for_buffer, cx);
     }
 
+    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+
+        let buffer = buffer_entity.read(cx);
+        if buffer.file().is_some() {
+            return;
+        }
+
+        let buffer_snapshot = buffer.snapshot();
+        if buffer_snapshot.len() < MIN_LANGUAGE_DETECTION_LEN {
+            return;
+        }
+
+        let Some(language_registry) = buffer.language_registry() else {
+            return;
+        };
+        let buffer_version = buffer_snapshot.version().clone();
+        let detected_language = detect_language(buffer_snapshot, language_registry, cx);
+
+        cx.spawn(async move |_, cx| {
+            if let Some((detected_language, confidence)) = detected_language.await {
+                if confidence < MIN_LANGUAGE_DETECTION_CONFIDENCE {
+                    return;
+                }
+                buffer_entity.update(cx, |buffer, cx| {
+                    if buffer.file().is_none() && !buffer.version().changed_since(&buffer_version) {
+                        buffer.set_language(Some(detected_language), cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
         if !self.lsp_data_enabled() {
             return;
@@ -11589,15 +11644,12 @@ impl EditorSnapshot {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                         const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
-                        /// The number of characters to dedicate to gaps and margins.
-                        const SPACING_WIDTH: usize = 4;
-
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
-                            + SPACING_WIDTH;
+                            + MAX_RELATIVE_TIMESTAMP.len();
 
                         ch_advance * max_char_count
+                            + renderer.blame_entry_non_text_width(window, cx)
                     });
 
             let is_singleton = self.buffer_snapshot().is_singleton();

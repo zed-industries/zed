@@ -189,6 +189,7 @@ pub(crate) struct MacPlatformState {
     keyboard_mapper: Rc<MacKeyboardMapper>,
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
+    system_notifications: crate::system_notifications::SystemNotificationState,
 }
 
 impl MacPlatform {
@@ -235,6 +236,7 @@ impl MacPlatform {
             menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
+            system_notifications: crate::system_notifications::SystemNotificationState::new(),
         }))
     }
 
@@ -966,6 +968,27 @@ impl Platform for MacPlatform {
                 _ => ThermalState::Nominal,
             }
         }
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.system_notifications.show(&executor, notification);
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.system_notifications.dismiss(&executor, tag);
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.system_notifications.on_response(&executor, callback);
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

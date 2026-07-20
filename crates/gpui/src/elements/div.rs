@@ -262,7 +262,10 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && !hitbox.contains(&window.mouse_position()) {
+                if phase == DispatchPhase::Capture
+                    && !window.has_active_prompt()
+                    && !hitbox.contains(&window.mouse_position())
+                {
                     (listener)(event, window, cx)
                 }
             }));
@@ -2669,8 +2672,8 @@ impl Interactivity {
                     if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
+                            cx.notify(current_view);
                         }
-                        cx.notify(current_view);
                     }
                 });
             }
@@ -4114,9 +4117,108 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
-        TestAppContext, util::FluentBuilder as _,
+        TestAppContext, canvas, util::FluentBuilder as _,
     };
-    use std::rc::Weak;
+    use std::{cell::Cell, rc::Weak};
+
+    struct GroupHoverTestView {
+        render_count: Rc<Cell<usize>>,
+        anonymous_paint_count: Rc<Cell<usize>>,
+        stateful_width: Rc<Cell<Pixels>>,
+    }
+
+    impl Render for GroupHoverTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            let anonymous_paint_count = self.anonymous_paint_count.clone();
+            let stateful_width = self.stateful_width.clone();
+            div().size_full().child(
+                div()
+                    .ml(px(20.))
+                    .mt(px(20.))
+                    .size(px(50.))
+                    .relative()
+                    .group("hover-group")
+                    .child(
+                        div()
+                            .absolute()
+                            .size_full()
+                            .invisible()
+                            .group_hover("hover-group", |style| style.visible())
+                            .child(canvas(
+                                |_, _, _| {},
+                                move |_, _, _, _| {
+                                    anonymous_paint_count.set(anonymous_paint_count.get() + 1)
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("stateful-group-hover-target")
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size(px(10.))
+                            .group_hover("hover-group", |style| style.size(px(20.)))
+                            .child(canvas(
+                                move |bounds, _, _| stateful_width.set(bounds.size.width),
+                                |_, _, _, _| {},
+                            )),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn group_hover_styles_update_only_on_transitions(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let anonymous_paint_count = Rc::new(Cell::new(0));
+        let stateful_width = Rc::new(Cell::new(px(0.)));
+        let window = cx.add_window({
+            let render_count = render_count.clone();
+            let anonymous_paint_count = anonymous_paint_count.clone();
+            let stateful_width = stateful_width.clone();
+            move |_, _| GroupHoverTestView {
+                render_count,
+                anonymous_paint_count,
+                stateful_width,
+            }
+        });
+        let window = AnyWindowHandle::from(window);
+
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        assert_eq!(anonymous_paint_count.get(), 0);
+        assert_eq!(stateful_width.get(), px(10.));
+
+        let move_mouse = |cx: &mut TestAppContext, position| {
+            cx.update_window(window, |_, window, cx| {
+                window.simulate_mouse_move(position, cx)
+            })
+            .unwrap();
+        };
+
+        let initial_render_count = render_count.get();
+        move_mouse(cx, point(px(25.), px(25.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(20.));
+
+        move_mouse(cx, point(px(30.), px(30.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(20.));
+
+        move_mouse(cx, point(px(5.), px(5.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(10.));
+
+        move_mouse(cx, point(px(10.), px(10.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(10.));
+    }
 
     struct TestTooltipView;
 
@@ -4422,6 +4524,87 @@ mod tests {
             .unwrap();
 
         assert!(active_tooltip.borrow().is_none());
+    }
+
+    struct MouseDownOutOwner {
+        mouse_down_out_count: Rc<RefCell<usize>>,
+    }
+
+    impl Render for MouseDownOutOwner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mouse_down_out_count = self.mouse_down_out_count.clone();
+            div()
+                .size_full()
+                .child(div().id("target").w(px(50.)).h(px(50.)).on_mouse_down_out(
+                    move |_, _, _| {
+                        *mouse_down_out_count.borrow_mut() += 1;
+                    },
+                ))
+        }
+    }
+
+    #[test]
+    fn mouse_down_out_is_suppressed_while_window_prompt_is_active() {
+        let mut test_app = TestAppContext::single();
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let window = test_app.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            move |_, _| MouseDownOutOwner {
+                mouse_down_out_count,
+            }
+        });
+        let any_window: AnyWindowHandle = window.into();
+
+        fn dispatch_mouse_down_outside_target(
+            test_app: &mut TestAppContext,
+            any_window: AnyWindowHandle,
+        ) {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.dispatch_event(
+                        MouseDownEvent {
+                            position: point(px(75.), px(75.)),
+                            button: MouseButton::Left,
+                            modifiers: Default::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
+        }
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down outside the element should fire mouse-down-out listeners"
+        );
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                cx.set_prompt_builder(crate::fallback_prompt_renderer);
+                let _receiver =
+                    window.prompt(crate::PromptLevel::Warning, "message", None, &["Ok"], cx);
+                assert!(window.has_active_prompt());
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down over an active prompt should not fire mouse-down-out listeners"
+        );
     }
 
     #[test]

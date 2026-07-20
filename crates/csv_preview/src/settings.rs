@@ -46,3 +46,12 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) show_perf_metrics_overlay: bool,
     pub(crate) multiline_cells_enabled: bool,
 }
+
+impl CsvPreviewSettings {
+    /// `multiline_cells_enabled` only makes sense with `VariableList`, which
+    /// supports per-row heights; `UniformList` requires every row to share one
+    /// height, so multiline is never honored there regardless of the setting.
+    pub(crate) fn multiline_cells_effectively_enabled(&self) -> bool {
+        self.multiline_cells_enabled && self.rendering_with == RowRenderMechanism::VariableList
+    }
+}

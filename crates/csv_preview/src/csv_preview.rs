@@ -13,7 +13,7 @@ use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
     TableResizeBehavior, prelude::*,
 };
-use workspace::{Item, SplitDirection, Workspace};
+use workspace::{Item, Pane, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
@@ -49,6 +49,10 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
+    /// Cached row height, refreshed from the actual text line height on every render.
+    /// Used to size not-yet-rendered rows for the scrollbar without a full `.measure_all()`
+    /// pass, so it tracks the real row height instead of a hardcoded guess.
+    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -89,62 +93,19 @@ impl CsvPreviewView {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
                 div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
-                    if let Some(editor) = workspace
-                        .active_item(cx)
-                        .and_then(|item| item.act_as::<Editor>(cx))
-                        .filter(|editor| Self::is_csv_file(editor, cx))
-                    {
-                        let csv_preview = Self::new(&editor, cx);
-                        workspace.active_pane().update(cx, |pane, cx| {
-                            let existing = pane
-                                .items_of_type::<CsvPreviewView>()
-                                .find(|view| view.read(cx).active_editor_state.editor == editor);
-                            if let Some(idx) = existing.and_then(|e| pane.index_for_item(&e)) {
-                                pane.activate_item(idx, true, true, window, cx);
-                            } else {
-                                pane.add_item(Box::new(csv_preview), true, true, None, window, cx);
-                            }
-                        });
-                        cx.notify();
+                    if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx) {
+                        let pane = workspace.active_pane().clone();
+                        Self::open_preview_in_pane(editor, pane, window, cx);
                     }
                 }))
                 .on_action(cx.listener(
                     |workspace, _: &OpenPreviewToTheSide, window, cx| {
-                        if let Some(editor) = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx))
-                            .filter(|editor| Self::is_csv_file(editor, cx))
+                        if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx)
                         {
-                            let csv_preview = Self::new(&editor, cx);
-                            let pane = workspace
-                                .find_pane_in_direction(SplitDirection::Right, cx)
-                                .unwrap_or_else(|| {
-                                    workspace.split_pane(
-                                        workspace.active_pane().clone(),
-                                        SplitDirection::Right,
-                                        window,
-                                        cx,
-                                    )
-                                });
-                            pane.update(cx, |pane, cx| {
-                                let existing =
-                                    pane.items_of_type::<CsvPreviewView>().find(|view| {
-                                        view.read(cx).active_editor_state.editor == editor
-                                    });
-                                if let Some(idx) = existing.and_then(|e| pane.index_for_item(&e)) {
-                                    pane.activate_item(idx, true, true, window, cx);
-                                } else {
-                                    pane.add_item(
-                                        Box::new(csv_preview),
-                                        false,
-                                        false,
-                                        None,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            });
-                            cx.notify();
+                            let pane = workspace.active_pane().clone();
+                            Self::open_preview_to_the_side_of_pane(
+                                workspace, editor, pane, window, cx,
+                            );
                         }
                     },
                 ))
@@ -152,7 +113,58 @@ impl CsvPreviewView {
         });
     }
 
-    fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
+    pub fn open_preview_in_pane(
+        editor: Entity<Editor>,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::activate_or_add_preview(editor, pane, true, window, cx);
+    }
+
+    pub fn open_preview_to_the_side_of_pane(
+        workspace: &mut Workspace,
+        editor: Entity<Editor>,
+        origin_pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let target_pane = workspace.adjacent_pane_of(&origin_pane, window, cx);
+        Self::activate_or_add_preview(editor, target_pane, false, window, cx);
+    }
+
+    fn activate_or_add_preview(
+        editor: Entity<Editor>,
+        pane: Entity<Pane>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let existing_view_idx = Self::find_existing_preview_item_idx(pane.read(cx), &editor, cx);
+        if let Some(existing_view_idx) = existing_view_idx {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(existing_view_idx, focus, focus, window, cx);
+            });
+        } else {
+            let csv_preview = Self::new(&editor, window, cx);
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(csv_preview), focus, focus, None, window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn find_existing_preview_item_idx(
+        pane: &Pane,
+        editor: &Entity<Editor>,
+        cx: &App,
+    ) -> Option<usize> {
+        pane.items_of_type::<CsvPreviewView>()
+            .find(|view| &view.read(cx).active_editor_state.editor == editor)
+            .and_then(|view| pane.index_for_item(&view))
+    }
+
+    fn new(editor: &Entity<Editor>, window: &Window, cx: &mut Context<Workspace>) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let table_interaction_state = cx.new(|cx| {
             TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
@@ -173,6 +185,7 @@ impl CsvPreviewView {
                 },
             );
 
+            let row_height = window.pixel_snap(window.line_height());
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
@@ -186,7 +199,8 @@ impl CsvPreviewView {
                 filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(px(24.)),
+                    .with_uniform_item_height(row_height),
+                row_height,
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -239,11 +253,10 @@ impl CsvPreviewView {
             this.update(cx, |view, cx| {
                 view.engine.set_d2d_mapping(mapping);
                 let visible_rows = view.engine.d2d_mapping().visible_row_count();
-                // Approximation of single csv table row height. Will be re-measured on scrolling.
-                // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
-                let approximate_height = px(24.);
+                // Uses the row height measured on the last render. Cheaper than a full
+                // `.measure_all()` pass; exact row heights are re-measured on scrolling.
                 view.list_state
-                    .reset_with_uniform_height(visible_rows, approximate_height);
+                    .reset_with_uniform_height(visible_rows, view.row_height);
                 cx.notify();
             })
             .ok();
@@ -260,7 +273,7 @@ impl CsvPreviewView {
         Self::is_csv_file(&editor, cx).then_some(editor)
     }
 
-    fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
+    pub fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
         editor
             .read(cx)
             .buffer()
