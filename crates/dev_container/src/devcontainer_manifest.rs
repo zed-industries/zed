@@ -3362,7 +3362,8 @@ fi
     );
     for command in script_commands.into_values() {
         script.push_str(&command_to_shell_string(&command));
-        script.push_str(" || exit $?\n");
+        script.push_str("\ncommand_status=$?\n");
+        script.push_str("[ \"$command_status\" -eq 0 ] || exit \"$command_status\"\n");
     }
     script.push_str(
         r#"if [ "$marker_available" = "true" ]; then
@@ -3970,7 +3971,9 @@ mod test {
         assert!(post_start_script.contains("marker_directory=\"$home_directory/.devcontainer\""));
         assert!(post_start_script.contains("marker=\"$marker_directory/.postStartCommandMarker\""));
         assert!(!post_start_script.contains("/tmp/zed-devcontainer"));
-        assert!(post_start_script.contains("echo post-start || exit $?"));
+        assert!(post_start_script.contains(
+            "echo post-start\ncommand_status=$?\n[ \"$command_status\" -eq 0 ] || exit \"$command_status\""
+        ));
         assert!(
             post_start_script.find("echo post-start").unwrap()
                 < post_start_script.find("printf '%s'").unwrap(),
@@ -4004,6 +4007,36 @@ mod test {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout), "post-start\n");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn post_start_marker_script_accepts_background_command() {
+        let home_directory = temporary_home_directory("post-start-background");
+        let started_at = "2026-06-23T10:00:00Z";
+        let marker = home_directory
+            .join(".devcontainer")
+            .join(".postStartCommandMarker");
+        let mut command = Command::new("true");
+        command.arg("&");
+        let script = super::post_start_marker_script(
+            started_at,
+            HashMap::from([("default".to_string(), command)]),
+        );
+
+        let output = run_shell_script(&script, &home_directory);
+
+        assert!(
+            output.status.success(),
+            "background command should be accepted: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std_fs::read_to_string(&marker).expect("marker should be written"),
+            started_at
+        );
+
+        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
     }
 
     #[cfg(not(target_os = "windows"))]
