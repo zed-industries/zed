@@ -3284,6 +3284,8 @@ impl CollabPanel {
             .flatten()
             .unwrap_or(px(240.));
         let root_id = channel.root_id();
+        let theme_settings = ThemeSettings::get_global(cx);
+        let ui_line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
 
         let is_favorited = self.is_channel_favorited(channel_id, cx);
         let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorited {
@@ -3297,7 +3299,7 @@ impl CollabPanel {
         h_flex()
             .id(ix)
             .group("")
-            .h(height)
+            .h(ui_line_height)
             .w_full()
             .overflow_hidden()
             .when(!channel.is_root_channel(), |el| {
@@ -3660,7 +3662,8 @@ fn render_tree_branch(
     cx: &mut App,
 ) -> impl IntoElement {
     let rem_size = window.rem_size();
-    let line_height = window.text_style().line_height_in_pixels(rem_size);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
     let thickness = px(1.);
     let color = cx.theme().colors().icon_disabled;
 
