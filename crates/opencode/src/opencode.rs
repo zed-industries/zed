@@ -439,7 +439,6 @@ impl Model {
             | Self::Glm5_1
             | Self::Glm5_2
             | Self::GrokBuild0_1
-            | Self::Grok4_5
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
@@ -450,6 +449,8 @@ impl Model {
             | Self::DeepSeekV4Flash
             | Self::BigPickle
             | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
+
+            Self::Grok4_5 => ApiProtocol::OpenAiResponses,
 
             Self::Custom { protocol, .. } => *protocol,
         }
