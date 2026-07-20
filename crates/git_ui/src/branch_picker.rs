@@ -1781,6 +1781,7 @@ impl PickerDelegate for BranchListDelegate {
             .child(
                 h_flex()
                     .w_full()
+                    .min_w_0()
                     .gap_2p5()
                     .flex_grow_1()
                     .child(
@@ -1796,6 +1797,7 @@ impl PickerDelegate for BranchListDelegate {
                         v_flex()
                             .id("info_container")
                             .w_full()
+                            .min_w_0()
                             .child(entry_title)
                             .child({
                                 let message = match entry {
