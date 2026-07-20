@@ -388,14 +388,21 @@ pub enum Platform {
 
 impl Platform {
     fn current() -> Platform {
-        if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
             Self::Darwin
-        } else if cfg!(target_os = "linux") {
+        }
+        #[cfg(target_os = "linux")]
+        {
             Self::Linux
-        } else if cfg!(target_os = "windows") {
+        }
+        #[cfg(target_os = "windows")]
+        {
             Self::Windows
-        } else {
-            panic!("Unknown platform.")
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+            compile_error!("Unknown platform.")
         }
     }
 }
