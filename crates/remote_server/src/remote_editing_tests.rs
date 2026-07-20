@@ -22,7 +22,7 @@ use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
-    repository::{CommitData, Worktree as GitWorktree},
+    repository::{CommitData, RepoPath, Worktree as GitWorktree},
 };
 use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, VisualContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
@@ -2421,6 +2421,127 @@ async fn test_remote_archive_git_operations_are_supported(
     .await
     .expect("restore_archive_checkpoint request should complete")
     .expect("restore_archive_checkpoint should succeed for remote repository");
+}
+
+#[gpui::test]
+async fn test_add_path_to_gitignore_in_remote_repository(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            ".gitignore": "existing\n",
+            "logs": {
+                "app.log": ""
+            },
+            "tmp.txt": "",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(
+        Path::new("/project/.git"),
+        &[(".gitignore", "existing\n".into())],
+        "head-sha",
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    for (path, is_dir) in [("tmp.txt", false), ("logs", true), ("tmp.txt", false)] {
+        let repo_path = RepoPath::new(path).expect("path should be a valid repo path");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.add_path_to_gitignore(&repo_path, is_dir)
+            })
+        })
+        .await
+        .expect("add to .gitignore request should complete")
+        .expect("add to .gitignore should succeed for remote repository");
+    }
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new("/project/.gitignore"))
+            .await
+            .expect(".gitignore should be readable"),
+        "existing\ntmp.txt\nlogs/\n"
+    );
+}
+
+#[gpui::test]
+async fn test_add_path_to_git_info_exclude_in_remote_repository(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "logs": {
+                "app.log": ""
+            },
+            "tmp.txt": "",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(Path::new("/project/.git"), &[], "head-sha");
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    for (path, is_dir) in [("tmp.txt", false), ("logs", true), ("tmp.txt", false)] {
+        let repo_path = RepoPath::new(path).expect("path should be a valid repo path");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.add_path_to_git_info_exclude(&repo_path, is_dir)
+            })
+        })
+        .await
+        .expect("add to info/exclude request should complete")
+        .expect("add to info/exclude should succeed for remote repository");
+    }
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new("/project/.git/info/exclude"))
+            .await
+            .expect("info/exclude should be readable"),
+        "tmp.txt\nlogs/\n"
+    );
 }
 
 #[gpui::test]

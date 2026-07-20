@@ -644,7 +644,7 @@ image = { version = "0.25.1", default-features = false, features = [
     "tiff",
     "webp",
 ] }
-imara-diff = "0.1.8"
+imara-diff = "0.2.0"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
