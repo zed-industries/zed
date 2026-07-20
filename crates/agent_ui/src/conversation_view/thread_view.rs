@@ -9771,7 +9771,7 @@ impl ThreadView {
                 acp::ToolKind::Search => IconName::ToolSearch,
                 acp::ToolKind::Execute => IconName::ToolTerminal,
                 acp::ToolKind::Think => IconName::ToolThink,
-                acp::ToolKind::Fetch => IconName::ToolWeb,
+                acp::ToolKind::Fetch => IconName::Web,
                 acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
                 acp::ToolKind::Other | _ => IconName::ToolHammer,
             })
