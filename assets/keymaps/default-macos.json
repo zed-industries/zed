@@ -1164,9 +1164,10 @@
     },
   },
   {
-    // While a debug session is live, debugger controls take over their F-keys.
-    // `f6` becomes Pause (region navigation stays on `cmd-f6` / `shift-f6`),
-    // and step/stop/rerun are scoped here so they're inert when not debugging.
+    // While a debug session is live, `Pause`/`Stop`/`RerunSession` take over their F-keys
+    // (region navigation stays on `cmd-f6` / `shift-f6`), so they're inert when not debugging.
+    // Step commands and `Continue` are scoped to `debugger_stopped` instead, since they only
+    // make sense while execution is actually paused.
     // `debugger::Start` stays global so a session can be started from anywhere.
     "context": "Workspace && debugger_session",
     "use_key_equivalents": true,
@@ -1174,9 +1175,6 @@
       "f6": "debugger::Pause",
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::RerunSession",
-      "f7": "debugger::StepOver",
-      "ctrl-f11": "debugger::StepInto",
-      "shift-f11": "debugger::StepOut",
     },
   },
   {
