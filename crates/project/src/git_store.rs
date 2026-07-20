@@ -3125,6 +3125,7 @@ impl GitStore {
                         amend: options.amend,
                         signoff: options.signoff,
                         allow_empty: options.allow_empty,
+                        no_verify: options.no_verify,
                     },
                     askpass,
                     cx,
@@ -7529,6 +7530,7 @@ impl Repository {
                                     amend: options.amend,
                                     signoff: options.signoff,
                                     allow_empty: options.allow_empty,
+                                    no_verify: options.no_verify,
                                 }),
                                 askpass_id,
                             })

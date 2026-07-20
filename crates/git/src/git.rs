@@ -100,6 +100,8 @@ actions!(
         FetchFrom,
         /// Creates a new commit with staged changes.
         Commit,
+        /// Enable the --no-verify option.
+        NoVerify,
         /// Amends the last commit with staged changes.
         Amend,
         /// Enable the --signoff option.

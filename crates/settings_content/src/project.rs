@@ -554,6 +554,10 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
+    /// Whether commits that skip pre-commit and commit-msg hooks are allowed.
+    ///
+    /// Default: false
+    pub allow_no_verify_commit: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
