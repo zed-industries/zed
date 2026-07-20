@@ -767,7 +767,17 @@ impl TerminalPanel {
                         cx,
                     )
                 });
-                workspace.add_item_to_active_pane(Box::new(terminal_view), None, true, window, cx);
+                // Don't steal focus from an open modal (e.g. the command palette):
+                // a background terminal can finish starting up after the user has
+                // moved on, and focusing it would dismiss whatever they opened.
+                let focus_item = !workspace.has_active_modal(window, cx);
+                workspace.add_item_to_active_pane(
+                    Box::new(terminal_view),
+                    None,
+                    focus_item,
+                    window,
+                    cx,
+                );
             })?;
             Ok(terminal.downgrade())
         })
@@ -1364,6 +1374,7 @@ impl Render for TerminalPanel {
             .update(cx, |workspace, cx| {
                 registrar.size_full().child(self.center.render(
                     workspace.zoomed_item(),
+                    None,
                     &workspace::PaneRenderContext {
                         follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),
@@ -1910,6 +1921,124 @@ mod tests {
             result.is_ok(),
             "local terminal should successfully create in local project"
         );
+    }
+
+    struct FocusOnlyModal {
+        focus_handle: gpui::FocusHandle,
+    }
+    impl gpui::EventEmitter<gpui::DismissEvent> for FocusOnlyModal {}
+    impl gpui::Focusable for FocusOnlyModal {
+        fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl Render for FocusOnlyModal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div().track_focus(&self.focus_handle)
+        }
+    }
+    impl workspace::ModalView for FocusOnlyModal {}
+
+    async fn open_center_display_terminal(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                TerminalPanel::add_center_terminal(workspace, window, cx, |_, cx| {
+                    let terminal = cx.new(|cx| {
+                        terminal::TerminalBuilder::new_display_only(
+                            terminal::terminal_settings::CursorShape::default(),
+                            terminal::terminal_settings::AlternateScroll::On,
+                            None,
+                            0,
+                            cx.background_executor(),
+                            util::paths::PathStyle::local(),
+                        )
+                        .subscribe(cx)
+                    });
+                    gpui::Task::ready(Ok(terminal))
+                })
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_center_terminal_keeps_focus_on_active_modal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let modal_focus_handle = workspace.update_in(cx, |workspace, window, cx| {
+            let focus_handle = cx.focus_handle();
+            workspace.toggle_modal(window, cx, {
+                let focus_handle = focus_handle.clone();
+                move |_, _| FocusOnlyModal { focus_handle }
+            });
+            focus_handle
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.has_active_modal(window, cx));
+            assert!(
+                modal_focus_handle.is_focused(window),
+                "the modal should hold focus before the terminal is created"
+            );
+        });
+
+        open_center_display_terminal(&workspace, cx).await;
+
+        workspace.update_in(cx, |_, window, _| {
+            assert!(
+                modal_focus_handle.is_focused(window),
+                "a background center terminal must not steal focus from an active modal"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_center_terminal_takes_focus_without_modal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        open_center_display_terminal(&workspace, cx).await;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.has_active_modal(window, cx));
+            let terminal_view = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<TerminalView>())
+                .expect("the new center terminal should be the active item");
+            assert!(
+                terminal_view.focus_handle(cx).contains_focused(window, cx),
+                "with no modal open, a new center terminal should take focus"
+            );
+        });
     }
 
     #[gpui::test]

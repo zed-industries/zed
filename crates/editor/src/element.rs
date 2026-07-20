@@ -59,7 +59,7 @@ use language::{
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 
 use project::{
@@ -167,10 +167,28 @@ impl SelectionLayout {
         is_local: bool,
         user_name: Option<SharedString>,
     ) -> Self {
-        let point_selection = selection.map(|p| p.to_point(map.buffer_snapshot()));
+        let buffer_snapshot = map.buffer_snapshot();
+        let point_selection = selection.map(|p| p.to_point(buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
         let mut range = display_selection.range();
         let mut head = display_selection.head();
+        if !line_mode {
+            let offset_range = point_selection.start.to_offset(buffer_snapshot)
+                ..point_selection.end.to_offset(buffer_snapshot);
+            if let Some(contiguous_range) =
+                map.contiguous_display_point_range_for_buffer_range(offset_range)
+            {
+                range = contiguous_range;
+                // Keep the cursor attached to the highlight boundary; the
+                // anchor-bias display position may sit on the far side of a
+                // boundary inlay the highlight excludes.
+                head = if selection.reversed {
+                    range.start
+                } else {
+                    range.end
+                };
+            }
+        }
         let mut active_rows = map.prev_line_boundary(point_selection.start).1.row()
             ..map.next_line_boundary(point_selection.end).1.row();
 
@@ -184,7 +202,7 @@ impl SelectionLayout {
         if cursor_offset && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
-            } else if head.row().0 > 0 && head != map.max_point() {
+            } else if head.row().0 > 0 {
                 head = map.clip_point(
                     DisplayPoint::new(
                         head.row().previous_row(),
@@ -2545,13 +2563,10 @@ impl EditorElement {
             return None;
         }
 
-        let buffer_id = row_info.and_then(|info| info.buffer_id);
-        if buffer_id.is_none() {
-            return None;
-        }
+        let buffer_id = row_info.and_then(|info| info.buffer_id)?;
 
         let editor = self.editor.read(cx);
-        if buffer_id.is_some_and(|buffer_id| editor.is_buffer_folded(buffer_id, cx)) {
+        if editor.is_buffer_folded(buffer_id, cx) {
             return None;
         }
 
@@ -3069,7 +3084,7 @@ impl EditorElement {
                         ..Default::default()
                     };
                     let line = window.text_system().shape_line(
-                        line.to_string().into(),
+                        SharedString::new(line),
                         font_size,
                         &[run],
                         None,
@@ -3172,13 +3187,13 @@ impl EditorElement {
                 }
                 let align_to = block_start.to_display_point(snapshot);
                 let x_and_width = |layout: &LineWithInvisibles| {
-                    Some((
+                    (
                         text_x + layout.x_for_index(align_to.column() as usize),
                         text_x + layout.width,
-                    ))
+                    )
                 };
                 let line_ix = align_to.row().0.checked_sub(rows.start.0);
-                x_position =
+                let custom_block_x_position =
                     if let Some(layout) = line_ix.and_then(|ix| line_layouts.get(ix as usize)) {
                         x_and_width(layout)
                     } else {
@@ -3193,7 +3208,8 @@ impl EditorElement {
                         ))
                     };
 
-                let anchor_x = x_position.unwrap().0;
+                let anchor_x = custom_block_x_position.0;
+                x_position = Some(custom_block_x_position);
 
                 let selected = selections
                     .binary_search_by(|selection| {
@@ -3889,7 +3905,7 @@ impl EditorElement {
                 } else {
                     None
                 };
-                vec![edit_prediction, context_menu]
+                [edit_prediction, context_menu]
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>()
@@ -4349,25 +4365,29 @@ impl EditorElement {
         let hovered_point = content_origin + point(x, y);
 
         let mut overall_height = Pixels::ZERO;
-        let mut measured_hover_popovers = Vec::new();
-        for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
-            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let horizontal_offset =
-                (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
-                    .min(Pixels::ZERO);
-            match position {
-                itertools::Position::Middle | itertools::Position::Last => {
-                    overall_height += HOVER_POPOVER_GAP
+
+        let measured_hover_popovers = hover_popovers
+            .into_iter()
+            .with_position()
+            .map(|(position, mut hover_popover)| {
+                let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let horizontal_offset =
+                    (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                        .min(Pixels::ZERO);
+                match position {
+                    itertools::Position::Middle | itertools::Position::Last => {
+                        overall_height += HOVER_POPOVER_GAP
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            overall_height += size.height;
-            measured_hover_popovers.push(MeasuredHoverPopover {
-                element: hover_popover,
-                size,
-                horizontal_offset,
-            });
-        }
+                overall_height += size.height;
+                MeasuredHoverPopover {
+                    element: hover_popover,
+                    size,
+                    horizontal_offset,
+                }
+            })
+            .collect::<Vec<_>>();
 
         fn draw_occluder(
             width: Pixels,
@@ -4437,34 +4457,28 @@ impl EditorElement {
         };
 
         let can_place_above = {
-            let mut bounds_above = Vec::new();
             let mut current_y = hovered_point.y;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(
                     hovered_point.x + popover.horizontal_offset,
                     current_y - size.height,
                 );
-                bounds_above.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
-            }
-            bounds_above
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         let can_place_below = || {
-            let mut bounds_below = Vec::new();
             let mut current_y = hovered_point.y + line_height;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
-                bounds_below.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
-            }
-            bounds_below
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         if can_place_above {
@@ -4492,7 +4506,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - total_width - HOVER_POPOVER_GAP,
@@ -4832,7 +4846,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - actual_size.width - HOVER_POPOVER_GAP,
@@ -6605,7 +6619,7 @@ impl EditorElement {
                             is_newest: false,
                             is_local: false,
                             active_rows: start.row()..end.row(),
-                            user_name: Some(SharedString::new(debug_range.value.clone())),
+                            user_name: Some(SharedString::from(debug_range.value.clone())),
                         };
                         Some((player_color, vec![selection_layout]))
                     })
@@ -6932,10 +6946,12 @@ fn render_blame_entry_popover(
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
     let repository = blame.repository(cx, buffer)?;
+    let tag_names = blame.tag_names_for_entry(buffer, &blame_entry);
     renderer.render_blame_entry_popover(
         blame_entry,
         scroll_handle,
         commit_message,
+        tag_names,
         markdown,
         repository,
         workspace,
@@ -6972,11 +6988,13 @@ fn render_blame_entry(
 
     let blame = blame.read(cx);
     let details = blame.details_for_entry(buffer, &blame_entry);
+    let tag_names = blame.tag_names_for_entry(buffer, &blame_entry);
     let repository = blame.repository(cx, buffer)?;
     renderer.render_blame_entry(
         &style.text,
         blame_entry,
         details,
+        tag_names,
         repository,
         workspace.downgrade(),
         editor,
@@ -7077,7 +7095,7 @@ impl LineWithInvisibles {
                         &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                     };
                     let shaped_line = window.text_system().shape_line(
-                        line.clone().into(),
+                        line.as_str().into(),
                         font_size,
                         text_runs,
                         None,
@@ -8331,7 +8349,7 @@ impl Element for EditorElement {
                                     selected_buffer_ids
                                 };
 
-                                let mut selections = editor.selections.disjoint_in_range(
+                                let mut selections = editor.selections.disjoint_in_row_range(
                                     start_anchor..end_anchor,
                                     &snapshot.display_snapshot,
                                 );
@@ -10673,13 +10691,13 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, HighlightKey, MultiBuffer, NavigationOverlayKey, NavigationOverlayLabel,
-        NavigationTargetOverlay, SelectionEffects,
-        display_map::{BlockPlacement, BlockProperties},
+        Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
+        NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
+        display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
-    use gpui::{TestAppContext, VisualTestContext};
-    use language::{Buffer, language_settings, tree_sitter_python};
+    use gpui::{TestAppContext, VisualTestContext, font};
+    use language::{Buffer, SelectionGoal, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
@@ -10780,6 +10798,121 @@ mod tests {
             snapshot: snapshot,
             row_infos: &ROW_INFOS,
         }
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/48141.
+    #[gpui::test]
+    fn test_selection_layout_around_inlay(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let snapshot = cx.update(|cx| {
+            let buffer = MultiBuffer::build_simple("abcd", cx);
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    buffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    None,
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    project::project_settings::DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            display_map.update(cx, |display_map, cx| {
+                display_map.splice_inlays(
+                    &[],
+                    vec![
+                        Inlay::mock_hint(
+                            0,
+                            buffer_snapshot.anchor_before(MultiBufferOffset(1)),
+                            "hint ",
+                        ),
+                        Inlay::mock_hint(
+                            1,
+                            buffer_snapshot.anchor_after(MultiBufferOffset(3)),
+                            "!!",
+                        ),
+                    ],
+                    cx,
+                );
+                display_map.snapshot(cx)
+            })
+        });
+
+        let layout = |range: Range<MultiBufferOffset>, reversed, cursor_offset| {
+            SelectionLayout::new(
+                Selection {
+                    id: 0,
+                    start: range.start,
+                    end: range.end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                },
+                false,
+                cursor_offset,
+                CursorShape::Bar,
+                &snapshot,
+                true,
+                true,
+                None,
+            )
+        };
+        let display_point = |column| DisplayPoint::new(DisplayRow(0), column);
+
+        let ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, false);
+        assert_eq!(ending_at_inlay.range, display_point(0)..display_point(1));
+        assert_eq!(ending_at_inlay.head, display_point(1));
+
+        let starting_at_inlay = layout(MultiBufferOffset(1)..MultiBufferOffset(2), false, false);
+        assert_eq!(starting_at_inlay.range, display_point(6)..display_point(7));
+        assert_eq!(starting_at_inlay.head, display_point(7));
+
+        let spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, false);
+        assert_eq!(spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(spanning_inlay.head, display_point(7));
+
+        let reversed = layout(MultiBufferOffset(0)..MultiBufferOffset(2), true, false);
+        assert_eq!(reversed.range, display_point(0)..display_point(7));
+        assert_eq!(reversed.head, display_point(0));
+
+        // A reversed selection starting at a right-anchored hint: the
+        // anchor-bias cursor position would sit before the hint, detached from
+        // the highlight, so the head snaps to the highlight boundary instead.
+        let reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, false);
+        assert_eq!(
+            reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(reversed_at_right_anchored_inlay.head, display_point(10));
+
+        // An empty selection is a typing position, so it keeps the anchor-bias
+        // display position rather than snapping around boundary inlays.
+        let empty = layout(MultiBufferOffset(1)..MultiBufferOffset(1), false, false);
+        assert!(empty.range.is_empty());
+        assert_eq!(empty.head, display_point(6));
+
+        let vim_ending_at_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(1), false, true);
+        assert_eq!(
+            vim_ending_at_inlay.range,
+            display_point(0)..display_point(1)
+        );
+        assert_eq!(vim_ending_at_inlay.head, display_point(0));
+
+        let vim_spanning_inlay = layout(MultiBufferOffset(0)..MultiBufferOffset(2), false, true);
+        assert_eq!(vim_spanning_inlay.range, display_point(0)..display_point(7));
+        assert_eq!(vim_spanning_inlay.head, display_point(6));
+
+        let vim_reversed_at_right_anchored_inlay =
+            layout(MultiBufferOffset(3)..MultiBufferOffset(4), true, true);
+        assert_eq!(
+            vim_reversed_at_right_anchored_inlay.range,
+            display_point(10)..display_point(11)
+        );
+        assert_eq!(vim_reversed_at_right_anchored_inlay.head, display_point(10));
     }
 
     #[gpui::test]
@@ -11391,20 +11524,20 @@ mod tests {
             DisplayPoint::new(DisplayRow(3), 2)
         );
 
-        // leaves cursor on the max point
+        // displays the trailing newline cursor on the preceding row
         assert_eq!(
             local_selections[2].range,
             DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(6), 0)
         );
         assert_eq!(
             local_selections[2].head,
-            DisplayPoint::new(DisplayRow(6), 0)
+            DisplayPoint::new(DisplayRow(5), 6)
         );
 
         // active lines does not include 1 (even though the range of the selection does)
         assert_eq!(
             state.active_rows.keys().cloned().collect::<Vec<_>>(),
-            vec![DisplayRow(0), DisplayRow(3), DisplayRow(5), DisplayRow(6)]
+            vec![DisplayRow(0), DisplayRow(3), DisplayRow(5)]
         );
     }
 

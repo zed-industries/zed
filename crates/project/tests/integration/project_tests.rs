@@ -25,7 +25,7 @@ use buffer_diff::{
 };
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
-use fs::{FakeFs, PathEventKind};
+use fs::{FakeFs, PathEventKind, RealFs};
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -4432,6 +4432,284 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
+async fn test_diagnostic_summaries_cleared_on_buffer_close_without_workspace_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-no-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: false,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error no-ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer);
+        drop(handle);
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostic_summaries_retained_on_buffer_close_with_workspace_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                            lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .pull_diagnostics_for_buffer(buffer.clone(), cx)
+            .detach();
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer);
+        drop(handle);
+    });
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_workspace_diagnostics_pull_timeout_releases_waiters(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-ws-timeout".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                // Simulate a server that holds workspace diagnostic pull requests
+                // open forever without responding or streaming partial results.
+                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        future::pending::<()>().await;
+                        Err(anyhow::anyhow!("should never respond"))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let pull_task = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.pull_workspace_diagnostics_once(cx)
+    });
+
+    // The waiter must be released after the request times out, instead of
+    // being held through every retry of the background refresh loop.
+    cx.executor().advance_clock(DEFAULT_LSP_REQUEST_TIMEOUT * 2);
+    let refreshed = pull_task.await;
+    assert!(
+        !refreshed,
+        "pull should report a failed refresh when the server never responds"
+    );
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8637,6 +8915,74 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            ".gitignore": ".checkouts/\n",
+            "src": {
+                "main.rs": "fn main() {}"
+            },
+            ".checkouts": {
+                "worktrees": {
+                    "foo": {
+                        "README.md": "hello"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let root = PathBuf::from(path!("/dir"));
+        let file = PathBuf::from(path!("/dir/src/main.rs"));
+        let ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo"));
+        let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
+
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            Some(true)
+        );
+        assert_eq!(
+            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            Some(true)
+        );
+
+        // Paths inside gitignored directories aren't scanned, so they aren't
+        // considered contained by the project; opening one should behave like
+        // opening an unrelated path.
+        for path in [&ignored_dir, &file_in_ignored_dir] {
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                None,
+                "{path:?} should not be considered contained"
+            );
+            assert_eq!(
+                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                None,
+                "{path:?} should not be considered a contained subpath"
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -12026,16 +12372,28 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -12064,11 +12422,18 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
@@ -12077,11 +12442,21 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -12119,6 +12494,11 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
                 diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
+                staged_diff_stat: None,
+                unstaged_diff_stat: Some(DiffStat {
                     added: 0,
                     deleted: 1,
                 }),
@@ -12170,6 +12550,8 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
                 repo_path: repo_path("ci2/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
                 diff_stat: None,
+                staged_diff_stat: None,
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12212,6 +12594,8 @@ async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui:
                 repo_path: repo_path("ci3/Dockerfile.namespace"),
                 status: FileStatus::Untracked,
                 diff_stat: None,
+                staged_diff_stat: None,
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12373,6 +12757,11 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                 }
                 .into(),
                 diff_stat: None,
+                staged_diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         )
     });
@@ -12579,6 +12968,11 @@ async fn test_repository_pending_ops_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12689,6 +13083,11 @@ async fn test_repository_pending_ops_long_running_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12814,11 +13213,15 @@ async fn test_repository_pending_ops_stage_all(
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
             ]
         );
@@ -15468,6 +15871,44 @@ async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(not(windows))]
+async fn test_os_read_only_files_open_as_read_only(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "test.txt": "hello",
+        },
+    }));
+    let file_path = root.path().join("project/test.txt");
+    let mut permissions = std::fs::metadata(&file_path).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file_path, permissions).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "OS read-only files should open as read-only"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -15613,7 +16054,7 @@ mod disable_ai_settings_tests {
 
         let worktree_id = WorktreeId::from_usize(1);
         let rel_path = |path: &str| -> std::sync::Arc<util::rel_path::RelPath> {
-            std::sync::Arc::from(util::rel_path::RelPath::unix(path).unwrap())
+            std::sync::Arc::from(util::rel_path::RelPath::from_unix_str(path).unwrap())
         };
         let project_path = rel_path("project");
         let settings_location = SettingsLocation {
@@ -15696,4 +16137,202 @@ mod disable_ai_settings_tests {
             );
         });
     }
+}
+
+/// Regression test for https://github.com/zed-industries/zed/issues/60424.
+///
+/// The committed text contains repeated `end\n\n` line runs, so the deletion
+/// hunks have ambiguous placements. Before hunk placement was canonicalized,
+/// the uncommitted diff (HEAD vs worktree) and the recomputed unstaged diff
+/// (index vs worktree) could anchor the same logical deletion at different
+/// rows after a partial stage. The mismatched hunk then rendered as staged
+/// while git still had it unstaged, and unstaging it inserted a duplicate
+/// copy of its contents into the index on every click.
+#[gpui::test]
+async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = concat!(
+        "function is_empty(str)\n",
+        "    assert(type(str) == string)\n",
+        "    return str == nil or str == \"\"\n",
+        "end\n",
+        "\n",
+        "function string:starts_with(str)\n",
+        "    return self:sub(1, #str) == str\n",
+        "end\n",
+        "\n",
+        "function string:ends_with(str)\n",
+        "    return self:sub(-#str) == str\n",
+        "end\n",
+        "\n",
+        "function table:append(other)\n",
+        "    for _, val in ipairs(other) do table.insert(self, val) end\n",
+        "end\n",
+        "\n",
+        "function table:contains(elem)\n",
+        "    assert(type(self) == \"table\")\n",
+        "\n",
+        "    for _, val in ipairs(self) do\n",
+        "        if val == elem then return true end\n",
+        "    end\n",
+        "    return false\n",
+        "end\n",
+        "\n",
+        "function table:keys()\n",
+        "    local keys = {}\n",
+        "    for key, _ in pairs(self) do\n",
+        "        table.insert(keys, key)\n",
+        "    end\n",
+        "    return keys\n",
+        "end\n",
+        "\n",
+        "function has_class(el, class) return el.classes[0] == class end\n",
+    )
+    .to_string();
+    let file_contents = concat!(
+        "function table:append(other)\n",
+        "    for _, val in ipairs(other) do table.insert(self, val) end\n",
+        "end\n",
+        "\n",
+        "function table:keys()\n",
+        "    local keys = {}\n",
+        "    for key, _ in pairs(self) do\n",
+        "        table.insert(keys, key)\n",
+        "    end\n",
+        "    return keys\n",
+        "end\n",
+        "\n",
+        "function has_class(el, class) return el.classes:includes(class) end\n",
+    )
+    .to_string();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "test.txt": file_contents.clone()
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("test.txt", committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/test.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    fn hunk_states(
+        uncommitted_diff: &Entity<BufferDiff>,
+        snapshot: &language::BufferSnapshot,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<(Range<Point>, DiffHunkSecondaryStatus)> {
+        uncommitted_diff.read_with(cx, |diff, cx| {
+            diff.snapshot(cx)
+                .hunks(&snapshot.text)
+                .map(|hunk| (hunk.range.clone(), hunk.secondary_status))
+                .collect()
+        })
+    }
+
+    fn index_text(fs: &FakeFs) -> String {
+        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+            state
+                .index_contents
+                .get(&repo_path("test.txt"))
+                .cloned()
+                .expect("file is present in the index")
+        })
+        .unwrap()
+    }
+
+    use DiffHunkSecondaryStatus::*;
+    let row = |start: u32, end: u32| Point::new(start, 0)..Point::new(end, 0);
+
+    // Two deletions and one modification, all unstaged.
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), HasSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
+
+    // Stage the first deletion (the three string functions).
+    let hunks = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot.text).collect::<Vec<_>>()
+    });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(
+                buffer.clone(),
+                unstaged_diff,
+                vec![hunks[0].buffer_range.clone()],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Only the first hunk is staged; the other hunks must not be affected,
+    // even though the unstaged diff was recomputed against a new index text
+    // in which the remaining deletion has an ambiguous placement.
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), NoSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
+    let table_contains_offset = committed_contents
+        .find("function table:append")
+        .expect("committed text contains table:append");
+    let expected_index = &committed_contents[table_contains_offset..];
+    assert_eq!(index_text(&fs), expected_index);
+
+    // Unstaging the second deletion is a no-op, since it isn't staged. Before
+    // the fix, each such request inserted another copy of the deleted content
+    // into the index.
+    for _ in 0..3 {
+        let hunks = uncommitted_diff.read_with(cx, |diff, cx| {
+            diff.snapshot(cx).hunks(&snapshot.text).collect::<Vec<_>>()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.unstage_uncommitted_hunks(
+                    buffer.clone(),
+                    uncommitted_diff.clone(),
+                    vec![hunks[1].buffer_range.clone()],
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(index_text(&fs), expected_index);
+    assert_eq!(
+        hunk_states(&uncommitted_diff, &snapshot, cx),
+        vec![
+            (row(0, 0), NoSecondaryHunk),
+            (row(4, 4), HasSecondaryHunk),
+            (row(12, 13), HasSecondaryHunk),
+        ]
+    );
 }
