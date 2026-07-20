@@ -3748,10 +3748,17 @@ mod test {
         let docker_run_command = docker_run_command.expect("ok");
 
         assert_eq!(docker_run_command.get_program(), "docker");
-        let expected_config_file_label = PathBuf::from(TEST_PROJECT_PATH)
+        let expected_local_folder_label = format!(
+            "devcontainer.local_folder={}",
+            super::normalize_label_path(TEST_PROJECT_PATH)
+        );
+        let expected_config_file_path = PathBuf::from(TEST_PROJECT_PATH)
             .join(".devcontainer")
             .join("devcontainer.json");
-        let expected_config_file_label = expected_config_file_label.display();
+        let expected_config_file_label = format!(
+            "devcontainer.config_file={}",
+            super::normalize_label_path(&expected_config_file_path.display().to_string())
+        );
         assert_eq!(
             docker_run_command.get_args().collect::<Vec<&OsStr>>(),
             vec![
@@ -3763,11 +3770,9 @@ mod test {
                     "type=bind,source={TEST_PROJECT_PATH},target=/workspaces/project,consistency=cached"
                 )),
                 OsStr::new("-l"),
-                OsStr::new(&format!("devcontainer.local_folder={TEST_PROJECT_PATH}")),
+                OsStr::new(&expected_local_folder_label),
                 OsStr::new("-l"),
-                OsStr::new(&format!(
-                    "devcontainer.config_file={expected_config_file_label}"
-                )),
+                OsStr::new(&expected_config_file_label),
                 OsStr::new("--cap-add"),
                 OsStr::new("SYS_PTRACE"),
                 OsStr::new("--security-opt"),
