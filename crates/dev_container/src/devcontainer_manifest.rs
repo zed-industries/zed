@@ -3431,7 +3431,6 @@ mod test {
     #[cfg(not(target_os = "windows"))]
     use std::{
         fs as std_fs,
-        process::Command as StdCommand,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -3897,12 +3896,7 @@ mod test {
             HashMap::from([("default".to_string(), command)]),
         );
 
-        let output = StdCommand::new("sh")
-            .arg("-c")
-            .arg(script)
-            .env("HOME", "/dev/null")
-            .output()
-            .expect("shell should run postStartCommand marker script");
+        let output = run_shell_script(&script, Path::new("/dev/null"));
 
         assert!(
             output.status.success(),
@@ -3927,12 +3921,7 @@ mod test {
             HashMap::from([("default".to_string(), command)]),
         );
 
-        let output = StdCommand::new("sh")
-            .arg("-c")
-            .arg(&script)
-            .env("HOME", &home_directory)
-            .output()
-            .expect("shell should run postStartCommand marker script");
+        let output = run_shell_script(&script, &home_directory);
         assert!(
             output.status.success(),
             "script should run successfully: {}",
@@ -3944,12 +3933,7 @@ mod test {
             started_at
         );
 
-        let output = StdCommand::new("sh")
-            .arg("-c")
-            .arg(&script)
-            .env("HOME", &home_directory)
-            .output()
-            .expect("shell should run postStartCommand marker script");
+        let output = run_shell_script(&script, &home_directory);
         assert!(
             output.status.success(),
             "script should skip successfully: {}",
@@ -3975,12 +3959,7 @@ mod test {
             HashMap::from([("default".to_string(), command)]),
         );
 
-        let output = StdCommand::new("sh")
-            .arg("-c")
-            .arg(script)
-            .env("HOME", &home_directory)
-            .output()
-            .expect("shell should run postStartCommand marker script");
+        let output = run_shell_script(&script, &home_directory);
 
         assert!(!output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "post-start\n");
@@ -4001,17 +3980,19 @@ mod test {
             HashMap::from([("default".to_string(), Command::new("false"))]),
         );
 
-        let output = StdCommand::new("sh")
-            .arg("-c")
-            .arg(script)
-            .env("HOME", &home_directory)
-            .output()
-            .expect("shell should run postStartCommand marker script");
+        let output = run_shell_script(&script, &home_directory);
 
         assert!(!output.status.success());
         assert!(!marker.exists());
 
         std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn run_shell_script(script: &str, home_directory: &Path) -> Output {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(script).env("HOME", home_directory);
+        gpui::block_on(command.output()).expect("shell should run postStartCommand marker script")
     }
 
     #[cfg(not(target_os = "windows"))]

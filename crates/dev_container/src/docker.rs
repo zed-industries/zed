@@ -768,6 +768,7 @@ mod test {
             parse_find_process_output,
         },
     };
+    #[cfg(not(target_os = "windows"))]
     use util::command::Command;
 
     #[test]
