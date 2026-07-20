@@ -1,4 +1,7 @@
 use crate::askpass_modal::AskPassModal;
+use crate::commit_context_menu::{
+    CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
+};
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
@@ -2147,7 +2150,7 @@ impl GitPanel {
                     let task = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
-                            .update(cx, |project, cx| project.delete_file(path, true, cx))
+                            .update(cx, |project, cx| project.trash_file(path, cx))
                     })?;
                     if let Some(task) = task {
                         task.await?;
@@ -2338,7 +2341,7 @@ impl GitPanel {
                             let project_path = active_repo
                                 .read(cx)
                                 .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.delete_file(project_path, true, cx)
+                            project.trash_file(project_path, cx)
                         })
                     })
                     .collect::<Vec<_>>()
@@ -3229,7 +3232,7 @@ impl GitPanel {
 
                 let worktree_snapshot = worktree.read(cx).snapshot();
                 for rules_name in RULES_FILE_NAMES {
-                    if let Ok(rel_path) = RelPath::unix(rules_name) {
+                    if let Ok(rel_path) = RelPath::from_unix_str(rules_name) {
                         if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
                             if entry.is_file() {
                                 return Some(ProjectPath {
@@ -4545,13 +4548,13 @@ impl GitPanel {
 
         self.stash_entries = repo.cached_stash();
 
-        for entry in repo.cached_status() {
+        for status_entry in repo.cached_status() {
             self.changes_count += 1;
-            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
-            let is_new = entry.status.is_created();
-            let staging = entry.status.staging();
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path);
+            let is_new = status_entry.status.is_created();
+            let staging = status_entry.status.staging();
 
-            if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
+            if let Some(pending) = repo.pending_ops_for_path(&status_entry.repo_path)
                 && pending
                     .ops
                     .iter()
@@ -4561,10 +4564,10 @@ impl GitPanel {
             }
 
             let entry = GitStatusEntry {
-                repo_path: entry.repo_path.clone(),
-                status: entry.status,
+                repo_path: status_entry.repo_path.clone(),
+                status: status_entry.status,
                 staging,
-                diff_stat: entry.diff_stat,
+                diff_stat: status_entry.diff_stat,
             };
 
             if !is_conflict && !is_new {
@@ -4580,10 +4583,16 @@ impl GitPanel {
                 conflict_entries.push(entry);
             } else if group_by_staging_state {
                 if staging.has_staged() {
-                    staged_entries.push(entry.clone());
+                    staged_entries.push(GitStatusEntry {
+                        diff_stat: status_entry.staged_diff_stat,
+                        ..entry.clone()
+                    });
                 }
                 if staging.has_unstaged() {
-                    unstaged_entries.push(entry);
+                    unstaged_entries.push(GitStatusEntry {
+                        diff_stat: status_entry.unstaged_diff_stat,
+                        ..entry
+                    });
                 }
             } else if group_by_file_status && is_conflict {
                 conflict_entries.push(entry);
@@ -5335,15 +5344,16 @@ impl GitPanel {
         &self,
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        disabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let menu_open = self.commit_menu_handle.is_deployed();
 
         PopoverMenu::new(id.into())
-            .trigger(crate::render_split_button_chevron_trigger(
-                "commit-split-button-right",
-                menu_open,
-            ))
+            .trigger(
+                crate::render_split_button_chevron_trigger("commit-split-button-right", menu_open)
+                    .disabled(disabled),
+            )
             .with_handle(self.commit_menu_handle.clone())
             .menu({
                 let git_panel = cx.entity();
@@ -5392,8 +5402,14 @@ impl GitPanel {
             })
     }
 
+    pub fn is_generating_commit_message(&self) -> bool {
+        self.generate_commit_message_task.is_some()
+    }
+
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
-        if self.has_unstaged_conflicts() {
+        if self.generate_commit_message_task.is_some() {
+            (false, "Generating commit message...")
+        } else if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
         } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
             (false, "No changes to commit")
@@ -5887,6 +5903,7 @@ impl GitPanel {
                 self.render_git_commit_menu(
                     ElementId::Name(format!("split-button-right-{}", title).into()),
                     Some(commit_tooltip_focus_handle),
+                    self.generate_commit_message_task.is_some(),
                     cx,
                 )
                 .into_any_element(),
@@ -6187,6 +6204,37 @@ impl GitPanel {
         );
     }
 
+    fn deploy_history_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.commit_history_entries().get(index).cloned() else {
+            return;
+        };
+        let Some(repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let context_menu = commit_context_menu(
+            CommitContextMenuData {
+                sha: commit.sha,
+                tag_names: commit.tag_names,
+            },
+            CommitContextMenuSource::GitPanel,
+            None,
+            self.focus_handle.clone(),
+            Some(repository.downgrade()),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+        self.focused_history_entry = Some(index);
+        self.history_keyboard_nav = false;
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn activate_changes_tab(
         &mut self,
         _: &ActivateChangesTab,
@@ -6347,6 +6395,7 @@ impl GitPanel {
         let focused_history_entry = self.focused_history_entry;
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
+        let has_context_menu = self.context_menu.is_some();
 
         let ahead_count = active_repository
             .read(cx)
@@ -6485,13 +6534,20 @@ impl GitPanel {
                                                             tag_names
                                                                 .iter()
                                                                 .take(MAX_HISTORY_TAG_CHIPS)
-                                                                .cloned()
                                                                 .map(|tag_name| {
+                                                                    let tag_name = tag_name.clone();
                                                                     Chip::new(tag_name.clone())
                                                                         .truncate()
-                                                                        .tooltip(Tooltip::text(
-                                                                            tag_name,
-                                                                        ))
+                                                                        .when(
+                                                                            !has_context_menu,
+                                                                            |chip| {
+                                                                                chip.tooltip(
+                                                                                    Tooltip::text(
+                                                                                        tag_name,
+                                                                                    ),
+                                                                                )
+                                                                            },
+                                                                        )
                                                                 }),
                                                         )
                                                         .when(hidden_tag_count > 0, |this| {
@@ -6502,9 +6558,11 @@ impl GitPanel {
                                                                 Chip::new(format!(
                                                                     "+{hidden_tag_count}"
                                                                 ))
-                                                                .tooltip(Tooltip::text(
-                                                                    hidden_tag_names,
-                                                                )),
+                                                                .when(!has_context_menu, |chip| {
+                                                                    chip.tooltip(Tooltip::text(
+                                                                        hidden_tag_names,
+                                                                    ))
+                                                                }),
                                                             )
                                                         })
                                                 }))
@@ -6541,13 +6599,15 @@ impl GitPanel {
                                                         .color(Color::Muted),
                                                 ),
                                         )
-                                        .tooltip(move |_, cx| {
-                                            Tooltip::with_meta(
-                                                "View Commit",
-                                                None,
-                                                short_sha.clone(),
-                                                cx,
-                                            )
+                                        .when(!has_context_menu, |this| {
+                                            this.tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "View Commit",
+                                                    None,
+                                                    short_sha.clone(),
+                                                    cx,
+                                                )
+                                            })
                                         })
                                         .on_mouse_down(gpui::MouseButton::Left, {
                                             let git_panel = git_panel.clone();
@@ -6559,6 +6619,22 @@ impl GitPanel {
                                                         cx.notify();
                                                     })
                                                     .ok();
+                                            }
+                                        })
+                                        .on_mouse_down(MouseButton::Right, {
+                                            let git_panel = git_panel.clone();
+                                            move |event, window, cx| {
+                                                git_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.deploy_history_context_menu(
+                                                            event.position,
+                                                            index,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                                cx.stop_propagation();
                                             }
                                         })
                                         .on_click(move |_, window, cx| {
@@ -7130,9 +7206,11 @@ impl GitPanel {
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&context_menu.focus_handle(cx), cx);
+
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -8663,6 +8741,7 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
+    use editor::SplittableEditor;
     use git::{
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
@@ -8670,13 +8749,15 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
+    use search::{BufferSearchBar, buffer_search::Deploy};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::any::TypeId;
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation};
 
     use super::*;
 
@@ -9275,7 +9356,6 @@ mod tests {
                 ("crates/util/util.rs", StatusCode::Modified.worktree()),
             ],
         );
-
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
         let window_handle =
@@ -9488,6 +9568,16 @@ mod tests {
                 ("unstaged.rs", StatusCode::Modified.worktree()),
             ],
         );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.head_contents.insert(
+                repo_path("partial.rs"),
+                "head one\nhead two\nhead three\nhead four".into(),
+            );
+            state
+                .index_contents
+                .insert(repo_path("partial.rs"), "index one\nindex two".into());
+        })
+        .expect("fake repository should exist");
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let window_handle =
@@ -9561,6 +9651,24 @@ mod tests {
             assert_eq!(
                 panel.stage_intent_for_entry_index(projections[1].index),
                 StageIntent::Stage
+            );
+            assert_eq!(
+                panel.entries[projections[0].index]
+                    .status_entry()
+                    .and_then(|entry| entry.diff_stat),
+                Some(DiffStat {
+                    added: 2,
+                    deleted: 4,
+                })
+            );
+            assert_eq!(
+                panel.entries[projections[1].index]
+                    .status_entry()
+                    .and_then(|entry| entry.diff_stat),
+                Some(DiffStat {
+                    added: 1,
+                    deleted: 2,
+                })
             );
             panel.entries.clone()
         });
@@ -10133,6 +10241,7 @@ mod tests {
     #[gpui::test]
     async fn test_group_by_staging_open_diff_uses_section_diff(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.update(search::buffer_search::init);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/project"),
@@ -10208,10 +10317,54 @@ mod tests {
         });
         cx.run_until_parked();
 
-        workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<SoloDiffView>(cx).is_some());
+        let search_bar = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar.clone(), window, cx)
+                });
+            });
+            search_bar
+        });
+
+        let split_editor = workspace.read_with(&cx, |workspace, cx| {
+            let solo_diff = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("SoloDiffView should be active");
+            let searchable = solo_diff
+                .read(cx)
+                .as_searchable(&solo_diff, cx)
+                .expect("SoloDiffView should expose its editor to buffer search");
+            let split_editor = searchable
+                .act_as_type(TypeId::of::<SplittableEditor>(), cx)
+                .and_then(|entity| entity.downcast::<SplittableEditor>().ok())
+                .expect("the split editor should be the searchable item");
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 1);
+            split_editor
+        });
+
+        let mut search_bar_events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
+        cx.dispatch_action(Deploy::find());
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!search_bar.read(cx).is_dismissed()));
+        assert_eq!(
+            search_bar_events
+                .try_recv()
+                .expect("search bar location event"),
+            ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary)
+        );
+
+        search_bar
+            .update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.search("partial", None, false, window, cx)
+            })
+            .await
+            .expect("buffer search should complete");
+
+        let focused_editor = cx.read(|cx| split_editor.read(cx).focused_editor().clone());
+        focused_editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.search_background_highlights(cx).len(), 1);
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {
@@ -11421,7 +11574,7 @@ mod tests {
             cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
         let project_path = ProjectPath {
             worktree_id,
-            path: RelPath::unix("src/a/foo.rs").unwrap().into_arc(),
+            path: RelPath::from_unix_str("src/a/foo.rs").unwrap().into_arc(),
         };
 
         panel.update_in(cx, |panel, window, cx| {

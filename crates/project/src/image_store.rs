@@ -698,7 +698,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
                 .request(rpc::proto::OpenImageByPath {
                     project_id,
                     worktree_id,
-                    path: path.to_proto(),
+                    path: path.as_unix_str().to_owned(),
                 })
                 .await?;
 
