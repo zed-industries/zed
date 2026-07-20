@@ -8,7 +8,7 @@ use git::{
     commit::ParsedCommitMessage,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, SharedString,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, Pixels, ScrollHandle, SharedString,
     Subscription, Task, TextStyle, WeakEntity, Window,
 };
 use itertools::Itertools;
@@ -86,6 +86,10 @@ pub struct GitBlame {
 
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
+
+    fn blame_entry_non_text_width(&self, _: &Window, _: &App) -> Pixels {
+        Pixels::ZERO
+    }
 
     fn render_blame_entry(
         &self,
