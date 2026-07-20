@@ -4261,6 +4261,47 @@ impl Project {
         })
     }
 
+    /// Re-stats the files backing the given buffers so that external changes are picked up
+    /// even when filesystem events were dropped (e.g. files inside git-ignored directories,
+    /// whose parent directories are never watched by the background scanner). The refreshed
+    /// entries flow through the normal `UpdatedEntries` -> `BufferStore::local_worktree_entry_changed`
+    /// -> `Buffer::file_updated` path, so clean buffers auto-reload, dirty buffers gain a
+    /// conflict, and deleted/recreated files transition `DiskState` correctly.
+    pub fn refresh_buffers_from_disk(
+        &self,
+        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let mut paths_by_worktree: HashMap<Entity<Worktree>, Vec<Arc<RelPath>>> =
+            HashMap::default();
+        for buffer in buffers {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                continue;
+            };
+            if !file.is_local {
+                continue;
+            }
+            paths_by_worktree
+                .entry(file.worktree.clone())
+                .or_default()
+                .push(file.path.clone());
+        }
+
+        let mut receivers = Vec::new();
+        for (worktree, paths) in paths_by_worktree {
+            if let Some(local_worktree) = worktree.read(cx).as_local() {
+                receivers.push(local_worktree.refresh_entries_for_paths(paths));
+            }
+        }
+
+        cx.background_spawn(async move {
+            use postage::stream::Stream as _;
+            for mut receiver in receivers {
+                receiver.recv().await;
+            }
+        })
+    }
+
     pub fn reload_images(
         &self,
         images: HashSet<Entity<ImageItem>>,

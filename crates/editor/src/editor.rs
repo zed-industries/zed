@@ -10371,8 +10371,26 @@ impl Editor {
         self.focus_handle.is_focused(window)
     }
 
+    pub(crate) fn refresh_buffers_from_disk(&self, cx: &mut Context<Self>) {
+        if !self.mode.is_full() {
+            return;
+        }
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
+        let Some(buffer) = self.active_buffer(cx) else {
+            return;
+        };
+        project
+            .update(cx, |project, cx| {
+                project.refresh_buffers_from_disk([buffer], cx)
+            })
+            .detach();
+    }
+
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(EditorEvent::Focused);
+        self.refresh_buffers_from_disk(cx);
 
         if let Some(descendant) = self
             .last_focused_descendant
