@@ -7209,7 +7209,12 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&context_menu.focus_handle(cx), cx);
+        // window.focus(&context_menu.focus_handle(cx), cx);
+
+        let focus_handle = context_menu.focus_handle(cx);
+        window.defer(cx, move |window, cx| {
+            window.focus(&focus_handle, cx);
+        });
 
         let subscription = cx.subscribe_in(
             &context_menu,
