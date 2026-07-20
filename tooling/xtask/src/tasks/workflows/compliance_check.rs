@@ -3,7 +3,7 @@ use gh_workflow::{Event, Job, Schedule, Workflow, WorkflowDispatch};
 use crate::tasks::workflows::{
     release::{ComplianceContext, add_compliance_steps},
     runners,
-    steps::{self, CommonJobConditions, named},
+    steps::{self, CommonJobConditions, CommonPermissionSets, named},
     vars::StepOutput,
 };
 
@@ -11,6 +11,7 @@ pub fn compliance_check() -> Workflow {
     let check = scheduled_compliance_check();
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             .schedule([Schedule::new("30 17 * * 2")])
             .workflow_dispatch(WorkflowDispatch::default()))

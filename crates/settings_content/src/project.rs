@@ -87,6 +87,30 @@ pub struct ProjectSettingsContent {
     pub disable_ai: Option<SaturatingBool>,
 }
 
+/// When to scan content of linked directories.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanSymlinksSetting {
+    /// Always scan symlinked directories
+    Always,
+    /// Only scan symlinked directories when they've been expanded in the workspace
+    #[default]
+    Expanded,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
@@ -119,6 +143,11 @@ pub struct WorktreeSettingsContent {
     ///  "docker-compose.*.yml",
     /// ]
     pub file_scan_inclusions: Option<Vec<String>>,
+
+    /// When to scan content of linked directories.
+    ///
+    /// Default: expanded
+    pub scan_symlinks: Option<ScanSymlinksSetting>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
@@ -388,6 +417,10 @@ pub enum ContextServerSettingsContent {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -429,11 +462,26 @@ impl ContextServerSettingsContent {
     }
 }
 
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
     pub path: PathBuf,
+    #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
@@ -500,6 +548,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
@@ -564,6 +616,28 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineBlameLocation {
+    /// Show git blame inline at the current line.
+    #[default]
+    Inline,
+    /// Show git blame in the status bar at the bottom of the window.
+    StatusBar,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -578,6 +652,10 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<DelayMs>,
+    /// Where to render the blame information when enabled.
+    ///
+    /// Default: inline
+    pub location: Option<InlineBlameLocation>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
@@ -795,4 +873,28 @@ pub enum GitHostingProviderKind {
     Gitea,
     Forgejo,
     SourceHut,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stdio_context_server_without_args() {
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo" }"#)
+                .expect("stdio context server without `args` should parse");
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.path, PathBuf::from("echo"));
+        assert!(command.args.is_empty());
+
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo", "args": ["hello"] }"#).unwrap();
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.args, vec!["hello".to_string()]);
+    }
 }

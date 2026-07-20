@@ -13,12 +13,12 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
+use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
     LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
-    project_settings::ProjectSettings,
+    project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
@@ -26,7 +26,7 @@ use ui::{
 };
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
-use workspace::{StatusItemView, Workspace};
+use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
 
 use crate::lsp_log_view;
 
@@ -220,6 +220,45 @@ impl LanguageServerState {
         let Some(lsp_logs) = lsp_logs else {
             return menu;
         };
+
+        let is_restricted = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+            })
+            .unwrap_or(false);
+
+        if is_restricted {
+            menu = menu.custom_entry(
+                move |_window, _cx| {
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .color(Color::Warning)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(
+                                    Label::new("Project is in Restricted Mode")
+                                        .size(LabelSize::Small),
+                                ),
+                        )
+                        .child(
+                            Label::new("Language Servers can't run until you trust this project.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
+                },
+                move |window, cx| {
+                    window.dispatch_action(ToggleWorktreeSecurity.boxed_clone(), cx);
+                },
+            );
+        }
 
         let server_metadata = self
             .lsp_store
@@ -512,6 +551,7 @@ impl LanguageServerState {
                                             HashSet::from_iter([LanguageServerSelector::Name(
                                                 server_name_for_restart.clone(),
                                             )]),
+                                            true,
                                             cx,
                                         );
                                     })
@@ -684,6 +724,19 @@ impl LanguageServers {
     fn is_empty(&self) -> bool {
         self.binary_statuses.is_empty() && self.health_statuses.is_empty()
     }
+
+    /// Drop all id-keyed state for a server that has been removed (stopped or
+    /// reaching end-of-life via restart). `binary_statuses` is intentionally
+    /// preserved — it is keyed by name and shared across restart cycles to
+    /// drive the "Downloading… → Starting…" status UX.
+    fn remove_server(&mut self, server_id: LanguageServerId) {
+        self.health_statuses.remove(&server_id);
+        self.servers_per_buffer_abs_path
+            .retain(|_, servers_for_path| {
+                servers_for_path.servers.remove(&server_id);
+                !servers_for_path.servers.is_empty()
+            });
+    }
 }
 
 #[derive(Debug)]
@@ -832,12 +885,18 @@ impl LspButton {
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         };
-        if !lsp_button
-            .server_state
-            .read(cx)
-            .language_servers
-            .binary_statuses
-            .is_empty()
+        let is_restricted = TrustedWorktrees::has_restricted_worktrees(
+            &workspace.project().read(cx).worktree_store(),
+            cx,
+        );
+
+        if is_restricted
+            || !lsp_button
+                .server_state
+                .read(cx)
+                .language_servers
+                .binary_statuses
+                .is_empty()
         {
             lsp_button.refresh_lsp_menu(true, window, cx);
         }
@@ -857,7 +916,6 @@ impl LspButton {
         let mut updated = false;
 
         // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
-        // Also, we do not get "LSP removed" events so LSPs are never removed.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -944,6 +1002,12 @@ impl LspButton {
                     if worktree.is_some() {
                         entry.worktree = worktree;
                     }
+                });
+                updated = true;
+            }
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                self.server_state.update(cx, |state, _| {
+                    state.language_servers.remove_server(*server_id);
                 });
                 updated = true;
             }
@@ -1258,7 +1322,20 @@ impl StatusItemView for LspButton {
 
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
+        let is_restricted = self
+            .server_state
+            .read(cx)
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+            })
+            .unwrap_or(false);
+
+        if !is_restricted
+            && (self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none())
+        {
             return div().hidden();
         }
 
@@ -1288,7 +1365,12 @@ impl Render for LspButton {
             }
         }
 
-        let (indicator, description) = if has_errors {
+        let (indicator, description) = if is_restricted {
+            (
+                Some(Indicator::dot().color(Color::Warning)),
+                "Restricted Mode",
+            )
+        } else if has_errors {
             (
                 Some(Indicator::dot().color(Color::Error)),
                 "Server with errors",
@@ -1333,11 +1415,174 @@ impl Render for LspButton {
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
+                        .tab_index(0isize)
+                        .aria_label("Language Servers")
+                        .when(is_restricted, |s| s.icon_color(Color::Warning))
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {
                         Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)
                     },
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_id(n: usize) -> LanguageServerId {
+        LanguageServerId(n)
+    }
+
+    fn server_name(s: &str) -> LanguageServerName {
+        LanguageServerName(s.into())
+    }
+
+    fn health_status(name: &str) -> LanguageServerHealthStatus {
+        LanguageServerHealthStatus {
+            name: server_name(name),
+            health: Some((None, ServerHealth::Ok)),
+        }
+    }
+
+    fn servers_for_path(servers: &[(LanguageServerId, &str)]) -> ServersForPath {
+        ServersForPath {
+            servers: servers
+                .iter()
+                .map(|(id, name)| (*id, Some(server_name(name))))
+                .collect(),
+            worktree: None,
+        }
+    }
+
+    /// `remove_server` evicts the id from `health_statuses` so a restarted
+    /// server's new id renders without inheriting the old one's stale entry.
+    /// This is the regression test for #53627.
+    #[test]
+    fn remove_server_drops_health_entry_for_id() {
+        let mut state = LanguageServers::default();
+        state
+            .health_statuses
+            .insert(server_id(1), health_status("rust-analyzer"));
+        state
+            .health_statuses
+            .insert(server_id(2), health_status("typescript-language-server"));
+
+        state.remove_server(server_id(1));
+
+        assert!(!state.health_statuses.contains_key(&server_id(1)));
+        assert!(state.health_statuses.contains_key(&server_id(2)));
+    }
+
+    /// `remove_server` evicts the id from each per-buffer entry; entries that
+    /// become empty are dropped so the map does not grow unbounded across
+    /// many buffer opens/closes.
+    #[test]
+    fn remove_server_evicts_id_from_per_buffer_entries_and_drops_empty_entries() {
+        let mut state = LanguageServers::default();
+        let buffer_a = PathBuf::from("/project/a.rs");
+        let buffer_b = PathBuf::from("/project/b.rs");
+
+        state.servers_per_buffer_abs_path.insert(
+            buffer_a.clone(),
+            servers_for_path(&[(server_id(1), "rust-analyzer")]),
+        );
+        state.servers_per_buffer_abs_path.insert(
+            buffer_b.clone(),
+            servers_for_path(&[(server_id(1), "rust-analyzer"), (server_id(2), "typos-lsp")]),
+        );
+
+        state.remove_server(server_id(1));
+
+        assert!(
+            !state.servers_per_buffer_abs_path.contains_key(&buffer_a),
+            "buffer_a's entry held only the removed server, so the entry itself should be dropped",
+        );
+        let buffer_b_entry = state
+            .servers_per_buffer_abs_path
+            .get(&buffer_b)
+            .expect("buffer_b's entry has another server, so it must be retained");
+        assert!(!buffer_b_entry.servers.contains_key(&server_id(1)));
+        assert!(buffer_b_entry.servers.contains_key(&server_id(2)));
+    }
+
+    /// `binary_statuses` is keyed by name and intentionally shared across
+    /// restart cycles to drive the "Downloading… → Starting…" UX. Removing a
+    /// single server's id must not touch it.
+    #[test]
+    fn remove_server_does_not_touch_binary_statuses() {
+        let mut state = LanguageServers::default();
+        state.binary_statuses.insert(
+            server_name("rust-analyzer"),
+            LanguageServerBinaryStatus {
+                status: BinaryStatus::Starting,
+                message: None,
+            },
+        );
+
+        state.remove_server(server_id(1));
+
+        assert!(
+            state
+                .binary_statuses
+                .contains_key(&server_name("rust-analyzer")),
+            "binary_statuses is name-keyed and shared across restart cycles",
+        );
+    }
+
+    /// Simulates the full restart event sequence: remove old id, register
+    /// new id with same name, write health for the new id. After restart
+    /// only the new id should be visible — no leftover entry from the old
+    /// incarnation.
+    #[test]
+    fn restart_sequence_leaves_only_new_server_id() {
+        let mut state = LanguageServers::default();
+        let buffer = PathBuf::from("/project/main.rs");
+        let name = "rust-analyzer";
+
+        // Pre-restart: server v1 is registered for the buffer with health.
+        state
+            .servers_per_buffer_abs_path
+            .insert(buffer.clone(), servers_for_path(&[(server_id(1), name)]));
+        state
+            .health_statuses
+            .insert(server_id(1), health_status(name));
+
+        // Restart: old id is removed.
+        state.remove_server(server_id(1));
+
+        // New id registers for the same buffer.
+        let entry = state
+            .servers_per_buffer_abs_path
+            .entry(buffer.clone())
+            .or_insert_with(|| ServersForPath {
+                servers: HashMap::default(),
+                worktree: None,
+            });
+        entry.servers.insert(server_id(2), Some(server_name(name)));
+
+        // Health update for the new id arrives.
+        state
+            .health_statuses
+            .insert(server_id(2), health_status(name));
+
+        let entry = state
+            .servers_per_buffer_abs_path
+            .get(&buffer)
+            .expect("buffer must still be tracked");
+        assert_eq!(
+            entry.servers.keys().copied().collect::<Vec<_>>(),
+            vec![server_id(2)],
+            "exactly one server for this buffer — the new incarnation",
+        );
+        assert!(
+            !state.health_statuses.contains_key(&server_id(1)),
+            "the dead server's health entry must not linger",
+        );
+        assert!(
+            state.health_statuses.contains_key(&server_id(2)),
+            "the new server's health entry is present",
+        );
     }
 }

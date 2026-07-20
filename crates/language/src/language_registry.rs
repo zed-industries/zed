@@ -383,6 +383,21 @@ impl LanguageRegistry {
     }
 
     #[cfg(any(feature = "test-support", test))]
+    pub fn register_fake_available_lsp_adapter(
+        &self,
+        name: impl Into<LanguageServerName>,
+        adapter: crate::FakeLspAdapter,
+    ) {
+        let name = name.into();
+        let adapter = Arc::new(adapter);
+        let mut state = self.state.write();
+        state.available_lsp_adapters.insert(
+            name,
+            Arc::new(move || CachedLspAdapter::new(adapter.clone())),
+        );
+    }
+
+    #[cfg(any(feature = "test-support", test))]
     pub fn has_fake_lsp_server(&self, lsp_name: &LanguageServerName) -> bool {
         self.state.read().fake_server_entries.contains_key(lsp_name)
     }

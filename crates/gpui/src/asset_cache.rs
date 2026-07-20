@@ -2,7 +2,7 @@ use crate::{App, SharedString, SharedUri};
 use futures::{Future, TryFutureExt};
 
 use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -78,7 +78,5 @@ where
 
 /// Use a quick, non-cryptographically secure hash function to get an identifier from data
 pub fn hash<T: Hash>(data: &T) -> u64 {
-    let mut hasher = collections::FxHasher::default();
-    data.hash(&mut hasher);
-    hasher.finish()
+    collections::FxBuildHasher.hash_one(data)
 }

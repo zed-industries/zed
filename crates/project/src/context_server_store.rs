@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
-use context_server::transport::{HttpTransport, TransportError};
+use context_server::transport::HttpTransport;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
 use futures::future::Either;
@@ -20,15 +20,15 @@ use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
     DisableAiSettings, Project,
-    project_settings::{ContextServerSettings, ProjectSettings},
-    worktree_store::WorktreeStore,
+    project_settings::{ContextServerSettings, OAuthClientSettings, ProjectSettings},
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
 /// Maximum timeout for context server requests
@@ -56,6 +56,11 @@ pub enum ContextServerStatus {
     /// The server returned 401 and OAuth authorization is needed. The UI
     /// should show an "Authenticate" button.
     AuthRequired,
+    /// The server has a pre-registered OAuth client_id, but a client_secret
+    /// is needed and not available in settings or the keychain.
+    ClientSecretRequired {
+        error: Option<Arc<str>>,
+    },
     /// The OAuth browser flow is in progress — the user has been redirected
     /// to the authorization server and we're waiting for the callback.
     Authenticating,
@@ -69,6 +74,11 @@ impl ContextServerStatus {
             ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
             ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
             ContextServerState::AuthRequired { .. } => ContextServerStatus::AuthRequired,
+            ContextServerState::ClientSecretRequired { error, .. } => {
+                ContextServerStatus::ClientSecretRequired {
+                    error: error.clone(),
+                }
+            }
             ContextServerState::Authenticating { .. } => ContextServerStatus::Authenticating,
         }
     }
@@ -83,6 +93,9 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
+        /// Initiates the OAuth flow if the transport shuts down on an
+        /// authentication challenge; cancelled by any state transition.
+        _transport_watch: Task<()>,
     },
     Stopped {
         server: Arc<ContextServer>,
@@ -99,6 +112,14 @@ enum ContextServerState {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
         discovery: Arc<OAuthDiscovery>,
+    },
+    /// A pre-registered client_id is configured but no client_secret was found
+    /// in settings or the keychain.
+    ClientSecretRequired {
+        server: Arc<ContextServer>,
+        configuration: Arc<ContextServerConfiguration>,
+        discovery: Arc<OAuthDiscovery>,
+        error: Option<Arc<str>>,
     },
     /// The OAuth browser flow is in progress. The user has been redirected
     /// to the authorization server and we're waiting for the callback.
@@ -117,6 +138,7 @@ impl ContextServerState {
             | ContextServerState::Stopped { server, .. }
             | ContextServerState::Error { server, .. }
             | ContextServerState::AuthRequired { server, .. }
+            | ContextServerState::ClientSecretRequired { server, .. }
             | ContextServerState::Authenticating { server, .. } => server.clone(),
         }
     }
@@ -128,6 +150,7 @@ impl ContextServerState {
             | ContextServerState::Stopped { configuration, .. }
             | ContextServerState::Error { configuration, .. }
             | ContextServerState::AuthRequired { configuration, .. }
+            | ContextServerState::ClientSecretRequired { configuration, .. }
             | ContextServerState::Authenticating { configuration, .. } => configuration.clone(),
         }
     }
@@ -148,6 +171,7 @@ pub enum ContextServerConfiguration {
         url: url::Url,
         headers: HashMap<String, String>,
         timeout: Option<u64>,
+        oauth: Option<OAuthClientSettings>,
     },
 }
 
@@ -228,12 +252,14 @@ impl ContextServerConfiguration {
                 url,
                 headers: auth,
                 timeout,
+                oauth,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
                 Some(ContextServerConfiguration::Http {
                     url,
                     headers: auth,
                     timeout,
+                    oauth,
                 })
             }
         }
@@ -254,9 +280,15 @@ enum ContextServerStoreState {
     },
 }
 
+#[derive(Clone, PartialEq)]
+struct ContextServerSettingsEntry {
+    worktree_id: Option<WorktreeId>,
+    settings: ContextServerSettings,
+}
+
 pub struct ContextServerStore {
     state: ContextServerStoreState,
-    context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
+    context_server_settings: HashMap<Arc<str>, ContextServerSettingsEntry>,
     servers: HashMap<ContextServerId, ContextServerState>,
     server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
@@ -339,7 +371,7 @@ impl ContextServerStore {
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
         self.context_server_settings
             .iter()
-            .filter(|(_, settings)| settings.enabled())
+            .filter(|(_, entry)| entry.settings.enabled())
             .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
     }
@@ -425,12 +457,11 @@ impl ContextServerStore {
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
 
-            let settings =
-                &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
-            let settings_changed = &this.context_server_settings != settings;
+            let settings = Self::resolve_all_context_server_settings(&this.worktree_store, cx);
+            let settings_changed = this.context_server_settings != settings;
 
             if settings_changed {
-                this.context_server_settings = settings.clone();
+                this.context_server_settings = settings;
             }
 
             // When AI is disabled, stop all running servers
@@ -454,15 +485,23 @@ impl ContextServerStore {
                     this.available_context_servers_changed(cx);
                 }
             }));
+            subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
+                if matches!(
+                    event,
+                    WorktreeStoreEvent::WorktreeAdded(_)
+                        | WorktreeStoreEvent::WorktreeRemoved(_, _)
+                ) && !DisableAiSettings::get_global(cx).disable_ai
+                {
+                    this.available_context_servers_changed(cx);
+                }
+            }));
         }
 
         let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let mut this = Self {
             state,
             _subscriptions: subscriptions,
-            context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
-                .context_servers
-                .clone(),
+            context_server_settings: Self::resolve_all_context_server_settings(&worktree_store, cx),
             worktree_store,
             project: weak_project,
             registry,
@@ -500,6 +539,35 @@ impl ContextServerStore {
         id: &ContextServerId,
     ) -> Option<Arc<ContextServerConfiguration>> {
         self.servers.get(id).map(|state| state.configuration())
+    }
+
+    /// Returns the configured settings for a server, if it is present in the user
+    /// or project settings. This is available regardless of whether the server is
+    /// currently running, unlike [`Self::configuration_for_server`].
+    pub fn settings_for_server(&self, id: &ContextServerId) -> Option<&ContextServerSettings> {
+        self.context_server_settings
+            .get(&id.0)
+            .map(|entry| &entry.settings)
+    }
+
+    /// Returns whether a server is provided by an extension (as opposed to a
+    /// custom Stdio/HTTP server configured directly in settings).
+    ///
+    /// This is derived from the configured settings rather than the runtime
+    /// configuration, so it stays correct even when a custom server is disabled
+    /// or has not been started yet (in which case it has no runtime state).
+    pub fn is_extension_provided(&self, id: &ContextServerId, cx: &App) -> bool {
+        match self.settings_for_server(id) {
+            Some(ContextServerSettings::Stdio { .. } | ContextServerSettings::Http { .. }) => false,
+            Some(ContextServerSettings::Extension { .. }) => true,
+            // No custom settings entry: the server can only originate from an
+            // extension descriptor in the registry.
+            None => self
+                .registry
+                .read(cx)
+                .context_server_descriptor(&id.0)
+                .is_some(),
+        }
     }
 
     /// Returns a sorted slice of available unique context server IDs. Within the
@@ -561,13 +629,13 @@ impl ContextServerStore {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
             let id = server.id();
-            let settings = this
+            let settings_entry = this
                 .update(cx, |this, _| {
                     this.context_server_settings.get(&id.0).cloned()
                 })
                 .context("Failed to get context server settings")?;
 
-            if !settings.enabled() {
+            if !settings_entry.settings.enabled() {
                 return anyhow::Ok(());
             }
 
@@ -575,7 +643,7 @@ impl ContextServerStore {
                 (this.registry.clone(), this.worktree_store.clone())
             });
             let configuration = ContextServerConfiguration::from_settings(
-                settings,
+                settings_entry.settings,
                 id.clone(),
                 registry,
                 worktree_store,
@@ -648,9 +716,12 @@ impl ContextServerStore {
                 let new_state = match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
+                        let _transport_watch =
+                            Self::watch_transport_shutdown(this.clone(), server.clone(), cx);
                         ContextServerState::Running {
                             server,
                             configuration,
+                            _transport_watch,
                         }
                     }
                     Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
@@ -664,6 +735,97 @@ impl ContextServerStore {
 
         self.update_server_state(
             id.clone(),
+            ContextServerState::Starting {
+                configuration,
+                _task: task,
+                server,
+            },
+            cx,
+        );
+    }
+
+    /// Watches a running server's transport and initiates the OAuth flow if it
+    /// shuts down on an authentication challenge.
+    ///
+    /// MCP servers may accept `initialize` unauthenticated and only send a 401
+    /// with a `WWW-Authenticate` challenge on a later request or notification.
+    /// The HTTP transport records the challenge, and the failed send tears
+    /// down the client's output loop. Observing that shutdown — rather than
+    /// relying on some request to carry a typed error back to a caller — is
+    /// what lets any post-initialize 401 move the server into `AuthRequired`
+    /// instead of leaving it `Running` with a dead client.
+    fn watch_transport_shutdown(
+        this: WeakEntity<Self>,
+        server: Arc<ContextServer>,
+        cx: &mut AsyncApp,
+    ) -> Task<()> {
+        let Some(shutdown) = server
+            .client()
+            .and_then(|client| client.wait_for_shutdown())
+        else {
+            return Task::ready(());
+        };
+        cx.spawn(async move |cx| {
+            let Some(www_authenticate) = shutdown.await else {
+                // Non-auth transport deaths leave the server state untouched,
+                // as they did before this watch existed.
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.handle_auth_challenge(server, www_authenticate, cx);
+            })
+            .log_err();
+        })
+    }
+
+    fn handle_auth_challenge(
+        &mut self,
+        server: Arc<ContextServer>,
+        www_authenticate: oauth::WwwAuthenticate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = server.id();
+
+        // Act only if this exact server is still the one we consider running.
+        // If the state has changed since the challenge was recorded, whoever
+        // changed it owns the lifecycle now.
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&id)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+        let configuration = configuration.clone();
+
+        log::info!("{id} received 401 after initialization; initiating OAuth authorization");
+
+        // The 401 already tore down the client's output loop. Stop the dead
+        // client, then resolve auth using the captured `WWW-Authenticate` — do
+        // not restart via `run_server`, as a fresh `initialize` would succeed
+        // and lose the challenge.
+        server.stop().log_err();
+
+        let task = cx.spawn({
+            let id = id.clone();
+            let server = server.clone();
+            let configuration = configuration.clone();
+            async move |this, cx| {
+                let new_state =
+                    resolve_auth_required(&id, &www_authenticate, server, configuration, cx).await;
+                this.update(cx, |this, cx| {
+                    this.update_server_state(id.clone(), new_state, cx)
+                })
+                .log_err();
+            }
+        });
+
+        self.update_server_state(
+            id,
             ContextServerState::Starting {
                 configuration,
                 _task: task,
@@ -768,6 +930,7 @@ impl ContextServerStore {
                     &response.env.into_iter().collect(),
                     root_dir,
                     None,
+                    Interactive::Yes,
                 )
             })?;
 
@@ -823,14 +986,14 @@ impl ContextServerStore {
             };
 
         let server: Arc<ContextServer> = this.update(cx, |this, cx| {
-            let global_timeout =
-                Self::resolve_project_settings(&this.worktree_store, cx).context_server_timeout;
+            let global_timeout = this.timeout_for_server(&id, cx);
 
             match configuration.as_ref() {
                 ContextServerConfiguration::Http {
                     url,
                     headers,
                     timeout,
+                    oauth: _,
                 } => {
                     let transport = HttpTransport::new_with_token_provider(
                         cx.http_client(),
@@ -880,31 +1043,37 @@ impl ContextServerStore {
     ) -> Result<proto::ContextServerCommand> {
         let server_id = ContextServerId(envelope.payload.server_id.into());
 
-        let (settings, registry, worktree_store) = this.update(&mut cx, |this, inner_cx| {
-            let ContextServerStoreState::Local {
-                is_headless: true, ..
-            } = &this.state
-            else {
-                anyhow::bail!("unexpected GetContextServerCommand request in a non-local project");
-            };
+        let (settings_entry, registry, worktree_store) =
+            this.update(&mut cx, |this, inner_cx| {
+                let ContextServerStoreState::Local {
+                    is_headless: true, ..
+                } = &this.state
+                else {
+                    anyhow::bail!(
+                        "unexpected GetContextServerCommand request in a non-local project"
+                    );
+                };
 
-            let settings = this
-                .context_server_settings
-                .get(&server_id.0)
-                .cloned()
-                .or_else(|| {
-                    this.registry
-                        .read(inner_cx)
-                        .context_server_descriptor(&server_id.0)
-                        .map(|_| ContextServerSettings::default_extension())
-                })
-                .with_context(|| format!("context server `{}` not found", server_id))?;
+                let settings = this
+                    .context_server_settings
+                    .get(&server_id.0)
+                    .cloned()
+                    .or_else(|| {
+                        this.registry
+                            .read(inner_cx)
+                            .context_server_descriptor(&server_id.0)
+                            .map(|_| ContextServerSettingsEntry {
+                                worktree_id: None,
+                                settings: ContextServerSettings::default_extension(),
+                            })
+                    })
+                    .with_context(|| format!("context server `{}` not found", server_id))?;
 
-            anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
-        })?;
+                anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
+            })?;
 
         let configuration = ContextServerConfiguration::from_settings(
-            settings,
+            settings_entry.settings,
             server_id.clone(),
             registry,
             worktree_store,
@@ -928,19 +1097,29 @@ impl ContextServerStore {
         })
     }
 
-    fn resolve_project_settings<'a>(
-        worktree_store: &'a Entity<WorktreeStore>,
-        cx: &'a App,
-    ) -> &'a ProjectSettings {
-        let location = worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| settings::SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
+    /// Merges context server settings from all visible worktrees so that servers defined
+    /// in any project folder in a multi-root workspace are picked up.
+    fn resolve_all_context_server_settings(
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &App,
+    ) -> HashMap<Arc<str>, ContextServerSettingsEntry> {
+        let mut merged = HashMap::default();
+        for worktree in worktree_store.read(cx).visible_worktrees(cx) {
+            let worktree_id = worktree.read(cx).id();
+            let location = settings::SettingsLocation {
+                worktree_id,
                 path: RelPath::empty(),
-            });
-        ProjectSettings::get(location, cx)
+            };
+            for (id, settings) in &ProjectSettings::get(Some(location), cx).context_servers {
+                merged
+                    .entry(id.clone())
+                    .or_insert_with(|| ContextServerSettingsEntry {
+                        worktree_id: Some(worktree_id),
+                        settings: settings.clone(),
+                    });
+            }
+        }
+        merged
     }
 
     fn create_oauth_token_provider(
@@ -975,6 +1154,23 @@ impl ContextServerStore {
         ))
     }
 
+    fn timeout_for_server(&self, id: &ContextServerId, cx: &App) -> u64 {
+        let worktree_id = self
+            .context_server_settings
+            .get(&id.0)
+            .as_ref()
+            .and_then(|entry| entry.worktree_id);
+
+        ProjectSettings::get(
+            worktree_id.map(|id| SettingsLocation {
+                worktree_id: id,
+                path: &RelPath::empty(),
+            }),
+            cx,
+        )
+        .context_server_timeout
+    }
+
     /// Initiate the OAuth browser flow for a server in the `AuthRequired` state.
     ///
     /// This starts a loopback HTTP callback server on an ephemeral port, builds
@@ -987,6 +1183,7 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let state = self.servers.get(id).context("Context server not found")?;
+        let global_timeout = self.timeout_for_server(id, cx);
 
         let (discovery, server, configuration) = match state {
             ContextServerState::AuthRequired {
@@ -997,6 +1194,15 @@ impl ContextServerStore {
             _ => anyhow::bail!("Server is not in AuthRequired state"),
         };
 
+        let needs_keychain_check = match configuration.as_ref() {
+            ContextServerConfiguration::Http {
+                url,
+                oauth: Some(oauth_settings),
+                ..
+            } if oauth_settings.client_secret.is_none() => Some(url.clone()),
+            _ => None,
+        };
+
         let id = id.clone();
 
         let task = cx.spawn({
@@ -1004,26 +1210,52 @@ impl ContextServerStore {
             let server = server.clone();
             let configuration = configuration.clone();
             async move |this, cx| {
+                if let Some(server_url) = needs_keychain_check {
+                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+                    let has_keychain_secret =
+                        Self::load_client_secret(&credentials_provider, &server_url, cx)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some();
+
+                    if !has_keychain_secret {
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::ClientSecretRequired {
+                                    server,
+                                    configuration,
+                                    discovery,
+                                    error: None,
+                                },
+                                cx,
+                            );
+                        })
+                        .log_err();
+                        return;
+                    }
+                }
+
                 let result = Self::run_oauth_flow(
                     this.clone(),
                     id.clone(),
                     discovery.clone(),
                     configuration.clone(),
+                    global_timeout,
                     cx,
                 )
                 .await;
 
                 if let Err(err) = &result {
                     log::error!("{} OAuth authentication failed: {:?}", id, err);
-                    // Transition back to AuthRequired so the user can retry
-                    // rather than landing in a terminal Error state.
                     this.update(cx, |this, cx| {
                         this.update_server_state(
                             id.clone(),
-                            ContextServerState::AuthRequired {
+                            ContextServerState::Error {
                                 server,
                                 configuration,
-                                discovery,
+                                error: format!("{err:#}").into(),
                             },
                             cx,
                         )
@@ -1046,11 +1278,129 @@ impl ContextServerStore {
         Ok(())
     }
 
+    /// Store the client secret and proceed with authentication.
+    pub fn submit_client_secret(
+        &mut self,
+        id: &ContextServerId,
+        secret: String,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let state = self.servers.get(id).context("Context server not found")?;
+        let global_timeout = self.timeout_for_server(id, cx);
+
+        let (server, configuration, discovery) = match state {
+            ContextServerState::ClientSecretRequired {
+                server,
+                configuration,
+                discovery,
+                ..
+            } => (server.clone(), configuration.clone(), discovery.clone()),
+            _ => anyhow::bail!("Server is not in ClientSecretRequired state"),
+        };
+
+        let server_url = match configuration.as_ref() {
+            ContextServerConfiguration::Http { url, .. } => url.clone(),
+            _ => anyhow::bail!("OAuth only supported for HTTP servers"),
+        };
+
+        let id = id.clone();
+
+        let task = cx.spawn({
+            let id = id.clone();
+            let server = server.clone();
+            let configuration = configuration.clone();
+            async move |this, cx| {
+                // Store the secret if non-empty (empty means public client / skip).
+                if !secret.is_empty() {
+                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+                    if let Err(err) =
+                        Self::store_client_secret(&credentials_provider, &server_url, &secret, cx)
+                            .await
+                    {
+                        log::error!(
+                            "{} failed to store client secret in keychain: {:?}",
+                            id,
+                            err
+                        );
+                    }
+                }
+
+                let result = Self::run_oauth_flow(
+                    this.clone(),
+                    id.clone(),
+                    discovery.clone(),
+                    configuration.clone(),
+                    global_timeout,
+                    cx,
+                )
+                .await;
+
+                if let Err(err) = &result {
+                    log::error!("{} OAuth authentication failed: {:?}", id, err);
+
+                    let is_bad_client_credentials = err
+                        .downcast_ref::<oauth::OAuthTokenError>()
+                        .is_some_and(|e| e.error == "unauthorized_client");
+
+                    if is_bad_client_credentials {
+                        // Clear the bad secret from the keychain so the user
+                        // gets a fresh prompt.
+                        let credentials_provider =
+                            cx.update(|cx| zed_credentials_provider::global(cx));
+                        Self::clear_client_secret(&credentials_provider, &server_url, cx)
+                            .await
+                            .log_err();
+
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::ClientSecretRequired {
+                                    server,
+                                    configuration,
+                                    discovery,
+                                    error: Some(format!("{err:#}").into()),
+                                },
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    } else {
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::Error {
+                                    server,
+                                    configuration,
+                                    error: format!("{err:#}").into(),
+                                },
+                                cx,
+                            )
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        });
+
+        self.update_server_state(
+            id,
+            ContextServerState::Authenticating {
+                server,
+                configuration,
+                _task: task,
+            },
+            cx,
+        );
+
+        Ok(())
+    }
+
     async fn run_oauth_flow(
         this: WeakEntity<Self>,
         id: ContextServerId,
         discovery: Arc<OAuthDiscovery>,
         configuration: Arc<ContextServerConfiguration>,
+        global_timeout: u64,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let resource = oauth::canonical_server_uri(&discovery.resource_metadata.resource);
@@ -1063,9 +1413,8 @@ impl ContextServerStore {
         // Start a loopback HTTP server on an ephemeral port. The redirect URI
         // includes this port so the browser sends the callback directly to our
         // process.
-        let (redirect_uri, callback_rx) = oauth::start_callback_server()
-            .await
-            .context("Failed to start OAuth callback server")?;
+        let (redirect_uri, callback_rx) =
+            oauth::start_callback_server().context("Failed to start OAuth callback server")?;
 
         let http_client = cx.update(|cx| cx.http_client());
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
@@ -1074,10 +1423,30 @@ impl ContextServerStore {
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         };
 
-        let client_registration =
-            oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri)
+        let client_registration = match configuration.as_ref() {
+            ContextServerConfiguration::Http {
+                url,
+                oauth: Some(oauth_settings),
+                ..
+            } => {
+                // Pre-registered client. Resolve the secret from settings, then keychain.
+                let client_secret = if oauth_settings.client_secret.is_some() {
+                    oauth_settings.client_secret.clone()
+                } else {
+                    Self::load_client_secret(&credentials_provider, url, cx)
+                        .await
+                        .ok()
+                        .flatten()
+                };
+                oauth::OAuthClientRegistration {
+                    client_id: oauth_settings.client_id.clone(),
+                    client_secret,
+                }
+            }
+            _ => oauth::resolve_client_registration(&http_client, &discovery, &redirect_uri)
                 .await
-                .context("Failed to resolve OAuth client registration")?;
+                .context("Failed to resolve OAuth client registration")?,
+        };
 
         let auth_url = oauth::build_authorization_url(
             &discovery.auth_server_metadata,
@@ -1093,9 +1462,6 @@ impl ContextServerStore {
 
         let callback = callback_rx
             .await
-            .map_err(|_| {
-                anyhow::anyhow!("OAuth callback server was shut down before receiving a response")
-            })?
             .context("OAuth callback server received an invalid request")?;
 
         if callback.state != state_param {
@@ -1110,6 +1476,7 @@ impl ContextServerStore {
             &redirect_uri,
             &pkce.verifier,
             &resource,
+            client_registration.client_secret.as_deref(),
         )
         .await
         .context("Failed to exchange authorization code for tokens")?;
@@ -1134,33 +1501,29 @@ impl ContextServerStore {
             cx,
         );
 
-        let new_server = this.update(cx, |this, cx| {
-            let global_timeout =
-                Self::resolve_project_settings(&this.worktree_store, cx).context_server_timeout;
-
-            match configuration.as_ref() {
-                ContextServerConfiguration::Http {
-                    url,
-                    headers,
-                    timeout,
-                } => {
-                    let transport = HttpTransport::new_with_token_provider(
-                        http_client.clone(),
-                        url.to_string(),
-                        headers.clone(),
-                        cx.background_executor().clone(),
-                        Some(token_provider.clone()),
-                    );
-                    Ok(Arc::new(ContextServer::new_with_timeout(
-                        id.clone(),
-                        Arc::new(transport),
-                        Some(Duration::from_secs(
-                            timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
-                        )),
-                    )))
-                }
-                _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
+        let new_server = this.update(cx, |_this, cx| match configuration.as_ref() {
+            ContextServerConfiguration::Http {
+                url,
+                headers,
+                timeout,
+                oauth: _,
+            } => {
+                let transport = HttpTransport::new_with_token_provider(
+                    http_client.clone(),
+                    url.to_string(),
+                    headers.clone(),
+                    cx.background_executor().clone(),
+                    Some(token_provider.clone()),
+                );
+                Ok(Arc::new(ContextServer::new_with_timeout(
+                    id.clone(),
+                    Arc::new(transport),
+                    Some(Duration::from_secs(
+                        timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_SECS),
+                    )),
+                )))
             }
+            _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
         })??;
 
         this.update(cx, |this, cx| {
@@ -1216,6 +1579,46 @@ impl ContextServerStore {
         format!("mcp-oauth:{}", oauth::canonical_server_uri(server_url))
     }
 
+    fn client_secret_keychain_key(server_url: &url::Url) -> String {
+        format!(
+            "mcp-oauth-client-secret:{}",
+            oauth::canonical_server_uri(server_url)
+        )
+    }
+
+    async fn load_client_secret(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        cx: &AsyncApp,
+    ) -> Result<Option<String>> {
+        let key = Self::client_secret_keychain_key(server_url);
+        match credentials_provider.read_credentials(&key, cx).await? {
+            Some((_username, secret_bytes)) => Ok(Some(String::from_utf8(secret_bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn store_client_secret(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        secret: &str,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let key = Self::client_secret_keychain_key(server_url);
+        credentials_provider
+            .write_credentials(&key, "mcp-oauth-client-secret", secret.as_bytes(), cx)
+            .await
+    }
+
+    async fn clear_client_secret(
+        credentials_provider: &Arc<dyn CredentialsProvider>,
+        server_url: &url::Url,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let key = Self::client_secret_keychain_key(server_url);
+        credentials_provider.delete_credentials(&key, cx).await
+    }
+
     /// Log out of an OAuth-authenticated MCP server: clear the stored OAuth
     /// session from the keychain and stop the server.
     pub fn logout_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
@@ -1235,6 +1638,11 @@ impl ContextServerStore {
             if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
+            // Also clear any client secret so the user gets a fresh prompt on
+            // the next authentication attempt.
+            Self::clear_client_secret(&credentials_provider, &server_url, &cx)
+                .await
+                .log_err();
             // Trigger server recreation so the next start uses a fresh
             // transport without the old (now-invalidated) token provider.
             this.update(cx, |this, cx| {
@@ -1310,29 +1718,33 @@ impl ContextServerStore {
         for (id, _) in registry.read_with(cx, |registry, _| registry.context_server_descriptors()) {
             configured_servers
                 .entry(id)
-                .or_insert(ContextServerSettings::default_extension());
+                .or_insert(ContextServerSettingsEntry {
+                    worktree_id: None,
+                    settings: ContextServerSettings::default_extension(),
+                });
         }
 
         let (enabled_servers, disabled_servers): (HashMap<_, _>, HashMap<_, _>) =
             configured_servers
                 .into_iter()
-                .partition(|(_, settings)| settings.enabled());
+                .partition(|(_, entry)| entry.settings.enabled());
 
-        let configured_servers = join_all(enabled_servers.into_iter().map(|(id, settings)| {
-            let id = ContextServerId(id);
-            ContextServerConfiguration::from_settings(
-                settings,
-                id.clone(),
-                registry.clone(),
-                worktree_store.clone(),
-                cx,
-            )
-            .map(move |config| (id, config))
-        }))
-        .await
-        .into_iter()
-        .filter_map(|(id, config)| config.map(|config| (id, config)))
-        .collect::<HashMap<_, _>>();
+        let configured_servers =
+            join_all(enabled_servers.into_iter().map(|(id, settings_entry)| {
+                let id = ContextServerId(id);
+                ContextServerConfiguration::from_settings(
+                    settings_entry.settings,
+                    id.clone(),
+                    registry.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+                .map(move |config| (id, config))
+            }))
+            .await
+            .into_iter()
+            .filter_map(|(id, config)| config.map(|config| (id, config)))
+            .collect::<HashMap<_, _>>();
 
         let mut servers_to_start = Vec::new();
         let mut servers_to_remove = HashSet::default();
@@ -1412,43 +1824,34 @@ async fn resolve_start_failure(
     configuration: Arc<ContextServerConfiguration>,
     cx: &AsyncApp,
 ) -> ContextServerState {
-    let www_authenticate = err.downcast_ref::<TransportError>().map(|e| match e {
-        TransportError::AuthRequired { www_authenticate } => www_authenticate.clone(),
-    });
-
-    if www_authenticate.is_some() && configuration.has_static_auth_header() {
-        log::warn!("{id} received 401 with a static Authorization header configured");
-        return ContextServerState::Error {
-            configuration,
-            server,
-            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
-                .into(),
-        };
-    }
-
-    let server_url = match configuration.as_ref() {
-        ContextServerConfiguration::Http { url, .. } if !configuration.has_static_auth_header() => {
-            url.clone()
-        }
-        _ => {
-            if www_authenticate.is_some() {
-                log::error!("{id} got OAuth 401 on a non-HTTP transport or with static auth");
-            } else {
-                log::error!("{id} context server failed to start: {err}");
-            }
-            return ContextServerState::Error {
-                configuration,
-                server,
-                error: err.to_string().into(),
-            };
-        }
-    };
+    // Read the challenge from the transport rather than downcasting `err`: it
+    // is recorded before the failed send's error propagates, so a 401 is
+    // recognized even when another error (e.g. the request timeout) wins the
+    // race to become the reported startup failure.
+    let www_authenticate = server.auth_challenge();
 
     // When the error is NOT a 401 but there is a cached OAuth session in the
     // keychain, the session is likely stale/expired and caused the failure
     // (e.g. timeout because the server rejected the token silently). Clear it
     // so the next start attempt can get a clean 401 and trigger the auth flow.
+    // If there is no such session this is an ordinary startup error.
     if www_authenticate.is_none() {
+        let server_url = match configuration.as_ref() {
+            ContextServerConfiguration::Http { url, .. }
+                if !configuration.has_static_auth_header() =>
+            {
+                url.clone()
+            }
+            _ => {
+                log::error!("{id} context server failed to start: {err}");
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: err.to_string().into(),
+                };
+            }
+        };
+
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
         match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
             Ok(Some(_)) => {
@@ -1477,10 +1880,78 @@ async fn resolve_start_failure(
     let www_authenticate = www_authenticate
         .as_ref()
         .unwrap_or(&default_www_authenticate);
+
+    resolve_auth_required(id, www_authenticate, server, configuration, cx).await
+}
+
+/// Runs OAuth discovery for a server that returned a 401 and produces the
+/// appropriate state (`AuthRequired`, `ClientSecretRequired`, or `Error`).
+///
+/// Shared by the startup path ([`resolve_start_failure`]) and the
+/// post-initialize path ([`ContextServerStore::handle_auth_challenge`]) so
+/// that a 401 at any point — not only during `initialize` — can initiate the
+/// OAuth flow.
+async fn resolve_auth_required(
+    id: &ContextServerId,
+    www_authenticate: &oauth::WwwAuthenticate,
+    server: Arc<ContextServer>,
+    configuration: Arc<ContextServerConfiguration>,
+    cx: &AsyncApp,
+) -> ContextServerState {
+    if configuration.has_static_auth_header() {
+        log::warn!("{id} received 401 with a static Authorization header configured");
+        return ContextServerState::Error {
+            configuration,
+            server,
+            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
+                .into(),
+        };
+    }
+
+    let server_url = match configuration.as_ref() {
+        ContextServerConfiguration::Http { url, .. } => url.clone(),
+        _ => {
+            log::error!("{id} got OAuth 401 on a non-HTTP transport");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error: "Server returned 401 Unauthorized on a non-HTTP transport".into(),
+            };
+        }
+    };
+
     let http_client = cx.update(|cx| cx.http_client());
 
     match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
         Ok(discovery) => {
+            use context_server::oauth::{
+                ClientRegistrationStrategy, determine_registration_strategy,
+            };
+
+            let has_preregistered_client_id = matches!(
+                configuration.as_ref(),
+                ContextServerConfiguration::Http { oauth: Some(_), .. }
+            );
+
+            let strategy = determine_registration_strategy(&discovery.auth_server_metadata);
+
+            if matches!(strategy, ClientRegistrationStrategy::Unavailable)
+                && !has_preregistered_client_id
+            {
+                log::error!(
+                    "{id} authorization server supports neither CIMD nor DCR, \
+                     and no pre-registered client_id is configured"
+                );
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: "Authorization server supports neither CIMD nor DCR. \
+                            Configure a pre-registered client_id in your settings \
+                            under the \"oauth\" key."
+                        .into(),
+                };
+            }
+
             log::info!(
                 "{id} requires OAuth authorization (auth server: {})",
                 discovery.auth_server_metadata.issuer,

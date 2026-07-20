@@ -11,12 +11,15 @@ workspace = true
 [lib]
 path = "src/edit_prediction_metrics.rs"
 
+[features]
+tree-sitter = ["dep:tree-sitter"]
+
 [dependencies]
 imara-diff.workspace = true
 serde.workspace = true
 serde_json = "1.0"
 similar = "2.7.0"
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, optional = true }
 zeta_prompt.workspace = true
 
 [dev-dependencies]

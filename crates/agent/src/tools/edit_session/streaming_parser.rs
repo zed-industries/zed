@@ -113,7 +113,7 @@ impl StreamingParser {
             {
                 if partial.new_text.is_some() && !state.buffer_new_text_until_old_text_done {
                     // new_text appeared after old_text, so old_text is done — emit everything.
-                    let start = state.old_text_emitted_len.min(old_text.len());
+                    let start = find_char_boundary(old_text, state.old_text_emitted_len);
                     let chunk = normalize_done_chunk(old_text[start..].to_string());
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
@@ -124,9 +124,10 @@ impl StreamingParser {
                     });
                 } else {
                     let safe_end = safe_emit_end_for_edit_text(old_text);
+                    let safe_start = find_char_boundary(old_text, state.old_text_emitted_len);
 
-                    if safe_end > state.old_text_emitted_len {
-                        let chunk = old_text[state.old_text_emitted_len..safe_end].to_string();
+                    if safe_end > safe_start {
+                        let chunk = old_text[safe_start..safe_end].to_string();
                         state.old_text_emitted_len = safe_end;
                         events.push(EditEvent::OldTextChunk {
                             edit_index: index,
@@ -143,9 +144,10 @@ impl StreamingParser {
                 && !state.new_text_done
             {
                 let safe_end = safe_emit_end_for_edit_text(new_text);
+                let safe_start = find_char_boundary(new_text, state.new_text_emitted_len);
 
-                if safe_end > state.new_text_emitted_len {
-                    let chunk = new_text[state.new_text_emitted_len..safe_end].to_string();
+                if safe_end > safe_start {
+                    let chunk = new_text[safe_start..safe_end].to_string();
                     state.new_text_emitted_len = safe_end;
                     events.push(EditEvent::NewTextChunk {
                         edit_index: index,
@@ -167,8 +169,9 @@ impl StreamingParser {
         let mut events = SmallVec::new();
 
         let safe_end = safe_emit_end(content);
-        if safe_end > self.content_emitted_len {
-            let chunk = content[self.content_emitted_len..safe_end].to_string();
+        let safe_start = find_char_boundary(content, self.content_emitted_len);
+        if safe_end > safe_start {
+            let chunk = content[safe_start..safe_end].to_string();
             self.content_emitted_len = safe_end;
             events.push(WriteEvent::ContentChunk { chunk });
         }
@@ -226,7 +229,7 @@ impl StreamingParser {
             }
 
             if !state.old_text_done {
-                let start = state.old_text_emitted_len.min(edit.old_text.len());
+                let start = find_char_boundary(&edit.old_text, state.old_text_emitted_len);
                 let chunk = normalize_done_chunk(edit.old_text[start..].to_string());
                 state.old_text_done = true;
                 state.old_text_emitted_len = edit.old_text.len();
@@ -238,7 +241,7 @@ impl StreamingParser {
             }
 
             if !state.new_text_done {
-                let start = state.new_text_emitted_len.min(edit.new_text.len());
+                let start = find_char_boundary(&edit.new_text, state.new_text_emitted_len);
                 let chunk = normalize_done_chunk(edit.new_text[start..].to_string());
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
@@ -257,7 +260,7 @@ impl StreamingParser {
     pub fn finalize_content(&mut self, content: &str) -> SmallVec<[WriteEvent; 1]> {
         let mut events = SmallVec::new();
 
-        let start = self.content_emitted_len.min(content.len());
+        let start = find_char_boundary(content, self.content_emitted_len);
         if content.len() > start {
             let chunk = content[start..].to_string();
             self.content_emitted_len = content.len();
@@ -311,7 +314,7 @@ impl StreamingParser {
 
         if !state.old_text_done {
             let old_text = old_text.unwrap_or_default();
-            let start = state.old_text_emitted_len.min(old_text.len());
+            let start = find_char_boundary(old_text, state.old_text_emitted_len);
             state.old_text_done = true;
             state.old_text_emitted_len = old_text.len();
             events.push(EditEvent::OldTextChunk {
@@ -323,7 +326,7 @@ impl StreamingParser {
 
         if !state.new_text_done {
             let new_text = new_text.unwrap_or_default();
-            let start = state.new_text_emitted_len.min(new_text.len());
+            let start = find_char_boundary(new_text, state.new_text_emitted_len);
             state.new_text_done = true;
             state.new_text_emitted_len = new_text.len();
             state.buffer_new_text_until_old_text_done = false;
@@ -343,8 +346,10 @@ impl StreamingParser {
 /// held back because it may be an artifact of the partial JSON fixer closing
 /// an incomplete escape sequence (e.g. turning a half-received `\n` into `\\`).
 /// The next partial will reveal the correct character.
+///
+/// The returned position is always a valid UTF-8 character boundary.
 fn safe_emit_end(text: &str) -> usize {
-    if text.as_bytes().last() == Some(&b'\\') {
+    if text.ends_with('\\') {
         text.len() - 1
     } else {
         text.len()
@@ -353,11 +358,33 @@ fn safe_emit_end(text: &str) -> usize {
 
 fn safe_emit_end_for_edit_text(text: &str) -> usize {
     let safe_end = safe_emit_end(text);
-    if safe_end > 0 && text.as_bytes()[safe_end - 1] == b'\n' {
+    // Use string slicing to check the last character, ensuring we respect UTF-8 boundaries.
+    if safe_end > 0 && text[..safe_end].ends_with('\n') {
         safe_end - 1
     } else {
         safe_end
     }
+}
+
+/// Finds a valid UTF-8 character boundary at or before the target position.
+///
+/// When streaming partial JSON, the text structure can change between updates
+/// (e.g., an escape sequence being completed). This means a byte position that
+/// was valid in one partial may land inside a multi-byte character in the next.
+/// This function finds the nearest valid boundary at or before the target.
+fn find_char_boundary(text: &str, target: usize) -> usize {
+    if target >= text.len() {
+        return text.len();
+    }
+    if text.is_char_boundary(target) {
+        return target;
+    }
+    // Walk backwards to find a valid boundary.
+    let mut pos = target;
+    while pos > 0 && !text.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
 }
 
 fn normalize_done_chunk(mut chunk: String) -> String {
@@ -370,6 +397,44 @@ fn normalize_done_chunk(mut chunk: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn emitted_len_inside_multibyte_char() -> impl Strategy<Value = (String, String)> {
+        (1usize..8, prop::sample::select(&["。", "—", "é", "🦀"])).prop_map(
+            |(emitted_len, multibyte_char)| {
+                let first = "a".repeat(emitted_len);
+                let second = format!("{}{}", "a".repeat(emitted_len - 1), multibyte_char);
+                (first, second)
+            },
+        )
+    }
+
+    fn boundary_sensitive_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            emitted_len_inside_multibyte_char().prop_map(|(first, _)| first),
+            emitted_len_inside_multibyte_char().prop_map(|(_, second)| second),
+            prop::sample::select(&[
+                "",
+                "a",
+                "ab",
+                "ab\\",
+                "a。",
+                "a—",
+                "hello,\\",
+                "hello,\n",
+                "hello,\nworld",
+            ])
+            .prop_map(ToString::to_string),
+        ]
+    }
+
+    fn partial_edit() -> impl Strategy<Value = PartialEdit> {
+        (
+            prop::option::of(boundary_sensitive_text()),
+            prop::option::of(boundary_sensitive_text()),
+        )
+            .prop_map(|(old_text, new_text)| PartialEdit { old_text, new_text })
+    }
 
     #[test]
     fn test_first_edit_with_new_text_in_first_chunk_is_held_until_finalize() {
@@ -733,6 +798,30 @@ mod tests {
             events.as_slice(),
             &[WriteEvent::ContentChunk { chunk: "\n".into() }]
         );
+    }
+
+    proptest! {
+        #[test]
+        fn test_content_finalize_does_not_panic_when_emitted_len_lands_inside_multibyte_char(
+            pair in emitted_len_inside_multibyte_char()
+        ) {
+            let (first, second) = pair;
+            let mut parser = StreamingParser::default();
+
+            parser.push_content(&first);
+            parser.finalize_content(&second);
+        }
+
+        #[test]
+        fn test_push_edits_does_not_panic_on_boundary_sensitive_sequences(
+            partials in prop::collection::vec(prop::collection::vec(partial_edit(), 0..4), 1..12)
+        ) {
+            let mut parser = StreamingParser::default();
+
+            for edits in partials {
+                parser.push_edits(&edits);
+            }
+        }
     }
 
     #[test]
@@ -1145,5 +1234,78 @@ mod tests {
                 done: false,
             }]
         );
+    }
+
+    #[test]
+    fn test_multibyte_char_with_trailing_backslash() {
+        // Reproduces a panic where the stored `old_text_emitted_len` from a previous
+        // partial lands inside a multi-byte UTF-8 character in the current partial.
+        //
+        // Scenario: The JSON fixer produces a literal backslash when the stream cuts
+        // mid-escape. If the *next* partial replaces that backslash with a multi-byte
+        // character (e.g., em-dash '—'), the stored byte position is no longer valid.
+        let mut parser = StreamingParser::default();
+
+        // First partial: text ends with backslash (held back by safe_emit_end).
+        // "abc" = 3 bytes, backslash held back, so emitted_len = 3.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("abc\\".into()),
+            new_text: None,
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "abc".into(),
+                done: false,
+            }]
+        );
+
+        // Second partial: the backslash is replaced by em-dash '—' (3 bytes: E2 80 94).
+        // "ab—" = 2 + 3 = 5 bytes total, with em-dash at bytes 2..5.
+        // The stored emitted_len (3) is inside the em-dash!
+        // This should NOT panic.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ab—".into()),
+            new_text: None,
+        }]);
+        // The parser should handle this gracefully.
+        let _ = events;
+    }
+
+    #[test]
+    fn test_emitted_len_inside_multibyte_char_boundary() {
+        // More direct reproduction: emitted_len points inside a multi-byte character.
+        //
+        // This can happen when:
+        // 1. First partial has text where byte N is a valid boundary
+        // 2. Second partial has *different* text where byte N is inside a multi-byte char
+        let mut parser = StreamingParser::default();
+
+        // First partial: "ab" (2 bytes), backslash held back.
+        // After processing: emitted_len = 2
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ab\\".into()),
+            new_text: None,
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "ab".into(),
+                done: false,
+            }]
+        );
+
+        // Second partial: "a—" where em-dash starts at byte 1 and spans bytes 1-3.
+        // Stored emitted_len = 2, but byte 2 is inside the em-dash!
+        // This should NOT panic.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("a—".into()),
+            new_text: None,
+        }]);
+        // The parser should handle this gracefully.
+        // We don't care exactly what it emits, just that it doesn't panic.
+        let _ = events;
     }
 }

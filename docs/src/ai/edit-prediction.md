@@ -1,14 +1,18 @@
 ---
 title: AI Code Completion in Zed - Zeta, Copilot, Codestral, Mercury Coder
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions as you type.
 ---
 
 # Edit Prediction
 
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
-Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
+As you type, Zed requests predictions from the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
 The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
+
+For privacy and training data details, see
+[AI Privacy](./privacy-and-security.md) and
+[Feedback and Training Data](./ai-improvement.md#edit-predictions).
 
 ## Configuring Zeta
 
@@ -31,13 +35,13 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/plans-and-usage.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
 Edit Prediction has two display modes:
 
-1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
+1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
 Toggle between them via the `mode` key:
@@ -56,7 +60,7 @@ Or directly via the UI through the status bar menu:
 
 ## Default Key Bindings
 
-On macOS and Windows, you can accept edit predictions with `alt-tab`. On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is the default key binding for edit predictions.
+On all platforms, you can accept edit predictions with `alt-tab`. On Linux and Windows, `alt-tab` is often used by the system for switching windows, so `alt-l` is also bound as a default key binding for edit predictions on those platforms.
 
 In `eager` mode, you can also use the `tab` key to accept edit predictions, unless the completion menu is open, in which case `tab` accepts LSP completions. To use `tab` to insert whitespace, you need to dismiss the prediction with {#kb editor::Cancel} before hitting `tab`.
 
@@ -105,13 +109,13 @@ Alternatively, you can put the following in your `keymap.json`:
 ]
 ```
 
-After that, `alt-tab` remains available for accepting edit predictions, and on Linux `alt-l` does too unless you unbind it.
+After that, `alt-tab` remains available for accepting edit predictions, and on Linux and Windows `alt-l` does too unless you unbind it.
 
 ### Keybinding Example: Rebind Both Tab and Alt-Tab
 
 To move both default accept bindings to something else, unbind them and add your replacement:
 
-Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it. Then right click on the binding for `alt-tab`, select "Edit", and record your desired keystrokes before hitting saving.
+Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it. Then right click on the binding for `alt-tab`, select "Edit", and record your desired keystrokes before saving.
 
 Alternatively, you can put the following in your `keymap.json`:
 

@@ -1,16 +1,23 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
-use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
+use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<ResponseIncludable>,
     #[serde(default)]
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,6 +36,28 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Vec<ContextManagement>>,
+}
+
+/// Server-side context management configuration.
+///
+/// <https://developers.openai.com/api/docs/guides/compaction>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextManagement {
+    Compaction { compact_threshold: u64 },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseIncludable {
+    #[serde(rename = "reasoning.encrypted_content")]
+    ReasoningEncryptedContent,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,12 +66,25 @@ pub enum ResponseInputItem {
     Message(ResponseMessageItem),
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
+    CustomToolCall(ResponseCustomToolCallItem),
+    CustomToolCallOutput(ResponseCustomToolCallOutputItem),
+    Reasoning(ResponseReasoningInputItem),
+    Compaction(ResponseCompactionItem),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseCompactionItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Arc<str>>,
+    pub encrypted_content: Arc<str>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseMessageItem {
     pub role: Role,
     pub content: Vec<ResponseInputContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +98,41 @@ pub struct ResponseFunctionCallItem {
 pub struct ResponseFunctionCallOutputItem {
     pub call_id: String,
     pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseCustomToolCallItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub call_id: String,
+    pub name: String,
+    pub input: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseCustomToolCallOutputItem {
+    pub call_id: String,
+    pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseReasoningInputItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ResponseReasoningSummaryPart>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseReasoningSummaryPart {
+    SummaryText { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -97,7 +174,7 @@ pub enum ReasoningSummaryMode {
     Detailed,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     Function {
@@ -109,11 +186,76 @@ pub enum ToolDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         strict: Option<bool>,
     },
+    Custom {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        format: Option<CustomToolFormat>,
+    },
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Error {
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomToolFormat {
+    Text,
+    Grammar {
+        syntax: CustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomToolGrammarSyntax {
+    Lark,
+    Regex,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ResponseError {
+    #[serde(default)]
+    pub code: Option<String>,
     pub message: String,
+    #[serde(default)]
+    pub param: Option<Value>,
+}
+
+/// Payload of the top-level `error` SSE event from the Responses API.
+///
+/// OpenAI's spec documents the error fields as being at the top level of the
+/// event, but in practice the API often nests them under an `error` object.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct GenericStreamErrorPayload {
+    #[serde(flatten)]
+    top_level: PartialResponseError,
+    #[serde(default)]
+    error: Option<PartialResponseError>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+struct PartialResponseError {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    param: Option<Value>,
+}
+
+impl GenericStreamErrorPayload {
+    pub fn into_response_error(self) -> ResponseError {
+        let nested = self.error.unwrap_or_default();
+        ResponseError {
+            code: self.top_level.code.or(nested.code),
+            message: self
+                .top_level
+                .message
+                .or(nested.message)
+                .unwrap_or_default(),
+            param: self.top_level.param.or(nested.param),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -167,6 +309,24 @@ pub enum StreamEvent {
         content_index: Option<usize>,
         text: String,
     },
+    #[serde(rename = "response.refusal.delta")]
+    RefusalDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.refusal.done")]
+    RefusalDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        refusal: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
     #[serde(rename = "response.reasoning_summary_part.added")]
     ReasoningSummaryPartAdded {
         item_id: String,
@@ -191,6 +351,23 @@ pub enum StreamEvent {
         output_index: usize,
         summary_index: usize,
     },
+    #[serde(rename = "response.reasoning.delta")]
+    ReasoningDelta {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning.done")]
+    ReasoningDone {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         item_id: String,
@@ -207,6 +384,22 @@ pub enum StreamEvent {
         #[serde(default)]
         sequence_number: Option<u64>,
     },
+    #[serde(rename = "response.custom_tool_call_input.delta")]
+    CustomToolCallInputDelta {
+        item_id: String,
+        output_index: usize,
+        delta: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.custom_tool_call_input.done")]
+    CustomToolCallInputDone {
+        item_id: String,
+        output_index: usize,
+        input: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
     #[serde(rename = "response.completed")]
     Completed { response: ResponseSummary },
     #[serde(rename = "response.incomplete")]
@@ -214,66 +407,94 @@ pub enum StreamEvent {
     #[serde(rename = "response.failed")]
     Failed { response: ResponseSummary },
     #[serde(rename = "response.error")]
-    Error { error: Error },
+    Error { error: ResponseError },
     #[serde(rename = "error")]
-    GenericError { error: Error },
+    GenericError {
+        #[serde(flatten)]
+        error: GenericStreamErrorPayload,
+    },
     #[serde(other)]
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseSummary {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
-    pub status_details: Option<ResponseStatusDetails>,
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
+    #[serde(default)]
+    pub error: Option<ResponseError>,
     #[serde(default)]
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
+    #[serde(default)]
+    pub service_tier: Option<crate::ServiceTier>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
-pub struct ResponseStatusDetails {
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct ResponseIncompleteDetails {
     #[serde(default)]
     pub reason: Option<String>,
-    #[serde(default)]
-    pub r#type: Option<String>,
-    #[serde(default)]
-    pub error: Option<Value>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ResponseUsage {
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
+    pub input_tokens_details: ResponseInputTokensDetails,
+    #[serde(default)]
     pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens_details: ResponseOutputTokensDetails,
     #[serde(default)]
     pub total_tokens: Option<u64>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct ResponseInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct ResponseOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseOutputItem {
     Message(ResponseOutputMessage),
     FunctionCall(ResponseFunctionToolCall),
+    CustomToolCall(ResponseCustomToolCall),
     Reasoning(ResponseReasoningItem),
+    Compaction(ResponseCompactionItem),
+    /// Deserialization-only catch-all; must never be serialized back to the API.
     #[serde(other)]
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseReasoningItem {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
+    #[serde(default)]
+    pub content: Vec<Value>,
+    #[serde(default)]
+    pub encrypted_content: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReasoningSummaryPart {
     SummaryText {
@@ -283,7 +504,7 @@ pub enum ReasoningSummaryPart {
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseOutputMessage {
     #[serde(default)]
     pub id: Option<String>,
@@ -293,9 +514,11 @@ pub struct ResponseOutputMessage {
     pub role: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseFunctionToolCall {
     #[serde(default)]
     pub id: Option<String>,
@@ -309,22 +532,36 @@ pub struct ResponseFunctionToolCall {
     pub status: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ResponseCustomToolCall {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub call_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: String,
+}
+
 pub async fn stream_response(
     client: &dyn HttpClient,
     provider_name: &str,
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
+    let is_streaming = request.stream;
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let is_streaming = request.stream;
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))
@@ -416,6 +653,16 @@ pub async fn stream_response(
                                     });
                                 }
                             }
+                            ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                                if let Some(ref item_id) = custom_tool_call.id {
+                                    all_events.push(StreamEvent::CustomToolCallInputDone {
+                                        item_id: item_id.clone(),
+                                        output_index,
+                                        input: custom_tool_call.input.clone(),
+                                        sequence_number: None,
+                                    });
+                                }
+                            }
                             ResponseOutputItem::Reasoning(reasoning) => {
                                 if let Some(ref item_id) = reasoning.id {
                                     for part in &reasoning.summary {
@@ -431,6 +678,9 @@ pub async fn stream_response(
                                     }
                                 }
                             }
+                            // No synthesized deltas; the `OutputItemDone`
+                            // event pushed below carries the full item.
+                            ResponseOutputItem::Compaction(_) => {}
                             ResponseOutputItem::Unknown => {}
                         }
 
@@ -441,8 +691,17 @@ pub async fn stream_response(
                         });
                     }
 
-                    all_events.push(StreamEvent::Completed {
-                        response: response_summary,
+                    let status = response_summary.status.clone();
+                    all_events.push(match status.as_deref() {
+                        Some("incomplete") => StreamEvent::Incomplete {
+                            response: response_summary,
+                        },
+                        Some("failed") => StreamEvent::Failed {
+                            response: response_summary,
+                        },
+                        _ => StreamEvent::Completed {
+                            response: response_summary,
+                        },
                     });
 
                     Ok(futures::stream::iter(all_events.into_iter().map(Ok)).boxed())

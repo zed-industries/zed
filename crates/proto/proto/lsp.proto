@@ -8,10 +8,29 @@ message GetDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
+  reserved 5;
 }
 
 message GetDefinitionResponse {
   repeated LocationLink links = 1;
+}
+
+message GetEditPredictionDefinition {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetEditPredictionDefinitionResponse {
+  repeated EditPredictionDefinition definitions = 1;
+}
+
+message EditPredictionDefinition {
+  uint64 worktree_id = 1;
+  string path = 2;
+  PointUtf16 start = 3;
+  PointUtf16 end = 4;
 }
 
 message GetDeclaration {
@@ -30,11 +49,24 @@ message GetTypeDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
+  reserved 5;
 }
 
 message GetTypeDefinitionResponse {
   repeated LocationLink links = 1;
 }
+
+message GetEditPredictionTypeDefinition {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetEditPredictionTypeDefinitionResponse {
+  repeated EditPredictionDefinition definitions = 1;
+}
+
 message GetImplementation {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
@@ -118,6 +150,35 @@ message GetDocumentSymbols {
 
 message GetDocumentSymbolsResponse {
   repeated DocumentSymbol symbols = 1;
+}
+
+message GetDocumentLinks {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentLinksResponse {
+  repeated DocumentLinkProto links = 1;
+  repeated VectorClockEntry version = 2;
+}
+
+message DocumentLinkProto {
+  optional AnchorRange range = 1;
+  optional string target = 2;
+  optional string tooltip = 3;
+  optional string data = 4;
+}
+
+message ResolveDocumentLink {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  uint64 language_server_id = 3;
+  bytes lsp_link = 4;
+}
+
+message ResolveDocumentLinkResponse {
+  bytes lsp_link = 1;
 }
 
 message DocumentSymbol {
@@ -347,6 +408,16 @@ message ApplyCodeAction {
   CodeAction action = 3;
 }
 
+message ResolveCodeAction {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CodeAction action = 3;
+}
+
+message ResolveCodeActionResponse {
+  CodeAction action = 1;
+}
+
 message ApplyCodeActionResponse {
   ProjectTransaction transaction = 1;
 }
@@ -542,6 +613,7 @@ message LanguageServer {
   uint64 id = 1;
   string name = 2;
   optional uint64 worktree_id = 3;
+  optional string language_name = 4;
 }
 
 message StartLanguageServer {
@@ -577,6 +649,7 @@ message UpdateLanguageServer {
     StatusUpdate status_update = 9;
     RegisteredForBuffer registered_for_buffer = 10;
     ServerMetadataUpdated metadata_updated = 11;
+    ServerRemoved removed = 12;
   }
 }
 
@@ -612,6 +685,8 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message ServerRemoved {}
 
 message StatusUpdate {
   optional string message = 1;
@@ -851,6 +926,9 @@ message LspQuery {
     SemanticTokens semantic_tokens = 16;
     GetFoldingRanges get_folding_ranges = 17;
     GetDocumentSymbols get_document_symbols = 18;
+    GetDocumentLinks get_document_links = 19;
+    GetEditPredictionDefinition get_edit_prediction_definition = 20;
+    GetEditPredictionTypeDefinition get_edit_prediction_type_definition = 21;
   }
 }
 
@@ -877,6 +955,9 @@ message LspResponse {
     SemanticTokensResponse semantic_tokens_response = 14;
     GetFoldingRangesResponse get_folding_ranges_response = 15;
     GetDocumentSymbolsResponse get_document_symbols_response = 16;
+    GetDocumentLinksResponse get_document_links_response = 17;
+    GetEditPredictionDefinitionResponse get_edit_prediction_definition_response = 18;
+    GetEditPredictionTypeDefinitionResponse get_edit_prediction_type_definition_response = 19;
   }
   uint64 server_id = 7;
 }

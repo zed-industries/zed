@@ -98,6 +98,7 @@ fn get_safe_id(input: &str) -> String {
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub use_podman: bool,
+    pub use_buildkit: Option<bool>,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub environment: WeakEntity<ProjectEnvironment>,
@@ -106,13 +107,16 @@ pub struct DevContainerContext {
 impl DevContainerContext {
     pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
         let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
-        let use_podman = DevContainerSettings::get_global(cx).use_podman;
+        let settings = DevContainerSettings::get_global(cx);
+        let use_podman = settings.use_podman;
+        let use_buildkit = settings.use_buildkit;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
         let environment = workspace.project().read(cx).environment().downgrade();
         Some(Self {
             project_directory,
             use_podman,
+            use_buildkit,
             fs,
             http_client,
             environment,
@@ -134,6 +138,7 @@ impl DevContainerContext {
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
     use_podman: bool,
+    use_buildkit: Option<bool>,
 }
 
 pub fn use_podman(cx: &App) -> bool {
@@ -144,6 +149,7 @@ impl Settings for DevContainerSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
             use_podman: content.remote.use_podman.unwrap_or(false),
+            use_buildkit: content.remote.dev_container_use_buildkit,
         }
     }
 }
@@ -296,6 +302,10 @@ impl TemplatePickerDelegate {
 
 impl PickerDelegate for TemplatePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "dev container template picker"
+    }
 
     fn match_count(&self) -> usize {
         self.matching_indices.len()
@@ -479,6 +489,10 @@ impl FeaturePickerDelegate {
 
 impl PickerDelegate for FeaturePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "dev container feature picker"
+    }
 
     fn match_count(&self) -> usize {
         self.matching_indices.len()
@@ -1170,8 +1184,7 @@ impl StatefulModal for DevContainerModal {
                         }),
                     );
 
-                    let picker =
-                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
                     self.picker = Some(picker);
                     Some(DevContainerState::TemplateQueryReturned(Ok(items)))
                 } else {
@@ -1302,8 +1315,7 @@ impl StatefulModal for DevContainerModal {
                         }),
                     );
 
-                    let picker =
-                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
                     self.features_picker = Some(picker);
                     Some(DevContainerState::FeaturesQueryReturned(template_entry))
                 } else {
@@ -1567,11 +1579,12 @@ fn dispatch_apply_templates(
             };
 
             if files.project_files.contains(&Arc::from(
-                RelPath::unix(".devcontainer/devcontainer.json").unwrap(),
+                RelPath::from_unix_str(".devcontainer/devcontainer.json").unwrap(),
             )) {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let Ok(path) = RelPath::unix(".devcontainer/devcontainer.json") else {
+                        let Ok(path) = RelPath::from_unix_str(".devcontainer/devcontainer.json")
+                        else {
                             return Task::ready(Err(anyhow!(
                                 "Couldn't create path for .devcontainer/devcontainer.json"
                             )));
