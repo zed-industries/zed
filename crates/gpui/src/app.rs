@@ -747,6 +747,8 @@ pub struct App {
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
 
     pub(crate) window_update_stack: Vec<WindowId>,
+    /// Tracks the last active window for cascading new windows.
+    pub(crate) last_active_window: Option<AnyWindowHandle>,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
     pub(crate) reduce_motion: bool,
@@ -808,6 +810,7 @@ impl App {
                 new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
+                last_active_window: None,
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
@@ -1225,6 +1228,9 @@ impl App {
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
                     cx.window_update_stack.push(id);
+                    if cx.window_update_stack.len() == 1 {
+                        cx.last_active_window = Some(window.handle);
+                    }
                     let root_view = build_root_view(&mut window, cx);
                     cx.window_update_stack.pop();
                     window.root.replace(root_view.into());
@@ -1779,6 +1785,9 @@ impl App {
             let root_view = window.root.clone().unwrap();
 
             cx.window_update_stack.push(window.handle.id);
+            if cx.window_update_stack.len() == 1 {
+                cx.last_active_window = Some(window.handle);
+            }
             let result = update(root_view, &mut window, cx);
             fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
                 cx.window_update_stack.pop();

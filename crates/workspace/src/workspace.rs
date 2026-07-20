@@ -2050,10 +2050,13 @@ impl Workspace {
                     {
                         // Reopening an existing workspace - restore its saved bounds
                         (Some(bounds.0), Some(display))
+                    } else if project_paths.is_empty() {
+                        // Truly new window (empty, no paths) - let GPUI handle cascading
+                        (None, None)
                     } else if let Some((display, bounds)) =
                         persistence::read_default_window_bounds(&kvp)
                     {
-                        // New or empty workspace - use the last known window bounds
+                        // Opening existing paths but new workspace - use persisted bounds
                         (Some(bounds), Some(display))
                     } else {
                         // New window - let GPUI's default_bounds() handle cascading

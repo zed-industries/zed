@@ -1216,13 +1216,15 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously fallback to `None`
-    //
-    // TODO these should be the initial window bounds not considering maximized/fullscreen
     let active_window_bounds = cx
         .active_window()
         .and_then(|w| w.update(cx, |_, window, _| window.window_bounds()).ok());
+
+    // If no platform active window, try the tracked last active window
+    let active_window_bounds = active_window_bounds.or_else(|| {
+        cx.last_active_window
+            .and_then(|w| w.update(cx, |_, window, _| window.window_bounds()).ok())
+    });
 
     const CASCADE_OFFSET: f32 = 25.0;
 
