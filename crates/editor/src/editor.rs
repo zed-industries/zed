@@ -5833,10 +5833,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let source = self
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .anchor_before(Point::new(display_row.0, 0u32));
+            .display_snapshot(cx)
+            .display_point_to_anchor(display_row.as_display_point(), Bias::Left);
 
         let context_menu = self.gutter_context_menu(position.unwrap_or(source), window, cx);
 
