@@ -2563,13 +2563,10 @@ impl EditorElement {
             return None;
         }
 
-        let buffer_id = row_info.and_then(|info| info.buffer_id);
-        if buffer_id.is_none() {
-            return None;
-        }
+        let buffer_id = row_info.and_then(|info| info.buffer_id)?;
 
         let editor = self.editor.read(cx);
-        if buffer_id.is_some_and(|buffer_id| editor.is_buffer_folded(buffer_id, cx)) {
+        if editor.is_buffer_folded(buffer_id, cx) {
             return None;
         }
 
@@ -3087,7 +3084,7 @@ impl EditorElement {
                         ..Default::default()
                     };
                     let line = window.text_system().shape_line(
-                        line.to_string().into(),
+                        SharedString::new(line),
                         font_size,
                         &[run],
                         None,
@@ -3190,13 +3187,13 @@ impl EditorElement {
                 }
                 let align_to = block_start.to_display_point(snapshot);
                 let x_and_width = |layout: &LineWithInvisibles| {
-                    Some((
+                    (
                         text_x + layout.x_for_index(align_to.column() as usize),
                         text_x + layout.width,
-                    ))
+                    )
                 };
                 let line_ix = align_to.row().0.checked_sub(rows.start.0);
-                x_position =
+                let custom_block_x_position =
                     if let Some(layout) = line_ix.and_then(|ix| line_layouts.get(ix as usize)) {
                         x_and_width(layout)
                     } else {
@@ -3211,7 +3208,8 @@ impl EditorElement {
                         ))
                     };
 
-                let anchor_x = x_position.unwrap().0;
+                let anchor_x = custom_block_x_position.0;
+                x_position = Some(custom_block_x_position);
 
                 let selected = selections
                     .binary_search_by(|selection| {
@@ -3907,7 +3905,7 @@ impl EditorElement {
                 } else {
                     None
                 };
-                vec![edit_prediction, context_menu]
+                [edit_prediction, context_menu]
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>()
@@ -4367,25 +4365,29 @@ impl EditorElement {
         let hovered_point = content_origin + point(x, y);
 
         let mut overall_height = Pixels::ZERO;
-        let mut measured_hover_popovers = Vec::new();
-        for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
-            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let horizontal_offset =
-                (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
-                    .min(Pixels::ZERO);
-            match position {
-                itertools::Position::Middle | itertools::Position::Last => {
-                    overall_height += HOVER_POPOVER_GAP
+
+        let measured_hover_popovers = hover_popovers
+            .into_iter()
+            .with_position()
+            .map(|(position, mut hover_popover)| {
+                let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let horizontal_offset =
+                    (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                        .min(Pixels::ZERO);
+                match position {
+                    itertools::Position::Middle | itertools::Position::Last => {
+                        overall_height += HOVER_POPOVER_GAP
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            overall_height += size.height;
-            measured_hover_popovers.push(MeasuredHoverPopover {
-                element: hover_popover,
-                size,
-                horizontal_offset,
-            });
-        }
+                overall_height += size.height;
+                MeasuredHoverPopover {
+                    element: hover_popover,
+                    size,
+                    horizontal_offset,
+                }
+            })
+            .collect::<Vec<_>>();
 
         fn draw_occluder(
             width: Pixels,
@@ -4455,34 +4457,28 @@ impl EditorElement {
         };
 
         let can_place_above = {
-            let mut bounds_above = Vec::new();
             let mut current_y = hovered_point.y;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(
                     hovered_point.x + popover.horizontal_offset,
                     current_y - size.height,
                 );
-                bounds_above.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
-            }
-            bounds_above
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         let can_place_below = || {
-            let mut bounds_below = Vec::new();
             let mut current_y = hovered_point.y + line_height;
-            for popover in &measured_hover_popovers {
+            measured_hover_popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
-                bounds_below.push(Bounds::new(popover_origin, size));
+                let bounds = Bounds::new(popover_origin, size);
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
-            }
-            bounds_below
-                .iter()
-                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+                bounds.is_contained_within(hitbox) && !intersects_menu(bounds)
+            })
         };
 
         if can_place_above {
@@ -4510,7 +4506,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - total_width - HOVER_POPOVER_GAP,
@@ -4850,7 +4846,7 @@ impl EditorElement {
                 } else {
                     menu.bounds.top()
                 };
-                let possible_origins = vec![
+                let possible_origins = [
                     // left of context menu
                     point(
                         menu.bounds.left() - actual_size.width - HOVER_POPOVER_GAP,
@@ -6623,7 +6619,7 @@ impl EditorElement {
                             is_newest: false,
                             is_local: false,
                             active_rows: start.row()..end.row(),
-                            user_name: Some(SharedString::new(debug_range.value.clone())),
+                            user_name: Some(SharedString::from(debug_range.value.clone())),
                         };
                         Some((player_color, vec![selection_layout]))
                     })
