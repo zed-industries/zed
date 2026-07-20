@@ -1135,7 +1135,11 @@ impl CompletionsMenu {
                                     )
                                     .when_some(documentation_label, |this, doc| {
                                         this.child(
-                                            div().flex_shrink(1.0).min_w_0().child(doc.truncate()),
+                                            div()
+                                                .flex_shrink(1.0)
+                                                .ml_auto()
+                                                .min_w_0()
+                                                .child(doc.truncate()),
                                         )
                                     }),
                             )
