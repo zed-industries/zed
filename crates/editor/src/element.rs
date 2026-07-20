@@ -5785,43 +5785,59 @@ impl EditorElement {
                     if axis == ScrollbarAxis::Vertical {
                         let fast_markers =
                             self.collect_fast_scrollbar_markers(layout, scrollbar_layout, cx);
-                        // Refresh slow scrollbar markers in the background. Below, we
-                        // paint whatever markers have already been computed.
-                        self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
 
-                        let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
-                        for marker in markers.iter().chain(&fast_markers) {
+                        self.refresh_buffer_scrollbar_markers(layout, scrollbar_layout, window, cx);
+                        self.refresh_scope_scrollbar_markers(layout, scrollbar_layout, window, cx);
+
+                        let buffer_markers = self
+                            .editor
+                            .read(cx)
+                            .scrollbar_marker_state
+                            .buffer_markers
+                            .clone();
+                        let scope_markers = self
+                            .editor
+                            .read(cx)
+                            .scrollbar_marker_state
+                            .scope_markers
+                            .clone();
+
+                        if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
+                            let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
+                                ScrollbarThumbState::Dragging => {
+                                    cx.theme().colors().scrollbar_thumb_active_background
+                                }
+                                ScrollbarThumbState::Hovered => {
+                                    cx.theme().colors().scrollbar_thumb_hover_background
+                                }
+                                ScrollbarThumbState::Idle => {
+                                    cx.theme().colors().scrollbar_thumb_background
+                                }
+                            };
+                            window.paint_quad(quad(
+                                thumb_bounds,
+                                Corners::default(),
+                                scrollbar_thumb_color,
+                                scrollbar_edges,
+                                cx.theme().colors().scrollbar_thumb_border,
+                                BorderStyle::Solid,
+                            ));
+
+                            if any_scrollbar_dragged {
+                                window.set_window_cursor_style(CursorStyle::Arrow);
+                            } else {
+                                window.set_cursor_style(CursorStyle::Arrow, hitbox);
+                            }
+                        }
+
+                        for marker in buffer_markers
+                            .iter()
+                            .chain(scope_markers.iter())
+                            .chain(fast_markers.iter())
+                        {
                             let mut marker = marker.clone();
                             marker.bounds.origin += hitbox.origin;
                             window.paint_quad(marker);
-                        }
-                    }
-
-                    if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
-                        let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
-                            ScrollbarThumbState::Dragging => {
-                                cx.theme().colors().scrollbar_thumb_active_background
-                            }
-                            ScrollbarThumbState::Hovered => {
-                                cx.theme().colors().scrollbar_thumb_hover_background
-                            }
-                            ScrollbarThumbState::Idle => {
-                                cx.theme().colors().scrollbar_thumb_background
-                            }
-                        };
-                        window.paint_quad(quad(
-                            thumb_bounds,
-                            Corners::default(),
-                            scrollbar_thumb_color,
-                            scrollbar_edges,
-                            cx.theme().colors().scrollbar_thumb_border,
-                            BorderStyle::Solid,
-                        ));
-
-                        if any_scrollbar_dragged {
-                            window.set_window_cursor_style(CursorStyle::Arrow);
-                        } else {
-                            window.set_cursor_style(CursorStyle::Arrow, hitbox);
                         }
                     }
                 })
@@ -5993,7 +6009,7 @@ impl EditorElement {
         scrollbar_layout.marker_quads_for_ranges(cursor_ranges, None)
     }
 
-    fn refresh_slow_scrollbar_markers(
+    fn refresh_buffer_scrollbar_markers(
         &self,
         layout: &EditorLayout,
         scrollbar_layout: &ScrollbarLayout,
@@ -6004,22 +6020,21 @@ impl EditorElement {
             if editor.buffer_kind(cx) != ItemBufferKind::Singleton
                 || !editor
                     .scrollbar_marker_state
-                    .should_refresh(scrollbar_layout.hitbox.size)
+                    .should_refresh_buffer(scrollbar_layout.hitbox.size)
             {
-                return;
+                return; // skip
             }
 
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             let scrollbar_layout = scrollbar_layout.clone();
             let background_highlights = editor.background_highlights.clone();
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
-            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-
-            editor.scrollbar_marker_state.dirty = false;
-            editor.scrollbar_marker_state.pending_refresh =
-                Some(cx.spawn_in(window, async move |editor, cx| {
+            editor
+                .scrollbar_marker_state
+                .start_buffer_refresh(cx.spawn_in(window, async move |editor, cx| {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
-                    let scrollbar_markers = cx
+                    let buffer_markers: Arc<[PaintQuad]> = cx
                         .background_spawn(async move {
                             let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
                             let mut marker_quads = Vec::new();
@@ -6054,7 +6069,6 @@ impl EditorElement {
                                             color,
                                         }
                                     });
-
                                 marker_quads.extend(
                                     scrollbar_layout
                                         .marker_quads_for_ranges(marker_row_ranges, Some(0)),
@@ -6103,7 +6117,6 @@ impl EditorElement {
                                 let diagnostics = snapshot
                                     .buffer_snapshot()
                                     .diagnostics_in_range::<Point>(Point::zero()..max_point)
-                                    // Don't show diagnostics the user doesn't care about
                                     .filter(|diagnostic| {
                                         match (
                                             scrollbar_settings.diagnostics,
@@ -6128,7 +6141,6 @@ impl EditorElement {
                                             (_, _) => false,
                                         }
                                     })
-                                    // We want to sort by severity, in order to paint the most severe diagnostics last.
                                     .sorted_by_key(|diagnostic| {
                                         std::cmp::Reverse(diagnostic.diagnostic.severity)
                                     });
@@ -6159,15 +6171,111 @@ impl EditorElement {
                                         .marker_quads_for_ranges(marker_row_ranges, Some(2)),
                                 );
                             }
-
                             Arc::from(marker_quads)
                         })
                         .await;
 
                     editor.update(cx, |editor, cx| {
-                        editor.scrollbar_marker_state.markers = scrollbar_markers;
-                        editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
-                        editor.scrollbar_marker_state.pending_refresh = None;
+                        editor
+                            .scrollbar_marker_state
+                            .complete_buffer_refresh(buffer_markers, scrollbar_size);
+                        cx.notify();
+                    })?;
+
+                    Ok(())
+                }));
+        });
+    }
+
+    /// Spawns a lightweight background task that recomputes the two scope
+    /// tick-marks (opening-brace row and closing-brace row)
+    /// Fires on *any* non-Clean dirty state, including `CursorMoved`
+    /// Has its own `pending_scope_refresh` guard so it runs in parallel
+    /// with the buffer task and completes in roughly one frame
+    fn refresh_scope_scrollbar_markers(
+        &self,
+        layout: &EditorLayout,
+        scrollbar_layout: &ScrollbarLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if editor.buffer_kind(cx) != ItemBufferKind::Singleton
+                || !editor.scrollbar_marker_state.should_refresh_scope()
+            {
+                return; //skip
+            }
+
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+
+            // Setting is off — clear any leftover markers and skip
+            if !scrollbar_settings.active_scope_markers {
+                editor.scrollbar_marker_state.clear_scope();
+                return;
+            }
+
+            let snapshot = layout.position_map.snapshot.clone();
+            let scrollbar_layout = scrollbar_layout.clone();
+            let theme = cx.theme().clone();
+
+            // Compute cursor offset so we can check if the lang has brackets
+            let cursor_offset = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&snapshot.buffer_snapshot());
+
+            // Languages with no enabled bracket pairs (plain text, markdown
+            // prose, etc.) will always return None from current_scope_boundary
+            // Skip
+            let has_brackets = snapshot
+                .language_scope_at(cursor_offset)
+                .map_or(false, |scope| scope.brackets().any(|(_, enabled)| enabled));
+
+            if !has_brackets {
+                editor.scrollbar_marker_state.clear_scope();
+                return;
+            }
+
+            editor
+                .scrollbar_marker_state
+                .start_scope_markers_refresh(cx.spawn_in(window, async move |editor, cx| {
+                    let (scope_markers, new_scope_range): (Arc<[PaintQuad]>, Option<Range<_>>) = cx
+                        .background_spawn(async move {
+                            match Editor::current_scope_boundary(&snapshot, cursor_offset) {
+                                None => {
+                                    (Arc::from([]), None) // cursor at top of outside any brackets
+                                }
+                                Some((start_row, end_row, inner_range)) => {
+                                    let color = theme.colors().scrollbar_active_scope_marker;
+
+                                    // Two single-row ColoredRanges
+                                    let ranges = [
+                                        ColoredRange {
+                                            start: start_row,
+                                            end: start_row,
+                                            color,
+                                        },
+                                        ColoredRange {
+                                            start: end_row,
+                                            end: end_row,
+                                            color,
+                                        },
+                                    ];
+                                    let quads = scrollbar_layout
+                                        .marker_quads_for_ranges(ranges.into_iter(), Some(4));
+
+                                    let constructed_markers: Arc<[PaintQuad]> = Arc::from(quads);
+                                    (constructed_markers, Some(inner_range))
+                                }
+                            }
+                        })
+                        .await;
+
+                    editor.update(cx, |editor, cx| {
+                        editor
+                            .scrollbar_marker_state
+                            .complete_scope_markers_refresh(scope_markers, new_scope_range);
                         cx.notify();
                     })?;
 
@@ -9959,16 +10067,33 @@ impl ScrollbarLayout {
             max: Pixels,
         }
         let (x_range, height_limit) = if let Some(column) = column {
-            let column_width = ((self.hitbox.size.width - Self::BORDER_WIDTH) / 3.0).floor();
-            let start = Self::BORDER_WIDTH + (column as f32 * column_width);
-            let end = start + column_width;
-            (
-                Range { start, end },
-                MinMax {
-                    min: Self::MIN_MARKER_HEIGHT,
-                    max: px(f32::MAX),
-                },
-            )
+            if column == 4 {
+                let marker_size = px(5.0); 
+                let scrollbar_width = self.hitbox.size.width;
+                
+                // Center the square horizontally in the scrollbar track
+                let start = ((scrollbar_width - marker_size)).floor();
+                let end = start + marker_size;
+                
+                (
+                    Range { start, end },
+                    MinMax {
+                        min: marker_size,
+                        max: marker_size,
+                    },
+                )
+            } else {
+                let column_width = ((self.hitbox.size.width - Self::BORDER_WIDTH) / 3.0).floor();
+                let start = Self::BORDER_WIDTH + (column as f32 * column_width);
+                let end = start + column_width;
+                (
+                    Range { start, end },
+                    MinMax {
+                        min: Self::MIN_MARKER_HEIGHT,
+                        max: px(f32::MAX),
+                    },
+                )
+            }
         } else {
             (
                 Range {

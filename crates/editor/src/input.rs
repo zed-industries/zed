@@ -531,6 +531,9 @@ impl Editor {
                 cx,
             );
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+
+            // Ensure scrollbar marker state machine transitions on buffer edit
+            this.scrollbar_marker_state.mark_buffer_changed();
         });
     }
 

@@ -594,7 +594,7 @@ impl Editor {
 
         cx.notify();
 
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.mark_buffer_changed();
         self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
     }
@@ -1089,7 +1089,7 @@ impl Editor {
         }
 
         cx.notify();
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.mark_buffer_changed();
         self.active_indent_guides_state.dirty = true;
     }
 }

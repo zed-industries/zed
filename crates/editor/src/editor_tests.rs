@@ -41772,3 +41772,202 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
+// Moving the cursor must set CursorMoved, not BufferChanged
+#[gpui::test]
+async fn test_scope_marker_cursor_move_sets_cursor_moved(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn foo() {
+            ˇlet x = 1;
+            let y = 2;
+        }
+    "});
+
+    // Flush any framework-driven init refresh tasks completely out of the queue
+    cx.background_executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        // Clear any lingering task guards and force a baseline Clean state
+        editor.scrollbar_marker_state.pending_scope_refresh = None;
+        editor.scrollbar_marker_state.last_scope_range = None;
+        editor.scrollbar_marker_state.dirty = ScrollbarDirtyState::Clean;
+
+        // Perform the cursor action
+        editor.move_down(&MoveDown, window, cx);
+
+        // Assert IMMEDIATELY before yielding to the layout/render loop
+        assert_eq!(
+            editor.scrollbar_marker_state.dirty,
+            ScrollbarDirtyState::CursorMoved,
+            "cursor movement must set CursorMoved.\n\
+             BufferChanged triggers a full git/diagnostic re-scan on every keystroke."
+        );
+    });
+}
+
+// A text edit must set BufferChanged
+#[gpui::test]
+async fn test_scope_marker_text_edit_sets_buffer_changed(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇhello\n");
+
+    cx.background_executor.run_until_parked();
+
+    // Leverage the Rc type already available in scope from the file header
+    let observed_buffer_changed = Rc::new(std::cell::Cell::new(false));
+    let observed_flag = Rc::clone(&observed_buffer_changed);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.scrollbar_marker_state.pending_scope_refresh = None;
+        editor.scrollbar_marker_state.last_scope_range = None;
+        editor.scrollbar_marker_state.dirty = ScrollbarDirtyState::Clean;
+
+        let buffer = editor.buffer().clone();
+
+        // cx is a ViewContext<Editor>. Its observe method automatically injects 
+        // the live `&mut Editor` state as the first parameter of the closure!
+        cx.observe(&buffer, move |editor_state, _, _| {
+            if editor_state.scrollbar_marker_state.dirty == ScrollbarDirtyState::BufferChanged {
+                observed_flag.set(true);
+            }
+        })
+        .detach();
+
+        // Process the text insertion, which queues the edit and flushes mutations
+        editor.handle_input("x", window, cx);
+    });
+
+    // Verify that the state hit BufferChanged during the processing loop
+    assert!(
+        observed_buffer_changed.get(),
+        "a text edit must transit through BufferChanged so git/diagnostic markers are recalculated.\n\
+         Failing this means the framework skipped the dirty flag update entirely."
+    );
+}
+
+// Repeated cursor moves must stay at CursorMoved never escalating to BufferChanged
+#[gpui::test]
+async fn test_scope_marker_cursor_moves_do_not_escalate(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn foo() {
+            ˇlet x = 1;
+            let y = 2;
+            let z = 3;
+        }
+    "});
+
+    cx.background_executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.scrollbar_marker_state.pending_scope_refresh = None;
+        editor.scrollbar_marker_state.last_scope_range = None;
+        editor.scrollbar_marker_state.dirty = ScrollbarDirtyState::Clean;
+
+        // First movement
+        editor.move_down(&MoveDown, window, cx);
+        assert_eq!(editor.scrollbar_marker_state.dirty, ScrollbarDirtyState::CursorMoved);
+
+        // Subsequent sequential movements
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+
+        assert_eq!(
+            editor.scrollbar_marker_state.dirty,
+            ScrollbarDirtyState::CursorMoved,
+            "repeated cursor moves must stay at CursorMoved, not escalate to BufferChanged."
+        );
+    });
+}
+
+/// A buffer edit must clear `last_scope_range`.
+/// If it doesn't, pre-edit byte offsets survive into the post-edit state
+/// and the cache suppression logic in `selections_did_change` would use
+/// stale offsets to incorrectly skip scheduling the scope task.
+#[gpui::test]
+async fn test_scope_marker_buffer_edit_clears_scope_cache(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn foo() {
+            ˇlet x = 1;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let head_offset = editor
+            .selections
+            .newest_anchor()
+            .head()
+            .to_offset(&snapshot.buffer_snapshot());
+            
+        let raw_offset = head_offset.0;
+        let range_start = multi_buffer::MultiBufferOffset(raw_offset.saturating_sub(5));
+        let range_end = multi_buffer::MultiBufferOffset(raw_offset + 5);
+        
+        editor.scrollbar_marker_state.last_scope_range = Some(range_start..range_end);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("x", window, cx);
+    });
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.scrollbar_marker_state.last_scope_range.is_none(),
+            "a buffer edit must clear last_scope_range.\n\
+             If it stays set the cache uses stale pre-edit byte offsets."
+        );
+    });
+}
+
+// Ensures that the scope-matching logic safely identifies valid, non-inverted
+// text ranges for the column 4 track marker system without breaking on blank lines.
+#[gpui::test]
+async fn test_scope_marker_range_integrity(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+
+    cx.set_state(indoc! {"
+fn layout_check() {
+
+ˇlet target = 4;
+}
+"});
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let cursor = editor
+            .selections
+            .newest_anchor()
+            .head()
+            .to_offset(&snapshot.buffer_snapshot());
+
+        let (start_row, end_row, inner_range) = Editor::current_scope_boundary(&snapshot, cursor)
+            .expect("Cursor must resolve inside the layout_check fn block");
+
+        // The layout system requires that the starting display row is strictly less
+        // than or equal to the ending display row to prevent inverted/malformed quads
+        assert!(
+            start_row <= end_row,
+            "Scope marker track bounds are inverted: start ({:?}) must be <= end ({:?})",
+            start_row,
+            end_row
+        );
+
+        // Verify that the computed inner range is valid and non-empty
+        assert!(
+            inner_range.start < inner_range.end,
+            "The computed inner scope range for the marker must span a valid text length"
+        );
+    });
+}
+

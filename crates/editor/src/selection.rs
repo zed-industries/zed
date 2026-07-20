@@ -1601,6 +1601,19 @@ impl Editor {
                 self.register_buffer(anchor.buffer_id, cx);
             }
 
+            {
+                let new_offset = new_cursor_position.to_offset(buffer);
+                let still_in_scope = self
+                    .scrollbar_marker_state
+                    .last_scope_range
+                    .as_ref()
+                    .map_or(false, |r| r.contains(&new_offset));
+
+                if !still_in_scope {
+                    self.scrollbar_marker_state.mark_cursor_moved();
+                }
+            }
+
             let mut context_menu = self.context_menu.borrow_mut();
             let completion_menu = match context_menu.as_ref() {
                 Some(CodeContextMenu::Completions(menu)) => Some(menu),

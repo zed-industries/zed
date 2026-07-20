@@ -622,17 +622,95 @@ type BackgroundHighlight = (
 );
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
+//  Scrollbar marker dirty-state
+//  Clean         – nothing changed, both tasks can skip
+//  CursorMoved   – only the scope boundary needs recomputing;
+//                   expensive buffer markers (git, diagnostics, …) are unchanged
+//  BufferChanged – buffer content/highlights changed; recompute everything
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+pub(crate) enum ScrollbarDirtyState {
+    #[default]
+    Clean,
+    CursorMoved,
+    BufferChanged,
+}
+
 #[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
-    dirty: bool,
-    markers: Arc<[PaintQuad]>,
-    pending_refresh: Option<Task<Result<()>>>,
+    dirty: ScrollbarDirtyState,
+    /// Markers for git hunks, diagnostics, search results, selections.
+    /// Recomputed only on BufferChanged or scrollbar resize.
+    buffer_markers: Arc<[PaintQuad]>,
+    /// current start/end row of the cursor's bracket scope.
+    scope_markers: Arc<[PaintQuad]>,
+    /// Background task handle for the expensive buffer-marker computation.
+    pending_buffer_refresh: Option<Task<Result<()>>>,
+    /// Separate, lightweight background task handle for scope-marker computation
+    pending_scope_refresh: Option<Task<Result<()>>>,
+    /// The inner byte-offset range of the bracket pair whose tick-marks are
+    /// currently painted.  Used by `selections_did_change` to decide whether
+    /// the cursor is still in the same scope —> if so, we skip scheduling the
+    /// scope task entirely
+    last_scope_range: Option<Range<MultiBufferOffset>>,
 }
 
 impl ScrollbarMarkerState {
-    fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
-        self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
+    /// Spawn the buffer task when the scrollbar resized or content changed.
+    fn should_refresh_buffer(&self, scrollbar_size: Size<Pixels>) -> bool {
+        self.pending_buffer_refresh.is_none()
+            && (self.scrollbar_size != scrollbar_size
+                || self.dirty == ScrollbarDirtyState::BufferChanged)
+    }
+
+    /// Spawn the scope task on any non-Clean dirty state
+    fn should_refresh_scope(&self) -> bool {
+        self.pending_scope_refresh.is_none() && self.dirty != ScrollbarDirtyState::Clean
+    }
+
+    /// Call on every event that changes buffer content or highlights
+    /// Clears the scope cache because byte offsets may have shifted
+    fn mark_buffer_changed(&mut self) {
+        self.dirty = ScrollbarDirtyState::BufferChanged;
+        self.last_scope_range = None;
+    }
+
+    /// Call when the cursor moves
+    /// Never overwrites BufferChanged
+    fn mark_cursor_moved(&mut self) {
+        if self.dirty == ScrollbarDirtyState::Clean {
+            self.dirty = ScrollbarDirtyState::CursorMoved;
+        }
+    }
+
+    fn start_buffer_refresh(&mut self, task: Task<Result<()>>) {
+        self.pending_buffer_refresh = Some(task);
+    }
+
+    fn complete_buffer_refresh(&mut self, markers: Arc<[PaintQuad]>, scrollbar_size: Size<Pixels>) {
+        self.buffer_markers = markers;
+        self.scrollbar_size = scrollbar_size;
+        self.pending_buffer_refresh = None;
+    }
+
+    fn start_scope_markers_refresh(&mut self, task: Task<Result<()>>) {
+        self.dirty = ScrollbarDirtyState::Clean;
+        self.pending_scope_refresh = Some(task);
+    }
+
+    fn complete_scope_markers_refresh(
+        &mut self,
+        markers: Arc<[PaintQuad]>,
+        last_scope_range: Option<Range<MultiBufferOffset>>,
+    ) {
+        self.scope_markers = markers;
+        self.last_scope_range = last_scope_range;
+        self.pending_scope_refresh = None;
+    }
+
+    fn clear_scope(&mut self) {
+        self.scope_markers = Arc::from([]);
+        self.dirty = ScrollbarDirtyState::Clean;
     }
 }
 
@@ -3209,6 +3287,40 @@ impl Editor {
 
     fn should_serialize_buffer(&self) -> bool {
         self.buffer_serialization.is_some()
+    }
+
+    /// Returns the opening-brace display row, closing-brace display row, and
+    /// inner byte-offset range of the *innermost* bracket pair that encloses
+    /// `cursor_offset`
+    ///
+    /// Returns `None` when:
+    ///   - the cursor is at the top level (no enclosing brackets), or
+    ///   - the snapshot has no language / bracket data loaded yet
+    pub fn current_scope_boundary(
+        snapshot: &EditorSnapshot,
+        cursor_offset: MultiBufferOffset,
+    ) -> Option<(DisplayRow, DisplayRow, Range<MultiBufferOffset>)> {
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        // `enclosing_bracket_ranges`
+        let (open_range, close_range) = buffer_snapshot
+            .enclosing_bracket_ranges(cursor_offset..cursor_offset)?
+            .min_by_key(|(o, c)| c.end.0.saturating_sub(o.start.0))?;
+
+        // The "inner" range
+        let inner_range = open_range.end..close_range.start;
+
+        // Convert buffer-space row numbers to display-space row numbers
+        let start_row = buffer_snapshot
+            .anchor_before(open_range.start.to_point(&buffer_snapshot))
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        let end_row = buffer_snapshot
+            .anchor_before(close_range.start.to_point(&buffer_snapshot))
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+
+        Some((start_row, end_row, inner_range))
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {
@@ -9013,7 +9125,7 @@ impl Editor {
     ) {
         self.background_highlights
             .insert(key, (Arc::new(color_fetcher), Arc::from(ranges)));
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.mark_buffer_changed();
         cx.notify();
     }
 
@@ -9024,7 +9136,7 @@ impl Editor {
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&key)?;
         if !text_highlights.1.is_empty() {
-            self.scrollbar_marker_state.dirty = true;
+            self.scrollbar_marker_state.mark_buffer_changed();
             cx.notify();
         }
         Some(text_highlights)
@@ -9533,7 +9645,7 @@ impl Editor {
                 edited_buffer,
                 source,
             } => {
-                self.scrollbar_marker_state.dirty = true;
+                self.scrollbar_marker_state.mark_buffer_changed();
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions_for_selection(window, cx);
