@@ -237,6 +237,10 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
+name = "rotated_text"
+path = "examples/rotated_text.rs"
+
+[[example]]
 name = "tree"
 path = "examples/tree.rs"
 

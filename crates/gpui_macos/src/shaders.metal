@@ -676,6 +676,7 @@ struct PolychromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
   uint sprite_id [[flat]];
+  float2 local_position;
   float clip_distance [[clip_distance]][4];
 };
 
@@ -683,6 +684,7 @@ struct PolychromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   uint sprite_id [[flat]];
+  float2 local_position;
 };
 
 vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
@@ -696,15 +698,19 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
-  float4 device_position =
-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
-  float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
-                                                 sprite.content_mask.bounds);
+  float2 local_position = unit_vertex * float2(sprite.bounds.size.width, sprite.bounds.size.height)
+      + float2(sprite.bounds.origin.x, sprite.bounds.origin.y);
+  float4 device_position = to_device_position_transformed(
+      unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float4 clip_distance = distance_from_clip_rect_transformed(
+      unit_vertex, sprite.bounds, sprite.content_mask.bounds,
+      sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{
       device_position,
       tile_position,
       sprite_id,
+      local_position,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -718,7 +724,7 @@ fragment float4 polychrome_sprite_fragment(
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float distance =
-      quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+      quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
   float4 color = sample;
   if (sprite.grayscale) {
