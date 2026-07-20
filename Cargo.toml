@@ -114,6 +114,7 @@ members = [
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",
+    "crates/language_detection",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
@@ -376,6 +377,7 @@ json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
+language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
@@ -554,6 +556,7 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
+betlang = "0.1.0"
 bitflags = "2.6.0"
 block2 = "0.6"
 brotli = "8.0.2"
