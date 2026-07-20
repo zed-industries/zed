@@ -435,6 +435,33 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     })
     .detach();
 
+    // `CloseProject` is handled globally rather than as a workspace-scoped
+    // action. After switching the active workspace (e.g. closing one project in
+    // a multi-project window), the app menu can dispatch this action while the
+    // window's focus resolves to the window root, so a workspace-scoped handler
+    // is never reached and the menu item silently does nothing. A global
+    // handler fires in the dispatch capture phase regardless of focus, like
+    // `CloseWindow` (zed#61316).
+    cx.on_action(|_: &CloseProject, cx| {
+        let Some(multi_workspace) = cx
+            .active_window()
+            .and_then(|window| window.downcast::<MultiWorkspace>())
+        else {
+            return;
+        };
+        // Defer so this does not run inside the dispatch's window update.
+        cx.defer(move |cx| {
+            multi_workspace
+                .update(cx, |multi_workspace, window, cx| {
+                    let group_key = multi_workspace.workspace().read(cx).project_group_key(cx);
+                    multi_workspace
+                        .remove_project_group(&group_key, window, cx)
+                        .detach_and_log_err(cx);
+                })
+                .log_err();
+        });
+    });
+
     init_cursor_hide_mode(cx);
     init_reduce_motion(cx);
 
@@ -1289,22 +1316,6 @@ fn register_actions(
                     },
                 )
                 .detach();
-            }
-        })
-        .register_action({
-            move |workspace, _: &CloseProject, window, cx| {
-                let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-                    return;
-                };
-                let old_group_key = workspace.project_group_key(cx);
-                cx.spawn_in(window, async move |_, cx| {
-                    let task = window_handle.update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.remove_project_group(&old_group_key, window, cx)
-                    })?;
-                    task.await?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
             }
         })
         .register_action({
@@ -7157,6 +7168,116 @@ mod tests {
         assert!(
             keys.is_empty(),
             "project group should be removed after CloseProject: {keys:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_close_project_when_active_workspace_not_retained(cx: &mut TestAppContext) {
+        use workspace::OpenMode;
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/my-project"), json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/my-project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        // Deliberately do NOT open the sidebar: the active workspace is then
+        // never retained. `Close Project` used to look for the project only
+        // among retained workspaces, find nothing, and silently no-op, leaving
+        // the project open (zed#61316).
+        let root_paths = window
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx))
+            .unwrap();
+        assert_eq!(
+            root_paths,
+            vec![Arc::from(Path::new(path!("/my-project")))],
+            "project should be open before CloseProject: {root_paths:?}"
+        );
+
+        cx.dispatch_action(window.into(), CloseProject);
+
+        // The project is closed by replacing the active workspace with an empty
+        // one, so the active workspace should no longer contain the project.
+        let root_paths = window
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx))
+            .unwrap();
+        assert!(
+            root_paths.is_empty(),
+            "project should be closed after CloseProject, but workspace still has: {root_paths:?}"
+        );
+
+        // Closing the project must not leave stale, serializable project group
+        // metadata behind: `activate()` can transiently re-create the group for
+        // the workspace being torn down during fallback (zed#61316).
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert!(
+            keys.is_empty(),
+            "no stale project group should remain after CloseProject: {keys:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_close_project_dispatched_at_window_root(cx: &mut TestAppContext) {
+        use workspace::OpenMode;
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/my-project"), json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/my-project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        // Reproduce the state seen after switching the active workspace, where
+        // the focused element is no longer in the rendered dispatch tree and
+        // action dispatch falls back to the window root. A workspace-scoped
+        // handler would never be reached; `CloseProject` is global so it still
+        // runs (zed#61316).
+        window
+            .update(cx, |_, window, _| window.disable_focus())
+            .unwrap();
+        cx.dispatch_action(window.into(), CloseProject);
+
+        let root_paths = window
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx))
+            .unwrap();
+        assert!(
+            root_paths.is_empty(),
+            "CloseProject dispatched at the window root should still close the project: {root_paths:?}"
         );
     }
 
