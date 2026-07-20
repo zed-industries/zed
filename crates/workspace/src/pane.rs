@@ -2344,7 +2344,7 @@ impl Pane {
                         PromptLevel::Warning,
                         CONFLICT_MESSAGE,
                         None,
-                        &["Overwrite", "Discard", "Cancel"],
+                        &["Overwrite", "Discard Edits", "Cancel"],
                         cx,
                     )
                 })?;
