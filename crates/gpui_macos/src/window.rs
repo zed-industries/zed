@@ -50,7 +50,7 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::rc::Retained;
+use objc2::{rc::Retained, runtime::AnyObject as Objc2Object};
 use objc2_app_kit::{
     NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
     NSWindowButton as Objc2NSWindowButton,
@@ -113,6 +113,7 @@ const NSDragOperationCopy: NSDragOperation = 1;
 const NSDragOperationMove: NSDragOperation = 16;
 const NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION: NSInteger = 0;
 const NSDRAGGING_CONTEXT_WITHIN_APPLICATION: NSInteger = 1;
+const NS_LEFT_MOUSE_BUTTON_MASK: NSUInteger = 1;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -524,6 +525,7 @@ struct MacWindowState {
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
+    last_left_mouse_dragged_event: Option<Retained<Objc2Object>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     traffic_light_frames: Option<TrafficLightFrames>,
@@ -925,6 +927,7 @@ impl MacWindow {
                 appearance_changed_callback: None,
                 input_handler: None,
                 last_key_equivalent: None,
+                last_left_mouse_dragged_event: None,
                 synthetic_drag_counter: 0,
                 traffic_light_position: titlebar
                     .as_ref()
@@ -1870,9 +1873,13 @@ impl PlatformWindow for MacWindow {
             return false;
         }
 
-        let (native_view, native_window) = {
+        let (native_view, native_window, last_left_mouse_dragged_event) = {
             let state = self.0.lock();
-            (state.native_view.as_ptr(), state.native_window)
+            (
+                state.native_view.as_ptr(),
+                state.native_window,
+                state.last_left_mouse_dragged_event.clone(),
+            )
         };
 
         // SAFETY: This method runs on the AppKit/foreground path during drag initiation. The
@@ -1880,25 +1887,44 @@ impl PlatformWindow for MacWindow {
         // and Objective-C results that may be nil are checked before use.
         unsafe {
             let app = NSApplication::sharedApplication(nil);
-            let event: id = msg_send![app, currentEvent];
-            if event.is_null() {
-                log::warn!("start_file_drag declined: currentEvent is nil");
-                return false;
+            let current_event: id = msg_send![app, currentEvent];
+            let pressed_mouse_buttons = NSEvent::pressedMouseButtons(nil);
+            let current_event_type = (!current_event.is_null()).then(|| current_event.eventType());
+            if current_event_type == Some(NSEventType::NSEventTypePressure) {
+                log::info!(
+                    "[DEBUG-file-drag-event] start_file_drag: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}, pressure={}, stage={}",
+                    current_event.pressure(),
+                    current_event.stage(),
+                );
+            } else {
+                log::info!(
+                    "[DEBUG-file-drag-event] start_file_drag: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}"
+                );
             }
 
-            let event_type = event.eventType();
-            if !matches!(
-                event_type,
-                NSEventType::NSLeftMouseDragged
-                    | NSEventType::NSRightMouseDragged
-                    | NSEventType::NSOtherMouseDragged
+            let event = if matches!(
+                current_event_type,
+                Some(
+                    NSEventType::NSLeftMouseDragged
+                        | NSEventType::NSRightMouseDragged
+                        | NSEventType::NSOtherMouseDragged
+                )
             ) {
+                current_event
+            } else if pressed_mouse_buttons & NS_LEFT_MOUSE_BUTTON_MASK != 0
+                && let Some(last_left_mouse_dragged_event) = &last_left_mouse_dragged_event
+            {
+                log::info!(
+                    "[DEBUG-file-drag-event] start_file_drag: using cached left-mouse-dragged event for current_event_type={current_event_type:?}"
+                );
+                Retained::as_ptr(last_left_mouse_dragged_event).cast()
+            } else {
                 log::warn!(
-                    "start_file_drag declined: currentEvent is not a mouse dragged event: {:?}",
-                    event_type
+                    "start_file_drag declined: no usable mouse dragged event: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}, cached_left_drag_event={}",
+                    last_left_mouse_dragged_event.is_some()
                 );
                 return false;
-            }
+            };
 
             let dragging_items: id = msg_send![class!(NSMutableArray), array];
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -2384,9 +2410,39 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
     let window_height = lock.content_size().height;
+    let native_event_type = unsafe { native_event.eventType() };
+    match native_event_type {
+        NSEventType::NSLeftMouseDown | NSEventType::NSLeftMouseUp => {
+            lock.last_left_mouse_dragged_event = None;
+        }
+        NSEventType::NSLeftMouseDragged => {
+            // AppKit owns `native_event` for the callback; retain it so a later pressure or
+            // tracking event can still initiate the same drag gesture.
+            lock.last_left_mouse_dragged_event =
+                unsafe { Retained::retain(native_event.cast::<Objc2Object>()) };
+        }
+        _ => {}
+    }
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
+        if matches!(
+            &event,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                ..
+            }) | PlatformInput::MouseMove(MouseMoveEvent {
+                pressed_button: Some(MouseButton::Left),
+                ..
+            }) | PlatformInput::MousePressure(_)
+                | PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    ..
+                })
+        ) {
+            log::info!("[DEBUG-file-drag-event] handle_view_event: translated={event:?}");
+        }
+
         // AppKit unhides the cursor on the next mouse movement; mirror that here.
         if matches!(
             event,
@@ -3138,6 +3194,12 @@ extern "C" fn dragging_session_ended(
 
 fn send_drag_session_ended_event(window_state: Arc<Mutex<MacWindowState>>) -> bool {
     let mut lock = window_state.lock();
+    lock.synthetic_drag_counter += 1;
+    lock.last_left_mouse_dragged_event = None;
+    log::info!(
+        "[DEBUG-file-drag-event] drag session ended: cancelled_synthetic_drag_id={}",
+        lock.synthetic_drag_counter
+    );
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
         callback(PlatformInput::DragSessionEnded);

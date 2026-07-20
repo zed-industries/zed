@@ -2845,7 +2845,14 @@ impl Interactivity {
                                 .as_ref()
                                 .and_then(|drag| drag.external_paths.as_ref())
                             {
-                                window.platform_window.start_file_drag(paths);
+                                log::info!(
+                                    "[DEBUG-file-drag-event] requesting platform file drag: path_count={}, trigger={event:?}",
+                                    paths.paths().len()
+                                );
+                                let started = window.platform_window.start_file_drag(paths);
+                                log::info!(
+                                    "[DEBUG-file-drag-event] platform file drag request completed: started={started}"
+                                );
                             }
                             pending_mouse_down.take();
                             window.refresh();
