@@ -202,7 +202,7 @@ impl SelectionLayout {
         if cursor_offset && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
-            } else if head.row().0 > 0 && head != map.max_point() {
+            } else if head.row().0 > 0 {
                 head = map.clip_point(
                     DisplayPoint::new(
                         head.row().previous_row(),
@@ -11524,20 +11524,20 @@ mod tests {
             DisplayPoint::new(DisplayRow(3), 2)
         );
 
-        // leaves cursor on the max point
+        // displays the trailing newline cursor on the preceding row
         assert_eq!(
             local_selections[2].range,
             DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(6), 0)
         );
         assert_eq!(
             local_selections[2].head,
-            DisplayPoint::new(DisplayRow(6), 0)
+            DisplayPoint::new(DisplayRow(5), 6)
         );
 
         // active lines does not include 1 (even though the range of the selection does)
         assert_eq!(
             state.active_rows.keys().cloned().collect::<Vec<_>>(),
-            vec![DisplayRow(0), DisplayRow(3), DisplayRow(5), DisplayRow(6)]
+            vec![DisplayRow(0), DisplayRow(3), DisplayRow(5)]
         );
     }
 
