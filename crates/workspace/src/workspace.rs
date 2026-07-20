@@ -14148,6 +14148,7 @@ mod tests {
         workspace.center.root.render(
             0,
             None,
+            None,
             &PaneRenderContext {
                 follower_states: &workspace.follower_states,
                 active_call: workspace.active_call(),
