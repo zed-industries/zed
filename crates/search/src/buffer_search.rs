@@ -4044,9 +4044,6 @@ mod tests {
     #[gpui::test]
     async fn test_seeded_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
         init_globals(cx);
-        // Buffer has "z.d" on line 1 and "zed" on line 2. Without escaping, seeding "z.d"
-        // as a regex would match both lines because dot is a wildcard. With escaping it
-        // becomes "z\.d" and matches only the literal "z.d".
         let buffer = cx.new(|cx| Buffer::local("z.d\nzed\n", cx));
         let cx = cx.add_empty_window();
         let editor =
@@ -4065,7 +4062,6 @@ mod tests {
             });
         });
 
-        // Enable regex mode and seed the search from the selection.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
             search_bar.search_suggested(Some(SeedQuerySetting::Selection), window, cx);
