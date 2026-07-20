@@ -458,6 +458,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub skip_hooks: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -2559,6 +2560,10 @@ impl GitRepository for RealGitRepository {
 
             if options.allow_empty {
                 cmd.arg("--allow-empty");
+            }
+
+            if options.skip_hooks {
+                cmd.arg("--no-verify");
             }
 
             if let Some((name, email)) = name_and_email {
@@ -5013,11 +5018,29 @@ mod tests {
         .await
         .expect_err("failing pre-commit hook should abort the commit");
 
+        repo.commit(
+            "Commit bypassing hook".into(),
+            None,
+            CommitOptions {
+                skip_hooks: true,
+                ..CommitOptions::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("skip_hooks should bypass a failing pre-commit hook in a trusted repo");
+
         write_hook("pre-commit", "#!/bin/sh\nexit 0\n");
         write_hook(
             "commit-msg",
             "#!/bin/sh\necho 'rewritten by commit-msg hook' > \"$1\"\n",
         );
+
+        fs::write(repo_dir.path().join("file"), "three").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
 
         repo.commit(
             "Original message".into(),

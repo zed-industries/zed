@@ -930,6 +930,7 @@ pub struct GitPanel {
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
     signoff_enabled: bool,
+    skip_hooks_override: Option<bool>,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -1089,6 +1090,7 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_skip_hooks = ProjectSettings::get_global(cx).git.skip_hooks;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1097,6 +1099,7 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_icons = settings.folder_icons;
                 let diff_stats = settings.diff_stats;
+                let skip_hooks = ProjectSettings::get_global(cx).git.skip_hooks;
                 if tree_view != was_tree_view {
                     match (&mut this.view_mode, tree_view) {
                         (GitPanelViewMode::Tree(state), false) => {
@@ -1125,12 +1128,16 @@ impl GitPanel {
                 if file_icons != was_file_icons || folder_icons != was_folder_icons {
                     cx.notify();
                 }
+                if skip_hooks != was_skip_hooks {
+                    cx.notify();
+                }
                 was_sort_by = sort_by;
                 was_group_by = group_by;
                 was_tree_view = tree_view;
                 was_file_icons = file_icons;
                 was_folder_icons = folder_icons;
                 was_diff_stats = diff_stats;
+                was_skip_hooks = skip_hooks;
             })
             .detach();
 
@@ -1231,6 +1238,7 @@ impl GitPanel {
                 original_commit_message,
                 pending_commit_message_restores,
                 signoff_enabled,
+                skip_hooks_override: None,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
@@ -2786,6 +2794,7 @@ impl GitPanel {
                     amend: self.amend_pending,
                     signoff: self.signoff_enabled,
                     allow_empty: false,
+                    skip_hooks: self.skip_hooks_enabled(cx),
                 },
                 window,
                 cx,
@@ -2950,6 +2959,7 @@ impl GitPanel {
             self.fill_co_authors(&mut message, cx);
         }
 
+        let submitted_skip_hooks_override = self.skip_hooks_override;
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.update(cx, |repo, cx| {
@@ -2985,6 +2995,9 @@ impl GitPanel {
 
                 match result {
                     Ok(()) => {
+                        if this.skip_hooks_override == submitted_skip_hooks_override {
+                            this.skip_hooks_override = None;
+                        }
                         if options.amend {
                             this.set_amend_pending(false, cx);
                         } else {
@@ -5367,6 +5380,7 @@ impl GitPanel {
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
+                let skip_hooks = self.skip_hooks_enabled(cx);
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -5398,6 +5412,22 @@ impl GitPanel {
                                 IconPosition::Start,
                                 Some(Box::new(Signoff)),
                                 move |window, cx| window.dispatch_action(Box::new(Signoff), cx),
+                            )
+                            .toggleable_entry(
+                                "Skip hooks",
+                                skip_hooks,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    let git_panel = git_panel.downgrade();
+                                    move |_, cx| {
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.toggle_skip_hooks(cx);
+                                            })
+                                            .log_err();
+                                    }
+                                },
                             )
                     }))
                 }
@@ -5843,6 +5873,7 @@ impl GitPanel {
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
+        let skip_hooks = self.skip_hooks_enabled(cx);
 
         let label_color = if self.pending_commit.is_some() {
             Color::Disabled
@@ -5879,6 +5910,7 @@ impl GitPanel {
                                             amend,
                                             signoff,
                                             allow_empty: false,
+                                            skip_hooks,
                                         },
                                         window,
                                         cx,
@@ -5895,9 +5927,10 @@ impl GitPanel {
                                     tooltip,
                                     Some(&git::Commit),
                                     format!(
-                                        "git commit{}{}",
+                                        "git commit{}{}{}",
                                         if amend { " --amend" } else { "" },
-                                        if signoff { " --signoff" } else { "" }
+                                        if signoff { " --signoff" } else { "" },
+                                        if skip_hooks { " --no-verify" } else { "" }
                                     ),
                                     &handle.clone(),
                                     cx,
@@ -7774,6 +7807,17 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.set_signoff_enabled(!self.signoff_enabled, cx);
+    }
+
+    pub fn skip_hooks_enabled(&self, cx: &App) -> bool {
+        self.skip_hooks_override
+            .unwrap_or_else(|| ProjectSettings::get_global(cx).git.skip_hooks)
+    }
+
+    pub fn toggle_skip_hooks(&mut self, cx: &mut Context<Self>) {
+        let current_value = self.skip_hooks_enabled(cx);
+        self.skip_hooks_override = Some(!current_value);
+        cx.notify();
     }
 
     pub async fn load(

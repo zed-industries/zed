@@ -7450,7 +7450,7 @@ fn terminal_page() -> SettingsPage {
 }
 
 fn version_control_page() -> SettingsPage {
-    fn git_integration_section() -> [SettingsPageItem; 2] {
+    fn git_integration_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Integration"),
             SettingsPageItem::DynamicItem(DynamicItem {
@@ -7550,6 +7550,20 @@ fn version_control_page() -> SettingsPage {
                         },
                     ],
                 ],
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Skip hooks",
+                description: "Whether to skip Git hooks when committing.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.skip_hooks"),
+                    pick: |settings_content| settings_content.git.as_ref()?.skip_hooks.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git.get_or_insert_default().skip_hooks = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }

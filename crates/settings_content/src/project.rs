@@ -554,6 +554,10 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
+    /// Whether to skip running Git hooks.
+    ///
+    /// Default: false
+    pub skip_hooks: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
@@ -890,6 +894,17 @@ pub enum GitHostingProviderKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::merge_from::MergeFrom as _;
+
+    fn default_git_settings() -> GitSettings {
+        let settings: crate::SettingsContent = settings_json::parse_json_with_comments(
+            include_str!("../../../assets/settings/default.json"),
+        )
+        .expect("default settings should parse");
+        settings
+            .git
+            .expect("default settings should include git settings")
+    }
 
     #[test]
     fn test_stdio_context_server_without_args() {
@@ -908,5 +923,23 @@ mod tests {
             panic!("expected Stdio variant, got {settings:?}");
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn git_skip_hooks_defaults_to_false() {
+        let settings = default_git_settings();
+        assert_eq!(settings.skip_hooks, Some(false));
+    }
+
+    #[test]
+    fn git_skip_hooks_is_overridden_when_merged() {
+        let mut settings = default_git_settings();
+        let project_settings = GitSettings {
+            skip_hooks: Some(true),
+            ..Default::default()
+        };
+        settings.merge_from(&project_settings);
+
+        assert_eq!(settings.skip_hooks, Some(true));
     }
 }
