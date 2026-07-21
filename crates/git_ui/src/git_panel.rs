@@ -895,6 +895,13 @@ impl TruncatedPatch {
     }
 }
 
+struct GitPanelContextMenu {
+    menu: Entity<ContextMenu>,
+    position: Point<Pixels>,
+    target_entry_index: Option<usize>,
+    _subscription: Subscription,
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -934,7 +941,7 @@ pub struct GitPanel {
     update_visible_entries_task: Task<()>,
     reopen_commit_buffer_task: Task<()>,
     pub(crate) workspace: WeakEntity<Workspace>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<GitPanelContextMenu>,
     modal_open: bool,
     show_placeholders: bool,
     // Only read to compute collaborative co-authors, which requires the `call` feature.
@@ -6232,7 +6239,7 @@ impl GitPanel {
         );
         self.focused_history_entry = Some(index);
         self.history_keyboard_nav = false;
-        self.set_context_menu(context_menu, position, window, cx);
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
     }
 
     fn activate_changes_tab(
@@ -6396,6 +6403,10 @@ impl GitPanel {
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
         let has_context_menu = self.context_menu.is_some();
+        let context_menu_target_index = self
+            .context_menu
+            .as_ref()
+            .and_then(|context_menu| context_menu.target_entry_index);
 
         let ahead_count = active_repository
             .read(cx)
@@ -6488,6 +6499,8 @@ impl GitPanel {
 
                                     let is_unpushed = index < ahead_count;
                                     let is_focused = focused_history_entry == Some(index);
+                                    let is_context_menu_target =
+                                        context_menu_target_index == Some(index);
                                     let workspace = workspace.clone();
                                     let repo = repo_weak.clone();
                                     let sha_for_click = sha_string;
@@ -6517,6 +6530,9 @@ impl GitPanel {
                                             },
                                         )
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                        .when(is_context_menu_target, |this| {
+                                            this.bg(cx.theme().colors().element_hover)
+                                        })
                                         .child(
                                             h_flex()
                                                 .gap_1()
@@ -7174,7 +7190,7 @@ impl GitPanel {
                 })
         });
         self.selected_entry = Some(ix);
-        self.set_context_menu(context_menu, position, window, cx);
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn deploy_panel_context_menu(
@@ -7199,13 +7215,14 @@ impl GitPanel {
             window,
             cx,
         );
-        self.set_context_menu(context_menu, position, window, cx);
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
+        target_entry_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7216,7 +7233,10 @@ impl GitPanel {
             window,
             |this, _, _: &DismissEvent, window, cx| {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                    context_menu
+                        .menu
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
                 }) {
                     cx.focus_self(window);
                 }
@@ -7224,7 +7244,12 @@ impl GitPanel {
                 cx.notify();
             },
         );
-        self.context_menu = Some((context_menu, position, subscription));
+        self.context_menu = Some(GitPanelContextMenu {
+            menu: context_menu,
+            position,
+            target_entry_index,
+            _subscription: subscription,
+        });
         cx.notify();
     }
 
@@ -8024,12 +8049,12 @@ impl Render for GitPanel {
                     })
                     .into_any_element(),
             )
-            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+            .children(self.context_menu.as_ref().map(|context_menu| {
                 deferred(
                     anchored()
-                        .position(*position)
+                        .position(context_menu.position)
                         .anchor(Anchor::TopLeft)
-                        .child(menu.clone()),
+                        .child(context_menu.menu.clone()),
                 )
                 .with_priority(1)
             }))
@@ -8741,6 +8766,7 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
+    use editor::SplittableEditor;
     use git::{
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
@@ -8748,13 +8774,15 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
+    use search::{BufferSearchBar, buffer_search::Deploy};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::any::TypeId;
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation};
 
     use super::*;
 
@@ -10238,6 +10266,7 @@ mod tests {
     #[gpui::test]
     async fn test_group_by_staging_open_diff_uses_section_diff(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.update(search::buffer_search::init);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/project"),
@@ -10313,10 +10342,54 @@ mod tests {
         });
         cx.run_until_parked();
 
-        workspace.read_with(&cx, |workspace, cx| {
-            assert!(workspace.active_item_as::<SoloDiffView>(cx).is_some());
+        let search_bar = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar.clone(), window, cx)
+                });
+            });
+            search_bar
+        });
+
+        let split_editor = workspace.read_with(&cx, |workspace, cx| {
+            let solo_diff = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("SoloDiffView should be active");
+            let searchable = solo_diff
+                .read(cx)
+                .as_searchable(&solo_diff, cx)
+                .expect("SoloDiffView should expose its editor to buffer search");
+            let split_editor = searchable
+                .act_as_type(TypeId::of::<SplittableEditor>(), cx)
+                .and_then(|entity| entity.downcast::<SplittableEditor>().ok())
+                .expect("the split editor should be the searchable item");
             assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
             assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 1);
+            split_editor
+        });
+
+        let mut search_bar_events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
+        cx.dispatch_action(Deploy::find());
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!search_bar.read(cx).is_dismissed()));
+        assert_eq!(
+            search_bar_events
+                .try_recv()
+                .expect("search bar location event"),
+            ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary)
+        );
+
+        search_bar
+            .update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.search("partial", None, false, window, cx)
+            })
+            .await
+            .expect("buffer search should complete");
+
+        let focused_editor = cx.read(|cx| split_editor.read(cx).focused_editor().clone());
+        focused_editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.search_background_highlights(cx).len(), 1);
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {

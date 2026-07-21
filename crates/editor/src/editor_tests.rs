@@ -6681,6 +6681,24 @@ async fn test_join_lines_strips_comment_prefix(cx: &mut TestAppContext) {
             + fooˇ bar
         "});
 
+        cx.set_state(indoc! {"
+            fooˇ
+            *bar*
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            fooˇ *bar*
+        "});
+
+        cx.set_state(indoc! {"
+            * ˇfoo
+            *
+        "});
+        cx.update_editor(|e, window, cx| e.join_lines(&JoinLines, window, cx));
+        cx.assert_editor_state(indoc! {"
+            * fooˇ
+        "});
+
         // No-whitespace join also strips the list marker.
         cx.set_state(indoc! {"
             - ˇfoo
@@ -10726,6 +10744,40 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         .assert_editor_state(
             "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhh\niiiii",
         );
+}
+
+#[gpui::test]
+/// A different number of tabs can align the same column on each row, so a cursor has to
+/// be placed by the column the tabs expand to. Counting a tab as a single column lands it
+/// wherever that many characters happen to reach on the next row.
+#[gpui::test]
+async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Both `=` render at column 48: `current.rgb.r` ends at 37 and is padded by three
+    // tabs, `residuals[run].rgb.r` ends at 44 and is padded by one.
+    cx.set_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\t= p[0] & 0xff;\n",
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
+    );
 }
 
 #[gpui::test]

@@ -822,7 +822,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 struct GitGraphContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
-    entry_idx: Option<usize>,
+    target_entry_index: Option<usize>,
     _subscription: Subscription,
 }
 
@@ -1941,7 +1941,7 @@ impl GitGraph {
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        entry_idx: Option<usize>,
+        target_entry_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1966,7 +1966,7 @@ impl GitGraph {
         self.context_menu = Some(GitGraphContextMenu {
             menu: context_menu,
             position,
-            entry_idx,
+            target_entry_index,
             _subscription: subscription,
         });
         cx.notify();
@@ -3019,8 +3019,10 @@ impl Render for GitGraph {
                             let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
-                            let context_menu_entry_idx =
-                                self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
+                            let context_menu_target_index = self
+                                .context_menu
+                                .as_ref()
+                                .and_then(|menu| menu.target_entry_index);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -3060,7 +3062,7 @@ impl Render for GitGraph {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
                                     let is_context_menu_target =
-                                        context_menu_entry_idx == Some(index);
+                                        context_menu_target_index == Some(index);
                                     let table_focus_handle = table_focus_handle.clone();
                                     let is_focused = focus_handle.is_focused(window)
                                         || table_focus_handle.is_focused(window);

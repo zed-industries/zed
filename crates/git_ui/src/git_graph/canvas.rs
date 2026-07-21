@@ -103,7 +103,10 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
+        let context_menu_target_index = self
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target_entry_index);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -127,7 +130,7 @@ impl GitGraph {
                         let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
                         let is_selected = selected_entry_idx == Some(absolute_row_idx);
                         let is_context_menu_target =
-                            context_menu_entry_idx == Some(absolute_row_idx);
+                            context_menu_target_index == Some(absolute_row_idx);
 
                         if is_hovered || is_selected || is_context_menu_target {
                             let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
