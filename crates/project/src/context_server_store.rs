@@ -570,6 +570,21 @@ impl ContextServerStore {
         }
     }
 
+    /// Returns whether a server is enabled.
+    /// Servers with no settings entry only originate from an extension
+    /// descriptor in the registry, and those are enabled by default
+    /// ([`ContextServerSettings::default_extension`]).
+    pub fn is_server_enabled(&self, id: &ContextServerId, cx: &App) -> bool {
+        match self.settings_for_server(id) {
+            Some(settings) => settings.enabled(),
+            None => self
+                .registry
+                .read(cx)
+                .context_server_descriptor(&id.0)
+                .is_some(),
+        }
+    }
+
     /// Returns a sorted slice of available unique context server IDs. Within the
     /// slice, context servers which have `mcp-server-` as a prefix in their ID will
     /// appear after servers that do not have this prefix in their ID.
@@ -859,6 +874,7 @@ impl ContextServerStore {
             server_id: id.clone(),
             status: ContextServerStatus::Stopped,
         });
+        cx.notify();
         Ok(())
     }
 
@@ -1667,6 +1683,7 @@ impl ContextServerStore {
             server_id: id,
             status,
         });
+        cx.notify();
     }
 
     fn available_context_servers_changed(&mut self, cx: &mut Context<Self>) {

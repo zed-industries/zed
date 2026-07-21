@@ -1658,6 +1658,92 @@ async fn test_multi_worktree_duplicate_server_first_wins(cx: &mut TestAppContext
     });
 }
 
+#[gpui::test]
+async fn test_is_server_enabled(cx: &mut TestAppContext) {
+    // We'll be setting up 4 different servers in order to test the following
+    // scenarios:
+    //
+    // 1. Explicit Settings, Enabled
+    // 2. Explicit Settings, Disabled
+    // 3. No Settings, Registry Descriptor, Enabled
+    // 4. No Settings, No Descriptor, Disabled
+    const SERVER_1_ID: &str = "mcp-1";
+    const SERVER_2_ID: &str = "mcp-2";
+    const SERVER_3_ID: &str = "mcp-3";
+    const SERVER_4_ID: &str = "mcp-4";
+
+    let (_fs, project) = setup_context_server_test(
+        cx,
+        json!({"code.rs": ""}),
+        vec![
+            (
+                SERVER_1_ID.into(),
+                ContextServerSettings::Extension {
+                    enabled: true,
+                    remote: false,
+                    settings: json!({}),
+                },
+            ),
+            (
+                SERVER_2_ID.into(),
+                ContextServerSettings::Extension {
+                    enabled: false,
+                    remote: false,
+                    settings: json!({}),
+                },
+            ),
+        ],
+    )
+    .await;
+
+    let registry = cx.new(|cx| {
+        let mut registry = ContextServerDescriptorRegistry::new();
+        let descriptor = Arc::new(FakeContextServerDescriptor::new(SERVER_3_ID));
+        registry.register_context_server_descriptor(SERVER_3_ID.into(), descriptor, cx);
+
+        registry
+    });
+
+    let store = cx.new(|cx| {
+        ContextServerStore::test(
+            registry.clone(),
+            project.read(cx).worktree_store(),
+            Some(project.downgrade()),
+            cx,
+        )
+    });
+
+    // Sanity check before proceeding, confirm server 1 and 2 have settings,
+    // server 3 is present in the registry while server 4 does not meet any of
+    // the conditions.
+    cx.update(|cx| {
+        let settings = ProjectSettings::get_global(cx);
+
+        assert!(settings.context_servers.contains_key(SERVER_1_ID));
+        assert!(settings.context_servers.contains_key(SERVER_2_ID));
+        assert!(!settings.context_servers.contains_key(SERVER_3_ID));
+        assert!(!settings.context_servers.contains_key(SERVER_4_ID));
+    });
+
+    registry.update(cx, |registry, _cx| {
+        let descriptors = registry.context_server_descriptors();
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].0.as_ref(), SERVER_3_ID);
+    });
+
+    let server_1_id = ContextServerId(SERVER_1_ID.into());
+    let server_2_id = ContextServerId(SERVER_2_ID.into());
+    let server_3_id = ContextServerId(SERVER_3_ID.into());
+    let server_4_id = ContextServerId(SERVER_4_ID.into());
+
+    store.read_with(cx, |store, cx| {
+        assert!(store.is_server_enabled(&server_1_id, cx));
+        assert!(!store.is_server_enabled(&server_2_id, cx));
+        assert!(store.is_server_enabled(&server_3_id, cx));
+        assert!(!store.is_server_enabled(&server_4_id, cx));
+    })
+}
+
 fn assert_server_events(
     store: &Entity<ContextServerStore>,
     expected_events: Vec<(ContextServerId, ContextServerStatus)>,

@@ -2534,8 +2534,8 @@ impl Session {
                         return
                     };
 
-                    for scope in scopes.iter() {
-                        this.variables(scope.variables_reference, cx);
+                    for scope in scopes.iter().filter(|scope| !scope.expensive) {
+                            this.variables(scope.variables_reference, cx);
                     }
 
                     let entry = this
