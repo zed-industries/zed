@@ -98,6 +98,10 @@ impl TerminalProcessIds {
                     .filter(|foreground| *foreground != self.child),
             )
             .map(|pid| pid.as_u32() as i32)
+            // `killpg(0, ...)` signals the caller's own process group, i.e.
+            // Zed itself, so never let a zero id (or a negative one from an
+            // implausibly large pid wrapping the cast) through.
+            .filter(|process_group_id| *process_group_id > 0)
     }
 
     pub(crate) fn terminate(&self) {
