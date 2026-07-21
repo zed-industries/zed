@@ -55,7 +55,7 @@ collections.workspace = true
 criterion = { workspace = true, optional = true }
 ctor.workspace = true
 derive_more.workspace = true
-etagere = "0.2"
+etagere.workspace = true
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
