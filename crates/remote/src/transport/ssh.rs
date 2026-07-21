@@ -1610,7 +1610,6 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
 
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
-        let input = input.trim_start_matches("ssh ");
         let mut hostname: Option<String> = None;
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
@@ -1630,6 +1629,14 @@ impl SshConnectionOptions {
             .split(input)
             .context("invalid input")?
             .into_iter();
+        // Treat `ssh` as the executable only when a destination follows, so a
+        // host named `ssh` remains valid.
+        if matches!(
+            tokens.as_slice(),
+            [executable, _, ..] if executable == "ssh"
+        ) {
+            tokens.next();
+        }
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -2232,6 +2239,45 @@ mod tests {
         assert_eq!(opts.host, "192.168.1.1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_optional_ssh_executable() -> Result<()> {
+        let options = SshConnectionOptions::parse_command_line(
+            "'ssh' '-i' '/tmp/key with spaces' '-p' '64042' 'user@example.com'",
+        )?;
+
+        assert_eq!(options.host, "example.com".into());
+        assert_eq!(options.username.as_deref(), Some("user"));
+        assert_eq!(options.port, Some(64042));
+        assert_eq!(
+            options.args,
+            Some(vec!["-i".to_string(), "/tmp/key with spaces".to_string(),])
+        );
+
+        let options = SshConnectionOptions::parse_command_line(
+            r#""ssh" "-i" "/tmp/key with spaces" "-p" "64042" "user@example.com""#,
+        )?;
+        assert_eq!(options.host, "example.com".into());
+        assert_eq!(options.username.as_deref(), Some("user"));
+        assert_eq!(options.port, Some(64042));
+        assert_eq!(
+            options.args,
+            Some(vec!["-i".to_string(), "/tmp/key with spaces".to_string(),])
+        );
+
+        let options = SshConnectionOptions::parse_command_line("ssh user@example.com")?;
+        assert_eq!(options.host, "example.com".into());
+        assert_eq!(options.username.as_deref(), Some("user"));
+
+        let options = SshConnectionOptions::parse_command_line("ssh")?;
+        assert_eq!(options.host, "ssh".into());
+
+        let options = SshConnectionOptions::parse_command_line("'ssh' 'user@example.com'")?;
+        assert_eq!(options.host, "example.com".into());
+        assert_eq!(options.username.as_deref(), Some("user"));
 
         Ok(())
     }
