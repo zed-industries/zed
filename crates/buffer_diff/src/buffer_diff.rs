@@ -2122,6 +2122,12 @@ impl BufferDiff {
             .is_some_and(|diff_snapshot| diff_snapshot.base_text_exists)
     }
 
+    pub fn changed_row_counts(&self) -> (u32, u32) {
+        self.diff_snapshot
+            .as_ref()
+            .map_or((0, 0), |diff_snapshot| diff_snapshot.changed_row_counts())
+    }
+
     pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {
         let mut snapshot = self.diff_snapshot.clone().unwrap_or_else(|| {
             let base_text = self.base_text_buffer.read(cx).snapshot();
