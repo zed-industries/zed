@@ -208,10 +208,6 @@ impl AvatarAvailabilityIndicator {
         self
     }
 
-    /// Adds a border around the indicator, typically matching the background
-    /// of the element the avatar sits on so the indicator appears cut out of
-    /// it. The border is drawn outside the indicator's normal size, so the
-    /// dot itself stays the same size.
     pub fn border_color(mut self, color: impl Into<Hsla>) -> Self {
         self.border_color = Some(color.into());
         self

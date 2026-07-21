@@ -35,9 +35,9 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
-    DecoratedIcon, Disclosure, Divider, Facepile, HighlightedLabel, IconButtonShape,
-    IconDecoration, IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab,
-    TintColor, Tooltip, prelude::*, tooltip_container,
+    DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
+    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor,
+    Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -52,6 +52,8 @@ use workspace::{
 
 const FILTER_OCCUPIED_CHANNELS_KEY: &str = "filter_occupied_channels";
 const FAVORITE_CHANNELS_KEY: &str = "favorite_channels";
+const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
+const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 actions!(
     collab_panel,
@@ -92,16 +94,10 @@ struct ChannelMoveClipboard {
     channel_id: ChannelId,
 }
 
-/// Tracks the open contact context menu and how it was triggered, so the
-/// contact's row can reflect it (e.g. keeping the ellipsis button visible
-/// while its menu is open, and suppressing the row tooltip).
 struct ContactContextMenu {
     user_id: u64,
     via_ellipsis_button: bool,
 }
-
-const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
-const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -1127,8 +1123,6 @@ impl CollabPanel {
         cx.notify();
     }
 
-    /// The height of a single row, derived from the last layout of the list.
-    /// Returns `None` before the first layout or when the list is empty.
     fn row_height(&self, item_count: usize) -> Option<Pixels> {
         if item_count == 0 {
             return None;
@@ -1138,10 +1132,6 @@ impl CollabPanel {
         (height > px(0.)).then_some(height)
     }
 
-    /// Computes the bounds of the item at the given index, based on the list's
-    /// last layout. `uniform_list` doesn't track per-item bounds like the
-    /// `list` element does, but since all rows share the same height they can
-    /// be derived arithmetically.
     fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         let row_height = self.row_height(self.entries.len())?;
         let state = self.scroll_handle.0.borrow();
