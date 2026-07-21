@@ -21,6 +21,7 @@ pub struct Model {
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
+    pub disabled: Option<String>,
 }
 
 fn get_max_tokens(_name: &str) -> u64 {
@@ -31,7 +32,6 @@ fn get_max_tokens(_name: &str) -> u64 {
 impl Model {
     pub fn new(
         name: &str,
-        display_name: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_vision: Option<bool>,
@@ -39,14 +39,26 @@ impl Model {
     ) -> Self {
         Self {
             name: name.to_owned(),
-            display_name: display_name
-                .map(ToString::to_string)
-                .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
+            display_name: name.strip_suffix(":latest").map(ToString::to_string),
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
             supports_vision,
             supports_thinking,
+            disabled: None,
+        }
+    }
+
+    pub fn new_disabled(name: &str, reason: String) -> Self {
+        Self {
+            name: name.to_owned(),
+            display_name: name.strip_suffix(":latest").map(ToString::to_string),
+            max_tokens: get_max_tokens(name),
+            keep_alive: Some(KeepAlive::indefinite()),
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: None,
+            disabled: Some(reason),
         }
     }
 

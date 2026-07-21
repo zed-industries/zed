@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Run the zed-eval Python CLI from this checkout without manually setting
+# PYTHONPATH or installing the tool globally.
+#
+# Usage:
+#   crates/eval_cli/script/zed-eval doctor
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PACKAGE_DIR="$REPO_ROOT/crates/eval_cli/zed_eval"
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "error: uv is required to run zed-eval from source" >&2
+    echo "Install uv from https://docs.astral.sh/uv/getting-started/installation/" >&2
+    exit 1
+fi
+
+exec uv run --project "$PACKAGE_DIR" zed-eval "$@"

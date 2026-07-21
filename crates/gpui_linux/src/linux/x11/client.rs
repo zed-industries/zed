@@ -7,6 +7,7 @@ use calloop::{
 use collections::HashMap;
 use core::str;
 use gpui::{Capslock, profiler};
+use gpui_util::ResultExt as _;
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
@@ -18,7 +19,6 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -309,7 +309,7 @@ impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -333,6 +333,16 @@ impl X11Client {
             })
             .map_err(|err| {
                 anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
+            })?;
+
+        handle
+            .insert_source(wake_receiver, |event, _, client: &mut X11Client| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    client.0.borrow_mut().common.handle_system_wake();
+                }
+            })
+            .map_err(|err| {
+                anyhow!("Failed to initialize event loop handling of wake events: {err:?}")
             })?;
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;

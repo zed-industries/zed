@@ -335,7 +335,7 @@ impl Editor {
                 }
                 (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
+                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))
@@ -1373,7 +1373,7 @@ mod tests {
         cx.run_until_parked();
 
         // Jiggle within the same character should not produce a new request,
-        // even though the previous reponse was empty and produced no link to
+        // even though the previous response was empty and produced no link to
         // highlight.
         cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
         cx.run_until_parked();

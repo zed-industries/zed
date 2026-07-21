@@ -36,6 +36,11 @@ enum ConfigStatus {
     VariableParsed(DevContainer),
 }
 
+enum ComposeUpBehavior {
+    Resume,
+    Create,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeResources {
     files: Vec<PathBuf>,
@@ -1541,6 +1546,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let updated_image_tag = features_build_info.image_tag.clone();
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // Without a usable BuildKit, force the classic builder: the build's
+        // `FROM $BASE_IMAGE` references the locally-built features image, which
+        // only resolves from the daemon's image store under the classic builder.
+        if !self.docker_client.supports_compose_buildkit()
+            && self.docker_client.docker_cli() != "podman"
+        {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args(["build"]);
         command.args(["-f", &dockerfile_path.display().to_string()]);
         command.args(["-t", &updated_image_tag]);
@@ -1644,6 +1657,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             })?;
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // This path runs only when BuildKit is unavailable, so force the classic
+        // builder: the feature content image is consumed by a later multi-stage
+        // `FROM`, which requires it to live in the daemon's image store.
+        if self.docker_client.docker_cli() != "podman" {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args([
             "build",
             "-t",
@@ -1786,13 +1805,34 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         &self,
         resources: DockerComposeResources,
     ) -> Result<DockerInspect, DevContainerError> {
+        self.start_docker_compose_services(&resources, ComposeUpBehavior::Create)
+            .await?;
+
+        if let Some(docker_ps) = self.check_for_existing_container().await? {
+            log::debug!("Found newly created dev container");
+            return self.docker_client.inspect(&docker_ps.id).await;
+        }
+
+        log::error!("Could not find existing container after docker compose up");
+
+        Err(DevContainerError::DevContainerParseFailed)
+    }
+
+    async fn start_docker_compose_services(
+        &self,
+        resources: &DockerComposeResources,
+        behavior: ComposeUpBehavior,
+    ) -> Result<(), DevContainerError> {
         let mut command = Command::new(self.docker_client.docker_cli());
         let project_name = self.project_name().await?;
         command.args(&["compose", "--project-name", &project_name]);
-        for docker_compose_file in resources.files {
+        for docker_compose_file in &resources.files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+        if matches!(behavior, ComposeUpBehavior::Resume) {
+            command.arg("--no-recreate");
+        }
         if let Some(run_services) = self.dev_container().run_services.as_ref() {
             command.args(run_services);
         }
@@ -1814,14 +1854,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ));
         }
 
-        if let Some(docker_ps) = self.check_for_existing_container().await? {
-            log::debug!("Found newly created dev container");
-            return self.docker_client.inspect(&docker_ps.id).await;
-        }
-
-        log::error!("Could not find existing container after docker compose up");
-
-        Err(DevContainerError::DevContainerParseFailed)
+        Ok(())
     }
 
     async fn run_docker_image(
@@ -2151,7 +2184,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
             if !docker_inspect.is_running() {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
-                self.docker_client.start_container(&docker_ps.id).await?;
+
+                match self.dev_container().build_type() {
+                    DevContainerBuildType::DockerCompose => {
+                        let resources = self.docker_compose_manifest().await?;
+                        self.start_docker_compose_services(&resources, ComposeUpBehavior::Resume)
+                            .await?
+                    }
+                    _ => self.docker_client.start_container(&docker_ps.id).await?,
+                }
             }
 
             let remote_user = get_remote_user_from_config(&docker_inspect, self)?;
@@ -2301,10 +2342,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let mut parsed_line = line.to_string();
             // Replace from devcontainer args first, since they take precedence
             for (key, value) in &devcontainer_args {
-                parsed_line = parsed_line.replace(&format!("${{{key}}}"), value)
+                parsed_line = expand_dockerfile_var(parsed_line, key, value);
             }
             for (key, value) in &inline_args {
-                parsed_line = parsed_line.replace(&format!("${{{key}}}"), value);
+                parsed_line = expand_dockerfile_var(parsed_line, key, value);
             }
             if let Some(arg_directives) = parsed_line.strip_prefix("ARG ") {
                 let trimmed = arg_directives.trim();
@@ -2375,9 +2416,9 @@ pub(crate) async fn read_devcontainer_configuration(
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2399,9 +2440,9 @@ pub(crate) async fn spawn_dev_container(
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
@@ -2440,6 +2481,30 @@ struct DockerBuildResources {
 enum DevContainerBuildResources {
     DockerCompose(DockerComposeResources),
     Docker(DockerBuildResources),
+}
+
+/// Replaces occurrences of `${KEY}` and `$KEY` in `line` with `value`.
+/// Bare `$KEY` is only replaced when the character immediately after the key
+/// is not a word character (`[A-Za-z0-9_]`), so `$RUBY_VERSION2` is not
+/// partially consumed when expanding `$RUBY_VERSION`.
+fn expand_dockerfile_var(mut line: String, key: &str, value: &str) -> String {
+    line = line.replace(&format!("${{{key}}}"), value);
+    let pattern = format!("${key}");
+    let mut result = String::with_capacity(line.len());
+    let mut remaining = line.as_str();
+    while let Some(pos) = remaining.find(pattern.as_str()) {
+        result.push_str(&remaining[..pos]);
+        let after = &remaining[pos + pattern.len()..];
+        if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+            result.push('$');
+            remaining = &remaining[pos + 1..];
+        } else {
+            result.push_str(value);
+            remaining = after;
+        }
+    }
+    result.push_str(remaining);
+    result
 }
 
 fn find_primary_service(
@@ -2755,54 +2820,77 @@ chmod +x ./install.sh
     Ok(script)
 }
 
+struct ParsedFromLine<'a> {
+    image: &'a str,
+    alias: Option<&'a str>,
+}
+
+/// Parses a `FROM` instruction into its image and optional stage alias,
+/// skipping flags like `--platform=...`. Returns `None` for non-`FROM` lines.
+fn parse_from_line(line: &str) -> Option<ParsedFromLine<'_>> {
+    let mut tokens = line.split_whitespace();
+    if !tokens.next()?.eq_ignore_ascii_case("FROM") {
+        return None;
+    }
+    let image = tokens.find(|token| !token.starts_with("--"))?;
+    let alias = match (tokens.next(), tokens.next()) {
+        (Some(keyword), Some(alias)) if keyword.eq_ignore_ascii_case("as") => Some(alias),
+        _ => None,
+    };
+    Some(ParsedFromLine { image, alias })
+}
+
 fn dockerfile_inject_alias(
     dockerfile_content: &str,
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    let from_lines: Vec<(usize, &str)> = dockerfile_content
+    let from_lines: Vec<(usize, ParsedFromLine)> = dockerfile_content
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.starts_with("FROM"))
+        .filter_map(|(index, line)| parse_from_line(line).map(|parsed| (index, parsed)))
         .collect();
 
     let target_entry = match &build_target {
-        Some(target) => from_lines.iter().rfind(|(_, line)| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            parts.len() >= 3
-                && parts
-                    .get(parts.len() - 2)
-                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
-                && parts
-                    .last()
-                    .map_or(false, |p| p.eq_ignore_ascii_case(target))
+        Some(target) => from_lines.iter().rfind(|(_, parsed)| {
+            parsed
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
         }),
         None => from_lines.last(),
     };
 
-    let Some(&(line_idx, from_line)) = target_entry else {
+    let Some((line_idx, parsed)) = target_entry else {
+        match &build_target {
+            Some(target) => log::warn!(
+                "Build target stage {target:?} not found in Dockerfile; leaving it unmodified"
+            ),
+            None => log::warn!("No FROM instruction found in Dockerfile; leaving it unmodified"),
+        }
         return dockerfile_content.to_string();
     };
 
-    let parts: Vec<&str> = from_line.split_whitespace().collect();
-    let has_alias = parts.len() >= 3
-        && parts
-            .get(parts.len() - 2)
-            .map_or(false, |p| p.eq_ignore_ascii_case("as"));
-
-    if has_alias {
-        let Some(existing_alias) = parts.last() else {
-            return dockerfile_content.to_string();
-        };
+    if let Some(existing_alias) = parsed.alias {
         format!("{dockerfile_content}\nFROM {existing_alias} AS {alias}")
     } else {
         let lines: Vec<&str> = dockerfile_content.lines().collect();
+        // Appending ` AS {alias}` to a line ending in a `\` continuation would
+        // corrupt the instruction, so leave the Dockerfile unmodified.
+        if lines
+            .get(*line_idx)
+            .is_some_and(|line| line.trim_end().ends_with('\\'))
+        {
+            log::warn!(
+                "FROM instruction spans multiple lines via `\\` continuation; cannot inject stage alias, leaving Dockerfile unmodified"
+            );
+            return dockerfile_content.to_string();
+        }
         let mut result = String::new();
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 result.push('\n');
             }
-            if i == line_idx {
+            if i == *line_idx {
                 result.push_str(&format!("{line} AS {alias}"));
             } else {
                 result.push_str(line);
@@ -2816,29 +2904,36 @@ fn dockerfile_inject_alias(
 }
 
 fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
-    dockerfile_contents
+    let stages: Vec<ParsedFromLine> = dockerfile_contents
         .lines()
-        .filter(|line| line.starts_with("FROM"))
-        .rfind(|from_line| match &target {
-            Some(target) => {
-                let parts = from_line.split(' ').collect::<Vec<&str>>();
-                if parts.len() >= 3
-                    && parts.get(parts.len() - 2).unwrap_or(&"").to_lowercase() == "as"
-                {
-                    parts.last().unwrap_or(&"").to_lowercase() == target.to_lowercase()
-                } else {
-                    false
-                }
-            }
-            None => true,
-        })
-        .and_then(|from_line| {
-            from_line
-                .split(' ')
-                .collect::<Vec<&str>>()
-                .get(1)
-                .map(|s| s.to_string())
-        })
+        .filter_map(parse_from_line)
+        .collect();
+
+    let start_index = match target {
+        Some(target) => stages.iter().rposition(|stage| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
+        })?,
+        None => stages.len().checked_sub(1)?,
+    };
+
+    // Follow alias chains (`FROM base AS development`) to a concrete image.
+    // Docker only resolves names to stages defined earlier in the file, so
+    // resolving strictly backwards is correct and cannot cycle.
+    let mut index = start_index;
+    loop {
+        let image = stages.get(index)?.image;
+        let previous_stage = stages.get(..index)?.iter().rposition(|stage| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(image))
+        });
+        match previous_stage {
+            Some(previous_index) => index = previous_index,
+            None => return Some(image.to_string()),
+        }
+    }
 }
 
 fn get_remote_user_from_config(
@@ -2907,6 +3002,7 @@ mod test {
     use fs::{FakeFs, Fs};
     use gpui::{AppContext, TestAppContext};
     use http_client::{AsyncBody, FakeHttpClient, HttpClient};
+    use indoc::indoc;
     use project::{
         ProjectEnvironment,
         worktree_store::{WorktreeIdCounter, WorktreeStore},
@@ -2923,8 +3019,9 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
+            DockerInspect, dockerfile_inject_alias, extract_feature_id, find_primary_service,
+            get_remote_user_from_config, image_from_dockerfile, is_local_feature_ref,
+            resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3038,6 +3135,7 @@ mod test {
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
             use_podman: false,
+            use_buildkit: None,
             fs: fs.clone(),
             http_client: http_client.clone(),
             environment: project_environment.downgrade(),
@@ -4899,6 +4997,75 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         );
     }
 
+    #[gpui::test]
+    async fn test_resumes_only_requested_compose_services_without_recreating(
+        cx: &mut TestAppContext,
+    ) {
+        let devcontainer_contents = r#"
+        {
+          "dockerComposeFile": "docker-compose.yml",
+          "service": "devcontainer",
+          "runServices": ["devcontainer", "db"],
+          "workspaceFolder": "/workspaces/project",
+          "updateRemoteUserUID": false
+        }
+        "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                indoc! {r#"
+                    services:
+                        app:
+                            image: test_image:latest
+                        devcontainer:
+                            image: test_image:latest
+                        db:
+                            image: postgres:18.4
+                "# }
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        assert!(
+            devcontainer_manifest
+                .check_for_existing_devcontainer()
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        let command = test_dependencies
+            .command_runner
+            .commands_by_program("docker")
+            .into_iter()
+            .find(|command| {
+                command.args.first().map(String::as_str) == Some("compose")
+                    && command.args.iter().any(|argument| argument == "up")
+            })
+            .expect("docker compose up command recorded");
+
+        assert!(
+            command.args.ends_with(&[
+                "up".to_string(),
+                "-d".to_string(),
+                "--no-recreate".to_string(),
+                "devcontainer".to_string(),
+                "db".to_string(),
+            ]),
+            "compose resume should target requested services without recreating them, got: {:?}",
+            command.args
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_podman(cx: &mut TestAppContext) {
@@ -5838,6 +6005,93 @@ FROM ${IMAGE} AS production
         assert_eq!(base_image, "docker.io/stuff/mybuild:latest".to_string());
     }
 
+    #[test]
+    fn test_image_from_dockerfile_resolves_one_hop_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base AS development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_resolves_deep_alias_chain() {
+        let dockerfile =
+            "FROM ubuntu:24.04 AS base\nFROM base AS mid\nFROM mid AS development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_no_target_resolves_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &None),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_stage_alias_shadows_external_image() {
+        // The first `a` is an external image: stage `a` isn't defined yet.
+        // Target `a` builds from stage `b`, whose base is that external `a`.
+        let dockerfile = "FROM a AS b\nFROM b AS a".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("a".to_string())),
+            Some("a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_only_resolves_earlier_stages() {
+        // The first `ubuntu` is the external image, not the later stage.
+        let dockerfile = "FROM ubuntu AS build\nFROM debian AS ubuntu".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("build".to_string())),
+            Some("ubuntu".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_skips_platform_flag() {
+        let dockerfile =
+            "FROM --platform=linux/amd64 ubuntu:24.04 AS base\nFROM base AS development"
+                .to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_missing_target() {
+        let dockerfile = "FROM ubuntu:24.04 AS base".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("nonexistent".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_case_insensitive_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS Base\nFROM Base AS Development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_scratch_base() {
+        let dockerfile = "FROM scratch AS builder\nFROM builder AS final".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("final".to_string())),
+            Some("scratch".to_string())
+        );
+    }
+
     #[gpui::test]
     async fn test_expands_args_in_dockerfile(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -5951,6 +6205,55 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         assert_eq!(base_image, "test_image:latest");
     }
 
+    #[gpui::test]
+    async fn test_expands_bare_dollar_args_in_dockerfile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "ruby-devcontainer",
+              "build": {
+                "dockerfile": "Dockerfile",
+              },
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                // Mirrors real-world Dockerfiles that use bare $VAR instead of ${VAR}.
+                // $RUBY_VERSION2 must not be partially replaced when expanding $RUBY_VERSION.
+                r#"
+ARG RUBY_VERSION=3.4.4
+ARG RUBY_VERSION2=3.3.0
+FROM ghcr.io/rails/devcontainer/images/ruby:$RUBY_VERSION
+RUN echo $RUBY_VERSION2
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expanded = devcontainer_manifest
+            .expanded_dockerfile_content()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            expanded,
+            "ARG RUBY_VERSION=3.4.4\nARG RUBY_VERSION2=3.3.0\nFROM ghcr.io/rails/devcontainer/images/ruby:3.4.4\nRUN echo 3.3.0"
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn check_for_existing_container_errors_when_multiple_match(cx: &mut TestAppContext) {
@@ -6002,13 +6305,62 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
     }
 
     #[test]
-    fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {}
+    fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base AS development";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            "FROM ubuntu:24.04 AS base\nFROM base AS development\nFROM development AS dev_container_auto_added_stage_label"
+        );
+    }
 
     #[test]
-    fn test_aliases_dockerfile_with_no_aliases_for_build() {}
+    fn test_aliases_dockerfile_with_no_aliases_for_build() {
+        let dockerfile = "FROM --platform=linux/amd64 ubuntu:24.04\nRUN echo ok";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            "FROM --platform=linux/amd64 ubuntu:24.04 AS dev_container_auto_added_stage_label\nRUN echo ok"
+        );
+    }
 
     #[test]
-    fn test_aliases_dockerfile_with_build_target_specified() {}
+    fn test_aliases_dockerfile_with_build_target_specified() {
+        let dockerfile = "FROM ubuntu:24.04 AS development\nFROM ubuntu:22.04 AS production";
+
+        assert_eq!(
+            dockerfile_inject_alias(
+                dockerfile,
+                "dev_container_auto_added_stage_label",
+                Some("development".to_string())
+            ),
+            "FROM ubuntu:24.04 AS development\nFROM ubuntu:22.04 AS production\nFROM development AS dev_container_auto_added_stage_label"
+        );
+    }
+
+    #[test]
+    fn test_aliases_dockerfile_with_missing_build_target_is_unmodified() {
+        let dockerfile = "FROM ubuntu:24.04 AS development";
+
+        assert_eq!(
+            dockerfile_inject_alias(
+                dockerfile,
+                "dev_container_auto_added_stage_label",
+                Some("nonexistent".to_string())
+            ),
+            dockerfile
+        );
+    }
+
+    #[test]
+    fn test_aliases_dockerfile_with_line_continuation_is_unmodified() {
+        let dockerfile = "FROM ubuntu:24.04 \\\n    --platform=linux/amd64\nRUN echo ok";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            dockerfile
+        );
+    }
 
     pub(crate) struct RecordedExecCommand {
         pub(crate) _container_id: String,

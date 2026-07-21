@@ -72,7 +72,7 @@ impl LineEndingSelector {
 
 impl Render for LineEndingSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -114,6 +114,10 @@ impl LineEndingSelectorDelegate {
 
 impl PickerDelegate for LineEndingSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "line ending selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a line ending…".into()

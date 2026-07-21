@@ -54,6 +54,7 @@ TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
 # keep track of (e.g. the prompt gets a rewrite or the model gets swapped).
 # Newest first, please. The datetime is for the deployment time (merge to main).
 BOT_VERSION_TIMELINE = [
+    ("v4", datetime(2026, 6, 16, 12, 43, tzinfo=timezone.utc)),
     ("v3", datetime(2026, 5, 25, 14, 30, tzinfo=timezone.utc)),
     ("v2", datetime(2026, 2, 26, 14, 9, tzinfo=timezone.utc)),
     ("v1", datetime(2026, 2, 18, tzinfo=timezone.utc)),

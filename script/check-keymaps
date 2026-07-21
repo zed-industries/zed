@@ -5,8 +5,8 @@ set -euo pipefail
 pattern='cmd-'
 result=$(git grep --no-color --line-number --fixed-strings -e "$pattern" -- \
   'assets/keymaps/' \
-  ':(exclude)assets/keymaps/storybook.json' \
   ':(exclude)assets/keymaps/default-macos.json' \
+  ':(exclude)assets/keymaps/specific-overrides-macos.json' \
   ':(exclude)assets/keymaps/macos/*.json' || true)
 
 if [[ -n "${result}" ]]; then

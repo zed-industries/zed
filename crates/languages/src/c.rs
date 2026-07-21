@@ -300,43 +300,43 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();
                 let display_range = 5..5 + name.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("struct {} {{}}", name);
                 let filter_range = 7..7 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::ENUM => {
+            language::SymbolKind::Enum => {
                 let text = format!("enum {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE | lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Interface | language::SymbolKind::Class => {
                 let text = format!("class {} {{}}", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const int {} = 0;", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("namespace {} {{}}", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::TYPE_PARAMETER => {
+            language::SymbolKind::TypeParameter => {
                 let text = format!("typename {} {{}};", name);
                 let filter_range = 9..9 + name.len();
                 let display_range = 0..filter_range.end;
@@ -445,6 +445,70 @@ mod tests {
                 buffer.text(),
                 "int main() {\n  \n}",
                 "content inside braces should be indented"
+            );
+
+            buffer
+        });
+    }
+
+    #[gpui::test]
+    async fn test_c_autoindent_switch_case(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    switch (a) {
+                    case 1:
+                    b++;
+                    break;
+                    case 2:
+                    case 3:
+                    c++;
+                    break;
+                    default:
+                    d++;
+                    }
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  switch (a) {
+                    case 1:
+                      b++;
+                      break;
+                    case 2:
+                    case 3:
+                      c++;
+                      break;
+                    default:
+                      d++;
+                  }
+                }
+                "#
+                .unindent(),
+                "statements under a case label should be indented, and the next label outdented"
             );
 
             buffer
