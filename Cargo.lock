@@ -2500,6 +2500,7 @@ dependencies = [
  "rand 0.9.4",
  "rope",
  "settings",
+ "strsim 0.11.1",
  "sum_tree",
  "text",
  "tracing",

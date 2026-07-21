@@ -5645,7 +5645,20 @@ async fn test_word_diff_modified_line_shifted_by_blank_lines(cx: &mut TestAppCon
 
     let word_diffs = collect_word_diffs(base_text, modified_text, cx);
 
-    assert_eq!(word_diffs, vec!["\n\n\n", " brave new"]);
+    assert_eq!(word_diffs, vec!["brave new "]);
+}
+
+#[gpui::test]
+async fn test_word_diff_skips_unmatched_lines_in_mixed_hunk(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "}\n// {}\n";
+    let modified_text = "}\n\nfn main() {\n    something;\n}\nfn thing() {}\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, Vec::<String>::new());
 }
 
 #[gpui::test]
@@ -5660,8 +5673,25 @@ async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppCon
 
     assert_eq!(
         word_diffs,
-        vec!["bbb\ndeleted line", "ddd", "BBB", "DDD"],
+        vec!["bbb", "ddd", "BBB", "DDD"],
         "modified lines with a deleted line between should produce word diffs"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_modified_lines_with_addition_between(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\nccc ddd\n";
+    let modified_text = "aaa BBB\nadded line\nccc DDD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        vec!["bbb", "ddd", "BBB", "DDD"],
+        "modified lines with an added line between should produce word diffs"
     );
 }
 
