@@ -17,7 +17,6 @@ use gpui::{
     Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
-use menu;
 use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
@@ -759,7 +758,6 @@ impl ProjectItem for ImageView {
 pub struct ImageViewToolbarControls {
     image_view: Option<WeakEntity<ImageView>>,
     _subscription: Option<gpui::Subscription>,
-    is_editing_zoom: bool,
     zoom_editor: Option<Entity<Editor>>,
     _zoom_subscription: Option<Subscription>,
 }
@@ -769,7 +767,6 @@ impl ImageViewToolbarControls {
         Self {
             image_view: None,
             _subscription: None,
-            is_editing_zoom: false,
             zoom_editor: None,
             _zoom_subscription: None,
         }
@@ -820,7 +817,6 @@ impl ImageViewToolbarControls {
 
         self.zoom_editor = Some(editor);
         self._zoom_subscription = Some(subscription);
-        self.is_editing_zoom = true;
 
         cx.notify();
     }
@@ -843,7 +839,6 @@ impl ImageViewToolbarControls {
             return;
         };
 
-        self.is_editing_zoom = false;
         self._zoom_subscription = None;
         self.zoom_editor = None;
 
@@ -858,7 +853,6 @@ impl ImageViewToolbarControls {
     }
 
     fn cancel_edit(&mut self, cx: &mut Context<Self>) {
-        self.is_editing_zoom = false;
         self.zoom_editor = None;
         self._zoom_subscription = None;
         cx.notify();
@@ -888,48 +882,42 @@ impl Render for ImageViewToolbarControls {
                         }
                     }),
             )
-            .child(if self.is_editing_zoom {
-                if let Some(editor) = self.zoom_editor.as_ref() {
-                    // Grow with input, defaulting to 3-digit zoom.
-                    let editor_width = px((editor
-                        .read(cx)
-                        .text(cx)
-                        .chars()
-                        .count()
-                        .clamp(ZOOM_EDITOR_MIN_DIGITS, ZOOM_EDITOR_MAX_DIGITS)
-                        as f32
-                        * ZOOM_EDITOR_APPROX_CHAR_WIDTH)
-                        + ZOOM_EDITOR_HORIZONTAL_PADDING);
+            .child(if let Some(editor) = self.zoom_editor.as_ref() {
+                // Grow with input, defaulting to 3-digit zoom.
+                let editor_width = px((editor
+                    .read(cx)
+                    .text(cx)
+                    .chars()
+                    .count()
+                    .clamp(ZOOM_EDITOR_MIN_DIGITS, ZOOM_EDITOR_MAX_DIGITS)
+                    as f32
+                    * ZOOM_EDITOR_APPROX_CHAR_WIDTH)
+                    + ZOOM_EDITOR_HORIZONTAL_PADDING);
 
-                    h_flex()
-                        .w(editor_width)
-                        .capture_key_down(|event, _window, cx| {
-                            if event.keystroke.modifiers.control
-                                || event.keystroke.modifiers.platform
-                            {
-                                return;
-                            }
+                h_flex()
+                    .w(editor_width)
+                    .capture_key_down(|event, _window, cx| {
+                        if event.keystroke.modifiers.control || event.keystroke.modifiers.platform {
+                            return;
+                        }
 
-                            // Only allow digits to be entered
-                            if let Some(text) = event.keystroke.key_char.as_deref()
-                                && !text.chars().all(|ch| ch.is_ascii_digit())
-                            {
-                                cx.stop_propagation();
-                            }
-                        })
-                        .child(editor.clone())
-                        .on_action::<menu::Confirm>({
-                            move |_: &menu::Confirm, window, _| {
-                                window.blur();
-                            }
-                        })
-                        .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                            this.cancel_edit(cx);
-                        }))
-                        .into_any_element()
-                } else {
-                    div().into_any_element()
-                }
+                        // Only allow digits to be entered
+                        if let Some(text) = event.keystroke.key_char.as_deref()
+                            && !text.chars().all(|ch| ch.is_ascii_digit())
+                        {
+                            cx.stop_propagation();
+                        }
+                    })
+                    .child(editor.clone())
+                    .on_action::<menu::Confirm>({
+                        move |_: &menu::Confirm, window, _| {
+                            window.blur();
+                        }
+                    })
+                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                        this.cancel_edit(cx);
+                    }))
+                    .into_any_element()
             } else {
                 let zoom_level = image_view.read(cx).zoom_level;
                 let zoom_percentage = format!("{}%", (zoom_level * 100.0).round() as i32);
@@ -941,16 +929,9 @@ impl Render for ImageViewToolbarControls {
                     .tooltip(|_window, cx| {
                         Tooltip::with_meta("Edit Zoom", None, "Right-click to reset to 100%.", cx)
                     })
-                    .on_click({
-                        let this = cx.entity().downgrade();
-                        move |_, window, cx| {
-                            if let Some(this) = this.upgrade() {
-                                this.update(cx, |this, cx| {
-                                    this.start_editing_zoom(window, cx);
-                                });
-                            }
-                        }
-                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.start_editing_zoom(window, cx);
+                    }))
                     .on_mouse_down(MouseButton::Right, {
                         let image_view = image_view.downgrade();
                         move |_, window, cx| {
@@ -1008,7 +989,6 @@ impl ToolbarItemView for ImageViewToolbarControls {
     ) -> ToolbarItemLocation {
         self.image_view = None;
         self._subscription = None;
-        self.is_editing_zoom = false;
         self.zoom_editor = None;
         self._zoom_subscription = None;
 
