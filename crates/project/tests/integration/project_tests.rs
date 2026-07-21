@@ -15027,10 +15027,11 @@ fn json_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JSON".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["json".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15041,10 +15042,11 @@ fn js_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15109,10 +15111,11 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Python".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["py".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None, // We're not testing Python parsing with this language.
@@ -15128,10 +15131,11 @@ fn typescript_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -15142,10 +15146,11 @@ fn tsx_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "tsx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

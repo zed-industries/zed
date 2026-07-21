@@ -169,11 +169,12 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
             autoclose_before: ")]}".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
                 modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![
                     BracketPair {
@@ -1598,10 +1599,11 @@ pub fn rust_lang() -> Arc<Language> {
     let language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
             brackets: BracketPairConfig {
                 pairs: vec![
@@ -1689,10 +1691,11 @@ pub fn markdown_lang() -> Arc<Language> {
     let language = Language::new(
         LanguageConfig {
             name: "Markdown".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["md".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_md::LANGUAGE.into()),
@@ -1849,19 +1852,21 @@ mod tests {
         languages.register_test_language(LanguageConfig {
             name: "JSON".into(),
             grammar: Some("json".into()),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["json".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         languages.register_test_language(LanguageConfig {
             name: "Rust".into(),
             grammar: Some("rust".into()),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         assert_eq!(

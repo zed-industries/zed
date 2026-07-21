@@ -371,7 +371,7 @@ impl LanguageRegistry {
         &self,
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
-        matcher: LanguageMatcher,
+        matcher: Arc<LanguageMatcher>,
         hidden: bool,
         manifest_name: Option<ManifestName>,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,

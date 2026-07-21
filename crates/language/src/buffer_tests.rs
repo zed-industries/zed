@@ -153,10 +153,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: LanguageName::new_static("Rust"),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -164,10 +165,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust with longer extension".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["longer.rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -175,10 +177,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: LanguageName::new_static("Make"),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -244,11 +247,12 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 
     languages.register_test_language(LanguageConfig {
         name: "JavaScript".into(),
-        matcher: LanguageMatcher {
+        matcher: (LanguageMatcher {
             path_suffixes: vec!["js".into()],
             first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
             ..LanguageMatcher::default()
-        },
+        })
+        .into(),
         ..Default::default()
     });
 
@@ -298,42 +302,47 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     for config in [
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string(), "ts.ecmascript".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "C++".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["cpp".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "C".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["c".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "Dockerfile".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["Dockerfile".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
     ] {
@@ -1208,10 +1217,11 @@ fn test_text_objects_with_has_parent_predicate(cx: &mut App) {
     let language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -1257,10 +1267,11 @@ fn test_text_objects_with_not_has_parent_predicate(cx: &mut App) {
     let language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4306,10 +4317,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
@@ -4362,10 +4374,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML+ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             block_comment: Some(BlockCommentConfig {
                 start: "<%#".into(),
                 prefix: "".into(),
@@ -4398,10 +4411,11 @@ fn json_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Json".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_json::LANGUAGE.into()),
