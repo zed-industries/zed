@@ -209,7 +209,7 @@ pub async fn apply_diff(
                 if status == FileStatus::Deleted {
                     let delete_task = project.update(cx, |project, cx| {
                         if let Some(path) = project.find_project_path(path.as_ref(), cx) {
-                            project.delete_file(path, false, cx)
+                            project.delete_file(path, cx)
                         } else {
                             None
                         }
@@ -309,12 +309,12 @@ pub async fn refresh_worktree_entries(
 ) -> Result<()> {
     let mut rel_paths = Vec::new();
     for path in paths {
-        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
 
         let path_without_root: PathBuf = path.components().skip(1).collect();
-        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
     }

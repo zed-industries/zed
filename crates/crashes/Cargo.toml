@@ -16,6 +16,9 @@ serde_json.workspace = true
 system_specs.workspace = true
 zstd.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true
 

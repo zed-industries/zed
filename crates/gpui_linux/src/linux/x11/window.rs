@@ -7,7 +7,7 @@ use gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    WindowDecorations, WindowKind, WindowParams, popup::PopupNotSupportedError, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -18,7 +18,7 @@ use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::ConnectionError,
-    properties::WmSizeHints,
+    properties::{WmHints, WmSizeHints},
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -428,6 +428,12 @@ impl X11WindowState {
         supports_xinput_gestures: bool,
         is_bgr: bool,
     ) -> anyhow::Result<Self> {
+        // Native popups are not implemented on X11 yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| u64::from(did) as usize);
@@ -1483,6 +1489,33 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn request_attention(&self) {
+        if self.is_active() {
+            return;
+        }
+
+        let mut hints = WmHints::new();
+        match WmHints::get(&*self.0.xcb, self.0.x_window) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(Some(existing_hints)) => hints = existing_hints,
+                Ok(None) => {}
+                Err(error) => {
+                    log::debug!("failed to read X11 WM_HINTS before setting urgency: {error}")
+                }
+            },
+            Err(error) => {
+                log::debug!("failed to request X11 WM_HINTS before setting urgency: {error}")
+            }
+        }
+        hints.urgent = true;
+        check_reply(
+            || "X11 ChangeProperty for WM_HINTS urgency failed.",
+            hints.set(&*self.0.xcb, self.0.x_window),
+        )
+        .log_err();
         xcb_flush(&self.0.xcb);
     }
 

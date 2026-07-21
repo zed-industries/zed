@@ -59,8 +59,8 @@ fn run_cherry_pick(
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo())
             .add_step(authenticate)
+            .add_step(steps::checkout_repo().with_token(&token))
             .add_step(cherry_pick(branch, commit, channel, &token)),
     )
 }

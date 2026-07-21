@@ -451,7 +451,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = crate::provider::open_ai::into_open_ai(
+        let request = match crate::provider::open_ai::into_open_ai(
             request,
             &self.model.name,
             self.model.capabilities.parallel_tool_calls,
@@ -460,7 +460,10 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             false,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_open_ai(request, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
