@@ -298,6 +298,7 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
+const LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(200);
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -1133,6 +1134,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
     diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
     selection_mark_mode: bool,
@@ -2444,6 +2446,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
             registered_buffers: HashMap::default(),
+            language_detection_task: Task::ready(()),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -10872,7 +10875,8 @@ impl Editor {
         self.refresh_document_symbols(for_buffer, cx);
     }
 
-    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
+    fn detect_buffer_language(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.language_detection_task = Task::ready(());
         if DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
@@ -10881,23 +10885,37 @@ impl Editor {
             return;
         };
 
-        let buffer = buffer_entity.read(cx);
-        if buffer.file().is_some() || !buffer.content_language_detection_enabled() {
-            return;
+        {
+            let buffer = buffer_entity.read(cx);
+            if buffer.file().is_some()
+                || !buffer.content_language_detection_enabled()
+                || buffer.len() < MIN_LANGUAGE_DETECTION_LEN
+            {
+                return;
+            }
         }
 
-        let buffer_snapshot = buffer.snapshot();
-        if buffer_snapshot.len() < MIN_LANGUAGE_DETECTION_LEN {
-            return;
-        }
-
-        let Some(language_registry) = buffer.language_registry() else {
-            return;
-        };
-        let buffer_version = buffer_snapshot.version().clone();
-        let detected_language = detect_language(buffer_snapshot, language_registry, cx);
-
-        cx.spawn(async move |_, cx| {
+        self.language_detection_task = cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT)
+                .await;
+            let Some((buffer_snapshot, language_registry)) =
+                buffer_entity.read_with(cx, |buffer, cx| {
+                    if DisableAiSettings::get_global(cx).disable_ai
+                        || buffer.file().is_some()
+                        || !buffer.content_language_detection_enabled()
+                        || buffer.len() < MIN_LANGUAGE_DETECTION_LEN
+                    {
+                        return None;
+                    }
+                    Some((buffer.snapshot(), buffer.language_registry()?))
+                })
+            else {
+                return;
+            };
+            let buffer_version = buffer_snapshot.version().clone();
+            let detected_language =
+                cx.update(|cx| detect_language(buffer_snapshot, language_registry, cx));
             if let Some(detected_language) = detected_language.await {
                 buffer_entity.update(cx, |buffer, cx| {
                     if buffer.file().is_none()
@@ -10908,8 +10926,7 @@ impl Editor {
                     }
                 });
             }
-        })
-        .detach();
+        });
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {

@@ -9650,6 +9650,26 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     });
     cx.run_until_parked();
 
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert(" ", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
     assert_eq!(
         buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
         rust_lang().name()
@@ -9667,6 +9687,15 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
         ));
         editor.paste(&Paste, window, cx);
     });
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        rust_lang().name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     assert_eq!(
