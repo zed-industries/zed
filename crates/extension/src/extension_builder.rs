@@ -11,6 +11,7 @@ use futures::{
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use language::LanguageConfig;
+use path::PathExt;
 use semver::Version;
 use serde::Deserialize;
 use std::{
@@ -20,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, command::Stdio, rel_path::PathExt};
+use util::{ResultExt, command::Stdio};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -446,21 +447,29 @@ impl ExtensionBuilder {
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
         let rustc_output = util::command::new_command("rustc")
-            .arg("--print")
-            .arg("sysroot")
+            .args(["--print", "target-libdir", "--target", RUST_TARGET])
             .output()
             .await
             .context("failed to run rustc")?;
         if !rustc_output.status.success() {
             bail!(
-                "failed to retrieve rust sysroot: {}",
+                "failed to retrieve the `{RUST_TARGET}` target libdir: {}",
                 String::from_utf8_lossy(&rustc_output.stderr)
             );
         }
 
-        let sysroot = PathBuf::from(String::from_utf8(rustc_output.stdout)?.trim());
-        if sysroot.join("lib/rustlib").join(RUST_TARGET).exists() {
+        let target_libdir = PathBuf::from(String::from_utf8(rustc_output.stdout)?.trim());
+        if target_libdir.exists() {
             return Ok(());
+        }
+
+        if which::which("rustup").is_err() {
+            bail!(
+                "the `{RUST_TARGET}` target is not installed, and `rustup` is not available to \
+                 install it. Add the target to your Rust toolchain (e.g. `targets = \
+                 [\"{RUST_TARGET}\"]` for Nix rust-overlay/fenix toolchains) or install it via \
+                 your package manager"
+            );
         }
 
         let output = util::command::new_command("rustup")
@@ -473,7 +482,7 @@ impl ExtensionBuilder {
         if !output.status.success() {
             bail!(
                 "failed to install the `{RUST_TARGET}` target: {}",
-                String::from_utf8_lossy(&rustc_output.stderr)
+                String::from_utf8_lossy(&output.stderr)
             );
         }
 
@@ -481,6 +490,18 @@ impl ExtensionBuilder {
     }
 
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
+        if let Some(sdk_path) = env::var_os("WASI_SDK_PATH").filter(|path| !path.is_empty()) {
+            let sdk_path = PathBuf::from(sdk_path);
+            let clang_path = wasi_sdk_clang_path(&sdk_path);
+            if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
+                log::info!("using wasi-sdk from WASI_SDK_PATH: {sdk_path:?}");
+                return Ok(clang_path);
+            }
+            log::warn!(
+                "WASI_SDK_PATH is set to {sdk_path:?} but clang was not found at {clang_path:?}, falling back to download"
+            );
+        }
+
         let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
             format!("{WASI_SDK_URL}{asset_name}")
         } else {
@@ -488,8 +509,7 @@ impl ExtensionBuilder {
         };
 
         let wasi_sdk_dir = self.cache_dir.join("wasi-sdk");
-        let mut clang_path = wasi_sdk_dir.clone();
-        clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
+        let clang_path = wasi_sdk_clang_path(&wasi_sdk_dir);
 
         log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
 
@@ -773,6 +793,12 @@ fn file_newer_than_deps(target: &Path, dependencies: &[&Path]) -> Result<bool, s
         }
     }
     Ok(true)
+}
+
+fn wasi_sdk_clang_path(wasi_sdk_dir: &Path) -> PathBuf {
+    let mut clang_path = wasi_sdk_dir.to_path_buf();
+    clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
+    clang_path
 }
 
 #[cfg(test)]

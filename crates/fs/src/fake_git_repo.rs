@@ -262,7 +262,18 @@ impl GitRepository for FakeGitRepository {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         self.with_state_async(false, move |state| {
-            let sha = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let sha = match state.refs.get(&commit) {
+                Some(sha) => sha.clone(),
+                // Real git fails to show an unresolvable revision (e.g. HEAD on an
+                // unborn branch), so only fall back to treating the input as a sha.
+                None => {
+                    anyhow::ensure!(
+                        commit.parse::<Oid>().is_ok(),
+                        "unable to resolve revision: {commit}"
+                    );
+                    commit
+                }
+            };
             Ok(CommitDetails {
                 sha: sha.into(),
                 message: "initial commit".into(),
@@ -1145,6 +1156,7 @@ impl GitRepository for FakeGitRepository {
 
     fn diff_stat(
         &self,
+        diff: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1192,22 +1204,43 @@ impl GitRepository for FakeGitRepository {
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
-                .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
-                .collect();
+            let (old_files, new_files) = match diff {
+                git::repository::DiffStatType::HeadToIndex => {
+                    (&state.head_contents, &state.index_contents)
+                }
+                git::repository::DiffStatType::HeadToWorktree => {
+                    (&state.head_contents, &worktree_files)
+                }
+                git::repository::DiffStatType::IndexToWorktree => {
+                    (&state.index_contents, &worktree_files)
+                }
+            };
+            let all_paths: HashSet<&RepoPath> = match diff {
+                git::repository::DiffStatType::HeadToIndex => state
+                    .head_contents
+                    .keys()
+                    .chain(state.index_contents.keys())
+                    .collect(),
+                git::repository::DiffStatType::HeadToWorktree => state
+                    .head_contents
+                    .keys()
+                    .chain(
+                        worktree_files
+                            .keys()
+                            .filter(|path| state.index_contents.contains_key(*path)),
+                    )
+                    .collect(),
+                git::repository::DiffStatType::IndexToWorktree => {
+                    state.index_contents.keys().collect()
+                }
+            };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let old_file = old_files.get(path);
+                let new_file = new_files.get(path);
+                match (old_file, new_file) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),

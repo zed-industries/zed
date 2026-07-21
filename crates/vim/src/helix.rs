@@ -169,14 +169,7 @@ impl Vim {
                     // our motions assume the current character is after the cursor,
                     // but in (forward) visual mode the current character is just
                     // before the end of the selection.
-
-                    // If the file ends with a newline (which is common) we don't do this.
-                    // so that if you go to the end of such a file you can use "up" to go
-                    // to the previous line and have it work somewhat as expected.
-                    if !selection.reversed
-                        && !selection.is_empty()
-                        && !(selection.end.column() == 0 && selection.end == map.max_point())
-                    {
+                    if !selection.reversed && !selection.is_empty() {
                         current_head = movement::left(map, selection.end)
                     }
 
@@ -241,9 +234,7 @@ impl Vim {
                     if !selection.reversed {
                         let next_point = movement::right(map, selection.end);
 
-                        if !(next_point.column() == 0 && next_point == map.max_point()) {
-                            selection.end = next_point;
-                        }
+                        selection.end = next_point;
                     }
 
                     // vim always ensures the anchor character stays selected.
@@ -2670,6 +2661,30 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_helix_select_move_to_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("line one\nline two\nline threˇe\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("v");
+        cx.assert_state("line one\nline two\nline thre«eˇ»\n", Mode::HelixSelect);
+        cx.simulate_keystrokes("l");
+        cx.assert_state("line one\nline two\nline thre«e\nˇ»", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("line one\nline two\nline threeˇ\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("v");
+        cx.assert_state("line one\nline two\nline three«\nˇ»", Mode::HelixSelect);
+        cx.simulate_keystrokes("g h");
+        cx.assert_state("line one\nline two\n«ˇline three\n»", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
     async fn test_goto_last_modification(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -4350,7 +4365,7 @@ mod test {
             .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
                 move |_, params, _| async move {
                     assert_eq!(params.position, expected_position);
-                    Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+                    Ok(Some(lsp::PrepareRenameResponse::Range(tgt_range)))
                 },
             );
         let mut rename_request = cx.set_request_handler::<lsp::request::Rename, _, _>(
