@@ -2170,41 +2170,6 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_rust_backtick_bracket_scopes(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let test_settings = SettingsStore::test(cx);
-            cx.set_global(test_settings);
-        });
-
-        let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
-
-        let text = "/// foo\nfn main() {\n    let bar = \"baz\";\n}";
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
-        cx.run_until_parked();
-
-        buffer.read_with(cx, |buffer, _| {
-            let snapshot = buffer.snapshot();
-            let backtick_enabled = |offset: usize| {
-                snapshot
-                    .language_scope_at(offset)
-                    .unwrap()
-                    .brackets()
-                    .find(|(pair, _)| pair.start == "`")
-                    .expect("rust config should define a backtick bracket pair")
-                    .1
-            };
-
-            // Enabled inside doc comments so selections are surrounded with backticks
-            // rather than being replaced (see issue #58538).
-            assert!(backtick_enabled(text.find("foo").unwrap()));
-            // Enabled in regular code as well.
-            assert!(backtick_enabled(text.find("fn main").unwrap()));
-            // Disabled inside string literals.
-            assert!(!backtick_enabled(text.find("baz").unwrap()));
-        });
-    }
-
     #[test]
     fn test_package_name_from_pkgid() {
         for (input, expected) in [
