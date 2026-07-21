@@ -1,4 +1,10 @@
 use anyhow::{Context, Result};
+mod ai_discovery;
+
+use ai_discovery::{
+    add_markdown_alternate_link, docs_pages, rewrite_docs_links, write_ai_discovery_artifacts,
+    write_markdown_redirect_aliases, write_pages_redirects,
+};
 use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
@@ -188,7 +194,7 @@ fn handle_preprocessing() -> Result<()> {
     template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
-    template_and_validate_json_snippets(&mut book, &mut errors);
+    template_and_validate_json_snippets(&mut book, &mut errors)?;
 
     if !errors.is_empty() {
         const ANSI_RED: &str = "\x1b[31m";
@@ -252,7 +258,7 @@ fn format_binding(binding: String) -> String {
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
+    let regex = Regex::new(r"(?s)\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
@@ -300,7 +306,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
 }
 
 fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
+    let regex = Regex::new(r"(?s)\{#action\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
@@ -379,7 +385,10 @@ fn find_binding_with_overlay(
         .or_else(|| find_binding(os, action))
 }
 
-fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+fn template_and_validate_json_snippets(
+    book: &mut Book,
+    errors: &mut HashSet<PreprocessorError>,
+) -> Result<()> {
     let params = SettingsJsonSchemaParams {
         language_names: &[],
         font_names: &[],
@@ -393,7 +402,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
     };
     let settings_schema = SettingsStore::json_schema(&params);
     let settings_validator = jsonschema::validator_for(&settings_schema)
-        .expect("failed to compile settings JSON schema");
+        .context("failed to compile settings JSON schema")?;
 
     // The keymap schema is built from the action manifest. When `actions.json`
     // is unavailable (e.g. when running outside of CI without first generating
@@ -405,7 +414,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
             keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
         Some(
             jsonschema::validator_for(&keymap_schema)
-                .expect("failed to compile keymap JSON schema"),
+                .context("failed to compile keymap JSON schema")?,
         )
     } else {
         None
@@ -568,6 +577,8 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
         };
         Ok(())
     });
+
+    Ok(())
 }
 
 /// Removes any configurable options from the stringified action if existing,
@@ -679,6 +690,19 @@ fn handle_postprocessing() -> Result<()> {
         .as_table_mut()
         .expect("output is table");
     let zed_html = output.remove("zed-html").expect("zed-html output defined");
+    let redirects = zed_html
+        .get("redirect")
+        .and_then(|redirects| redirects.as_table())
+        .map(|redirects| {
+            redirects
+                .iter()
+                .filter_map(|(source, destination)| {
+                    destination
+                        .as_str()
+                        .map(|destination| (source.clone(), destination.to_string()))
+                })
+                .collect::<Vec<_>>()
+        });
     let default_description = zed_html
         .get("default-description")
         .expect("Default description not found")
@@ -694,6 +718,17 @@ fn handle_postprocessing() -> Result<()> {
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
     let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
     let docs_channel = std::env::var("DOCS_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    let site_url = std::env::var("MDBOOK_BOOK__SITE_URL")
+        .ok()
+        .filter(|site_url| !site_url.trim().is_empty())
+        .unwrap_or_else(|| {
+            match docs_channel.as_str() {
+                "nightly" => "/docs/nightly/",
+                "preview" => "/docs/preview/",
+                _ => "/docs/",
+            }
+            .to_string()
+        });
     let noindex = if docs_channel == "nightly" || docs_channel == "preview" {
         "<meta name=\"robots\" content=\"noindex, nofollow\">"
     } else {
@@ -733,8 +768,10 @@ fn handle_postprocessing() -> Result<()> {
     }
 
     zlog::info!(logger => "Processing {} `.html` files", files.len());
+    let pages = docs_pages(&ctx.book)?;
+    write_ai_discovery_artifacts(&pages, &root_dir, &site_url)?;
     let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
-    for file in files {
+    for file in &files {
         let contents = std::fs::read_to_string(&file)?;
         let mut meta_description = None;
         let mut meta_title = None;
@@ -770,13 +807,18 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = contents.replace("#noindex#", noindex);
+        let contents = rewrite_docs_links(&contents, &site_url);
+        let contents = add_markdown_alternate_link(&contents, file, &root_dir, &site_url);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
             })
             .to_string();
-        // let contents = contents.replace("#title#", &meta_title);
         std::fs::write(file, contents)?;
+    }
+    if let Some(redirects) = redirects {
+        write_markdown_redirect_aliases(&root_dir, &redirects, &site_url)?;
+        write_pages_redirects(&root_dir, &redirects, &site_url)?;
     }
     return Ok(());
 
@@ -906,66 +948,4 @@ fn keymap_schema_for_actions(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn test_find_binding_prefers_exact_match_over_parameterized() {
-        let keymap: KeymapFile = serde_json::from_value(json!([
-            {
-                "bindings": {
-                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
-                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
-                }
-            }
-        ]))
-        .unwrap();
-
-        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
-        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
-    }
-
-    #[test]
-    fn test_find_binding_falls_back_to_parameterized_match() {
-        let keymap: KeymapFile = serde_json::from_value(json!([
-            {
-                "bindings": {
-                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
-                }
-            }
-        ]))
-        .unwrap();
-
-        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
-        assert_eq!(binding.as_deref(), Some("ctrl-shift-tab"));
-    }
-
-    #[test]
-    fn test_find_binding_prefers_exact_match_regardless_of_order() {
-        let keymap: KeymapFile = serde_json::from_value(json!([
-            {
-                "bindings": {
-                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
-                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher"
-                }
-            }
-        ]))
-        .unwrap();
-
-        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
-        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
-    }
-
-    #[test]
-    fn test_find_binding_later_section_overrides_earlier() {
-        let keymap: KeymapFile = serde_json::from_value(json!([
-            { "bindings": { "ctrl-a": "some::Action" } },
-            { "bindings": { "ctrl-b": "some::Action" } }
-        ]))
-        .unwrap();
-
-        let binding = find_binding_in_keymap(&keymap, "some::Action");
-        assert_eq!(binding.as_deref(), Some("ctrl-b"));
-    }
-}
+mod tests;

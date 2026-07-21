@@ -103,7 +103,7 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
+        let context_menu_entry_idx = self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 

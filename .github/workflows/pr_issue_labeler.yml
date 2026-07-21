@@ -41,7 +41,9 @@ jobs:
             const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const GUILD_LABEL = 'guild';
-            const GUILD_TEAM_SLUG = 'guild-cohort-2';
+            // Guild cohort members are outside collaborators holding this custom
+            // repository role, not members of an org team.
+            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
             const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
@@ -138,7 +140,25 @@ jobs:
             };
 
             const isStaffMember = (author) => isTeamMember(STAFF_TEAM_SLUG, author);
-            const isGuildMember = (author) => isTeamMember(GUILD_TEAM_SLUG, author);
+
+            const isGuildMember = async (author) => {
+              try {
+                const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: 'zed-industries',
+                  repo: 'zed',
+                  username: author
+                });
+                // role_name is the effective (highest) role; for cohort outside
+                // collaborators that is the custom role. Built-in roles come back
+                // lowercased and won't match.
+                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                return false;
+              }
+            };
 
             const getIssueLabels = () => {
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {

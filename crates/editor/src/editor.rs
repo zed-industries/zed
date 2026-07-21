@@ -98,21 +98,25 @@ pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-    render_breadcrumb_text,
+    file_status_label_color, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
+pub use git::{
+    DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
+    RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
+    set_blame_renderer,
+};
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{
-    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, render_diff_hunk_controls,
-    update_uncommitted_diff_for_buffer,
+    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, update_uncommitted_diff_for_buffer,
 };
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
-pub use git::{RenderDiffHunkControlsFn, set_blame_renderer};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -124,7 +128,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleSplitDiff};
+pub use split::{DiffStyleControls, SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -973,7 +977,6 @@ pub struct Editor {
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     delegate_expand_excerpts: bool,
-    delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
     enable_lsp_data: bool,
     needs_initial_data_update: bool,
@@ -1074,11 +1077,11 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
-    render_diff_hunk_controls: RenderDiffHunkControlsFn,
     buffer_serialization: Option<BufferSerialization>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    pending_blame_hover_observation: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1128,12 +1131,7 @@ pub struct Editor {
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
-    /// Whether we are temporarily displaying a diff other than git's
-    temporary_diff_override: bool,
-    /// Whether to render all diff hunks with the "unstaged" appearance,
-    /// regardless of whether they have a secondary hunk. Used by views whose
-    /// diffs aren't related to the git index (e.g. agent diffs).
-    render_diff_hunks_as_unstaged: bool,
+    diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -2284,7 +2282,6 @@ impl Editor {
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
             delegate_expand_excerpts: false,
-            delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
             enable_lsp_data: full_mode,
             needs_initial_data_update: full_mode,
@@ -2389,7 +2386,6 @@ impl Editor {
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame.enabled,
-            render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             buffer_serialization: is_minimap.not().then(|| {
                 BufferSerialization::new(
                     ProjectSettings::get_global(cx)
@@ -2399,6 +2395,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            pending_blame_hover_observation: None,
 
             bookmark_store,
             breakpoint_store,
@@ -2419,16 +2416,6 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, |editor, window, cx| {
-                            let active = window.is_window_active();
-                            editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
-                                    blink_manager.enable(cx);
-                                } else {
-                                    blink_manager.disable(cx);
-                                }
-                            });
-                        }),
                     ]
                 })
                 .unwrap_or_default(),
@@ -2458,8 +2445,7 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
-            temporary_diff_override: false,
-            render_diff_hunks_as_unstaged: false,
+            diff_hunk_delegate: None,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -7712,16 +7698,21 @@ impl Editor {
         let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+        let (head_buffer, head_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
-        if tail_buffer != cursor_buffer {
+        if tail_buffer != cursor_buffer || head_buffer != cursor_buffer {
             return None;
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let head_buffer_offset = head_buffer_position.to_offset(&snapshot);
         let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
         let prepare_rename = provider.range_for_rename(&cursor_buffer, cursor_buffer_position, cx);
         drop(snapshot);
@@ -7734,7 +7725,9 @@ impl Editor {
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
                         cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-                    let cursor_offset_in_rename_range_end =
+                    let head_offset_in_rename_range =
+                        head_buffer_offset.saturating_sub(rename_buffer_range.start);
+                    let tail_offset_in_rename_range =
                         cursor_buffer_offset_end.saturating_sub(rename_buffer_range.start);
 
                     this.take_rename(false, window, cx);
@@ -7775,24 +7768,23 @@ impl Editor {
                                 cx,
                             )
                         });
-                        let cursor_offset_in_rename_range =
-                            MultiBufferOffset(cursor_offset_in_rename_range);
-                        let cursor_offset_in_rename_range_end =
-                            MultiBufferOffset(cursor_offset_in_rename_range_end);
-                        let rename_selection_range = match cursor_offset_in_rename_range
-                            .cmp(&cursor_offset_in_rename_range_end)
-                        {
-                            Ordering::Equal => {
-                                editor.select_all(&SelectAll, window, cx);
-                                return editor;
-                            }
-                            Ordering::Less => {
-                                cursor_offset_in_rename_range..cursor_offset_in_rename_range_end
-                            }
-                            Ordering::Greater => {
-                                cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
-                            }
-                        };
+                        let head_offset_in_rename_range =
+                            MultiBufferOffset(head_offset_in_rename_range);
+                        let tail_offset_in_rename_range =
+                            MultiBufferOffset(tail_offset_in_rename_range);
+                        let rename_selection_range =
+                            match head_offset_in_rename_range.cmp(&tail_offset_in_rename_range) {
+                                Ordering::Equal => {
+                                    editor.select_all(&SelectAll, window, cx);
+                                    return editor;
+                                }
+                                Ordering::Less => {
+                                    head_offset_in_rename_range..tail_offset_in_rename_range
+                                }
+                                Ordering::Greater => {
+                                    tail_offset_in_rename_range..head_offset_in_rename_range
+                                }
+                            };
                         if rename_selection_range.end.0 > old_name.len() {
                             editor.select_all(&SelectAll, window, cx);
                         } else {
@@ -8658,19 +8650,30 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let start_line = selection.start.row + 1;
-        let end_line = selection.end.row + 1;
+        if let Some(file_location) = maybe!({
+            let (buffer, range) = multi_buffer_snapshot
+                .range_to_buffer_range(selection.range())
+                .or_else(|| {
+                    // A selection that spans multiple buffers has no single location,
+                    // so fall back to the buffer the latest cursor is in.
+                    let (buffer, point) =
+                        multi_buffer_snapshot.point_to_buffer_point(selection.head())?;
+                    Some((buffer, point..point))
+                })?;
 
-        let end_line = if selection.end.column == 0 && end_line > start_line {
-            end_line - 1
-        } else {
-            end_line
-        };
+            let start_line = range.start.row + 1;
+            let end_line = range.end.row + 1;
 
-        if let Some(file_location) = self.active_buffer(cx).and_then(|buffer| {
+            let end_line = if range.end.column == 0 && end_line > start_line {
+                end_line - 1
+            } else {
+                end_line
+            };
+
             let project = self.project()?.read(cx);
-            let file = buffer.read(cx).file()?;
+            let file = buffer.file()?;
             let path = file.path().display(project.path_style(cx));
 
             let location = if start_line == end_line {
@@ -9567,6 +9570,9 @@ impl Editor {
                 ranges,
                 path_key,
             } => {
+                if let Some(hovered_link_state) = self.hovered_link_state.as_mut() {
+                    hovered_link_state.symbol_range = None;
+                }
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
@@ -9755,7 +9761,13 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::SettingsChanged,
+            window,
+            cx,
+        );
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -10901,7 +10913,7 @@ impl Editor {
                         if multibuffer.is_singleton() {
                             multibuffer.title(cx).to_string()
                         } else {
-                            "untitled".to_string()
+                            MultiBuffer::DEFAULT_TITLE.to_string()
                         }
                     })
             });
@@ -11780,16 +11792,9 @@ pub enum EditorEvent {
         lines: u32,
         direction: ExpandExcerptDirection,
     },
-    StageOrUnstageRequested {
-        stage: bool,
-        hunks: Vec<MultiBufferDiffHunk>,
-    },
     OpenExcerptsRequested {
         selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
         split: bool,
-    },
-    RestoreRequested {
-        hunks: Vec<MultiBufferDiffHunk>,
     },
     /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,

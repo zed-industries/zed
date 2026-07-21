@@ -11,6 +11,7 @@ pub struct CircularProgress {
     max_value: f32,
     size: Pixels,
     stroke_width: Pixels,
+    radius: Option<Pixels>,
     bg_color: Hsla,
     progress_color: Hsla,
 }
@@ -22,6 +23,7 @@ impl CircularProgress {
             max_value,
             size,
             stroke_width: px(4.0),
+            radius: None,
             bg_color: cx.theme().colors().border_variant,
             progress_color: cx.theme().status().info,
         }
@@ -51,6 +53,16 @@ impl CircularProgress {
         self
     }
 
+    /// Sets the ring radius explicitly, decoupling it from the layout box.
+    ///
+    /// By default the radius is derived from the size and stroke width so
+    /// the ring fills the box. Set it explicitly to draw a smaller ring
+    /// inside the box, e.g. to match the padding of an icon glyph.
+    pub fn radius(mut self, radius: Pixels) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
     /// Sets the background circle color.
     pub fn bg_color(mut self, color: Hsla) -> Self {
         self.bg_color = color;
@@ -69,6 +81,8 @@ impl RenderOnce for CircularProgress {
         let value = self.value;
         let max_value = self.max_value;
         let size = self.size;
+        let stroke_width = self.stroke_width;
+        let radius = self.radius.unwrap_or_else(|| (size / 2.0) - stroke_width);
         let bg_color = self.bg_color;
         let progress_color = self.progress_color;
 
@@ -79,9 +93,6 @@ impl RenderOnce for CircularProgress {
 
                 let center_x = bounds.origin.x + bounds.size.width / 2.0;
                 let center_y = bounds.origin.y + bounds.size.height / 2.0;
-
-                let stroke_width = self.stroke_width;
-                let radius = (size / 2.0) - stroke_width;
 
                 // Draw background circle (full 360 degrees)
                 let mut bg_builder = PathBuilder::stroke(stroke_width);
