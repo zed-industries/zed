@@ -345,8 +345,6 @@ impl Render for TitleBar {
         let status = self.client.status();
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
-
-        let signed_in = user.is_some();
         let is_signing_in = user.is_none()
             && matches!(
                 status,
@@ -362,13 +360,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
-                .map(|this| {
-                    if signed_in {
-                        this.pr_1p5()
-                    } else {
-                        this.pr_1()
-                    }
-                })
+                .pr_1()
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(self.render_call_controls(window, cx))
