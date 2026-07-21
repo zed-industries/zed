@@ -1315,8 +1315,10 @@ impl EditorElement {
             ShowScrollbar::Auto => {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
+                let supports_git_diff_markers =
+                    is_singleton || editor.allow_git_diff_scrollbar_markers;
                 // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
+                (supports_git_diff_markers && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
                 ||
                 // Buffer Search Results
                 (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
@@ -2609,6 +2611,14 @@ impl EditorElement {
             run_indicators
                 .iter()
                 .filter_map(|display_row| {
+                    let task_status = gutter
+                        .row_infos
+                        .get((display_row.0.saturating_sub(gutter.range.start.0)) as usize)
+                        .and_then(|row_info| Some((row_info.buffer_id?, row_info.buffer_row?)))
+                        .and_then(|(buffer_id, buffer_row)| {
+                            editor.runnable_task_status(buffer_id, buffer_row)
+                        });
+
                     gutter.layout_item(
                         *display_row,
                         |cx, _| {
@@ -2617,6 +2627,7 @@ impl EditorElement {
                                     &self.style,
                                     Some(*display_row) == active_task_indicator_row,
                                     breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    task_status,
                                     *display_row,
                                     cx,
                                 )
@@ -6001,10 +6012,19 @@ impl EditorElement {
         cx: &mut App,
     ) {
         self.editor.update(cx, |editor, cx| {
-            if editor.buffer_kind(cx) != ItemBufferKind::Singleton
-                || !editor
-                    .scrollbar_marker_state
-                    .should_refresh(scrollbar_layout.hitbox.size)
+            let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+            let show_git_diff_markers = scrollbar_settings.git_diff
+                && (is_singleton || editor.allow_git_diff_scrollbar_markers);
+            if !is_singleton && !show_git_diff_markers {
+                editor.scrollbar_marker_state.dirty = true;
+                editor.scrollbar_marker_state.markers = Default::default();
+                editor.scrollbar_marker_state.pending_refresh = None;
+                return;
+            }
+            if !editor
+                .scrollbar_marker_state
+                .should_refresh(scrollbar_layout.hitbox.size)
             {
                 return;
             }
@@ -6013,7 +6033,6 @@ impl EditorElement {
             let background_highlights = editor.background_highlights.clone();
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
-            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -6023,7 +6042,7 @@ impl EditorElement {
                         .background_spawn(async move {
                             let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
                             let mut marker_quads = Vec::new();
-                            if scrollbar_settings.git_diff {
+                            if show_git_diff_markers {
                                 let marker_row_ranges =
                                     snapshot.buffer_snapshot().diff_hunks().map(|hunk| {
                                         let start_display_row =
@@ -6062,7 +6081,7 @@ impl EditorElement {
                             }
 
                             for (background_highlight_id, (_, background_ranges)) in
-                                background_highlights.iter()
+                                background_highlights.iter().filter(|_| is_singleton)
                             {
                                 let is_search_highlights = *background_highlight_id
                                     == HighlightKey::BufferSearchHighlights;
@@ -6099,7 +6118,9 @@ impl EditorElement {
                                 }
                             }
 
-                            if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
+                            if is_singleton
+                                && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None
+                            {
                                 let diagnostics = snapshot
                                     .buffer_snapshot()
                                     .diagnostics_in_range::<Point>(Point::zero()..max_point)
