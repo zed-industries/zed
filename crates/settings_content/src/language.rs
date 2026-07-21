@@ -1145,6 +1145,7 @@ pub struct LanguageTaskSettingsContent {
 pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
 
 /// Map from language name to file patterns.
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct FileTypeMap(pub HashMap<Arc<str>, ExtendingVec<String>>);
 

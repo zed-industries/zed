@@ -1208,7 +1208,8 @@ impl SettingsStore {
                 json_schema!({
                     "type": "object",
                     "errorMessage": "No language with this name is installed.",
-                    "properties": params.language_names.iter().map(|name| (name.clone(), file_type_patterns_ref.clone())).collect::<serde_json::Map<_, _>>()
+                    "properties": params.language_names.iter().map(|name| (name.clone(), file_type_patterns_ref.clone())).collect::<serde_json::Map<_, _>>(),
+                    "additionalProperties": file_type_patterns_ref.clone()
                 })
             });
         }
@@ -3192,14 +3193,24 @@ mod tests {
             deprecation_messages: &HashMap::default(),
         });
 
-        let properties = schema
-            .pointer("/$defs/FileTypeMap/properties")
+        let file_type_map = schema
+            .pointer("/$defs/FileTypeMap")
+            .expect("schema should have a FileTypeMap definition");
+        let properties = file_type_map
+            .pointer("/properties")
             .expect("FileTypeMap should have properties")
             .as_object()
             .expect("FileTypeMap properties should be an object");
 
-        assert!(properties.contains_key("Rust"));
-        assert!(properties.contains_key("TypeScript"));
+        let mut language_names = properties.keys().collect::<Vec<_>>();
+        language_names.sort();
+        assert_eq!(language_names, ["Rust", "TypeScript"]);
+
+        let patterns_schema = file_type_map
+            .pointer("/additionalProperties")
+            .expect("FileTypeMap should validate values of unknown language names");
+        assert_eq!(properties.get("Rust"), Some(patterns_schema));
+        assert_eq!(properties.get("TypeScript"), Some(patterns_schema));
     }
 
     #[gpui::test]
