@@ -1963,7 +1963,7 @@ impl LspCommand for GetDocumentHighlights {
             buffer
                 .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
                 .await?;
-            let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
+            let kind = match proto::document_highlight::Kind::try_from(highlight.kind).ok() {
                 Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,
                 Some(proto::document_highlight::Kind::Read) => DocumentHighlightKind::READ,
                 Some(proto::document_highlight::Kind::Write) => DocumentHighlightKind::WRITE,
@@ -4487,7 +4487,7 @@ impl GetDocumentDiagnostics {
         let tags = diagnostic
             .tags
             .into_iter()
-            .filter_map(|tag| match proto::LspDiagnosticTag::from_i32(tag) {
+            .filter_map(|tag| match proto::LspDiagnosticTag::try_from(tag).ok() {
                 Some(proto::LspDiagnosticTag::Unnecessary) => Some(lsp::DiagnosticTag::UNNECESSARY),
                 Some(proto::LspDiagnosticTag::Deprecated) => Some(lsp::DiagnosticTag::DEPRECATED),
                 _ => None,
@@ -4496,7 +4496,9 @@ impl GetDocumentDiagnostics {
 
         Ok(lsp::Diagnostic {
             range: language::range_to_lsp(range)?,
-            severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
+            severity: match proto::lsp_diagnostic::Severity::try_from(diagnostic.severity)
+                .ok()
+                .unwrap()
             {
                 proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
                 proto::lsp_diagnostic::Severity::Warning => Some(lsp::DiagnosticSeverity::WARNING),

@@ -926,7 +926,8 @@ impl LspButton {
                     let Some(name) = name.as_ref() else {
                         return;
                     };
-                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
+                    if let Some(binary_status) =
+                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -955,7 +956,7 @@ impl LspButton {
                     };
                 }
                 Some(proto::status_update::Status::Health(health_status)) => {
-                    if let Some(health) = proto::ServerHealth::from_i32(*health_status) {
+                    if let Some(health) = proto::ServerHealth::try_from(*health_status).ok() {
                         let health = match health {
                             proto::ServerHealth::Ok => ServerHealth::Ok,
                             proto::ServerHealth::Warning => ServerHealth::Warning,

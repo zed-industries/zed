@@ -12708,7 +12708,7 @@ impl LspStore {
         Ok(CoreCompletion {
             replace_range: old_replace_start..old_replace_end,
             new_text: completion.new_text,
-            source: match proto::completion::Source::from_i32(completion.source) {
+            source: match proto::completion::Source::try_from(completion.source).ok() {
                 Some(proto::completion::Source::Custom) => CompletionSource::Custom,
                 Some(proto::completion::Source::Lsp) => CompletionSource::Lsp {
                     insert_range,
@@ -12780,7 +12780,7 @@ impl LspStore {
             .end
             .and_then(deserialize_anchor)
             .context("invalid end")?;
-        let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
+        let lsp_action = match proto::code_action::Kind::try_from(action.kind).ok() {
             Some(proto::code_action::Kind::Action) => {
                 LspAction::Action(serde_json::from_slice(&action.lsp_action)?)
             }
@@ -14748,7 +14748,10 @@ impl LanguageServerLogType {
         use proto::rpc_message;
         match log_type {
             proto::language_server_log::LogType::Log(message_type) => Self::Log(
-                match LogLevel::from_i32(message_type.level).unwrap_or(LogLevel::Log) {
+                match LogLevel::try_from(message_type.level)
+                    .ok()
+                    .unwrap_or(LogLevel::Log)
+                {
                     LogLevel::Error => MessageType::ERROR,
                     LogLevel::Warning => MessageType::WARNING,
                     LogLevel::Info => MessageType::INFO,
@@ -14759,7 +14762,8 @@ impl LanguageServerLogType {
                 verbose_info: trace_message.verbose_info,
             },
             proto::language_server_log::LogType::Rpc(message) => Self::Rpc {
-                received: match rpc_message::Kind::from_i32(message.kind)
+                received: match rpc_message::Kind::try_from(message.kind)
+                    .ok()
                     .unwrap_or(rpc_message::Kind::Received)
                 {
                     rpc_message::Kind::Received => true,

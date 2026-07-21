@@ -6497,7 +6497,9 @@ impl Workspace {
             anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
-        let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
+        let panel_id = view
+            .panel_id
+            .and_then(|id| proto::PanelId::try_from(id).ok());
 
         let pane = this.update(cx, |this, _cx| {
             let state = this

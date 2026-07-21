@@ -1484,7 +1484,8 @@ impl BufferStore {
         let version = deserialize_version(&envelope.payload.version);
         let mtime = envelope.payload.mtime.clone().map(|time| time.into());
         let line_ending = deserialize_line_ending(
-            proto::LineEnding::from_i32(envelope.payload.line_ending)
+            proto::LineEnding::try_from(envelope.payload.line_ending)
+                .ok()
                 .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {

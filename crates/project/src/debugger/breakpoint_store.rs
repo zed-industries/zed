@@ -1032,7 +1032,7 @@ impl Breakpoint {
 
     fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
         Some(Self {
-            state: match proto::BreakpointState::from_i32(breakpoint.state) {
+            state: match proto::BreakpointState::try_from(breakpoint.state).ok() {
                 Some(proto::BreakpointState::Disabled) => BreakpointState::Disabled,
                 None | Some(proto::BreakpointState::Enabled) => BreakpointState::Enabled,
             },

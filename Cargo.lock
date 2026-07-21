@@ -632,7 +632,7 @@ dependencies = [
  "rustix-openpty",
  "serde",
  "signal-hook",
- "unicode-width",
+ "unicode-width 0.2.2",
  "vte",
  "windows-sys 0.59.0",
 ]
@@ -731,7 +731,7 @@ checksum = "c86cd1c51b95d71dde52bca69ed225008f6ff4c8cc825b08042aa1ef823e1980"
 dependencies = [
  "anstyle",
  "memchr",
- "unicode-width",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -1422,7 +1422,7 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
- "which 6.0.3",
+ "which",
  "workspace",
  "zlog",
 ]
@@ -3377,7 +3377,7 @@ checksum = "ba7a06c0b31fff5ff2e1e7d37dbf940864e2a974b336e1a2938d10af6e8fb283"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -3460,7 +3460,7 @@ dependencies = [
  "project",
  "prometheus",
  "prompt_store",
- "prost 0.9.0",
+ "prost",
  "rand 0.9.4",
  "recent_projects",
  "release_channel",
@@ -3718,7 +3718,7 @@ checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
 dependencies = [
  "encode_unicode",
  "libc",
- "unicode-width",
+ "unicode-width 0.2.2",
  "windows-sys 0.61.2",
 ]
 
@@ -5810,7 +5810,7 @@ dependencies = [
  "ui_input",
  "unicode-script",
  "unicode-segmentation",
- "unicode-width",
+ "unicode-width 0.2.2",
  "unindent",
  "url",
  "urlencoding",
@@ -7227,7 +7227,7 @@ version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe4fbac503b8d1f88e6676011885f34b7174f46e59956bba534ba83abded4df"
 dependencies = [
- "unicode-width",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -8010,7 +8010,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
- "which 6.0.3",
+ "which",
 ]
 
 [[package]]
@@ -8356,15 +8356,6 @@ checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
 dependencies = [
  "hash32",
  "stable_deref_trait",
-]
-
-[[package]]
-name = "heck"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d621efb26863f0e9924c6ac577e8275e5e6b77455db64ffa6c65c904e9e132c"
-dependencies = [
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -10290,7 +10281,7 @@ dependencies = [
  "livekit-runtime",
  "log",
  "parking_lot",
- "prost 0.12.6",
+ "prost",
  "semver",
  "serde",
  "serde_json",
@@ -10311,7 +10302,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pbjson-types",
- "prost 0.12.6",
+ "prost",
  "rand 0.9.4",
  "reqwest 0.12.24",
  "rustls-native-certs 0.6.3",
@@ -10335,7 +10326,7 @@ dependencies = [
  "parking_lot",
  "pbjson",
  "pbjson-types",
- "prost 0.12.6",
+ "prost",
  "serde",
  "thiserror 1.0.69",
  "tokio",
@@ -10358,9 +10349,10 @@ dependencies = [
  "async-trait",
  "jsonwebtoken",
  "log",
- "prost 0.9.0",
- "prost-build 0.9.0",
- "prost-types 0.9.0",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
  "serde",
  "zed-reqwest",
 ]
@@ -11079,7 +11071,7 @@ dependencies = [
  "serde_json",
  "svgtypes 0.11.0",
  "thiserror 2.0.17",
- "unicode-width",
+ "unicode-width 0.2.2",
  "url",
 ]
 
@@ -11096,6 +11088,28 @@ dependencies = [
  "log",
  "objc",
  "paste",
+]
+
+[[package]]
+name = "miette"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
+dependencies = [
+ "cfg-if",
+ "miette-derive",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
+name = "miette-derive"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -11560,7 +11574,7 @@ dependencies = [
  "smol",
  "util",
  "watch",
- "which 6.0.3",
+ "which",
 ]
 
 [[package]]
@@ -12852,8 +12866,8 @@ checksum = "2580e33f2292d34be285c5bc3dba5259542b083cfad6037b6d70345f24dcb735"
 dependencies = [
  "heck 0.4.1",
  "itertools 0.11.0",
- "prost 0.12.6",
- "prost-types 0.12.6",
+ "prost",
+ "prost-types",
 ]
 
 [[package]]
@@ -12866,8 +12880,8 @@ dependencies = [
  "chrono",
  "pbjson",
  "pbjson-build",
- "prost 0.12.6",
- "prost-build 0.12.6",
+ "prost",
+ "prost-build",
  "serde",
 ]
 
@@ -14169,7 +14183,7 @@ dependencies = [
  "util",
  "watch",
  "wax",
- "which 6.0.3",
+ "which",
  "worktree",
  "zed_credentials_provider",
  "zeroize",
@@ -14354,42 +14368,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "444879275cb4fd84958b1a1d5420d15e6fcf7c235fe47f053c9c2a80aceb6001"
-dependencies = [
- "bytes 1.11.1",
- "prost-derive 0.9.0",
-]
-
-[[package]]
-name = "prost"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "deb1435c188b76130da55f17a466d252ff7b1418b2ad3e037d127b94e3411f29"
 dependencies = [
  "bytes 1.11.1",
- "prost-derive 0.12.6",
-]
-
-[[package]]
-name = "prost-build"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62941722fb675d463659e49c4f3fe1fe792ff24fe5bbaa9c08cd3b98a1c354f5"
-dependencies = [
- "bytes 1.11.1",
- "heck 0.3.3",
- "itertools 0.10.5",
- "lazy_static",
- "log",
- "multimap",
- "petgraph",
- "prost 0.9.0",
- "prost-types 0.9.0",
- "regex",
- "tempfile",
- "which 4.4.2",
+ "prost-derive",
 ]
 
 [[package]]
@@ -14406,24 +14390,11 @@ dependencies = [
  "once_cell",
  "petgraph",
  "prettyplease",
- "prost 0.12.6",
- "prost-types 0.12.6",
+ "prost",
+ "prost-types",
  "regex",
  "syn 2.0.117",
  "tempfile",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9cc1a3263e07e0bf68e96268f37665207b49560d98739662cdfaae215c720fe"
-dependencies = [
- "anyhow",
- "itertools 0.10.5",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -14440,13 +14411,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-types"
-version = "0.9.0"
+name = "prost-reflect"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "534b7a0e836e3c482d2693070f982e39e7611da9695d4d1f5a4b186b51faef0a"
+checksum = "6f5eec97d5d34bdd17ad2db2219aabf46b054c6c41bd5529767c9ce55be5898f"
 dependencies = [
- "bytes 1.11.1",
- "prost 0.9.0",
+ "logos",
+ "miette",
+ "once_cell",
+ "prost",
+ "prost-types",
 ]
 
 [[package]]
@@ -14455,7 +14429,7 @@ version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9091c90b0a32608e984ff2fa4091273cbdd755d54935c51d520887f4a1dbd5b0"
 dependencies = [
- "prost 0.12.6",
+ "prost",
 ]
 
 [[package]]
@@ -14463,8 +14437,9 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "prost 0.9.0",
- "prost-build 0.9.0",
+ "prost",
+ "prost-build",
+ "protox",
  "serde",
 ]
 
@@ -14485,6 +14460,33 @@ version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protox"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac532509cee918d40f38c3e12f8ef9230f215f017d54de7dd975015538a42ce7"
+dependencies = [
+ "bytes 1.11.1",
+ "miette",
+ "prost",
+ "prost-reflect",
+ "prost-types",
+ "protox-parse",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protox-parse"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f6c33f43516fe397e2f930779d720ca12cd057f7da4cd6326a0ef78d69dee96"
+dependencies = [
+ "logos",
+ "miette",
+ "prost-types",
  "thiserror 1.0.69",
 ]
 
@@ -15221,7 +15223,7 @@ dependencies = [
  "log",
  "parking_lot",
  "paths",
- "prost 0.9.0",
+ "prost",
  "release_channel",
  "rpc",
  "schemars 1.0.4",
@@ -15235,7 +15237,7 @@ dependencies = [
  "thiserror 2.0.17",
  "urlencoding",
  "util",
- "which 6.0.3",
+ "which",
 ]
 
 [[package]]
@@ -19930,6 +19932,12 @@ checksum = "b1d386ff53b415b7fe27b50bb44679e2cc4660272694b7b6f3326d8480823a94"
 
 [[package]]
 name = "unicode-width"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+
+[[package]]
+name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
@@ -20081,7 +20089,7 @@ dependencies = [
  "url",
  "util_macros",
  "walkdir",
- "which 6.0.3",
+ "which",
  "windows 0.61.3",
 ]
 
@@ -21358,18 +21366,6 @@ dependencies = [
  "log",
  "raw-window-handle",
  "web-sys",
-]
-
-[[package]]
-name = "which"
-version = "4.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ba24419a2078cd2b0f2ede2691b6c66d8e47836da3b6db8265ebad47afbfc7"
-dependencies = [
- "either",
- "home",
- "once_cell",
- "rustix 0.38.44",
 ]
 
 [[package]]

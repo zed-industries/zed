@@ -743,9 +743,10 @@ profiling = "1"
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
 proxyvars = "0.2"
-prost = "0.9"
-prost-build = "0.9"
-prost-types = "0.9"
+prost = "0.12"
+prost-build = "0.12"
+prost-types = "0.12"
+protox = "0.6"
 pollster = "0.4.0"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.38"
