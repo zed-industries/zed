@@ -39007,7 +39007,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["...".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "..."
+            )],
             "local .zed/settings.json must not apply before trust approval"
         )
     });
@@ -39040,7 +39042,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["override-rust-analyzer".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "override-rust-analyzer"
+            )],
             "local .zed/settings.json should apply after trust approval"
         )
     });

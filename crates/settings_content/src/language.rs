@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{borrow::Cow, num::NonZeroU32};
 
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
@@ -58,7 +58,7 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
         let globally_disabled_servers = other.defaults.language_servers.as_ref().map(|servers| {
             servers
                 .iter()
-                .filter(|entry| entry.starts_with('!'))
+                .filter(|entry| entry.disabled)
                 .cloned()
                 .collect::<Vec<_>>()
         });
@@ -68,14 +68,13 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
             if let Some(mut language_server_overrides) = language_server_overrides {
                 if let Some(disabled) = &globally_disabled_servers {
                     for disabled_server in disabled {
-                        if let Some(enabled_server) = disabled_server.strip_prefix('!') {
-                            language_server_overrides.retain(|entry| entry != enabled_server);
-                        }
+                        language_server_overrides
+                            .retain(|entry| entry.disabled || entry.name != disabled_server.name);
                     }
 
                     let insert_before = language_server_overrides
                         .iter()
-                        .position(|entry| entry == REST_OF_LANGUAGE_SERVERS)
+                        .position(|entry| entry.name.as_ref() == REST_OF_LANGUAGE_SERVERS)
                         .unwrap_or(language_server_overrides.len());
                     for disabled_server in disabled {
                         if !language_server_overrides.contains(disabled_server) {
@@ -420,6 +419,63 @@ pub enum SoftWrap {
 
 pub const REST_OF_LANGUAGE_SERVERS: &str = "...";
 
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "String")]
+pub struct ConfiguredLanguageServer {
+    pub name: Arc<str>,
+    pub disabled: bool,
+}
+
+impl ConfiguredLanguageServer {
+    const DISABLED_CHAR: char = '!';
+
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            disabled: false,
+        }
+    }
+
+    pub fn new_disabled(name: impl Into<Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            disabled: true,
+        }
+    }
+}
+
+impl From<&str> for ConfiguredLanguageServer {
+    fn from(value: &str) -> Self {
+        match value.strip_prefix(Self::DISABLED_CHAR) {
+            Some(name) => Self::new_disabled(name),
+            None => Self::new(value),
+        }
+    }
+}
+
+impl Serialize for ConfiguredLanguageServer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.disabled {
+            serializer.collect_str(&format_args!("{}{}", Self::DISABLED_CHAR, self.name))
+        } else {
+            serializer.serialize_str(&self.name)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Cow::<'de, str>::deserialize(deserializer)?;
+        Ok(Self::from(value.as_ref()))
+    }
+}
+
 /// The settings for a particular language.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -511,7 +567,7 @@ pub struct LanguageSettingsContent {
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     ///
     /// Default: ["..."]
-    pub language_servers: Option<Vec<String>>,
+    pub language_servers: Option<Vec<ConfiguredLanguageServer>>,
     /// Controls how semantic tokens from language servers are used for syntax highlighting.
     ///
     /// Options:
@@ -1269,6 +1325,31 @@ mod test {
     }
 
     #[test]
+    fn test_configured_language_server_serialization() {
+        let enabled = ConfiguredLanguageServer::new("rust-analyzer");
+        let disabled = ConfiguredLanguageServer::new_disabled("rust-analyzer");
+
+        assert_eq!(
+            serde_json::to_string(&enabled).expect("enabled server should serialize"),
+            "\"rust-analyzer\""
+        );
+        assert_eq!(
+            serde_json::to_string(&disabled).expect("disabled server should serialize"),
+            "\"!rust-analyzer\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfiguredLanguageServer>("\"rust-analyzer\"")
+                .expect("enabled server should deserialize"),
+            enabled
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfiguredLanguageServer>("\"!rust-analyzer\"")
+                .expect("disabled server should deserialize"),
+            disabled
+        );
+    }
+
+    #[test]
     fn test_language_servers_merge_preserves_per_language_config() {
         let mut base = AllLanguageSettingsContent {
             defaults: LanguageSettingsContent {
@@ -1314,11 +1395,11 @@ mod test {
         assert_eq!(
             ts_servers,
             &vec![
-                "!typescript-language-server".to_string(),
-                "vtsls".to_string(),
-                "!eslint".to_string(),
-                "!tailwindcss-language-server".to_string(),
-                REST_OF_LANGUAGE_SERVERS.to_string(),
+                ConfiguredLanguageServer::new_disabled("typescript-language-server"),
+                ConfiguredLanguageServer::new("vtsls"),
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
             ]
         );
 
@@ -1326,9 +1407,9 @@ mod test {
         assert_eq!(
             default_servers,
             &vec![
-                "!tailwindcss-language-server".to_string(),
-                "!eslint".to_string(),
-                REST_OF_LANGUAGE_SERVERS.to_string(),
+                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
             ]
         );
     }
@@ -1369,9 +1450,9 @@ mod test {
         base.merge_from(&user);
 
         let expected = vec![
-            "!typescript-language-server".to_string(),
-            "!vtsls".to_string(),
-            REST_OF_LANGUAGE_SERVERS.to_string(),
+            ConfiguredLanguageServer::new_disabled("typescript-language-server"),
+            ConfiguredLanguageServer::new_disabled("vtsls"),
+            ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
         ];
         assert_eq!(
             base.languages
@@ -1416,7 +1497,10 @@ mod test {
         let rust_servers = base.languages.0["Rust"].language_servers.as_ref().unwrap();
         assert_eq!(
             rust_servers,
-            &vec!["!eslint".to_string(), REST_OF_LANGUAGE_SERVERS.to_string(),]
+            &vec![
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
         );
     }
 
@@ -1477,9 +1561,9 @@ mod test {
         assert_eq!(
             ts_servers,
             &vec![
-                "deno".to_string(),
-                "!vtsls".to_string(),
-                REST_OF_LANGUAGE_SERVERS.to_string(),
+                ConfiguredLanguageServer::new("deno"),
+                ConfiguredLanguageServer::new_disabled("vtsls"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
             ]
         );
     }
@@ -1536,8 +1620,8 @@ mod test {
         assert_eq!(
             ts_servers,
             &vec![
-                "typescript-language-server".to_string(),
-                REST_OF_LANGUAGE_SERVERS.to_string(),
+                ConfiguredLanguageServer::new("typescript-language-server"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
             ]
         );
     }
