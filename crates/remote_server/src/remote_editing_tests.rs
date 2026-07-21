@@ -22,7 +22,7 @@ use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
-    repository::{CommitData, Worktree as GitWorktree},
+    repository::{CommitData, RepoPath, Worktree as GitWorktree},
 };
 use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, VisualContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
@@ -2424,6 +2424,127 @@ async fn test_remote_archive_git_operations_are_supported(
 }
 
 #[gpui::test]
+async fn test_add_path_to_gitignore_in_remote_repository(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            ".gitignore": "existing\n",
+            "logs": {
+                "app.log": ""
+            },
+            "tmp.txt": "",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(
+        Path::new("/project/.git"),
+        &[(".gitignore", "existing\n".into())],
+        "head-sha",
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    for (path, is_dir) in [("tmp.txt", false), ("logs", true), ("tmp.txt", false)] {
+        let repo_path = RepoPath::new(path).expect("path should be a valid repo path");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.add_path_to_gitignore(&repo_path, is_dir)
+            })
+        })
+        .await
+        .expect("add to .gitignore request should complete")
+        .expect("add to .gitignore should succeed for remote repository");
+    }
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new("/project/.gitignore"))
+            .await
+            .expect(".gitignore should be readable"),
+        "existing\ntmp.txt\nlogs/\n"
+    );
+}
+
+#[gpui::test]
+async fn test_add_path_to_git_info_exclude_in_remote_repository(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "logs": {
+                "app.log": ""
+            },
+            "tmp.txt": "",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(Path::new("/project/.git"), &[], "head-sha");
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    for (path, is_dir) in [("tmp.txt", false), ("logs", true), ("tmp.txt", false)] {
+        let repo_path = RepoPath::new(path).expect("path should be a valid repo path");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.add_path_to_git_info_exclude(&repo_path, is_dir)
+            })
+        })
+        .await
+        .expect("add to info/exclude request should complete")
+        .expect("add to info/exclude should succeed for remote repository");
+    }
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new("/project/.git/info/exclude"))
+            .await
+            .expect("info/exclude should be readable"),
+        "tmp.txt\nlogs/\n"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "
         fn one() -> usize {
@@ -2800,6 +2921,20 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+
+    let default_branch = cx
+        .update(|cx| repository.update(cx, |repository, _cx| repository.default_branch(false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch.as_deref(), Some("main"));
+
+    let default_branch_with_remote = cx
+        .update(|cx| repository.update(cx, |repository, _cx| repository.default_branch(true)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_branch_with_remote.as_deref(), Some("origin/main"));
 }
 
 #[gpui::test]
@@ -3475,6 +3610,113 @@ async fn test_remote_restore_unstaged_hunk_clears_diff(
             .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
             .collect();
         assert!(hunks.is_empty(), "should have no diff hunks after restore");
+    });
+}
+
+#[gpui::test]
+async fn test_remote_delete_project_entry_with_trash(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "zed": {
+                "file_a.txt": "File A"
+            }
+        }),
+    )
+    .await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _path) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root/zed"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let entry_id = worktree.update(cx, |worktree, _cx| {
+        worktree.entry_for_path(rel_path("file_a.txt")).unwrap().id
+    });
+
+    let remote_client = project.read_with(cx, |project, _cx| {
+        project
+            .remote_client()
+            .expect("project should have a remote client")
+    });
+
+    let proto_client =
+        remote_client.read_with(cx, |remote_client, _cx| remote_client.proto_client());
+
+    proto_client
+        .request(proto::DeleteProjectEntry {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            entry_id: entry_id.to_proto(),
+            #[allow(deprecated)]
+            use_trash: true,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fs.trashed_paths(),
+        vec![PathBuf::from(path!("/root/zed/file_a.txt"))]
+    );
+}
+
+#[gpui::test]
+async fn test_remote_trash_restore(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "zed": {
+                "file_a.txt": "File A"
+            }
+        }),
+    )
+    .await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _path) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root/zed"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id());
+    let entry_id = worktree.update(cx, |worktree, _cx| {
+        worktree.entry_for_path(rel_path("file_a.txt")).unwrap().id
+    });
+
+    let trash_id = project
+        .update(cx, |project, cx| project.trash_entry(entry_id, cx))
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        assert!(worktree.entry_for_path(rel_path("file_a.txt")).is_none());
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.restore_entry(worktree_id, trash_id, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        assert!(worktree.entry_for_path(rel_path("file_a.txt")).is_some());
     });
 }
 

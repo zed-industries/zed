@@ -6,10 +6,10 @@ pub use lsp_types::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::{
-    AsyncRead, AsyncWrite, Future, FutureExt,
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot::{self, Canceled},
     future::{self, Either},
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     select,
 };
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -19,12 +19,9 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-};
 use util::command::{Child, Stdio};
 
+use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
 use std::{
     any::TypeId,
@@ -42,7 +39,7 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
+use util::{ConnectionResult, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -59,6 +56,25 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 
 /// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
+    let name = uri
+        .to_file_path()
+        .ok()
+        .map(|path| {
+            let name = path.file_name().unwrap_or(path.as_os_str());
+            name.to_string_lossy().into_owned()
+        })
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| uri.as_str().to_owned());
+
+    WorkspaceFolder { uri, name }
+}
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
@@ -99,8 +115,8 @@ struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
-    notification_tx: channel::Sender<NotificationSerializer>,
+    outbound_tx: async_channel::Sender<String>,
+    notification_tx: async_channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     version: Option<SharedString>,
     process_name: Arc<str>,
@@ -483,7 +499,7 @@ impl LanguageServer {
         Stderr: AsyncRead + Unpin + Send + 'static,
         F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
@@ -563,7 +579,8 @@ impl LanguageServer {
         }
         .into();
 
-        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        let (notification_tx, notification_rx) =
+            async_channel::unbounded::<NotificationSerializer>();
         cx.background_spawn({
             let outbound_tx = outbound_tx.clone();
             async move {
@@ -623,9 +640,8 @@ impl LanguageServer {
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
-        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
-        let _clear_response_handlers = util::defer({
+        let _clear_response_handlers = gpui_util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
@@ -667,7 +683,7 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
         input_handler.loop_handle.await
     }
@@ -703,13 +719,13 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
     }
 
     async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -750,21 +766,13 @@ impl LanguageServer {
         cx: &App,
     ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
-            || {
-                vec![WorkspaceFolder {
-                    name: Default::default(),
-                    uri: self.root_uri.clone(),
-                }]
-            },
+            || vec![workspace_folder_for_uri(self.root_uri.clone())],
             |folders| {
                 folders
                     .lock()
                     .iter()
                     .cloned()
-                    .map(|uri| WorkspaceFolder {
-                        name: Default::default(),
-                        uri,
-                    })
+                    .map(workspace_folder_for_uri)
                     .collect()
             },
         );
@@ -1426,8 +1434,8 @@ impl LanguageServer {
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1489,7 +1497,7 @@ impl LanguageServer {
                 return ConnectionResult::Result(Err(e));
             }
 
-            let cancel_on_drop = util::defer(move || {
+            let cancel_on_drop = gpui_util::defer(move || {
                 if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &notification_serializers,
@@ -1536,8 +1544,8 @@ impl LanguageServer {
     fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         request_timeout: Duration,
         params: T::Params,
@@ -1588,7 +1596,7 @@ impl LanguageServer {
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<NotificationSerializer>,
         params: T::Params,
     ) -> Result<()> {
         let serializer = NotificationSerializer(Box::new(move || {
@@ -1628,10 +1636,7 @@ impl LanguageServer {
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
-                    added: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    added: vec![workspace_folder_for_uri(uri)],
                     removed: vec![],
                 },
             };
@@ -1663,10 +1668,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
                     added: vec![],
-                    removed: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    removed: vec![workspace_folder_for_uri(uri)],
                 },
             };
             self.notify::<DidChangeWorkspaceFolders>(params).ok();
@@ -1681,18 +1683,14 @@ impl LanguageServer {
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
             .difference(&old_workspace_folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
 
         let removed: Vec<_> = old_workspace_folders
             .difference(&folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
         *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
@@ -1822,7 +1820,7 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
-    notifications_rx: channel::Receiver<(String, String)>,
+    notifications_rx: async_channel::Receiver<(String, String)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1837,7 +1835,7 @@ impl FakeLanguageServer {
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        let (notifications_tx, notifications_rx) = channel::unbounded();
+        let (notifications_tx, notifications_rx) = async_channel::unbounded();
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
@@ -2105,8 +2103,8 @@ mod tests {
             &mut cx.to_async(),
         );
 
-        let (message_tx, message_rx) = channel::unbounded();
-        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
         server
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()
@@ -2294,7 +2292,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_initialize_params_has_root_path_and_root_uri(cx: &mut TestAppContext) {
+    async fn test_default_initialize_params(cx: &mut TestAppContext) {
         cx.update(|cx| {
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
@@ -2309,6 +2307,9 @@ mod tests {
             Default::default(),
             &mut cx.to_async(),
         );
+        let project_uri = Uri::from_file_path(std::env::temp_dir().join("my project"))
+            .expect("workspace folder URI should be valid");
+        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
 
@@ -2325,5 +2326,14 @@ mod tests {
             expected_path.to_string_lossy(),
             "root_path should be derived from root_uri"
         );
+        let workspace_folders = params
+            .workspace_folders
+            .expect("workspace folders should be set");
+
+        let expected_workspace_folders = vec![WorkspaceFolder {
+            uri: project_uri,
+            name: "my project".to_string(),
+        }];
+        assert_eq!(workspace_folders, expected_workspace_folders);
     }
 }

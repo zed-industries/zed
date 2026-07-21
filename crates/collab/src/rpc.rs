@@ -406,6 +406,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::TrashProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::RestoreProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::ExpandAllForProjectEntry>,
@@ -480,8 +482,12 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitDiff>)
-            .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
-            .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitReset>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCheckoutFiles>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitAddPathToGitignore>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::GitAddPathToGitInfoExclude>,
+            )
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleBreakpoint>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)

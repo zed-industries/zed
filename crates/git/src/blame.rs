@@ -1,9 +1,9 @@
 use crate::Oid;
-use crate::commit::get_messages;
+use crate::commit::{get_messages, get_tag_names};
 use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use futures::{AsyncWriteExt, try_join};
+use futures::{AsyncWriteExt, TryFutureExt, try_join};
 use serde::{Deserialize, Serialize};
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::ops::Range;
@@ -17,6 +17,7 @@ use util::command::Stdio;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
+    pub tag_names: HashMap<Oid, Vec<String>>,
 }
 
 impl Blame {
@@ -35,12 +36,26 @@ impl Blame {
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
-        let messages = get_messages(git, &shas)
-            .await
-            .context("failed to get commit messages")?;
+        let (messages, tag_names) = try_join!(
+            get_messages(git, &shas)
+                .map_err(|error| error.context("failed to get commit messages")),
+            async {
+                match get_tag_names(git, &shas).await {
+                    Ok(tag_names) => Ok(tag_names),
+                    Err(error) => {
+                        log::warn!("failed to get commit tag names: {error:#}");
+                        Ok(HashMap::default())
+                    }
+                }
+            },
+        )?;
 
         entries.sort_unstable_by_key(|entry| entry.range.start);
-        Ok(Self { entries, messages })
+        Ok(Self {
+            entries,
+            messages,
+            tag_names,
+        })
     }
 }
 

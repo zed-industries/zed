@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use path::rel_path::RelPathBuf;
 use util::rel_path::RelPath;
 
 /// [RootPathTrie] is a workhorse of [super::ManifestTree]. It is responsible for determining the closest known entry for a given path.
@@ -59,12 +60,12 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     ) -> &mut Self {
         let mut current = self;
 
-        let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
+        let mut path_so_far = RelPathBuf::new();
         for key in path.0.iter() {
-            path_so_far = path_so_far.join(RelPath::unix(key.as_ref()).unwrap());
+            path_so_far = path_so_far.join(RelPath::from_unix_str(key.as_ref()).unwrap());
             current = match current.children.entry(key.clone()) {
                 Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone()))
+                    vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone().into()))
                 }
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };

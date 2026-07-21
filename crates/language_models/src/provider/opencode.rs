@@ -669,7 +669,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     anthropic::AnthropicModelMode::Default
                 };
-                let anthropic_request = into_anthropic(
+                let anthropic_request = match into_anthropic(
                     request,
                     self.model.id().to_string(),
                     1.0,
@@ -678,7 +678,10 @@ impl LanguageModel for OpenCodeLanguageModel {
                         .unwrap_or(8192),
                     mode,
                     anthropic::completion::AnthropicPromptCacheMode::Automatic,
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
@@ -696,7 +699,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     None
                 };
-                let openai_request = into_open_ai(
+                let openai_request = match into_open_ai(
                     request,
                     self.model.id(),
                     true,
@@ -705,7 +708,10 @@ impl LanguageModel for OpenCodeLanguageModel {
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
-                );
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream =
                     self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
                 async move {
@@ -744,7 +750,10 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     google_ai::GoogleModelMode::Default
                 };
-                let google_request = into_google(request, self.model.id().to_string(), mode);
+                let google_request = match into_google(request, self.model.id().to_string(), mode) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream = self.stream_google(google_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();
