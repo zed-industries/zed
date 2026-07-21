@@ -2342,7 +2342,7 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2693,7 +2693,7 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."],
       },
     },
   },
