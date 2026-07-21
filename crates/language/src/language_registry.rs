@@ -496,22 +496,14 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         name: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
-        let language = self.state.read().available_languages.find_by_name(name);
-        let rx = self.get_or_load_language(language);
+        let language_id = self.state.read().available_languages.find_by_name(name);
+        let rx = self.get_or_load_language(language_id);
         async move { rx.await? }
     }
 
-    pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
-        let available_language = {
-            let state = self.state.read();
-
-            let Some(available_language) = state.available_languages.find_by_id(id) else {
-                anyhow::bail!(LanguageNotFound);
-            };
-            available_language
-        };
-
-        self.load_language(&available_language).await?
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn language_name_for_id(&self, id: LanguageId) -> Option<LanguageName> {
+        self.state.read().available_languages.name_for_id(id)
     }
 
     pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
@@ -524,12 +516,12 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         string: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
-        let language = self
+        let language_id = self
             .state
             .read()
             .available_languages
             .find_by_name_or_extension(string);
-        let rx = self.get_or_load_language(language);
+        let rx = self.get_or_load_language(language_id);
         async move { rx.await? }
     }
 
@@ -559,7 +551,7 @@ impl LanguageRegistry {
         file: &Arc<dyn File>,
         content: Option<&Rope>,
         cx: &App,
-    ) -> Option<AvailableLanguage> {
+    ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
 
         self.language_for_file_internal(
@@ -569,7 +561,7 @@ impl LanguageRegistry {
         )
     }
 
-    pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<AvailableLanguage> {
+    pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
         self.language_for_file_internal(path, None, None)
     }
 
@@ -582,8 +574,8 @@ impl LanguageRegistry {
 
         let this = self.clone();
         async move {
-            if let Some(language) = language {
-                this.load_language(&language).await?
+            if let Some(language_id) = language {
+                this.load_language(language_id).await?
             } else {
                 Err(anyhow!(LanguageNotFound))
             }
@@ -595,7 +587,7 @@ impl LanguageRegistry {
         path: &Path,
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
-    ) -> Option<AvailableLanguage> {
+    ) -> Option<LanguageId> {
         self.state
             .read()
             .available_languages
@@ -605,7 +597,7 @@ impl LanguageRegistry {
     #[ztracing::instrument(skip_all)]
     pub fn load_language(
         self: &Arc<Self>,
-        language: &AvailableLanguage,
+        language_id: LanguageId,
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
         let (tx, rx) = oneshot::channel();
 
@@ -613,13 +605,23 @@ impl LanguageRegistry {
 
         // If the language is already loaded, resolve with it immediately.
         for loaded_language in state.languages.iter() {
-            if loaded_language.id == language.id {
+            if loaded_language.id == language_id {
                 tx.send(Ok(loaded_language.clone())).unwrap();
                 return rx;
             }
         }
 
-        match state.loading_languages.entry(language.id) {
+        let Some(available_language) = state.available_languages.get_language(language_id) else {
+            tx.send(Err(anyhow!(LanguageNotFound))).ok();
+            return rx;
+        };
+
+        let (language_name, language_load) = (
+            available_language.name.clone(),
+            available_language.load.clone(),
+        );
+
+        match state.loading_languages.entry(language_id) {
             // If the language is already being loaded, then add this
             // channel to a list that will be sent to when the load completes.
             hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(tx),
@@ -628,10 +630,6 @@ impl LanguageRegistry {
             hash_map::Entry::Vacant(entry) => {
                 let this = self.clone();
 
-                let id = language.id;
-                let name = language.name.clone();
-                let language_load = language.load.clone();
-
                 self.executor
                     .spawn(async move {
                         let language = async {
@@ -639,16 +637,22 @@ impl LanguageRegistry {
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
-                                Language::new_with_id(id, loaded_language.config, grammar)
+                                Language::new_with_id(language_id, loaded_language.config, grammar)
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_toolchain_lister(loaded_language.toolchain_provider)
                                     .with_manifest(loaded_language.manifest_name)
                                     .with_queries(loaded_language.queries)
                             } else {
-                                Ok(Language::new_with_id(id, loaded_language.config, None)
+                                Ok(
+                                    Language::new_with_id(
+                                        language_id,
+                                        loaded_language.config,
+                                        None,
+                                    )
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_manifest(loaded_language.manifest_name)
-                                    .with_toolchain_lister(loaded_language.toolchain_provider))
+                                    .with_toolchain_lister(loaded_language.toolchain_provider),
+                                )
                             }
                         }
                         .await;
@@ -659,21 +663,23 @@ impl LanguageRegistry {
                                 let mut state = this.state.write();
 
                                 state.add(language.clone());
-                                state.mark_language_loaded(id);
-                                if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                state.mark_language_loaded(language_id);
+                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
+                                {
                                     for tx in txs.drain(..) {
                                         let _ = tx.send(Ok(language.clone()));
                                     }
                                 }
                             }
                             Err(e) => {
-                                log::error!("failed to load language {name}:\n{e:?}");
+                                log::error!("failed to load language {language_name}:\n{e:?}");
                                 let mut state = this.state.write();
-                                state.mark_language_loaded(id);
-                                if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                state.mark_language_loaded(language_id);
+                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
+                                {
                                     for tx in txs.drain(..) {
                                         let _ = tx.send(Err(anyhow!(
-                                            "failed to load language {name}: {e}",
+                                            "failed to load language {language_name}: {e}",
                                         )));
                                     }
                                 }
@@ -693,15 +699,15 @@ impl LanguageRegistry {
     #[ztracing::instrument(skip_all)]
     fn get_or_load_language(
         self: &Arc<Self>,
-        language: Option<AvailableLanguage>,
+        language_id: Option<LanguageId>,
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
-        let Some(language) = language else {
+        let Some(language_id) = language_id else {
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(Err(anyhow!(LanguageNotFound)));
             return rx;
         };
 
-        self.load_language(&language)
+        self.load_language(language_id)
     }
 
     fn get_or_load_grammar(

@@ -188,13 +188,13 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.rs"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Rust".into())
     );
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.mk"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Make".into())
     );
 
@@ -202,7 +202,7 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.longer.rs"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Rust with longer extension".into())
     );
 
@@ -210,7 +210,7 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/Makefile"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Make".into())
     );
 
@@ -218,19 +218,19 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("zed/cars"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/a.cars"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/sumk"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
 }
@@ -267,8 +267,8 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
             Some(&"#!/bin/env node".into()),
             cx
         ))
-        .unwrap()
-        .name(),
+        .and_then(|id| languages.language_name_for_id(id))
+        .unwrap(),
         "JavaScript"
     );
 }
@@ -293,6 +293,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     });
 
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    let language_name = |id| languages.language_name_for_id(id).unwrap();
 
     for config in [
         LanguageConfig {
@@ -343,48 +344,48 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
 
     // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
 
     // user configured lang extension, longer than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript");
+    assert_eq!(language_name(language), "JavaScript");
 
     // user configured lang extension, shorter than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript");
+    assert_eq!(language_name(language), "JavaScript");
 
     // user configured glob matches
     let language = cx
         .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
     // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "Dockerfile");
+    assert_eq!(language_name(language), "Dockerfile");
 }
 
 fn file(path: &str) -> Arc<dyn File> {

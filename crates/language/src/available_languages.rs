@@ -21,6 +21,10 @@ pub struct AvailableLanguage {
 }
 
 impl AvailableLanguage {
+    pub fn id(&self) -> LanguageId {
+        self.id
+    }
+
     pub fn name(&self) -> LanguageName {
         self.name.clone()
     }
@@ -91,8 +95,16 @@ impl AvailableLanguages {
             .collect()
     }
 
-    pub(super) fn find_by_id(&self, id: LanguageId) -> Option<AvailableLanguage> {
-        self.0.iter().find(|language| language.id == id).cloned()
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn name_for_id(&self, id: LanguageId) -> Option<LanguageName> {
+        self.0
+            .iter()
+            .find(|language| language.id == id)
+            .map(|language| language.name.clone())
+    }
+
+    pub(super) fn get_language(&self, id: LanguageId) -> Option<&AvailableLanguage> {
+        self.0.iter().find(|language| language.id == id)
     }
 
     pub(super) fn find_name_by_extension(&self, extension: &str) -> Option<LanguageName> {
@@ -158,7 +170,7 @@ impl AvailableLanguages {
         }
     }
 
-    pub(super) fn find_by_name(&self, name: &str) -> Option<AvailableLanguage> {
+    pub(super) fn find_by_name(&self, name: &str) -> Option<LanguageId> {
         let name = UniCase::new(name);
         self.find_best_match(
             |language_name, _, current_best_match| match current_best_match {
@@ -172,7 +184,7 @@ impl AvailableLanguages {
         )
     }
 
-    pub(super) fn find_by_name_or_extension(&self, string: &str) -> Option<AvailableLanguage> {
+    pub(super) fn find_by_name_or_extension(&self, string: &str) -> Option<LanguageId> {
         let string = UniCase::new(string);
         self.find_best_match(|name, matcher, current_best_match| {
             let name_matches = || {
@@ -200,7 +212,7 @@ impl AvailableLanguages {
         path: &Path,
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
-    ) -> Option<AvailableLanguage> {
+    ) -> Option<LanguageId> {
         let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
@@ -292,7 +304,7 @@ impl AvailableLanguages {
             &LanguageMatcher,
             LanguageMatchPrecedence,
         ) -> Option<LanguageMatchPrecedence>,
-    ) -> Option<AvailableLanguage> {
+    ) -> Option<LanguageId> {
         self.0
             .iter()
             .rev()
@@ -311,7 +323,7 @@ impl AvailableLanguages {
                             | LanguageMatchPrecedence::UserConfigured(_),
                         ),
                         LanguageMatchPrecedence::Undetermined,
-                    ) => language_score.map(|new_score| (language.clone(), new_score)),
+                    ) => language_score.map(|new_score| (language, new_score)),
 
                     // our candidate is better only if the name is longer
                     (
@@ -327,7 +339,7 @@ impl AvailableLanguages {
                         LanguageMatchPrecedence::UserConfigured(current_len),
                     ) => {
                         if new_len > current_len {
-                            language_score.map(|new_score| (language.clone(), new_score))
+                            language_score.map(|new_score| (language, new_score))
                         } else {
                             best_language_match
                         }
@@ -339,7 +351,7 @@ impl AvailableLanguages {
                         LanguageMatchPrecedence::PathOrContent(current_len),
                     ) => {
                         if new_len >= current_len {
-                            language_score.map(|new_score| (language.clone(), new_score))
+                            language_score.map(|new_score| (language, new_score))
                         } else {
                             best_language_match
                         }
@@ -350,6 +362,6 @@ impl AvailableLanguages {
                     }
                 }
             })
-            .map(|(available_language, _)| available_language)
+            .map(|(available_language, _)| available_language.id())
     }
 }
