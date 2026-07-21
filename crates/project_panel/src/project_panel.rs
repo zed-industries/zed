@@ -79,7 +79,7 @@ use workspace::{
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Snapshot};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -1262,6 +1262,22 @@ impl ProjectPanel {
         false
     }
 
+    fn lone_child_entry<'a>(snapshot: &'a Snapshot, path: &'a RelPath) -> Option<&'a Entry> {
+        let mut child_entries = snapshot.child_entries(path);
+        let child = child_entries.next()?;
+        child_entries.next().is_none().then_some(child)
+    }
+
+    /// Whether a directory's lone child makes it eligible for single-file folding. The
+    /// child must be a file the panel actually renders: folding a directory away
+    /// together with a child that `hide_gitignore`/`hide_hidden` filters out would leave
+    /// no row for either entry.
+    fn is_foldable_lone_file(child: &Entry, settings: &ProjectPanelSettings) -> bool {
+        child.kind.is_file()
+            && (!settings.hide_gitignore || !child.is_ignored)
+            && (!settings.hide_hidden || !child.is_hidden)
+    }
+
     fn is_unfoldable(
         &self,
         entry: &Entry,
@@ -1276,27 +1292,18 @@ impl ProjectPanel {
         }
 
         let snapshot = worktree.snapshot();
-        if settings.fold_single_file_dirs {
-            let mut child_entries = snapshot.child_entries(&entry.path);
-            if let Some(child) = child_entries.next()
-                && child_entries.next().is_none()
-                && child.kind.is_file()
-                && (!settings.hide_gitignore || !child.is_ignored)
-                && (!settings.hide_hidden || !child.is_hidden)
-            {
-                return true;
-            }
+        if settings.fold_single_file_dirs
+            && let Some(child) = Self::lone_child_entry(&snapshot, &entry.path)
+            && Self::is_foldable_lone_file(child, settings)
+        {
+            return true;
         }
         if settings.auto_fold_dirs
             && let Some(parent_path) = entry.path.parent()
+            && let Some(child) = Self::lone_child_entry(&snapshot, parent_path)
         {
-            let mut child_entries = snapshot.child_entries(parent_path);
-            if let Some(child) = child_entries.next()
-                && child_entries.next().is_none()
-            {
-                return child.kind.is_dir();
-            }
-        };
+            return child.kind.is_dir();
+        }
         false
     }
 
@@ -1306,23 +1313,18 @@ impl ProjectPanel {
         worktree: &Worktree,
         settings: &ProjectPanelSettings,
     ) -> bool {
-        if entry.is_dir() {
-            let snapshot = worktree.snapshot();
-
-            let mut child_entries = snapshot.child_entries(&entry.path);
-            if let Some(child) = child_entries.next()
-                && child_entries.next().is_none()
-            {
-                return if child.kind.is_dir() {
-                    settings.auto_fold_dirs
-                } else {
-                    settings.fold_single_file_dirs
-                        && (!settings.hide_gitignore || !child.is_ignored)
-                        && (!settings.hide_hidden || !child.is_hidden)
-                };
-            }
+        if !entry.is_dir() {
+            return false;
         }
-        false
+        let snapshot = worktree.snapshot();
+        let Some(child) = Self::lone_child_entry(&snapshot, &entry.path) else {
+            return false;
+        };
+        if child.kind.is_dir() {
+            settings.auto_fold_dirs
+        } else {
+            settings.fold_single_file_dirs && Self::is_foldable_lone_file(child, settings)
+        }
     }
 
     fn expand_selected_entry(
@@ -4272,7 +4274,7 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let now = Instant::now();
-        let settings = ProjectPanelSettings::get_global(cx);
+        let settings = *ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let fold_single_file_dirs = settings.fold_single_file_dirs;
         let hide_gitignore = settings.hide_gitignore;
@@ -4343,24 +4345,15 @@ impl ProjectPanel {
                                 && let Some(root_path) = worktree_snapshot.root_entry()
                                 && entry.path != root_path.path
                             {
-                                let mut child_entries =
-                                    worktree_snapshot.child_entries(&entry.path);
-                                if let Some(child) = child_entries.next()
-                                    && child_entries.next().is_none()
-                                {
-                                    single_child = Some(child);
-                                }
+                                single_child =
+                                    Self::lone_child_entry(&worktree_snapshot, &entry.path);
                             }
-                            // The lone file may itself be filtered out of the panel; folding the
-                            // directory away with it would leave no row for either entry. A
-                            // directory that's the parent of an in-progress new entry stays
+                            // A directory that's the parent of an in-progress new entry stays
                             // unfolded so the filename editor renders as its child row.
                             if fold_single_file_dirs
                                 && new_entry_parent_id != Some(entry.id)
                                 && let Some(child) = single_child
-                                && child.kind.is_file()
-                                && (!hide_gitignore || !child.is_ignored)
-                                && (!hide_hidden || !child.is_hidden)
+                                && Self::is_foldable_lone_file(child, &settings)
                             {
                                 auto_folded_ancestors.push(entry.id);
                                 entry_iter.advance();
