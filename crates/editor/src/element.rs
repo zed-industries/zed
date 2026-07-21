@@ -4370,7 +4370,7 @@ impl EditorElement {
 
         let mut overall_height = Pixels::ZERO;
 
-        let measured_hover_popovers = hover_popovers
+        let mut measured_hover_popovers = hover_popovers
             .into_iter()
             .with_position()
             .map(|(position, mut hover_popover)| {

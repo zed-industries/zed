@@ -622,11 +622,12 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(multi_buffer_range),
                     parsed_content,
+                    debugger_hover: None,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                     last_bounds: Rc::new(Cell::new(None)),
-                    _subscription: subscription,
+                    _subscriptions: subscription.into_iter().collect(),
                 });
             }
 
@@ -1145,8 +1146,8 @@ impl DebuggerHoverView {
                                 div()
                                     .id(format!("{row_selector}-name"))
                                     .min_w_0()
-                                    .flex_grow()
-                                    .flex_shrink()
+                                    .flex_grow_1()
+                                    .flex_shrink_1()
                                     .flex_basis(gpui::relative(DEBUGGER_HOVER_NAME_FLEX_BASIS))
                                     .overflow_hidden()
                                     .tooltip(Tooltip::text(node.variable.name.clone()))
@@ -1162,7 +1163,7 @@ impl DebuggerHoverView {
                             .child(
                                 h_flex()
                                     .min_w_0()
-                                    .flex_shrink()
+                                    .flex_shrink_1()
                                     .overflow_hidden()
                                     .gap_0p5()
                                     .child(Label::new("=").single_line().color(Color::Muted))
@@ -1195,7 +1196,7 @@ impl DebuggerHoverView {
                                     div()
                                         .min_w_0()
                                         .max_w(DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH)
-                                        .flex_shrink()
+                                        .flex_shrink_1()
                                         .overflow_hidden()
                                         .child(
                                             Label::new(type_name)
