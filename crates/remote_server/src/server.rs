@@ -47,7 +47,6 @@ use smol::{
     stream::StreamExt as _,
 };
 use std::{
-    env,
     ffi::OsStr,
     fs::File,
     io::Write,
@@ -571,10 +570,8 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
     let crash_handler = if should_install_crash_handler {
         Some(app.background_executor().spawn(crashes::init(
@@ -851,10 +848,8 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
     if should_install_crash_handler {
         smol::spawn(crashes::init(

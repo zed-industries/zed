@@ -58,11 +58,11 @@ pub trait SettingsKey: 'static + Send + Sync {
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
 pub trait Settings: 'static + Send + Sync + Sized {
-    /// The name of the keys in the [`FileContent`](Self::FileContent) that should
+    /// The name of the keys in the [`SettingsContent`] that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
     ///
-    /// This is useful for tagged [`FileContent`](Self::FileContent)s where the tag
+    /// This is useful for tagged [`SettingsContent`]s where the tag
     /// is a "version" field that should always be persisted, even if the current
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
