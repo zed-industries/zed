@@ -2611,6 +2611,14 @@ impl EditorElement {
             run_indicators
                 .iter()
                 .filter_map(|display_row| {
+                    let task_status = gutter
+                        .row_infos
+                        .get((display_row.0.saturating_sub(gutter.range.start.0)) as usize)
+                        .and_then(|row_info| Some((row_info.buffer_id?, row_info.buffer_row?)))
+                        .and_then(|(buffer_id, buffer_row)| {
+                            editor.runnable_task_status(buffer_id, buffer_row)
+                        });
+
                     gutter.layout_item(
                         *display_row,
                         |cx, _| {
@@ -2619,6 +2627,7 @@ impl EditorElement {
                                     &self.style,
                                     Some(*display_row) == active_task_indicator_row,
                                     breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    task_status,
                                     *display_row,
                                     cx,
                                 )
