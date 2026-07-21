@@ -1063,6 +1063,27 @@
     },
   },
   {
+    "context": "BreadPaperTimelinePanel",
+    "bindings": {
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "down": "vim::MenuSelectNext",
+      "up": "vim::MenuSelectPrevious",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst",
+      "0": ["vim::Number", 0],
+      "1": ["vim::Number", 1],
+      "2": ["vim::Number", 2],
+      "3": ["vim::Number", 3],
+      "4": ["vim::Number", 4],
+      "5": ["vim::Number", 5],
+      "6": ["vim::Number", 6],
+      "7": ["vim::Number", 7],
+      "8": ["vim::Number", 8],
+      "9": ["vim::Number", 9],
+    },
+  },
+  {
     "context": "GitGraph",
     "bindings": {
       "tab": "git_graph::FocusNextTabStop",
