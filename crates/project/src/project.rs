@@ -4089,6 +4089,9 @@ impl Project {
         new_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) {
+        buffer.update(cx, |buffer, _| {
+            buffer.set_content_language_detection_enabled(false);
+        });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_for_buffer(buffer, new_language, cx)
         })

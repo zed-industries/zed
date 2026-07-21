@@ -9619,12 +9619,7 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
         .await
         .unwrap();
     let window = cx.add_window(|window, cx| {
-        let editor = build_editor_with_project(
-            project,
-            MultiBuffer::build_from_buffer(buffer.clone(), cx),
-            window,
-            cx,
-        );
+        let editor = Editor::for_buffer(buffer.clone(), None, window, cx);
         window.focus(&editor.focus_handle(cx), cx);
         editor
     });
@@ -9674,6 +9669,21 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     assert_eq!(
         buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
         go_language.name()
+    );
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, PLAIN_TEXT.clone(), cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+
+    cx.run_until_parked();
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
     );
 }
 

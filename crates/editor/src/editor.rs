@@ -2855,6 +2855,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
@@ -2902,6 +2905,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
@@ -10877,7 +10883,7 @@ impl Editor {
         };
 
         let buffer = buffer_entity.read(cx);
-        if buffer.file().is_some() {
+        if buffer.file().is_some() || !buffer.content_language_detection_enabled() {
             return;
         }
 
@@ -10898,7 +10904,10 @@ impl Editor {
                     return;
                 }
                 buffer_entity.update(cx, |buffer, cx| {
-                    if buffer.file().is_none() && !buffer.version().changed_since(&buffer_version) {
+                    if buffer.file().is_none()
+                        && buffer.content_language_detection_enabled()
+                        && !buffer.version().changed_since(&buffer_version)
+                    {
                         buffer.set_language(Some(detected_language), cx);
                     }
                 });
