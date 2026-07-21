@@ -4156,6 +4156,7 @@ impl Window {
                 pad: 0,
                 grayscale: false.into(),
                 bounds,
+                clip_bounds: bounds,
                 corner_radii: Default::default(),
                 content_mask,
                 tile,
@@ -4237,6 +4238,7 @@ impl Window {
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
+        clip_bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         data: Arc<RenderImage>,
         frame_index: usize,
@@ -4245,6 +4247,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let bounds = self.snap_bounds(bounds);
+        let clip_bounds = self.snap_bounds(clip_bounds);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -4271,6 +4274,7 @@ impl Window {
             pad: 0,
             grayscale: grayscale.into(),
             bounds,
+            clip_bounds,
             content_mask,
             corner_radii,
             tile,

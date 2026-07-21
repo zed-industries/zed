@@ -1207,6 +1207,7 @@ struct PolychromeSprite {
     uint grayscale;
     float opacity;
     Bounds bounds;
+    Bounds clip_bounds;
     Bounds content_mask;
     Corners corner_radii;
     AtlasTile tile;
@@ -1246,7 +1247,7 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    float distance = quad_sdf(input.position.xy, sprite.clip_bounds, sprite.corner_radii);
 
     float4 color = sample;
     if (sprite.grayscale != 0u) {

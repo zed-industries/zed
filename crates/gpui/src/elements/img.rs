@@ -488,13 +488,15 @@ impl Element for Img {
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
+                    let clip_bounds = new_bounds.intersect(&bounds);
                     let corner_radii = style
                         .corner_radii
                         .to_pixels(window.rem_size())
-                        .clamp_radii_for_quad_size(new_bounds.size);
+                        .clamp_radii_for_quad_size(clip_bounds.size);
                     window
                         .paint_image(
                             new_bounds,
+                            clip_bounds,
                             corner_radii,
                             data,
                             layout_state.frame_index,
