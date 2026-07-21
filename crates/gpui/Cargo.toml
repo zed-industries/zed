@@ -111,7 +111,7 @@ uuid = { workspace = true, features = ["js"] }
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block = "0.1"
+block.workspace = true
 cocoa.workspace = true
 cocoa-foundation.workspace = true
 core-foundation.workspace = true
