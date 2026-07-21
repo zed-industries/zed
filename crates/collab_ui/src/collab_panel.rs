@@ -2864,7 +2864,6 @@ impl CollabPanel {
                 .track_scroll(&self.scroll_handle)
                 .with_decoration(
                     ui::indent_guides(px(20.), IndentGuideColors::panel(cx))
-                        .with_left_offset(px(18.) + ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET)
                         .with_compute_indents_fn(cx.entity(), |this, range, _, _| {
                             range
                                 .map(|ix| match this.entries.get(ix) {
@@ -2873,6 +2872,62 @@ impl CollabPanel {
                                     _ => 0,
                                 })
                                 .collect()
+                        })
+                        .with_render_fn(cx.entity(), |this, params, _, _| {
+                            let left_offset = px(18.) + ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET;
+                            let indent_size = params.indent_size;
+                            let item_height = params.item_height;
+
+                            let mut rendered = SmallVec::new();
+                            for layout in params.indent_guides {
+                                let level = layout.offset.x;
+                                let start = layout.offset.y;
+                                let end = start + layout.length;
+
+                                let row_masks_guide = |row: usize| {
+                                    this.entries.get(row).is_some_and(|entry| match entry {
+                                        ListEntry::Channel {
+                                            channel,
+                                            depth,
+                                            has_children,
+                                            ..
+                                        } => {
+                                            *depth == level + 1
+                                                && *has_children
+                                                && (this.is_channel_collapsed(channel.id)
+                                                    || this.hovered_channel == Some(channel.id))
+                                        }
+                                        _ => false,
+                                    })
+                                };
+
+                                let mut segment_start = start;
+                                for row in start..=end {
+                                    if row == end || row_masks_guide(row) {
+                                        if segment_start < row {
+                                            let length = row - segment_start;
+                                            rendered.push(ui::RenderedIndentGuide {
+                                                bounds: Bounds::new(
+                                                    point(
+                                                        indent_size * level as f32 + left_offset,
+                                                        item_height * segment_start as f32,
+                                                    ),
+                                                    size(px(1.), item_height * length as f32),
+                                                ),
+                                                layout: ui::IndentGuideLayout {
+                                                    offset: point(level, segment_start),
+                                                    length,
+                                                    continues_offscreen: false,
+                                                },
+                                                is_active: false,
+                                                hitbox: None,
+                                            });
+                                        }
+                                        segment_start = row + 1;
+                                    }
+                                }
+                            }
+                            rendered
                         }),
                 ),
             )
