@@ -79,10 +79,9 @@ fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
         let feature_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
         for (tag, value) in features.tag_value_list() {
             let keys = [kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue];
-            let values = [
-                CFString::new(tag).as_CFTypeRef(),
-                CFNumber::from(*value as i32).as_CFTypeRef(),
-            ];
+            let tag_string = CFString::new(tag);
+            let value_number = CFNumber::from(*value as i32);
+            let values = [tag_string.as_CFTypeRef(), value_number.as_CFTypeRef()];
             let dict = CFDictionaryCreate(
                 kCFAllocatorDefault,
                 &keys as *const _ as _,
@@ -91,7 +90,6 @@ fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
                 &kCFTypeDictionaryKeyCallBacks,
                 &kCFTypeDictionaryValueCallBacks,
             );
-            values.into_iter().for_each(|value| CFRelease(value));
             CFArrayAppendValue(feature_array, dict as _);
             CFRelease(dict as _);
         }
