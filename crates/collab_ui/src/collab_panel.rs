@@ -14,10 +14,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, KeyContext, MouseDownEvent,
-    Pixels, Point, PromptLevel, ScrollStrategy, SharedString, Subscription, Task, TextStyle,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, canvas, deferred, div, fill,
-    point, prelude::*, px, size, uniform_list,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, KeyContext, MouseButton,
+    MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, SharedString, Subscription, Task,
+    TextStyle, UniformListScrollHandle, WeakEntity, Window, actions, anchored, canvas, deferred,
+    div, fill, point, prelude::*, px, size, uniform_list,
 };
 
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
@@ -35,9 +35,9 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
-    DecoratedIcon, Facepile, HighlightedLabel, IconButtonShape, IconDecoration, IconDecorationKind,
-    IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor, Tooltip, prelude::*,
-    tooltip_container,
+    DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
+    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor,
+    Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -274,6 +274,7 @@ pub struct CollabPanel {
     collapsed_channels: Vec<ChannelId>,
     filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
+    hovered_channel: Option<ChannelId>,
     notification_store: Entity<NotificationStore>,
     current_notification_toast: Option<(u64, Task<()>)>,
     mark_as_read_tasks: HashMap<u64, Task<anyhow::Result<()>>>,
@@ -392,6 +393,7 @@ impl CollabPanel {
             let mut this = Self {
                 focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
+                hovered_channel: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_panel_serialization: Task::ready(None),
                 pending_favorites_serialization: Task::ready(None),
@@ -3076,6 +3078,7 @@ impl CollabPanel {
         let online = contact.online;
         let busy = contact.busy || calling;
         let username = contact.user.username.clone();
+
         let item = ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
@@ -3340,33 +3343,35 @@ impl CollabPanel {
         let height = rems_from_px(24.);
 
         let icon_name = if is_public {
-            IconName::Web
+            IconName::Hash
         } else {
             IconName::Lock
         };
-        let notification_decoration = IconDecoration::new(
-            IconDecorationKind::Dot,
-            cx.theme().colors().panel_background,
-            cx,
-        )
-        .color(cx.theme().colors().text_accent)
-        .position(Point {
-            x: px(-3.),
-            y: px(6.),
-        });
+
         let icon = if has_notes_notification {
-            Icon::new(icon_name)
-                .size(IconSize::Small)
-                .color(Color::Muted)
-                .into_any_element()
-        } else {
             DecoratedIcon::new(
                 Icon::new(icon_name)
                     .size(IconSize::Small)
                     .color(Color::Muted),
-                Some(notification_decoration),
+                Some(
+                    IconDecoration::new(
+                        IconDecorationKind::Dot,
+                        cx.theme().colors().panel_background,
+                        cx,
+                    )
+                    .color(cx.theme().colors().text_accent)
+                    .position(Point {
+                        x: px(-3.),
+                        y: px(6.),
+                    }),
+                ),
             )
             .into_any_element()
+        } else {
+            Icon::new(icon_name)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
         };
 
         h_flex()
@@ -3375,6 +3380,15 @@ impl CollabPanel {
             .h(height)
             .w_full()
             .overflow_hidden()
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let hovered_channel = hovered.then_some(channel_id);
+                if this.hovered_channel != hovered_channel
+                    && (*hovered || this.hovered_channel == Some(channel_id))
+                {
+                    this.hovered_channel = hovered_channel;
+                    cx.notify();
+                }
+            }))
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
                     cx.new(|_| DraggedChannelView {
@@ -3408,9 +3422,6 @@ impl CollabPanel {
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
                     .toggle(disclosed)
-                    .on_toggle(cx.listener(move |this, _, window, cx| {
-                        this.toggle_channel_collapsed(channel_id, window, cx)
-                    }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if is_active {
                             this.open_channel_notes(channel_id, window, cx)
@@ -3429,6 +3440,35 @@ impl CollabPanel {
                             )
                         },
                     ))
+                    .when_some(disclosed, |this, is_open| {
+                        if is_open && self.hovered_channel != Some(channel_id) {
+                            this.disclosure_slot(Empty)
+                        } else {
+                            let background = if is_selected || is_active {
+                                cx.theme().colors().ghost_element_selected
+                            } else if self.hovered_channel == Some(channel_id) {
+                                cx.theme().colors().ghost_element_hover
+                            } else {
+                                cx.theme().colors().panel_background
+                            };
+                            this.disclosure_slot(deferred(
+                                h_flex()
+                                    .bg(background)
+                                    .child(
+                                        Disclosure::new("toggle", is_open)
+                                            .shape(IconButtonShape::Square)
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.toggle_channel_collapsed(
+                                                    channel_id, window, cx,
+                                                )
+                                            })),
+                                    )
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    }),
+                            ))
+                        }
+                    })
                     .child(
                         h_flex()
                             .id(format!("inside-{}", channel_id.0))
@@ -3469,8 +3509,10 @@ impl CollabPanel {
                     .right_0()
                     .px_1()
                     .gap_px()
-                    .rounded_l_md()
+                    // .rounded_l_md()
                     .bg(cx.theme().colors().background)
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)

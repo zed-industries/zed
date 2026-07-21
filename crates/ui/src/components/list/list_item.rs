@@ -38,6 +38,7 @@ pub struct ListItem {
     end_slot: Option<AnyElement>,
     end_slot_visibility: EndSlotVisibility,
     toggle: Option<bool>,
+    disclosure_slot: Option<AnyElement>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
@@ -74,6 +75,7 @@ impl ListItem {
             end_slot: None,
             end_slot_visibility: EndSlotVisibility::default(),
             toggle: None,
+            disclosure_slot: None,
             inset: false,
             on_click: None,
             on_secondary_mouse_down: None,
@@ -214,6 +216,11 @@ impl ListItem {
         on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
+        self
+    }
+
+    pub fn disclosure_slot(mut self, disclosure_slot: impl IntoElement) -> Self {
+        self.disclosure_slot = Some(disclosure_slot.into_any_element());
         self
     }
 
@@ -409,10 +416,12 @@ impl RenderOnce for ListItem {
                             .when(is_open && !self.always_show_disclosure_icon, |this| {
                                 this.visible_on_hover("")
                             })
-                            .child(
-                                Disclosure::new("toggle", is_open)
-                                    .on_toggle_expanded(self.on_toggle),
-                            )
+                            .child(match self.disclosure_slot {
+                                Some(disclosure_slot) => disclosure_slot,
+                                None => Disclosure::new("toggle", is_open)
+                                    .on_toggle_expanded(self.on_toggle)
+                                    .into_any_element(),
+                            })
                     }))
                     .child(
                         h_flex()
