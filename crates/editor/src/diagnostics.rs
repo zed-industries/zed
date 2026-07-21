@@ -600,11 +600,14 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use crate::{
-        actions::{ToggleDiagnostics, ToggleInlineDiagnostics},
+        actions::{
+            ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
+            ToggleSemanticHighlights,
+        },
         editor_tests::init_test,
         test::editor_test_context::EditorTestContext,
     };
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{Action, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::DiagnosticSourceKind;
     use lsp::LanguageServerId;
@@ -752,19 +755,28 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_diagnostics_gated_by_lsp_data(cx: &mut TestAppContext) {
+    async fn test_actions_gated_by_lsp_data(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let mut cx = EditorTestContext::new(cx).await;
+        let lsp_data_actions: [&dyn Action; 4] = [
+            &ToggleDiagnostics,
+            &ToggleInlayHints,
+            &ToggleCodeLens,
+            &ToggleSemanticHighlights,
+        ];
 
         cx.update_editor(|editor, _, cx| {
             editor.enable_lsp_data = false;
             cx.notify();
         });
         cx.update(|window, cx| {
-            assert!(
-                !window.is_action_available(&ToggleDiagnostics, cx),
-                "ToggleDiagnostics should not be available when LSP data is disabled"
-            );
+            for action in lsp_data_actions {
+                assert!(
+                    !window.is_action_available(action, cx),
+                    "{} should not be available when LSP data is disabled",
+                    action.name()
+                );
+            }
         });
 
         cx.update_editor(|editor, _, cx| {
@@ -772,10 +784,13 @@ mod tests {
             cx.notify();
         });
         cx.update(|window, cx| {
-            assert!(
-                window.is_action_available(&ToggleDiagnostics, cx),
-                "ToggleDiagnostics should be available again after re-enabling LSP data"
-            );
+            for action in lsp_data_actions {
+                assert!(
+                    window.is_action_available(action, cx),
+                    "{} should be available again after re-enabling LSP data",
+                    action.name()
+                );
+            }
         });
     }
 
