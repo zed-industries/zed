@@ -420,7 +420,9 @@ impl DevContainerManifest {
         Ok(())
     }
 
-    async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
+    async fn download_feature_and_dockerfile_resources(
+        &mut self,
+    ) -> Result<String, DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
                 log::error!(
@@ -682,7 +684,7 @@ impl DevContainerManifest {
         self.root_image = Some(root_image);
         self.features_build_info = Some(build_info);
 
-        Ok(())
+        Ok(remote_user)
     }
 
     fn generate_dockerfile_extended(
@@ -877,6 +879,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     async fn run_dev_container(
         &self,
         build_resources: DevContainerBuildResources,
+        remote_user: &str,
     ) -> Result<DevContainerUp, DevContainerError> {
         let ConfigStatus::VariableParsed(_) = &self.config else {
             log::error!(
@@ -889,7 +892,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 self.run_docker_compose(resources).await?
             }
             DevContainerBuildResources::Docker(resources) => {
-                self.run_docker_image(resources).await?
+                self.run_docker_image(resources, remote_user).await?
             }
         };
 
@@ -1860,8 +1863,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     async fn run_docker_image(
         &self,
         build_resources: DockerBuildResources,
+        remote_user: &str,
     ) -> Result<DockerInspect, DevContainerError> {
-        let mut docker_run_command = self.create_docker_run_command(build_resources)?;
+        let mut docker_run_command =
+            self.create_docker_run_command(build_resources, remote_user)?;
 
         let output = self
             .command_runner
@@ -1950,6 +1955,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     fn create_docker_run_command(
         &self,
         build_resources: DockerBuildResources,
+        remote_user: &str,
     ) -> Result<Command, DevContainerError> {
         let remote_workspace_mount = self.remote_workspace_mount()?;
 
@@ -1988,7 +1994,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 "--security-opt=label=disable",
                 &mut command,
             );
-            run_if_missing("--userns", "--userns=keep-id", &mut command);
+            if remote_user != "root"
+                && remote_user != "0"
+                && !remote_user.starts_with("root:")
+                && !remote_user.starts_with("0:")
+            {
+                run_if_missing("--userns", "--userns=keep-id", &mut command);
+            }
         }
 
         run_if_missing("--sig-proxy", "--sig-proxy=false", &mut command);
@@ -2058,11 +2070,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         self.run_initialize_commands().await?;
 
-        self.download_feature_and_dockerfile_resources().await?;
+        let remote_user = self.download_feature_and_dockerfile_resources().await?;
 
         let build_resources = self.build_resources().await?;
 
-        let devcontainer_up = self.run_dev_container(build_resources).await?;
+        let devcontainer_up = self
+            .run_dev_container(build_resources, &remote_user)
+            .await?;
 
         self.run_remote_scripts(&devcontainer_up, true).await?;
 
