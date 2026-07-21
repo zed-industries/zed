@@ -5025,9 +5025,7 @@ dependencies = [
  "text",
  "theme",
  "theme_settings",
- "tree-sitter",
  "tree-sitter-go",
- "tree-sitter-json",
  "ui",
  "ui_input",
  "unindent",
@@ -6335,6 +6333,7 @@ dependencies = [
  "util",
  "wasm-encoder 0.252.0",
  "wasmparser 0.252.0",
+ "which 6.0.3",
  "ztracing",
 ]
 
@@ -8996,6 +8995,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "menu",
  "project",
  "serde",
  "settings",
@@ -9013,11 +9013,12 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "imara-diff"
-version = "0.1.8"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17d34b7d42178945f775e84bc4c36dde7c1c6cdfea656d3354d009056f2bb3d2"
+checksum = "2f01d462f766df78ab820dd06f5eb700233c51f0f4c2e846520eaf4ba6aa5c5c"
 dependencies = [
  "hashbrown 0.15.5",
+ "memchr",
 ]
 
 [[package]]
@@ -16394,6 +16395,7 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "regex",
  "serde",
  "serde_json",
  "settings",
@@ -17484,7 +17486,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "webpki-roots",
+ "webpki-roots 0.26.8",
 ]
 
 [[package]]
@@ -18417,6 +18419,8 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
+ "tree-sitter",
+ "tree-sitter-json",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
@@ -21157,6 +21161,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpki-roots"
+version = "1.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "webrtc-sys"
 version = "0.3.23"
 source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
@@ -22974,23 +22987,24 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yawc"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19a5d82922135b4ae73a079a4ffb5501e9aadb4d785b8c660eaa0a8b899028c5"
+version = "0.3.3"
+source = "git+https://github.com/zed-industries/yawc?rev=71a452f551cac178367eaac5d7418a09afa1f3a2#71a452f551cac178367eaac5d7418a09afa1f3a2"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.11.1",
  "flate2",
  "futures 0.3.32",
+ "getrandom 0.2.16",
  "http-body-util",
  "hyper 1.7.0",
  "hyper-util",
  "js-sys",
+ "log",
  "nom 8.0.0",
  "pin-project",
  "rand 0.8.6",
  "sha1",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-rustls 0.26.4",
  "tokio-util",
@@ -22998,7 +23012,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]

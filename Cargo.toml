@@ -555,12 +555,14 @@ aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bitflags = "2.6.0"
+block = "0.1"
 block2 = "0.6"
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 brush-parser = "0.3"
+cbindgen = { version = "0.28.0", default-features = false }
 cfg-if = "1.0.3"
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -575,6 +577,8 @@ const_format = "0.2"
 convert_case = "0.11.0"
 core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
+core-graphics = "0.24"
+core-text = "21"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
 crash-handler = "0.7"
@@ -601,10 +605,12 @@ ec4rs = { version = "1.2", features = ["allow-empty-values"] }
 emojis = "0.6.1"
 env_logger = "0.11"
 encoding_rs = "0.8"
+etagere = "0.2"
 exec = "0.3.1"
 fancy-regex = "0.18.0"
 fork = "0.4.0"
 flume = "0.12"
+foreign-types = "0.5"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
@@ -644,7 +650,7 @@ image = { version = "0.25.1", default-features = false, features = [
     "tiff",
     "webp",
 ] }
-imara-diff = "0.1.8"
+imara-diff = "0.2.0"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
@@ -717,6 +723,7 @@ palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
+pathfinder_geometry = "0.5"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
 percent-encoding = "2.3.2"
@@ -798,6 +805,7 @@ stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.2", features = ["derive"] }
+swash = "0.2.6"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.37.0"
@@ -880,7 +888,7 @@ webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
 windows-core = "0.61"
 yaml-rust2 = "0.8"
-yawc = "0.2.5"
+yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
 zeroize = "1.8"
 zstd = "0.11"
 
