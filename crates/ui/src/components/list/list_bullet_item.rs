@@ -71,11 +71,11 @@ impl Component for ListBulletItem {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A list item with a dash indicator for unordered lists.")
+    fn description() -> &'static str {
+        "A list item with a dash indicator for unordered lists."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let basic_examples = vec![
             single_example(
                 "Simple",
@@ -105,11 +105,9 @@ impl Component for ListBulletItem {
             ),
         ];
 
-        Some(
-            v_flex()
-                .gap_6()
-                .child(example_group(basic_examples).vertical())
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .child(example_group(basic_examples).vertical())
+            .into_any_element()
     }
 }

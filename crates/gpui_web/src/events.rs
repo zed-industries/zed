@@ -64,6 +64,7 @@ impl WebWindowInner {
             self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_paste(),
             self.register_composition_start(),
             self.register_composition_update(),
             self.register_composition_end(),
@@ -150,13 +151,21 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            this.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
+            let result = this.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
                 button,
                 position,
                 modifiers,
                 click_count,
                 first_mouse: false,
             }));
+
+            // The browser fires `contextmenu` after this event; remember whether
+            // the app claimed the right-click (e.g. opened its own menu) so the
+            // contextmenu listener cancels the native menu only in that case.
+            if button == MouseButton::Right {
+                let claimed = result.is_some_and(|result| !result.propagate);
+                this.app_claimed_right_click.set(claimed);
+            }
         })
     }
 
@@ -270,9 +279,12 @@ impl WebWindowInner {
     }
 
     fn register_context_menu(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
         self.listen("contextmenu", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
-            event.prevent_default();
+            if this.app_claimed_right_click.replace(false) {
+                event.prevent_default();
+            }
         })
     }
 
@@ -351,8 +363,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
 
@@ -370,11 +380,13 @@ impl WebWindowInner {
 
             if let Some(result) = result {
                 if !result.propagate {
+                    event.prevent_default();
                     return;
                 }
             }
 
             if this.is_composing.get() || event.is_composing() {
+                event.prevent_default();
                 return;
             }
 
@@ -383,6 +395,11 @@ impl WebWindowInner {
                     this.with_input_handler(|handler| {
                         handler.replace_text_in_range(None, &text);
                     });
+                    // The character went into the input handler; suppress browser
+                    // side-effects for the same keystroke (space scrolling the
+                    // page, quick-find, etc.). Everything not handled above falls
+                    // through so browser shortcuts keep their defaults.
+                    event.prevent_default();
                 }
             }
         })
@@ -413,8 +430,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
@@ -423,7 +438,38 @@ impl WebWindowInner {
                 key_char,
             };
 
-            this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            if let Some(result) = result {
+                if !result.propagate {
+                    event.prevent_default();
+                }
+            }
+        })
+    }
+
+    /// Paste is delivered through the DOM `paste` event rather than
+    /// `Platform::read_from_clipboard`: the browser's asynchronous clipboard
+    /// read API cannot fit that synchronous signature, while `ClipboardEvent`
+    /// exposes `clipboardData` synchronously inside the event. It fires for
+    /// any browser-initiated paste (keyboard, menu bar, context menu).
+    fn register_paste(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("paste", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            let Some(clipboard_data) = event.clipboard_data() else {
+                return;
+            };
+            let Ok(text) = clipboard_data.get_data("text/plain") else {
+                return;
+            };
+            if text.is_empty() {
+                return;
+            }
+
+            event.prevent_default();
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(None, &text);
+            });
         })
     }
 

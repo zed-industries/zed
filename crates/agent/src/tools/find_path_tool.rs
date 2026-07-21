@@ -1,5 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use acp_thread::MentionUri;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
@@ -11,7 +12,7 @@ use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
 
-/// Fast file path pattern matching tool that works with any codebase size
+/// Find file paths that match a given pattern.
 ///
 /// - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 /// - Returns matching file paths sorted alphabetically
@@ -155,10 +156,13 @@ impl AgentTool for FindPathTool {
                         paginated_matches
                             .iter()
                             .map(|path| {
+                                let uri = MentionUri::File {
+                                    abs_path: path.clone(),
+                                };
                                 acp::ToolCallContent::Content(acp::Content::new(
                                     acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                                         path.to_string_lossy(),
-                                        format!("file://{}", path.display()),
+                                        uri.to_uri().to_string(),
                                     )),
                                 ))
                             })

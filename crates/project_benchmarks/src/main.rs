@@ -6,6 +6,7 @@ use clap::Parser;
 use client::{Client, UserStore};
 use futures::channel::oneshot;
 use gpui::AppContext as _;
+use gpui::TaskExt;
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;

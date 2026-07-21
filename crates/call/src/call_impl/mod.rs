@@ -9,7 +9,7 @@ use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
-    WeakEntity, Window,
+    TaskExt, WeakEntity, Window,
 };
 use postage::watch;
 use project::Project;
@@ -189,7 +189,7 @@ impl AnyActiveCall for ActiveCallEntity {
         let room = self.0.read(cx).room()?.read(cx);
         room.remote_participants()
             .values()
-            .find(|p| p.user.id == user_id)
+            .find(|p| p.user.legacy_id == user_id)
             .map(|p| p.peer_id)
     }
 
@@ -222,6 +222,7 @@ impl AnyActiveCall for ActiveCallEntity {
                     room::Event::LocalScreenShareStopped => {
                         Some(ActiveCallEvent::LocalScreenShareStopped)
                     }
+                    room::Event::RoomLeft { .. } => Some(ActiveCallEvent::RoomLeft),
                     _ => None,
                 };
                 if let Some(event) = mapped {

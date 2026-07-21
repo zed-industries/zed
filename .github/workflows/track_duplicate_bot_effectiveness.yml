@@ -16,8 +16,9 @@ jobs:
       github.event_name == 'issues' &&
       github.repository == 'zed-industries/zed' &&
       github.event.issue.pull_request == null &&
-      github.event.issue.type != null &&
-      (github.event.issue.type.name == 'Bug' || github.event.issue.type.name == 'Crash')
+      (github.event.issue.type == null ||
+       github.event.issue.type.name == 'Bug' ||
+       github.event.issue.type.name == 'Crash')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

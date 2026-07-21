@@ -9,7 +9,7 @@ use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
-use std::{env::consts, path::PathBuf, sync::Arc};
+use std::{env::consts, future::Future, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
@@ -23,7 +23,7 @@ impl LspInstaller for CLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -54,7 +54,7 @@ impl LspInstaller for CLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -66,82 +66,88 @@ impl LspInstaller for CLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        ensure_arch_compatibility()?;
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = version;
-        let version_dir = container_dir.join(format!("clangd_{name}"));
-        let binary_path = version_dir
-            .join("bin")
-            .join(format!("clangd{}", consts::EXE_SUFFIX));
+        async move {
+            ensure_arch_compatibility()?;
 
-        let binary = LanguageServerBinary {
-            path: binary_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = version_dir.join("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: binary_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &container_dir,
-            AssetKind::Zip,
-        )
-        .await?;
-        remove_matching(&container_dir, |entry| entry != version_dir).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = version;
+            let version_dir = container_dir.join(format!("clangd_{name}"));
+            let binary_path = version_dir
+                .join("bin")
+                .join(format!("clangd{}", consts::EXE_SUFFIX));
 
-        Ok(binary)
+            let binary = LanguageServerBinary {
+                path: binary_path.clone(),
+                env: None,
+                arguments: Default::default(),
+            };
+
+            let metadata_path = version_dir.join("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: binary_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {binary_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &container_dir,
+                AssetKind::Zip,
+            )
+            .await?;
+            remove_matching(&container_dir, |entry| entry != version_dir).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(binary)
+        }
     }
 
     async fn cached_server_binary(
@@ -294,43 +300,43 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();
                 let display_range = 5..5 + name.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("struct {} {{}}", name);
                 let filter_range = 7..7 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::ENUM => {
+            language::SymbolKind::Enum => {
                 let text = format!("enum {} {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE | lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Interface | language::SymbolKind::Class => {
                 let text = format!("class {} {{}}", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const int {} = 0;", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("namespace {} {{}}", name);
                 let filter_range = 10..10 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::TYPE_PARAMETER => {
+            language::SymbolKind::TypeParameter => {
                 let text = format!("typename {} {{}};", name);
                 let filter_range = 9..9 + name.len();
                 let display_range = 0..filter_range.end;
@@ -439,6 +445,70 @@ mod tests {
                 buffer.text(),
                 "int main() {\n  \n}",
                 "content inside braces should be indented"
+            );
+
+            buffer
+        });
+    }
+
+    #[gpui::test]
+    async fn test_c_autoindent_switch_case(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+        let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            buffer.edit(
+                [(
+                    0..0,
+                    r#"
+                    int main() {
+                    switch (a) {
+                    case 1:
+                    b++;
+                    break;
+                    case 2:
+                    case 3:
+                    c++;
+                    break;
+                    default:
+                    d++;
+                    }
+                    }
+                    "#
+                    .unindent(),
+                )],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(
+                buffer.text(),
+                r#"
+                int main() {
+                  switch (a) {
+                    case 1:
+                      b++;
+                      break;
+                    case 2:
+                    case 3:
+                      c++;
+                      break;
+                    default:
+                      d++;
+                  }
+                }
+                "#
+                .unindent(),
+                "statements under a case label should be indented, and the next label outdented"
             );
 
             buffer

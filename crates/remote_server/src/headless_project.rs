@@ -2,13 +2,14 @@ use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
 use collections::HashSet;
+use gpui::TasksIncluded;
 use language::File;
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
@@ -253,7 +254,7 @@ impl HeadlessProject {
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
         language_extension::init(
-            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            language_extension::LspAccess::ViaLspStore(lsp_store.downgrade()),
             proxy.clone(),
             languages.clone(),
         );
@@ -416,6 +417,16 @@ impl HeadlessProject {
                         log_store.remove_language_server(*id, cx);
                     });
                 }
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_name: None,
+                        language_server_id: id.to_proto(),
+                        variant: Some(proto::update_language_server::Variant::Removed(
+                            proto::ServerRemoved {},
+                        )),
+                    })
+                    .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -526,6 +537,7 @@ impl HeadlessProject {
                 root_repo_common_dir: worktree
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
             }
         });
 
@@ -573,7 +585,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?.into();
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
@@ -602,7 +614,7 @@ impl HeadlessProject {
     ) -> Result<proto::OpenImageResponse> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?;
         let project_id = message.payload.project_id;
         use proto::create_image_for_peer::Variant;
 
@@ -717,7 +729,7 @@ impl HeadlessProject {
         );
 
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?;
         let project_id = message.payload.project_id;
         let file_id = message.payload.file_id;
         log::debug!(
@@ -1096,7 +1108,7 @@ impl HeadlessProject {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let _ = buffer_store
                     .update(cx, |this, cx| {
                         this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
@@ -1259,11 +1271,12 @@ impl HeadlessProject {
         let foreground_only = envelope.payload.foreground_only;
 
         let (deltas, now_nanos) = cx.update(|cx| {
-            let dispatcher = cx.foreground_executor().dispatcher();
             let timings = if foreground_only {
-                vec![dispatcher.get_current_thread_timings()]
+                vec![gpui::profiler::get_current_thread_timings(
+                    TasksIncluded::OnlyCompleted,
+                )]
             } else {
-                dispatcher.get_all_timings()
+                gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted)
             };
             this.update(cx, |this, _cx| {
                 let deltas = this.profiling_collector.collect_unseen(timings);

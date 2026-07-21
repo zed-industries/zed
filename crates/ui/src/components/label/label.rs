@@ -73,6 +73,19 @@ impl Label {
         self.base = self.base.truncate_start();
         self
     }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        self.base = self.base.line_clamp(lines);
+        self
+    }
 }
 
 // Style methods.
@@ -352,13 +365,13 @@ impl Component for Label {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A text label component that supports various styles, sizes, and formatting options.")
+    fn description() -> &'static str {
+        "A text label component that supports various styles, \
+        sizes, and formatting options."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -405,6 +418,5 @@ impl Component for Label {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

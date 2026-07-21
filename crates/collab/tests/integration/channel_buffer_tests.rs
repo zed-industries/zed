@@ -1,7 +1,7 @@
 use crate::{TestServer, test_server::open_channel_notes};
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
-use client::{Collaborator, ParticipantIndex, UserId};
+use client::{Collaborator, LegacyUserId, ParticipantIndex};
 use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 
 use collab_ui::channel_view::ChannelView;
@@ -864,7 +864,10 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
 }
 
 #[track_caller]
-fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Option<UserId>]) {
+fn assert_collaborators(
+    collaborators: &HashMap<PeerId, Collaborator>,
+    ids: &[Option<LegacyUserId>],
+) {
     let mut user_ids = collaborators
         .values()
         .map(|collaborator| collaborator.user_id)

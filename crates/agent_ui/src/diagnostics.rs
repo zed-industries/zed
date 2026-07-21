@@ -1,6 +1,7 @@
 use anyhow::Result;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{Anchor, BufferSnapshot, DiagnosticEntryRef, DiagnosticSeverity, ToOffset};
+use multi_buffer::MultiBuffer;
 use project::{DiagnosticSummary, Project};
 use rope::Point;
 use std::{fmt::Write, ops::RangeInclusive, path::Path};
@@ -22,7 +23,7 @@ pub fn codeblock_fence_for_path(
 
         write!(text, "{path}").unwrap();
     } else {
-        write!(text, "untitled").unwrap();
+        write!(text, "{}", MultiBuffer::DEFAULT_TITLE).unwrap();
     }
 
     if let Some(row_range) = row_range {

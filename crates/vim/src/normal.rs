@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
+use gpui::{Context, TaskExt, Window, actions};
 use language::{AutoIndentMode, Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -146,6 +146,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
+        let original_selections =
+            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
@@ -155,7 +157,18 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        vim.visual_delete(false, window, cx);
+        let transaction_id = vim.visual_delete(false, window, cx);
+        if let (Some(original_selections), Some(transaction_id)) =
+            (original_selections, transaction_id)
+            && !original_selections.is_empty()
+        {
+            let updated = vim.update_editor(cx, |_, editor, _| {
+                editor.modify_transaction_selection_history(transaction_id, |selections| {
+                    selections.undo = original_selections;
+                })
+            });
+            debug_assert_ne!(updated, Some(false));
+        }
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });
 
@@ -740,7 +753,17 @@ impl Vim {
                     let indent = if auto_indent_mode == AutoIndentMode::None {
                         String::new()
                     } else {
-                        snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
+                        let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row)).len;
+                        let first_char = snapshot.chars_at(Point::new(row, indent_size)).next();
+                        let indent_row = if matches!(first_char, Some('}') | Some(')')) {
+                            snapshot
+                                .prev_non_blank_row(MultiBufferRow(row))
+                                .map(|r| r.0)
+                                .unwrap_or(row)
+                        } else {
+                            row
+                        };
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(indent_row), cx)
                     };
                     let start_of_line = Point::new(row, 0);
                     let edit = (start_of_line..start_of_line, indent + "\n");
@@ -1706,6 +1729,20 @@ mod test {
                 ˇ
                 fn test() {
                     println!();
+                }"},
+            Mode::Insert,
+        );
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                    println!();
+                ˇ}"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
                 }"},
             Mode::Insert,
         );

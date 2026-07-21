@@ -323,7 +323,8 @@ pub struct SplitSelectionIntoLines {
     pub keep_selections: bool,
 }
 
-/// Goes to the next diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -332,7 +333,8 @@ pub struct GoToDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Goes to the previous diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the previous diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +394,15 @@ actions!(
         /// Toggles the go to line dialog.
         #[action(name = "Toggle")]
         ToggleGoToLine
+    ]
+);
+
+actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
     ]
 );
 
@@ -501,6 +512,9 @@ actions!(
         ExpandAllDiffHunks,
         /// Collapses all diff hunks in the editor.
         CollapseAllDiffHunks,
+        /// Toggles all diff hunks in the editor. Collapses all hunks if any are
+        /// currently expanded, otherwise expands all hunks.
+        ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds the next match in the search.
@@ -568,16 +582,12 @@ actions!(
         GoToDeclaration,
         /// Goes to declaration in a split pane.
         GoToDeclarationSplit,
-        /// Goes to the definition of the symbol at cursor.
-        GoToDefinition,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
         /// Goes to the next diff hunk.
         GoToHunk,
         /// Goes to the previous diff hunk.
         GoToPreviousHunk,
-        /// Goes to the implementation of the symbol at cursor.
-        GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
         /// Goes to the next bookmark in the file.
@@ -640,14 +650,29 @@ actions!(
         MoveToBeginning,
         /// Moves cursor to the enclosing bracket.
         MoveToEnclosingBracket,
+        /// Selects the content within the nearest enclosing delimiters
+        /// (brackets, braces, parentheses, or quotes), excluding the
+        /// delimiters.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectInsideDelimiters,
+        /// Selects the nearest enclosing delimiters (brackets, braces,
+        /// parentheses, or quotes) together with the content between them.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectAroundDelimiters,
         /// Moves cursor to the end of the document.
         MoveToEnd,
         /// Moves cursor to the end of the paragraph.
         MoveToEndOfParagraph,
+        /// Moves cursor to the start of the next comment paragraph.
+        MoveToNextCommentParagraph,
         /// Moves cursor to the end of the next subword.
         MoveToNextSubwordEnd,
         /// Moves cursor to the end of the next word.
         MoveToNextWordEnd,
+        /// Moves cursor to the start of the previous comment paragraph.
+        MoveToPreviousCommentParagraph,
         /// Moves cursor to the start of the previous subword.
         MoveToPreviousSubwordStart,
         /// Moves cursor to the start of the previous word.
@@ -831,6 +856,10 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
+        /// Toggles a bookmark at the current line, prompting for a label when adding one.
+        ToggleBookmarkWithLabel,
+        /// Edits the bookmark's label at the current line.
+        EditBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -913,8 +942,32 @@ actions!(
         AlignSelections,
         /// Saves the current location to navigation history.
         SaveLocation,
+        /// Toggles breadcrumbs display.
+        ToggleBreadcrumb,
     ]
 );
+
+/// Goes to the definition of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinition {
+    /// Where to show the definitions. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
+/// Goes to the implementation of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToImplementation {
+    /// Where to show the implementations. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
 
 /// Finds all references to the symbol at cursor.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
@@ -923,12 +976,17 @@ actions!(
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+    /// Where to show the references. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
 }
 
 impl Default for FindAllReferences {
     fn default() -> Self {
         Self {
             always_open_multibuffer: true,
+            open_results_in: None,
         }
     }
 }

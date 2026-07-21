@@ -2,11 +2,9 @@ use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::{debug_panel, dev};
+use zed_actions::{Quit, assistant, debug_panel, dev, git_panel, project_panel};
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
-    use zed_actions::Quit;
-
     let mut view_items = vec![
         MenuItem::action(
             "Zoom In",
@@ -40,11 +38,13 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             ],
         }),
         MenuItem::separator(),
-        MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
+        MenuItem::action("Project Panel", project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
-        MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+        MenuItem::action("Terminal Panel", terminal_panel::Toggle),
         MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
+        MenuItem::action("Agent Panel", assistant::ToggleFocus),
+        MenuItem::action("Git Panel", git_panel::ToggleFocus),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
@@ -121,19 +121,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     },
                     workspace::Open::default(),
                 ),
-                MenuItem::action(
-                    "Open Recent...",
-                    zed_actions::OpenRecent {
-                        create_new_window: false,
-                    },
-                ),
-                MenuItem::action(
-                    "Open Remote...",
-                    zed_actions::OpenRemote {
-                        create_new_window: false,
-                        from_existing_connection: false,
-                    },
-                ),
+                MenuItem::action("Open Recent…", zed_actions::OpenRecent::default()),
+                MenuItem::action("Open Remote…", zed_actions::OpenRemote::default()),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),
@@ -243,7 +232,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 ),
                 MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
-                MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
+                MenuItem::action(
+                    "Go to Definition",
+                    editor::actions::GoToDefinition::default(),
+                ),
                 MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action(
@@ -270,8 +262,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 ),
                 MenuItem::action("Start Debugger", debugger_ui::Start),
                 MenuItem::separator(),
-                MenuItem::action("Edit tasks.json...", crate::zed::OpenProjectTasks),
-                MenuItem::action("Edit debug.json...", zed_actions::OpenProjectDebugTasks),
+                MenuItem::action("Edit tasks.json…", zed_actions::OpenProjectTasks),
+                MenuItem::action("Edit debug.json…", zed_actions::OpenProjectDebugTasks),
                 MenuItem::separator(),
                 MenuItem::action("Continue", debugger_ui::Continue),
                 MenuItem::action("Step Over", debugger_ui::StepOver),

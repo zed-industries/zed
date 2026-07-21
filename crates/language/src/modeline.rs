@@ -205,13 +205,16 @@ fn parse_vim_modelines(modelines: &[&str], settings: &mut ModelineSettings) {
     }
 }
 
+// Vim requires whitespace before the `{vi:|vim:|ex:}` marker. As an exception,
+// `vi:` and `vim:` may also appear at the start of a line, but `ex:` may not as
+// Vim ignores a leading `ex:` since it could be short for `example:`.
 static VIM_MODELINE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     [
-        // Second form: [text{white}]{vi:vim:Vim:}[white]se[t] {options}:[text]
+        // Second form: [text{white}]{vi:|vim:|Vim:|ex:}[white]se[t] {options}:[text]
         // Allow escaped colons in options: match non-colon chars or backslash followed by any char
-        r"(?:^|\s)(vi|vim|Vim):(?:\s*)se(?:t)?\s+((?:[^\\:]|\\.)*):",
-        // First form: [text{white}]{vi:vim:}[white]{options}
-        r"(?:^|\s+)(vi|vim):(?:\s*(.+))",
+        r"(?:(?:^|\s)(?:vi|vim|Vim)|\sex):\s*se(?:t)?\s+((?:[^\\:]|\\.)*):",
+        // First form: [text{white}]{vi:|vim:|ex:}[white]{options}
+        r"(?:(?:^|\s)(?:vi|vim)|\sex):\s*(.+)",
     ]
     .iter()
     .map(|pattern| Regex::new(pattern).expect("valid regex"))
@@ -225,7 +228,7 @@ static VIM_MODELINE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 fn parse_vim_modeline(line: &str, settings: &mut ModelineSettings) {
     for re in VIM_MODELINE_PATTERNS.iter() {
         if let Some(captures) = re.captures(line) {
-            if let Some(options) = captures.get(2) {
+            if let Some(options) = captures.get(1) {
                 parse_vim_settings(options.as_str().trim(), settings);
                 break;
             }
@@ -462,6 +465,21 @@ mod tests {
                 mode: Some("python".to_string()),
                 tab_size: Some(NonZeroU32::new(8).unwrap()),
                 hard_tabs: Some(true),
+                ..Default::default()
+            }
+        );
+
+        // Using `ex:` should only be interpreted when whitespace separates it
+        // from the beginning of the line.
+        let content = "ex: filetype=shell";
+        assert_eq!(parse_modeline(&[content], &[]), None);
+
+        let content = "\tex: filetype=shell";
+        let settings = parse_modeline(&[content], &[]).unwrap();
+        assert_eq!(
+            settings,
+            ModelineSettings {
+                mode: Some("shell".to_string()),
                 ..Default::default()
             }
         );

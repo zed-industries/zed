@@ -12,7 +12,7 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    Focusable, IntoElement, ParentElement, Render, Subscription, TaskExt, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
 use indoc::indoc;
@@ -37,14 +37,12 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
-use crate::{
-    CaptureExample, RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag,
-};
+use crate::{RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag};
 
 actions!(
     edit_prediction,
@@ -110,6 +108,8 @@ impl Render for EditPredictionButton {
                     return div().child(
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
+                            .tab_index(0isize)
+                            .aria_label("GitHub Copilot")
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 if let Some(workspace) = Workspace::for_window(window, cx) {
                                     workspace.update(cx, |workspace, cx| {
@@ -174,7 +174,9 @@ impl Render for EditPredictionButton {
                         })
                         .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
-                            IconButton::new("copilot-icon", icon),
+                            IconButton::new("copilot-icon", icon)
+                                .tab_index(0isize)
+                                .aria_label("GitHub Copilot"),
                             |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
                         )
                         .with_handle(self.popover_menu_handle.clone()),
@@ -220,6 +222,8 @@ impl Render for EditPredictionButton {
                         .trigger_with_tooltip(
                             IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
+                                .tab_index(0isize)
+                                .aria_label("Edit Prediction")
                                 .when(!has_api_key, |this| {
                                     this.indicator(Indicator::dot().color(Color::Error))
                                         .indicator_border_color(Some(
@@ -264,6 +268,8 @@ impl Render for EditPredictionButton {
                         .trigger(
                             IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
                                 .shape(IconButtonShape::Square)
+                                .tab_index(0isize)
+                                .aria_label("Edit Prediction")
                                 .when(!enabled, |this| {
                                     this.indicator(Indicator::dot().color(Color::Ignored))
                                         .indicator_border_color(Some(
@@ -294,6 +300,8 @@ impl Render for EditPredictionButton {
                         .trigger_with_tooltip(
                             IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
+                                .tab_index(0isize)
+                                .aria_label("Edit Prediction")
                                 .when(!enabled, |this| {
                                     this.indicator(Indicator::dot().color(Color::Ignored))
                                         .indicator_border_color(Some(
@@ -377,6 +385,8 @@ impl Render for EditPredictionButton {
                     return div().child(
                         IconButton::new("zed-predict-pending-button", ep_icon)
                             .shape(IconButtonShape::Square)
+                            .tab_index(0isize)
+                            .aria_label("Edit Predictions")
                             .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                             .tooltip(move |_window, cx| {
@@ -432,6 +442,8 @@ impl Render for EditPredictionButton {
 
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
+                    .tab_index(0isize)
+                    .aria_label("Edit Prediction")
                     .when_some(indicator_color, |this, color| {
                         this.indicator(Indicator::dot().color(color))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
@@ -594,30 +606,20 @@ impl EditPredictionButton {
                     continue;
                 };
                 let is_current = provider == current_provider;
+                let is_disabled_zed_provider =
+                    provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(
-                            IconPosition::Start,
-                            is_current
-                                && (provider == EditPredictionProvider::Zed
-                                    && !is_zed_provider_disabled),
-                        )
-                        .disabled(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                        )
-                        .when(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                            |item| {
-                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
-                                    Label::new(
-                                        "Edit predictions are disabled for this organization.",
-                                    )
+                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
+                        .disabled(is_disabled_zed_provider)
+                        .when(is_disabled_zed_provider, |item| {
+                            item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                Label::new("Edit predictions are disabled for this organization.")
                                     .into_any_element()
-                                })
-                            },
-                        )
+                            })
+                        })
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -642,6 +644,7 @@ impl EditPredictionButton {
                     window.dispatch_action(
                         OpenSettingsAt {
                             path: "edit_predictions.providers".to_string(),
+                            target: None,
                         }
                         .boxed_clone(),
                         cx,
@@ -724,14 +727,16 @@ impl EditPredictionButton {
 
             match language_state.clone() {
                 Some((language, false)) => {
-                    menu = menu.item(
-                        entry
-                            .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
-                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
-                                    .into_any_element()
-                            })
-                    );
+                    menu = menu.item(entry.disabled(true).documentation_aside(
+                        DocumentationSide::Left,
+                        move |_cx| {
+                            Label::new(format!(
+                                "Edit predictions are disabled for {}",
+                                language.name()
+                            ))
+                            .into_any_element()
+                        },
+                    ));
                 }
                 Some(_) | None => menu = menu.item(entry),
             }
@@ -919,7 +924,7 @@ impl EditPredictionButton {
 
         menu = menu.item(
             ContextMenuEntry::new("Configure Excluded Files")
-                .icon(IconName::LockOutlined)
+                .icon(IconName::Lock)
                 .icon_color(Color::Muted)
                 .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
@@ -992,10 +997,7 @@ impl EditPredictionButton {
                 .context(editor_focus_handle)
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
-                    |this| {
-                        this.action("Capture Prediction Example", CaptureExample.boxed_clone())
-                            .action("Rate Predictions", RatePredictions.boxed_clone())
-                    },
+                    |this| this.action("Rate Predictions", RatePredictions.boxed_clone()),
                 );
         }
 
@@ -1130,7 +1132,7 @@ impl EditPredictionButton {
                     .link_with_handler(
                         "Learn More",
                         OpenBrowser {
-                            url: zed_urls::edit_prediction_docs(cx),
+                            url: zed_urls::edit_prediction_docs(cx).into(),
                         }
                         .boxed_clone(),
                         |_window, _cx| {
@@ -1363,6 +1365,13 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // This button is already gated on having a non-disabled edit
+        // prediction provider, which the user manages through provider/AI
+        // settings.
+        None
     }
 }
 
@@ -1636,12 +1645,10 @@ fn emit_edit_prediction_menu_opened(
     );
 }
 
-fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
+fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
     match enterprise_uri {
-        Some(uri) => {
-            format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH)
-        }
-        None => COPILOT_SETTINGS_URL.to_string(),
+        Some(uri) => format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH).into(),
+        None => COPILOT_SETTINGS_URL.into(),
     }
 }
 
@@ -1677,7 +1684,7 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://my-company.ghe.com/settings/copilot");
     }
 
     #[gpui::test]
@@ -1707,7 +1714,7 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://my-company.ghe.com/settings/copilot");
     }
 
     #[gpui::test]
@@ -1728,6 +1735,6 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://github.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://github.com/settings/copilot");
     }
 }

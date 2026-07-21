@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
@@ -379,7 +379,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::schema::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::schema::v1::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -436,7 +436,7 @@ pub async fn new_test_thread(
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
-    let delegate = AgentServerDelegate::new(store, None);
+    let delegate = AgentServerDelegate::new(store, None, None);
 
     let connection = cx
         .update(|cx| server.connect(delegate, project.clone(), cx))

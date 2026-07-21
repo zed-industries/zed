@@ -47,7 +47,6 @@ use smol::{
     stream::StreamExt as _,
 };
 use std::{
-    env,
     ffi::OsStr,
     fs::File,
     io::Write,
@@ -153,18 +152,102 @@ fn init_logging_proxy() {
         .init();
 }
 
+const REMOTE_SERVER_LOG_MAX_BYTES: u64 = 1024 * 1024;
+
+struct RotatingLogFile {
+    path: PathBuf,
+    file: File,
+    size_bytes: u64,
+}
+
+impl RotatingLogFile {
+    fn open(path: &Path) -> Result<Self> {
+        if std::fs::metadata(path)
+            .map(|metadata| metadata.len() >= REMOTE_SERVER_LOG_MAX_BYTES)
+            .unwrap_or(false)
+        {
+            rotate_log_file(path, &rotated_log_path(path))
+                .context("failed to rotate existing remote server log")?;
+        }
+
+        let file = open_log_file(path).context("failed to open remote server log")?;
+        let size_bytes = file
+            .metadata()
+            .context("failed to read remote server log metadata")?
+            .len();
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            size_bytes,
+        })
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        self.file.flush()?;
+        rotate_log_file(&self.path, &rotated_log_path(&self.path))?;
+        self.file = open_log_file(&self.path)?;
+        self.size_bytes = 0;
+        Ok(())
+    }
+}
+
+impl Write for RotatingLogFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.size_bytes.saturating_add(buf.len() as u64) > REMOTE_SERVER_LOG_MAX_BYTES {
+            self.rotate()?;
+        }
+
+        self.file.write_all(buf)?;
+        self.size_bytes += buf.len() as u64;
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn open_log_file(path: &Path) -> std::io::Result<File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
+fn rotated_log_path(path: &Path) -> PathBuf {
+    path.with_extension("1.log")
+}
+
+fn rotate_log_file(path: &Path, rotated_path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    match std::fs::rename(path, rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    Ok(())
+}
+
 fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
-        file: File,
+        file: RotatingLogFile,
         channel: Sender<Vec<u8>>,
         buffer: Vec<u8>,
     }
 
     impl Write for MultiWrite {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let written = self.file.write(buf)?;
-            self.buffer.extend_from_slice(&buf[..written]);
-            Ok(written)
+            self.file.write_all(buf)?;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
@@ -176,11 +259,8 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         }
     }
 
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file_path)
-        .context("Failed to open log file in append mode")?;
+    let log_file = RotatingLogFile::open(log_file_path)
+        .context("Failed to open rotating remote server log file")?;
 
     let (tx, rx) = async_channel::unbounded();
 
@@ -221,6 +301,34 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         .init();
 
     Ok(rx)
+}
+
+/// Initializes the telemetry queue on the remote server, forwarding every
+/// emitted event to the connected client over the proto channel.
+///
+/// The remote server cannot upload telemetry itself (it has no logged-in user,
+/// no checksum seed, and no Telemetry instance), so without this its
+/// `telemetry::event!` calls are silently dropped. The client attributes these
+/// events to the remote host using the platform it already detected during
+/// connection setup, so no OS metadata needs to be sent here.
+fn init_telemetry_forwarding(session: AnyProtoClient, cx: &mut App) {
+    let (tx, mut rx) = mpsc::unbounded::<telemetry::Event>();
+    telemetry::init(tx);
+
+    cx.background_spawn(async move {
+        while let Some(event) = rx.next().await {
+            let Some(event_json) = serde_json::to_string(&event).log_err() else {
+                continue;
+            };
+            session
+                .send(proto::TelemetryEvent {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    event_json,
+                })
+                .log_err();
+        }
+    })
+    .detach();
 }
 
 fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
@@ -462,10 +570,8 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
     let crash_handler = if should_install_crash_handler {
         Some(app.background_executor().spawn(crashes::init(
@@ -558,6 +664,7 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
+        init_telemetry_forwarding(session.clone(), cx);
         trusted_worktrees::init(HashMap::default(), cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
@@ -741,10 +848,8 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
     if should_install_crash_handler {
         smol::spawn(crashes::init(
@@ -1263,4 +1368,64 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotated_remote_log_path_uses_numbered_log_suffix() {
+        assert_eq!(
+            rotated_log_path(Path::new("server-workspace-12.log")),
+            PathBuf::from("server-workspace-12.1.log")
+        );
+    }
+
+    #[test]
+    fn opening_remote_log_rotates_existing_oversized_log() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize];
+        std::fs::write(&log_path, &existing_contents).expect("write oversized log");
+
+        let _log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::metadata(&log_path)
+                .expect("active log metadata")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn writing_remote_log_rotates_before_exceeding_size_limit() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize - 1];
+        let new_contents = b"yz";
+        std::fs::write(&log_path, &existing_contents).expect("write existing log contents");
+        let mut log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        log_file
+            .write_all(new_contents)
+            .expect("write log contents");
+        log_file.flush().expect("flush log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::read(&log_path).expect("read active log"),
+            new_contents
+        );
+    }
 }

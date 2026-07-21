@@ -314,7 +314,7 @@ async fn test_core_channels(
 #[track_caller]
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
     assert_eq!(
-        participants.iter().map(|p| p.id).collect::<Vec<_>>(),
+        participants.iter().map(|p| p.legacy_id).collect::<Vec<_>>(),
         expected_partitipants
     );
 }
@@ -327,7 +327,7 @@ fn assert_members_eq(
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.role, member.kind))
+            .map(|member| (member.user.legacy_id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -587,6 +587,95 @@ async fn test_channel_room(
             pending: vec![]
         }
     );
+}
+
+#[gpui::test]
+async fn test_rejoining_channel_after_stale_connection_cleanup_connects_livekit(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_a2: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel("zed", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    active_call_a
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+    active_call_b
+        .update(cx_b, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    let old_room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| old_room_a.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+
+    server.disconnect_client(client_a.peer_id().unwrap());
+    executor.run_until_parked();
+    server.advance_livekit_timestamp();
+
+    let client_a2 = server.create_client(cx_a2, "user_a").await;
+    let active_call_a2 = cx_a2.read(ActiveCall::global);
+    active_call_a2
+        .update(cx_a2, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    let room_a2 =
+        cx_a2.read(|cx| active_call_a2.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a2.read(|cx| room_a2.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+    assert_eq!(
+        room_participants(&room_a2, cx_a2),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![]
+        }
+    );
+
+    let room_b =
+        cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_b.read(|cx| room_b.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec![]
+        }
+    );
+
+    cx_a2.read(|cx| {
+        client_a2.channel_store().read_with(cx, |channels, _| {
+            let mut participant_ids = channels
+                .channel_participants(channel_id)
+                .iter()
+                .map(|participant| participant.legacy_id)
+                .collect::<Vec<_>>();
+            participant_ids.sort_unstable();
+            let mut expected_ids = vec![client_a2.user_id().unwrap(), client_b.user_id().unwrap()];
+            expected_ids.sort_unstable();
+            assert_eq!(participant_ids, expected_ids);
+        })
+    });
 }
 
 #[gpui::test]
@@ -1259,7 +1348,7 @@ async fn test_guest_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_a);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     });
 }
 
@@ -1320,7 +1409,7 @@ async fn test_invite_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_b_id);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     })
 }
 

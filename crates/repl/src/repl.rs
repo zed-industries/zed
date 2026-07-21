@@ -46,9 +46,8 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     impl Dispatcher for ZedDispatcher {
         #[track_caller]
         fn dispatch(&self, runnable: Runnable) {
-            let location = core::panic::Location::caller();
             let (wrapper, task) = async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta::new_with_callers_location())
                 .spawn(|_| async move { runnable.run() }, {
                     let dispatcher = self.dispatcher.clone();
                     move |r| dispatcher.dispatch(r, Priority::default())
@@ -59,9 +58,8 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
 
         #[track_caller]
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            let location = core::panic::Location::caller();
             let (wrapper, task) = async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta::new_with_callers_location())
                 .spawn(|_| async move { runnable.run() }, {
                     let dispatcher = self.dispatcher.clone();
                     move |r| dispatcher.dispatch_after(duration, r)
