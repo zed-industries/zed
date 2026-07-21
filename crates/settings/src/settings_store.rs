@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-use settings_json::{infer_json_indent_size, update_value_in_json_text};
+use settings_json::{JsonIndent, infer_json_indent_with_fallback, update_value_in_json_text};
 
 pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
@@ -847,6 +847,28 @@ impl SettingsStore {
         })
     }
 
+    fn json_indent(settings: &SettingsContent) -> JsonIndent {
+        let language_settings = &settings.project.all_languages;
+        let jsonc_settings = language_settings.languages.0.get("JSONC");
+        let json_settings = language_settings.languages.0.get("JSON");
+        let hard_tabs = jsonc_settings
+            .and_then(|settings| settings.hard_tabs)
+            .or_else(|| json_settings.and_then(|settings| settings.hard_tabs))
+            .or(language_settings.defaults.hard_tabs)
+            .unwrap_or(false);
+
+        if hard_tabs {
+            JsonIndent::Tabs(1)
+        } else {
+            let tab_size = jsonc_settings
+                .and_then(|settings| settings.tab_size)
+                .or_else(|| json_settings.and_then(|settings| settings.tab_size))
+                .or(language_settings.defaults.tab_size)
+                .map_or(2, |tab_size| tab_size.get() as usize);
+            JsonIndent::Spaces(tab_size)
+        }
+    }
+
     /// Updates the value of a setting in a JSON file, returning a list
     /// of edits to apply to the JSON file.
     pub fn edits_for_update(
@@ -872,12 +894,12 @@ impl SettingsStore {
 
         let mut key_path = Vec::new();
         let mut edits = Vec::new();
-        let tab_size = infer_json_indent_size(&text);
+        let indent = infer_json_indent_with_fallback(text, Self::json_indent(&old_content.content));
         let mut text = text.to_string();
         update_value_in_json_text(
             &mut text,
             &mut key_path,
-            tab_size,
+            indent,
             &old_value,
             &new_value,
             &mut edits,
@@ -2147,6 +2169,28 @@ mod tests {
             }
             "#
             .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_setting_store_update_preserves_tab_indentation(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+
+        check_settings_update(
+            &mut store,
+            "{\n\t\"hard_tabs\": true,\n\t\"tab_size\": 4,\n}".to_string(),
+            |settings| settings.title_bar.get_or_insert_default().show_branch_name = Some(true),
+            "{\n\t\"title_bar\": {\n\t\t\"show_branch_name\": true\n\t},\n\t\"hard_tabs\": true,\n\t\"tab_size\": 4,\n}"
+                .to_string(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            "{\"hard_tabs\":true,\"tabs\":{}}".to_string(),
+            |settings| settings.tabs.as_mut().unwrap().close_position = Some(ClosePosition::Left),
+            "{\"hard_tabs\":true,\"tabs\":{\n\t\t\"close_position\": \"left\"\n\t}}".to_string(),
             cx,
         );
     }
