@@ -40,6 +40,7 @@ project.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 remote_connection.workspace = true
+rpc.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -691,6 +691,38 @@ pub struct OpenRemote {
 #[serde(deny_unknown_fields)]
 pub struct OpenDevContainer;
 
+/// Stops the current dev container and reopens the project locally.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct StopDevContainer;
+
+/// Stops and removes the current dev container, then reopens the project
+/// locally. The container is destroyed, freeing its resources.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteDevContainer;
+
+/// Rebuilds the current dev container from scratch and reconnects to it.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct RebuildDevContainer;
+
+/// Reconnects to the current dev container, starting it first if it has stopped.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct ReconnectDevContainer;
+
+/// Restarts the current dev container (stopping then starting it, which clears
+/// any wedged in-container state) and reconnects to it.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct RestartDevContainer;
+
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

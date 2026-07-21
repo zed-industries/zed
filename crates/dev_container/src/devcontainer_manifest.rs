@@ -2230,6 +2230,20 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             .await
     }
 
+    /// Removes any existing container matching this project/config's
+    /// identifying labels, so a subsequent `build_and_run` is guaranteed to
+    /// build a fresh container rather than resuming one. Used for rebuilds.
+    async fn remove_existing_container_if_present(&self) -> Result<(), DevContainerError> {
+        if let Some(docker_ps) = self.check_for_existing_container().await? {
+            log::debug!(
+                "Rebuild requested. Removing existing container {}",
+                docker_ps.id
+            );
+            self.docker_client.remove_container(&docker_ps.id).await?;
+        }
+        Ok(())
+    }
+
     /// Matches `@devcontainers/cli`'s `getProjectName` in
     /// `src/spec-node/dockerCompose.ts`. See `derive_project_name` for the
     /// full precedence. Using the devcontainer.json `name` field here
@@ -2438,6 +2452,7 @@ pub(crate) async fn spawn_dev_container(
     environment: HashMap<String, String>,
     config: DevContainerConfig,
     local_project_path: &Path,
+    force_rebuild: bool,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
         Docker::new("podman", context.use_buildkit).await
@@ -2456,17 +2471,23 @@ pub(crate) async fn spawn_dev_container(
 
     devcontainer_manifest.parse_nonremote_vars()?;
 
-    log::debug!("Checking for existing container");
-    if let Some(devcontainer) = devcontainer_manifest
-        .check_for_existing_devcontainer()
-        .await?
-    {
-        Ok(devcontainer)
+    if force_rebuild {
+        log::debug!("Rebuild requested. Removing any existing container before building");
+        devcontainer_manifest
+            .remove_existing_container_if_present()
+            .await?;
     } else {
+        log::debug!("Checking for existing container");
+        if let Some(devcontainer) = devcontainer_manifest
+            .check_for_existing_devcontainer()
+            .await?
+        {
+            return Ok(devcontainer);
+        }
         log::debug!("Existing container not found. Building");
-
-        devcontainer_manifest.build_and_run().await
     }
+
+    devcontainer_manifest.build_and_run().await
 }
 
 #[derive(Debug)]
@@ -3186,6 +3207,7 @@ mod test {
             config: DockerInspectConfig {
                 labels: DockerConfigLabels {
                     metadata: Some(vec![metadata]),
+                    ..Default::default()
                 },
                 image_user: None,
                 env: Vec::new(),
@@ -3214,6 +3236,7 @@ mod test {
             config: DockerInspectConfig {
                 labels: DockerConfigLabels {
                     metadata: Some(vec![metadata]),
+                    ..Default::default()
                 },
                 image_user: None,
                 env: Vec::new(),
@@ -3227,6 +3250,36 @@ mod test {
         assert!(remote_user.is_ok());
         let remote_user = remote_user.expect("ok");
         assert_eq!(&remote_user, "vsCode")
+    }
+
+    #[gpui::test]
+    async fn should_remove_existing_container_when_present(cx: &mut TestAppContext) {
+        let (test_dependencies, devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, "{}").await.unwrap();
+
+        devcontainer_manifest
+            .remove_existing_container_if_present()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            test_dependencies.docker.removed_container_ids(),
+            vec!["found_docker_ps".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    async fn should_not_remove_container_when_none_present(cx: &mut TestAppContext) {
+        let (test_dependencies, devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, "{}").await.unwrap();
+        test_dependencies.docker.set_no_existing_container();
+
+        devcontainer_manifest
+            .remove_existing_container_if_present()
+            .await
+            .unwrap();
+
+        assert!(test_dependencies.docker.removed_container_ids().is_empty());
     }
 
     #[test]
@@ -3277,9 +3330,7 @@ mod test {
             image: DockerInspect {
                 id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
                 config: DockerInspectConfig {
-                    labels: DockerConfigLabels {
-                        metadata: None,
-                        },
+                    labels: DockerConfigLabels::default(),
                     image_user: None,
                     env: Vec::new(),
                 },
@@ -3354,7 +3405,7 @@ mod test {
         let base_image = DockerInspect {
             id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
             config: DockerInspectConfig {
-                labels: DockerConfigLabels { metadata: None },
+                labels: DockerConfigLabels::default(),
                 image_user: None,
                 env: Vec::new(),
             },
@@ -6378,6 +6429,10 @@ RUN echo $RUBY_VERSION2
         /// `MultipleMatchingContainers` with these IDs. Used to exercise the
         /// duplicate-container error path.
         duplicate_container_ids: Mutex<Option<Vec<String>>>,
+        /// When `true`, `find_process_by_filters` returns `None`, simulating
+        /// no existing container matching the identifying labels.
+        no_existing_container: Mutex<bool>,
+        removed_container_ids: Mutex<Vec<String>>,
     }
 
     impl FakeDocker {
@@ -6387,6 +6442,8 @@ RUN echo $RUBY_VERSION2
                 has_buildx: true,
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
+                no_existing_container: Mutex::new(false),
+                removed_container_ids: Mutex::new(Vec::new()),
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -6399,6 +6456,18 @@ RUN echo $RUBY_VERSION2
                 .duplicate_container_ids
                 .lock()
                 .expect("should be available") = Some(ids);
+        }
+        fn set_no_existing_container(&self) {
+            *self
+                .no_existing_container
+                .lock()
+                .expect("should be available") = true;
+        }
+        fn removed_container_ids(&self) -> Vec<String> {
+            self.removed_container_ids
+                .lock()
+                .expect("should be available")
+                .clone()
         }
     }
 
@@ -6415,6 +6484,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("node".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         env: Vec::new(),
                         image_user: Some("root".to_string()),
@@ -6433,6 +6503,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("vscode".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         image_user: Some("root".to_string()),
                         env: Vec::new(),
@@ -6451,6 +6522,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("node".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         image_user: Some("root".to_string()),
                         env: vec!["PATH=/initial/path".to_string()],
@@ -6469,6 +6541,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("node".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         image_user: Some("root".to_string()),
                         env: vec!["PATH=/initial/path".to_string()],
@@ -6490,6 +6563,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("vscode".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         image_user: Some("root".to_string()),
                         env: Vec::new(),
@@ -6508,6 +6582,7 @@ RUN echo $RUBY_VERSION2
                                 "remoteUser".to_string(),
                                 Value::String("node".to_string()),
                             )])]),
+                            ..Default::default()
                         },
                         env: Vec::new(),
                         image_user: Some("root".to_string()),
@@ -6702,6 +6777,16 @@ RUN echo $RUBY_VERSION2
         async fn start_container(&self, _id: &str) -> Result<(), DevContainerError> {
             Err(DevContainerError::DockerNotAvailable)
         }
+        async fn stop_container(&self, _id: &str) -> Result<(), DevContainerError> {
+            Ok(())
+        }
+        async fn remove_container(&self, id: &str) -> Result<(), DevContainerError> {
+            self.removed_container_ids
+                .lock()
+                .expect("should be available")
+                .push(id.to_string());
+            Ok(())
+        }
         async fn find_process_by_filters(
             &self,
             _filters: Vec<String>,
@@ -6713,6 +6798,13 @@ RUN echo $RUBY_VERSION2
                 .clone()
             {
                 return Err(DevContainerError::MultipleMatchingContainers(ids));
+            }
+            if *self
+                .no_existing_container
+                .lock()
+                .expect("should be available")
+            {
+                return Ok(None);
             }
             Ok(Some(DockerPs {
                 id: "found_docker_ps".to_string(),

@@ -605,6 +605,7 @@ impl TitleBar {
 
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
+        let is_dev_container = matches!(options, RemoteConnectionOptions::Docker(_));
 
         let (nickname, tooltip_title, icon) = match options {
             RemoteConnectionOptions::Ssh(options) => (
@@ -648,6 +649,93 @@ impl TitleBar {
 
         let meta = SharedString::from(meta);
 
+        let trigger = ButtonLike::new("remote_project")
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .max_w_32()
+                    .child(
+                        IconWithIndicator::new(
+                            Icon::new(icon).size(IconSize::Small).color(icon_color),
+                            Some(Indicator::dot().color(indicator_color)),
+                        )
+                        .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                        .into_any_element(),
+                    )
+                    .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+            );
+
+        if is_dev_container {
+            return Some(
+                PopoverMenu::new("dev-container-menu")
+                    .menu(move |window, cx| {
+                        Some(ContextMenu::build(window, cx, |menu, _, _| {
+                            // Recovery ladder, lightest first, mirroring the
+                            // wording used by the reconnect affordances
+                            // elsewhere (connect-failure modal, file-open
+                            // prompt, agent thread callout).
+                            menu.entry(
+                                "Reconnect Dev Container",
+                                Some(Box::new(zed_actions::ReconnectDevContainer)),
+                                |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::ReconnectDevContainer),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .entry(
+                                "Restart Dev Container",
+                                Some(Box::new(zed_actions::RestartDevContainer)),
+                                |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::RestartDevContainer),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .entry(
+                                "Rebuild Dev Container",
+                                Some(Box::new(zed_actions::RebuildDevContainer)),
+                                |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::RebuildDevContainer),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .separator()
+                            .entry(
+                                "Stop Dev Container",
+                                Some(Box::new(zed_actions::StopDevContainer)),
+                                |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::StopDevContainer),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .entry(
+                                "Delete Dev Container",
+                                Some(Box::new(zed_actions::DeleteDevContainer)),
+                                |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::DeleteDevContainer),
+                                        cx,
+                                    );
+                                },
+                            )
+                        }))
+                    })
+                    .trigger_with_tooltip(trigger, move |_window, cx| {
+                        Tooltip::with_meta(tooltip_title, None, meta.clone(), cx)
+                    })
+                    .anchor(gpui::Anchor::TopLeft)
+                    .into_any_element(),
+            );
+        }
+
         Some(
             PopoverMenu::new("remote-project-menu")
                 .menu(move |window, cx| {
@@ -661,34 +749,14 @@ impl TitleBar {
                         cx,
                     ))
                 })
-                .trigger_with_tooltip(
-                    ButtonLike::new("remote_project")
-                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .max_w_32()
-                                .child(
-                                    IconWithIndicator::new(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                        Some(Indicator::dot().color(indicator_color)),
-                                    )
-                                    .indicator_border_color(Some(
-                                        cx.theme().colors().title_bar_background,
-                                    ))
-                                    .into_any_element(),
-                                )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
-                        ),
-                    move |_window, cx| {
-                        Tooltip::with_meta(
-                            tooltip_title,
-                            Some(&OpenRemote::default()),
-                            meta.clone(),
-                            cx,
-                        )
-                    },
-                )
+                .trigger_with_tooltip(trigger, move |_window, cx| {
+                    Tooltip::with_meta(
+                        tooltip_title,
+                        Some(&OpenRemote::default()),
+                        meta.clone(),
+                        cx,
+                    )
+                })
                 .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )

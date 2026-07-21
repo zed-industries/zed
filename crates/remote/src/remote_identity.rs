@@ -18,12 +18,32 @@ pub enum RemoteConnectionIdentity {
         user: Option<String>,
     },
     Docker {
-        container_id: String,
-        name: String,
         remote_user: String,
+        key: DockerIdentityKey,
     },
     #[cfg(any(test, feature = "test-support"))]
     Mock { id: u64 },
+}
+
+/// What uniquely identifies a Docker remote, independent of runtime-only
+/// details.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DockerIdentityKey {
+    /// A dev container, identified by its host project folder
+    /// (`devcontainer.local_folder`) and config file
+    /// (`devcontainer.config_file`). Zed enforces that these labels are unique
+    /// per dev container (it refuses to connect when two containers share
+    /// them), and they stay stable across rebuilds/restarts even though the
+    /// container's id changes each time. Keying on them here means an
+    /// open/stop/rebuild cycle maps to a single persisted connection rather
+    /// than accumulating a new one every time.
+    DevContainer {
+        local_folder: String,
+        config_file: String,
+    },
+    /// A Docker remote with no dev-container labels: fall back to the ephemeral
+    /// container id, preserving prior behavior.
+    ContainerId(String),
 }
 
 impl RemoteConnectionIdentity {
@@ -46,11 +66,15 @@ impl RemoteConnectionIdentity {
                 user.as_deref().unwrap_or_default(),
                 distro_name
             ),
-            Self::Docker {
-                container_id,
-                name,
-                remote_user,
-            } => format!("docker:{remote_user}@{name}:{container_id}"),
+            Self::Docker { remote_user, key } => match key {
+                DockerIdentityKey::DevContainer {
+                    local_folder,
+                    config_file,
+                } => format!("docker:{remote_user}@devcontainer:{local_folder}:{config_file}"),
+                DockerIdentityKey::ContainerId(container_id) => {
+                    format!("docker:{remote_user}@container:{container_id}")
+                }
+            },
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock { id } => format!("mock:{id}"),
         }
@@ -70,9 +94,14 @@ impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
                 user: options.user.clone(),
             },
             RemoteConnectionOptions::Docker(options) => Self::Docker {
-                container_id: options.container_id.clone(),
-                name: options.name.clone(),
                 remote_user: options.remote_user.clone(),
+                key: match (&options.local_folder, &options.config_file) {
+                    (Some(local_folder), Some(config_file)) => DockerIdentityKey::DevContainer {
+                        local_folder: local_folder.clone(),
+                        config_file: config_file.clone(),
+                    },
+                    _ => DockerIdentityKey::ContainerId(options.container_id.clone()),
+                },
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => Self::Mock { id: options.id },
@@ -170,6 +199,8 @@ mod tests {
             name: "zed-dev".to_string(),
             container_id: "container-123".to_string(),
             remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
             upload_binary_over_docker_exec: true,
             use_podman: true,
             remote_env: BTreeMap::from([("FOO".to_string(), "BAR".to_string())]),
@@ -178,12 +209,82 @@ mod tests {
             name: "zed-dev".to_string(),
             container_id: "container-123".to_string(),
             remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
             upload_binary_over_docker_exec: false,
             use_podman: false,
             remote_env: BTreeMap::new(),
         });
 
         assert!(same_remote_connection_identity(Some(&left), Some(&right),));
+    }
+
+    #[test]
+    fn dev_container_identity_is_stable_across_rebuilds() {
+        // A rebuild mints a new `container_id` (and may pick a new project
+        // `name`), but the host labels stay the same, so the identity must not
+        // change. This is what keeps a single sidebar/recent-projects entry per
+        // dev container across open/stop/rebuild cycles.
+        let before = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "zed-dev".to_string(),
+            container_id: "container-before".to_string(),
+            remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
+            ..Default::default()
+        });
+        let after = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "zed-dev-renamed".to_string(),
+            container_id: "container-after".to_string(),
+            remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
+            ..Default::default()
+        });
+
+        assert!(same_remote_connection_identity(Some(&before), Some(&after)));
+    }
+
+    #[test]
+    fn dev_container_identity_distinguishes_config_file() {
+        // Same folder, different config file (a second, named dev container in
+        // the same project) is a genuinely different remote.
+        let left = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some("/home/anth/project/.devcontainer/devcontainer.json".to_string()),
+            ..Default::default()
+        });
+        let right = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            local_folder: Some("/home/anth/project".to_string()),
+            config_file: Some(
+                "/home/anth/project/.devcontainer/backend/devcontainer.json".to_string(),
+            ),
+            ..Default::default()
+        });
+
+        assert!(!same_remote_connection_identity(Some(&left), Some(&right)));
+    }
+
+    #[test]
+    fn docker_identity_without_labels_falls_back_to_container_id() {
+        // A Docker remote with no dev-container labels keeps the prior behavior
+        // of identifying by container id.
+        let left = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            ..Default::default()
+        });
+        let right = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-456".to_string(),
+            remote_user: "anth".to_string(),
+            ..Default::default()
+        });
+
+        assert!(!same_remote_connection_identity(Some(&left), Some(&right)));
     }
 
     #[test]

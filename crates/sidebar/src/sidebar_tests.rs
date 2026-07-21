@@ -1085,6 +1085,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, expanded_path.clone()),
                 label: "expanded-project".into(),
+                subtitle: None,
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
                 waiting_thread_count: 0,
@@ -1232,6 +1233,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, collapsed_path.clone()),
                 label: "collapsed-project".into(),
+                subtitle: None,
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
                 waiting_thread_count: 0,
@@ -14871,4 +14873,82 @@ fn test_split_leading_icon_char() {
     assert_eq!(icon.as_ref(), "#");
     assert_eq!(trimmed.as_ref(), "abc");
     assert_eq!(positions, vec![0, 1]);
+}
+
+fn docker_options(
+    name: &str,
+    local_folder: &str,
+    config_file: &str,
+) -> remote::DockerConnectionOptions {
+    remote::DockerConnectionOptions {
+        name: name.to_string(),
+        local_folder: (!local_folder.is_empty()).then(|| local_folder.to_string()),
+        config_file: (!config_file.is_empty()).then(|| config_file.to_string()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_dev_container_config_subtitle() {
+    // A `.devcontainer/<name>/devcontainer.json` layout reduces to the
+    // distinguishing sub-path with the `.devcontainer` prefix stripped.
+    let docker = docker_options(
+        "backend",
+        "/host/project",
+        "/host/project/.devcontainer/backend/devcontainer.json",
+    );
+    assert_eq!(
+        dev_container_config_subtitle(&docker).unwrap().as_ref(),
+        "backend/devcontainer.json",
+    );
+
+    // A root config keeps just the file name once `.devcontainer` is stripped.
+    let docker = docker_options(
+        "root",
+        "/host/project",
+        "/host/project/.devcontainer/devcontainer.json",
+    );
+    assert_eq!(
+        dev_container_config_subtitle(&docker).unwrap().as_ref(),
+        "devcontainer.json",
+    );
+
+    // A config that isn't under `.devcontainer` is shown project-relative as-is.
+    let docker = docker_options("custom", "/host/project", "/host/project/custom.json");
+    assert_eq!(
+        dev_container_config_subtitle(&docker).unwrap().as_ref(),
+        "custom.json",
+    );
+
+    // Without a config file there is no path to show.
+    let docker = docker_options("noconfig", "/host/project", "");
+    assert!(dev_container_config_subtitle(&docker).is_none());
+}
+
+#[test]
+fn test_dev_container_tooltip_descriptor() {
+    let docker = docker_options(
+        "backend",
+        "/host/project",
+        "/host/project/.devcontainer/backend/devcontainer.json",
+    );
+    assert_eq!(
+        dev_container_tooltip_descriptor(&docker),
+        "backend - .devcontainer/backend/devcontainer.json",
+    );
+
+    // Falls back to the config path when the name is blank.
+    let docker = docker_options("", "/host/project", "/host/project/devcontainer.json");
+    assert_eq!(
+        dev_container_tooltip_descriptor(&docker),
+        "devcontainer.json",
+    );
+
+    // And to the name when there's no config path.
+    let docker = docker_options("solo", "", "");
+    assert_eq!(dev_container_tooltip_descriptor(&docker), "solo");
+
+    // Nothing identifying at all still yields a stable label.
+    let docker = docker_options("", "", "");
+    assert_eq!(dev_container_tooltip_descriptor(&docker), "Dev Container");
 }

@@ -634,6 +634,11 @@ pub struct ThreadView {
     pending_sandbox_status_key: Option<SandboxStatusKey>,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
+    /// Tracks whether the message editor is currently disabled because the
+    /// backing remote (dev container) connection was lost. Cached so we only
+    /// toggle the editor's read-only state when it actually changes, avoiding
+    /// a render/notify loop.
+    remote_input_disabled: bool,
     pub skill_loading_issues: Vec<SkillLoadingIssue>,
     /// Issues the user has explicitly dismissed. Each entry is matched against
     /// emitted issues by full equality; when an issue no longer appears in the
@@ -862,6 +867,14 @@ impl ThreadView {
                     ) {
                         resolver.clear_cache();
                         cx.notify();
+                    } else if matches!(
+                        event,
+                        project::Event::DisconnectedFromHost
+                            | project::Event::DisconnectedFromRemote { .. }
+                    ) {
+                        // Re-render so the message editor is disabled and the
+                        // reconnect callout is shown while the remote is down.
+                        cx.notify();
                     }
                 }
             }));
@@ -1037,6 +1050,7 @@ impl ThreadView {
             pending_sandbox_status_key: None,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
+            remote_input_disabled: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
             thread_search_bar: None,
@@ -1472,6 +1486,12 @@ impl ThreadView {
         let thread = &self.thread;
 
         if self.is_loading_contents {
+            return;
+        }
+
+        // The backing remote is gone; sending would hang indefinitely. The
+        // disconnected callout offers a reconnect path instead.
+        if self.is_remote_disconnected(cx) {
             return;
         }
 
@@ -5328,6 +5348,15 @@ impl ThreadView {
                 .px_1()
                 .tooltip(Tooltip::text("Loading Added Context…"))
                 .child(loading_contents_spinner(IconSize::default()))
+                .into_any_element()
+        } else if self.is_remote_disconnected(cx) && !is_generating {
+            IconButton::new("send-message", IconName::Send)
+                .style(ButtonStyle::Filled)
+                .disabled(true)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text(
+                    "Reconnect to the dev container to send messages",
+                ))
                 .into_any_element()
         } else if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
@@ -11610,6 +11639,83 @@ impl ThreadView {
         )
     }
 
+    /// Whether the backing remote (dev container) connection has been lost.
+    /// When true, the agent can't make progress, so we disable the message
+    /// editor and surface a reconnect affordance.
+    fn is_remote_disconnected(&self, cx: &App) -> bool {
+        self.project
+            .upgrade()
+            .map(|project| project.read(cx))
+            .is_some_and(|project| project.is_dev_container(cx) && project.is_disconnected(cx))
+    }
+
+    fn render_disconnected_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if !self.is_remote_disconnected(cx) {
+            return None;
+        }
+
+        Some(
+            Callout::new()
+                .border_position(self.callout_border_position())
+                .severity(Severity::Error)
+                .icon(IconName::XCircle)
+                .title("Lost connection to the dev container")
+                .description(
+                    "The dev container is no longer running. Reconnect to continue this thread.",
+                )
+                .actions_slot(
+                    h_flex()
+                        .gap_1()
+                        // Recovery ladder, lightest first. Labels are kept short
+                        // to fit the callout; the callout title already names
+                        // the dev container, and each tooltip spells out the
+                        // full action.
+                        .child(
+                            Button::new("reconnect-dev-container", "Reconnect")
+                                .label_size(LabelSize::Small)
+                                .start_icon(Icon::new(IconName::ArrowCircle).size(IconSize::Small))
+                                .tooltip(Tooltip::text(
+                                    "Reconnect to the dev container, starting it if it stopped",
+                                ))
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::ReconnectDevContainer.boxed_clone(),
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("restart-dev-container", "Restart")
+                                .label_size(LabelSize::Small)
+                                .start_icon(Icon::new(IconName::RotateCw).size(IconSize::Small))
+                                .tooltip(Tooltip::text(
+                                    "Stop and start the dev container, then reconnect",
+                                ))
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::RestartDevContainer.boxed_clone(),
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("rebuild-dev-container", "Rebuild")
+                                .label_size(LabelSize::Small)
+                                .start_icon(Icon::new(IconName::ToolHammer).size(IconSize::Small))
+                                .tooltip(Tooltip::text(
+                                    "Rebuild the dev container from scratch, then reconnect",
+                                ))
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::RebuildDevContainer.boxed_clone(),
+                                        cx,
+                                    );
+                                })),
+                        ),
+                ),
+        )
+    }
+
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
         if self.token_limit_callout_dismissed || self.as_native_thread(cx).is_none() {
             return None;
@@ -11917,6 +12023,18 @@ impl Render for ThreadView {
         // current availability of feedback/sharing, which can change between
         // renders (settings, connection state, feature flags).
         self.sync_local_commands(cx);
+
+        // Disable the message editor while the backing remote (dev container)
+        // connection is lost, so the user gets clear feedback instead of a
+        // prompt that hangs forever. Only toggle on change to avoid a
+        // render/notify loop.
+        let remote_disconnected = self.is_remote_disconnected(cx);
+        if remote_disconnected != self.remote_input_disabled {
+            self.remote_input_disabled = remote_disconnected;
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_read_only(remote_disconnected, cx);
+            });
+        }
 
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
@@ -12265,6 +12383,7 @@ impl Render for ThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
+            .children(self.render_disconnected_callout(cx))
             .children(self.render_request_elicitations(cx))
             .child(self.render_message_editor(window, cx))
     }
