@@ -72,10 +72,6 @@ impl RowChunks {
         self.chunks.len()
     }
 
-    pub fn get(&self, id: usize) -> Option<RowChunk> {
-        self.chunks.get(id).copied()
-    }
-
     pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
         let row_ranges = ranges
             .iter()
