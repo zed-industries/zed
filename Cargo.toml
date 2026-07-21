@@ -888,7 +888,7 @@ webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
 windows-core = "0.61"
 yaml-rust2 = "0.8"
-yawc = "0.2.5"
+yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
 zeroize = "1.8"
 zstd = "0.11"
 
