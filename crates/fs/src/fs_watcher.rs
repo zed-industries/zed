@@ -118,6 +118,15 @@ pub struct FsWatcher {
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     os_watcher: Arc<OsWatcher>,
+    /// Inode of the path at the time it was registered. Used to detect when a
+    /// watched path has been replaced by a different file/directory (e.g. one
+    /// that was deleted and quickly recreated). On Linux, inotify silently
+    /// invalidates the kernel watch on the old inode when the directory is
+    /// removed, but this registration lingers; without re-registering, a later
+    /// `add` for the recreated path would be treated as already-watched and the
+    /// new inode would never be watched. `None` when the inode is unavailable
+    /// (non-Unix, or the stat failed), in which case the check is skipped.
+    inode: Option<u64>,
 }
 
 impl FsWatcher {
@@ -144,9 +153,28 @@ impl FsWatcher {
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
-        if self.registrations.lock().contains_key(&key) {
-            log::trace!("path to watch is already watched: {path:?}");
-            return Ok(());
+        // Bind the lookup to a local so the registrations lock is released before
+        // the block below re-acquires it; `parking_lot::Mutex` is not reentrant.
+        let existing = self.registrations.lock().get(&key).cloned();
+        if let Some(existing) = existing {
+            let current_inode = path_inode(&path);
+            // Treat the path as already watched unless the inode changed, which
+            // means the file/directory here was replaced (e.g. deleted and
+            // recreated). In that case inotify's watch on the old inode is dead,
+            // so drop the stale registration and fall through to register a
+            // fresh watch on the new inode. When either inode is unknown we can't
+            // tell, so conservatively keep the existing registration.
+            if current_inode.is_none() || existing.inode.is_none() || current_inode == existing.inode
+            {
+                log::trace!("path to watch is already watched: {path:?}");
+                return Ok(());
+            }
+            log::trace!(
+                "path {path:?} was recreated (inode {:?} -> {current_inode:?}); re-registering watch",
+                existing.inode,
+            );
+            self.registrations.lock().remove(&key);
+            existing.os_watcher.remove(existing.id);
         }
         match register_existing_path(
             &self.native_watcher,
@@ -306,6 +334,22 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
     }
 }
 
+/// The inode of `path` itself (a final symlink is not followed), or `None` when
+/// the inode is unavailable (non-Unix platforms, or the stat failed). Used to
+/// detect a path replaced by a newly-created inode. See [`FsWatcherRegistration::inode`].
+fn path_inode(path: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::symlink_metadata(path).ok().map(|meta| meta.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 fn register_existing_path(
     native_watcher: &Arc<OsWatcher>,
     poll_watcher: &Arc<OsWatcher>,
@@ -315,6 +359,7 @@ fn register_existing_path(
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
 ) -> anyhow::Result<Option<FsWatcherRegistration>> {
+    let inode = path_inode(path.as_ref());
     let os_watcher = if fs.requires_poll_watcher(path.as_ref()) {
         log::info!(
             "Using poll watcher ({}ms interval) for {}",
@@ -346,6 +391,7 @@ fn register_existing_path(
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         os_watcher: os_watcher.clone(),
+        inode,
     }))
 }
 
