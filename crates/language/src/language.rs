@@ -6,6 +6,7 @@
 //! - Exposes [`LanguageConfig`] that describes how constructs (like brackets or line comments) should be handled by the editor for a source file of a particular language.
 //!
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
+mod available_languages;
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
@@ -96,14 +97,14 @@ pub use toolchain::{
 use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
 use util::rel_path::RelPath;
 
+pub use available_languages::AvailableLanguage;
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{
-    AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    QUERY_FILENAME_PREFIXES,
+    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
