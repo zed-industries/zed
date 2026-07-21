@@ -642,7 +642,7 @@ impl VsCodeSettings {
         }
     }
 
-    fn file_types(&self) -> Option<HashMap<Arc<str>, ExtendingVec<String>>> {
+    fn file_types(&self) -> Option<FileTypeMap> {
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
         let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
         let map = self.read_value("files.associations")?.as_object()?;
@@ -650,7 +650,7 @@ impl VsCodeSettings {
             let Some(v) = v.as_str() else { continue };
             associations.entry(v.into()).or_default().0.push(k.clone());
         }
-        skip_default(associations)
+        skip_default(FileTypeMap(associations))
     }
 
     fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {

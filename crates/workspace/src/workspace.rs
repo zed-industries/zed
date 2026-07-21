@@ -481,6 +481,8 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 /// Opens a new terminal in the center.
@@ -1779,6 +1781,9 @@ impl Workspace {
         let subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
+                if !window.is_window_active() {
+                    return;
+                }
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
@@ -5880,10 +5885,19 @@ impl Workspace {
     }
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
-        self.find_pane_in_direction(SplitDirection::Right, cx)
-            .unwrap_or_else(|| {
-                self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
-            })
+        self.adjacent_pane_of(&self.active_pane.clone(), window, cx)
+    }
+
+    pub fn adjacent_pane_of(
+        &mut self,
+        origin: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        self.center
+            .find_pane_in_direction(origin, SplitDirection::Right, cx)
+            .cloned()
+            .unwrap_or_else(|| self.split_pane(origin.clone(), SplitDirection::Right, window, cx))
     }
 
     pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
@@ -11098,31 +11112,16 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
 
 /// Add client-side decorations (rounded corners, shadows, resize handling) when
 /// appropriate.
-///
-/// The `border_radius_tiling` parameter allows overriding which corners get
-/// rounded, independently of the actual window tiling state. This is used
-/// specifically for the workspace switcher sidebar: when the sidebar is open,
-/// we want square corners on the left (so the sidebar appears flush with the
-/// window edge) but we still need the shadow padding for proper visual
-/// appearance. Unlike actual window tiling, this only affects border radius -
-/// not padding or shadows.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
     cx: &mut App,
-    border_radius_tiling: Tiling,
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
-    };
-    let corner_tiling = Tiling {
-        top: tiling.top || border_radius_tiling.top,
-        bottom: tiling.bottom || border_radius_tiling.bottom,
-        left: tiling.left || border_radius_tiling.left,
-        right: tiling.right || border_radius_tiling.right,
     };
 
     match decorations {
@@ -11139,7 +11138,7 @@ pub fn client_side_decorations(
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { .. } => div
-                .rounded_client_corners(corner_tiling)
+                .rounded_client_corners(tiling)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -11194,7 +11193,7 @@ pub fn client_side_decorations(
                     Decorations::Server => div,
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .rounded_client_corners(corner_tiling)
+                        .rounded_client_corners(tiling)
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
@@ -12411,7 +12410,7 @@ mod tests {
         assert!(cx.has_pending_prompt());
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer("Discard");
+        cx.simulate_prompt_answer("Discard Edits");
         cx.executor().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -14141,6 +14140,89 @@ mod tests {
         })
     }
 
+    fn render_center_group(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> pane_group::PaneRenderResult {
+        workspace.center.root.render(
+            0,
+            None,
+            None,
+            &PaneRenderContext {
+                follower_states: &workspace.follower_states,
+                active_call: workspace.active_call(),
+                active_pane: &workspace.active_pane,
+                app_state: &workspace.app_state,
+                project: &workspace.project,
+                workspace: &workspace.weak_self,
+            },
+            window,
+            cx,
+        )
+    }
+
+    #[gpui::test]
+    async fn test_active_pane_decorations_follow_window_focus(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Decorations are only painted for splits, so a second pane is needed.
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        let second_pane = split_pane(cx, &workspace);
+        add_an_item_to_active_pane(cx, &workspace, 2);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.active_pane(), &second_pane);
+            let result = render_center_group(workspace, window, cx);
+            assert!(result.contains_active_pane);
+            assert_eq!(
+                result.decorated_pane_ix,
+                Some(1),
+                "the active pane should be decorated while it has focus"
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |_, window, cx| {
+            assert!(panel.focus_handle(cx).is_focused(window));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.active_pane(), &second_pane);
+            let result = render_center_group(workspace, window, cx);
+            assert!(result.contains_active_pane);
+            assert_eq!(
+                result.decorated_pane_ix, None,
+                "an unfocused group should not decorate its active pane"
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let focus_handle = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&focus_handle, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let result = render_center_group(workspace, window, cx);
+            assert_eq!(result.decorated_pane_ix, Some(1));
+        });
+    }
+
     #[gpui::test]
     async fn test_join_all_panes(cx: &mut gpui::TestAppContext) {
         init_test(cx);
@@ -14256,6 +14338,40 @@ mod tests {
 
             let dock = workspace.right_dock().read(cx);
             assert_eq!(workspace.dock_size(&dock, window, cx).unwrap(), px(800.));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clamp_panel_size_only_skips_flexible_width(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let bottom_panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Bottom, 100, cx));
+            let right_panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+            workspace.add_panel(bottom_panel.clone(), window, cx);
+            workspace.add_panel(right_panel.clone(), window, cx);
+
+            let max_size = px(200.);
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.clamp_panel_size(max_size, window, cx);
+                assert_eq!(
+                    dock.stored_panel_size_state(&bottom_panel)
+                        .and_then(|state| state.size),
+                    Some(max_size - dock::RESIZE_HANDLE_SIZE)
+                );
+            });
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.clamp_panel_size(max_size, window, cx);
+                assert_eq!(
+                    dock.stored_panel_size_state(&right_panel)
+                        .and_then(|state| state.size),
+                    None
+                );
+            });
         });
     }
 
@@ -16516,6 +16632,57 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pane_close_active_item_from_dock_with_all_tabs_pinned(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, window, cx));
+
+            panel
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let item_a = cx.new(TestItem::new);
+        let item_b = cx.new(TestItem::new);
+        let item_b_id = item_b.entity_id();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_a.clone()), true, true, None, window, cx);
+            pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
+            pane.set_pinned_count(2);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |_, window, cx| {
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // Every center tab is pinned, so with `close_pinned` unset this must be
+        // a no-op. Dispatching it from the focused dock used to panic by
+        // re-entering the workspace while it was still mid-update.
+        cx.dispatch_action(pane::CloseActiveItem::default());
+        cx.run_until_parked();
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.active_item().unwrap().item_id(), item_b_id);
         });
     }
 
