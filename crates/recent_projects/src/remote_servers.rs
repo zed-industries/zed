@@ -1845,7 +1845,7 @@ impl RemoteServerProjects {
                         .and_then(|path| path.into_abs_path())
                         .map(|path| RemotePathBuf::new(path, path_style))
                         .unwrap_or_else(|| match path_style {
-                            PathStyle::Posix => RemotePathBuf::from_str("/", PathStyle::Posix),
+                            PathStyle::Unix => RemotePathBuf::from_str("/", PathStyle::Unix),
                             PathStyle::Windows => {
                                 RemotePathBuf::from_str("C:\\", PathStyle::Windows)
                             }
@@ -2164,7 +2164,7 @@ impl RemoteServerProjects {
             if let Some(worktree) = worktree {
                 let tree_id = worktree.read(cx).id();
                 let devcontainer_path =
-                    match RelPath::new(&config_path, util::paths::PathStyle::Posix) {
+                    match RelPath::new(&config_path, util::paths::PathStyle::Unix) {
                         Ok(path) => path.into_owned(),
                         Err(error) => {
                             log::error!(

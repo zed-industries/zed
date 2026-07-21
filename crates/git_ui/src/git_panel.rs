@@ -1,11 +1,16 @@
 use crate::askpass_modal::AskPassModal;
+use crate::commit_context_menu::{
+    CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
+};
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
-use crate::project_diff::{BranchDiff, Diff, ProjectDiff};
+use crate::project_diff::{DeployBranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::solo_diff_view::SoloDiffView;
+use crate::staged_diff::StagedDiff;
+use crate::unstaged_diff::UnstagedDiff;
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -25,8 +30,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-    ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus, get_git_committer,
+    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
+    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -37,10 +43,10 @@ use git::{
     ViewFile, parse_git_remote_url,
 };
 use gpui::{
-    AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
-    Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, size, uniform_list,
+    AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
+    DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton,
+    MouseDownEvent, Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt,
+    TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
@@ -78,8 +84,8 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
-    IndentGuideColors, KeyBinding, PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes,
+    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
+    IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
@@ -90,12 +96,17 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
-use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
+use zed_actions::{
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize, git_panel::ToggleFocus,
+};
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
 const TREE_INDENT: f32 = 16.0;
+const MAX_HISTORY_TAG_CHIPS: usize = 3;
+// Horizontal offset that aligns the tree indent guides with the row icon column.
+const INDENT_GUIDE_LEFT_OFFSET: gpui::Pixels = gpui::px(19.);
 
 actions!(
     git_panel,
@@ -104,8 +115,6 @@ actions!(
         Close,
         /// Toggles the git panel.
         Toggle,
-        /// Toggles focus on the git panel.
-        ToggleFocus,
         /// Opens the git panel menu.
         OpenMenu,
         /// Focuses on the commit message editor.
@@ -130,12 +139,18 @@ actions!(
         SetGroupByNone,
         /// Groups entries by status.
         SetGroupByStatus,
+        /// Groups entries by staging state.
+        SetGroupByStaging,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
         /// Expands the selected entry to show its children.
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// View unstaged changes
+        ViewUnstagedChanges,
+        /// View staged changes
+        ViewStagedChanges,
         /// Activates the Changes tab.
         ActivateChangesTab,
         /// Activates the History tab.
@@ -193,6 +208,11 @@ fn git_panel_context_menu(
             .context(focus_handle.clone())
             .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
             .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
+            .action_disabled_when(
+                !has_tracked_changes,
+                "Restore All Changes",
+                RestoreTrackedFiles.boxed_clone(),
+            )
             .separator()
             .action_disabled_when(
                 !(has_new_changes || has_tracked_changes),
@@ -310,7 +330,7 @@ fn git_panel_view_options_menu(
             })
             .item({
                 let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("Status")
+                ContextMenuEntry::new("Tracked & Untracked")
                     .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::Status)
                     .handler(move |window, cx| {
                         if state.group_by != GitPanelGroupBy::Status {
@@ -319,6 +339,23 @@ fn git_panel_view_options_menu(
                                 ..state
                             });
                             window.dispatch_action(Box::new(SetGroupByStatus), cx);
+                        }
+                    })
+            })
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
+                ContextMenuEntry::new("Staged & Unstaged")
+                    .toggle(
+                        IconPosition::End,
+                        state.group_by == GitPanelGroupBy::Staging,
+                    )
+                    .handler(move |window, cx| {
+                        if state.group_by != GitPanelGroupBy::Staging {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                group_by: GitPanelGroupBy::Staging,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(SetGroupByStaging), cx);
                         }
                     })
             })
@@ -396,16 +433,107 @@ enum GitPanelTab {
     History,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum CommitHistory {
+    Loading,
+    /// A non-empty list can still grow on later fetches.
+    /// An empty list means the repository has no commits.
+    Loaded(Rc<[CommitHistoryEntry]>),
+    Error(SharedString),
+}
+
+fn commit_history_from_response(
+    entries: Rc<[CommitHistoryEntry]>,
+    is_loading: bool,
+    error: Option<SharedString>,
+) -> CommitHistory {
+    if !entries.is_empty() {
+        CommitHistory::Loaded(entries)
+    } else if let Some(error) = error {
+        CommitHistory::Error(error)
+    } else if is_loading {
+        CommitHistory::Loading
+    } else {
+        CommitHistory::Loaded(Rc::from([]))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 enum Section {
     Conflict,
     Tracked,
     New,
+    Staged,
+    Unstaged,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitHeaderEntry {
     header: Section,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct ProjectedChangeEntry {
+    section: Section,
+    index: usize,
+}
+
+/// What clicking a staging control should do.
+///
+/// In the "staged & unstaged" grouping, a partially staged file appears in both the
+/// "Staged" and "Unstaged" sections at once, so a row's meaning comes from
+/// the section it is rendered in rather than from the file's own state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StageIntent {
+    Stage,
+    Unstage,
+    Toggle,
+}
+
+impl StageIntent {
+    fn for_section(section: Section) -> Self {
+        match section {
+            Section::Staged => StageIntent::Unstage,
+            Section::Unstaged => StageIntent::Stage,
+            _ => StageIntent::Toggle,
+        }
+    }
+
+    /// Resolves to a concrete direction (`true` = stage), consulting the
+    /// current stage status only when no section dictates one.
+    fn resolve_with(self, stage_status: impl FnOnce() -> StageStatus) -> bool {
+        match self {
+            StageIntent::Stage => true,
+            StageIntent::Unstage => false,
+            StageIntent::Toggle => match stage_status() {
+                StageStatus::Staged => false,
+                StageStatus::Unstaged | StageStatus::PartiallyStaged => true,
+            },
+        }
+    }
+
+    fn checkbox_state(self, entry_state: impl FnOnce() -> ToggleState) -> ToggleState {
+        match self {
+            StageIntent::Stage => ToggleState::Unselected,
+            StageIntent::Unstage => ToggleState::Selected,
+            StageIntent::Toggle => entry_state(),
+        }
+    }
+
+    fn label(self, stage_status: impl FnOnce() -> StageStatus) -> &'static str {
+        if self.resolve_with(stage_status) {
+            "Stage"
+        } else {
+            "Unstage"
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiffTarget {
+    Uncommitted,
+    Staged,
+    Unstaged,
 }
 
 impl GitHeaderEntry {
@@ -418,6 +546,18 @@ impl GitHeaderEntry {
             }
             Section::Tracked => !status.is_created(),
             Section::New => status.is_created(),
+            // Conflicted files render only under the Conflict section, so the
+            // Staged/Unstaged bulk operations must not sweep them up: "Unstage
+            // All" would silently un-resolve conflicts, and "Stage All" would
+            // silently mark them resolved.
+            Section::Staged => {
+                !repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
+                    && GitPanel::stage_status_for_entry(status_entry, repo).has_staged()
+            }
+            Section::Unstaged => {
+                !repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
+                    && GitPanel::stage_status_for_entry(status_entry, repo).has_unstaged()
+            }
         }
     }
     pub fn title(&self) -> &'static str {
@@ -425,6 +565,8 @@ impl GitHeaderEntry {
             Section::Conflict => "Conflicts",
             Section::Tracked => "Tracked",
             Section::New => "Untracked",
+            Section::Staged => "Staged",
+            Section::Unstaged => "Unstaged",
         }
     }
 }
@@ -435,6 +577,7 @@ enum GitListEntry {
     TreeStatus(GitTreeStatusEntry),
     Directory(GitTreeDirEntry),
     Header(GitHeaderEntry),
+    EmptySection(Section),
 }
 
 impl GitListEntry {
@@ -460,6 +603,13 @@ impl GitListEntry {
             GitListEntry::TreeStatus(status) => status.depth,
             _ => 0,
         }
+    }
+
+    fn is_selectable(&self) -> bool {
+        matches!(
+            self,
+            GitListEntry::Status(_) | GitListEntry::TreeStatus(_) | GitListEntry::Directory(_)
+        )
     }
 }
 
@@ -498,7 +648,7 @@ struct TreeViewState {
     // Length equals the number of visible entries.
     // This is needed because some entries (like collapsed directories) may be hidden.
     logical_indices: Vec<usize>,
-    expanded_dirs: HashMap<RepoPath, bool>,
+    expanded_dirs: HashMap<TreeKey, bool>,
     directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
 }
 
@@ -573,8 +723,8 @@ impl TreeViewState {
             let (child_flattened, mut child_statuses) =
                 self.flatten_tree(terminal, section, depth + 1, seen_directories);
             let key = TreeKey { section, path };
-            let expanded = *self.expanded_dirs.get(&key.path).unwrap_or(&true);
-            self.expanded_dirs.entry(key.path.clone()).or_insert(true);
+            let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
+            self.expanded_dirs.entry(key.clone()).or_insert(true);
             seen_directories.insert(key.clone());
 
             self.directory_descendants
@@ -745,6 +895,13 @@ impl TruncatedPatch {
     }
 }
 
+struct GitPanelContextMenu {
+    menu: Entity<ContextMenu>,
+    position: Point<Pixels>,
+    target_entry_index: Option<usize>,
+    _subscription: Subscription,
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -756,8 +913,8 @@ pub struct GitPanel {
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
     view_mode: GitPanelViewMode,
-    tree_expanded_dirs: HashMap<RepoPath, bool>,
-    entries_indices: HashMap<RepoPath, usize>,
+    tree_expanded_dirs: HashMap<TreeKey, bool>,
+    projected_entries_by_path: HashMap<RepoPath, SmallVec<[ProjectedChangeEntry; 2]>>,
     single_staged_entry: Option<GitStatusEntry>,
     single_tracked_entry: Option<GitStatusEntry>,
     focus_handle: FocusHandle,
@@ -784,7 +941,7 @@ pub struct GitPanel {
     update_visible_entries_task: Task<()>,
     reopen_commit_buffer_task: Task<()>,
     pub(crate) workspace: WeakEntity<Workspace>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<GitPanelContextMenu>,
     modal_open: bool,
     show_placeholders: bool,
     // Only read to compute collaborative co-authors, which requires the `call` feature.
@@ -796,20 +953,41 @@ pub struct GitPanel {
     stash_entries: GitStash,
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
-    commit_history_shas: Option<Vec<Oid>>,
+    commit_history: CommitHistory,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
     _repo_subscriptions: Vec<Subscription>,
-
     _settings_subscription: Subscription,
     git_access: Option<GitAccess>,
+    commit_menu_handle: PopoverMenuHandle<ContextMenu>,
+    changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
+    remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BulkStaging {
     repo_id: RepositoryId,
     anchor: RepoPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommitHistoryEntry {
+    sha: Oid,
+    tag_names: Vec<SharedString>,
+}
+
+impl From<&Arc<InitialGraphCommitData>> for CommitHistoryEntry {
+    fn from(commit: &Arc<InitialGraphCommitData>) -> Self {
+        Self {
+            sha: commit.sha,
+            tag_names: commit
+                .tag_names()
+                .into_iter()
+                .map(|tag_name| SharedString::from(tag_name.to_string()))
+                .collect(),
+        }
+    }
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
@@ -1040,7 +1218,7 @@ impl GitPanel {
                 entries: Vec::new(),
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
-                entries_indices: HashMap::default(),
+                projected_entries_by_path: HashMap::default(),
                 focus_handle: cx.focus_handle(),
                 fs,
                 new_count: 0,
@@ -1077,13 +1255,16 @@ impl GitPanel {
                 stash_entries: Default::default(),
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
-                commit_history_shas: None,
+                commit_history: CommitHistory::Loading,
                 focused_history_entry: None,
                 history_keyboard_nav: false,
                 _commit_message_buffer_subscription: None,
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: None,
+                commit_menu_handle: PopoverMenuHandle::default(),
+                changes_actions_menu_handle: PopoverMenuHandle::default(),
+                remote_action_menu_handle: PopoverMenuHandle::default(),
             };
 
             this.schedule_update(window, cx);
@@ -1092,7 +1273,18 @@ impl GitPanel {
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
-        self.entries_indices.get(path).copied()
+        self.projected_entries_by_path
+            .get(path)?
+            .first()
+            .map(|entry| entry.index)
+    }
+
+    fn entry_by_path_in_section(&self, path: &RepoPath, section: Section) -> Option<usize> {
+        self.projected_entries_by_path
+            .get(path)?
+            .iter()
+            .find(|entry| entry.section == section)
+            .map(|entry| entry.index)
     }
 
     pub fn select_entry_by_path(
@@ -1105,7 +1297,7 @@ impl GitPanel {
             return;
         };
 
-        let (repo_path, section) = {
+        let (repo_path, default_section) = {
             let repo = git_repo.read(cx);
             let Some(repo_path) = repo.project_path_to_repo_path(&path, cx) else {
                 return;
@@ -1115,7 +1307,15 @@ impl GitPanel {
                 .status_for_path(&repo_path)
                 .map(|status| status.status)
                 .map(|status| {
-                    if repo.had_conflict_on_last_merge_head_change(&repo_path) {
+                    if GitPanelSettings::get_global(cx).group_by == GitPanelGroupBy::Staging {
+                        if repo.had_conflict_on_last_merge_head_change(&repo_path) {
+                            Section::Conflict
+                        } else if status.staging().has_staged() {
+                            Section::Staged
+                        } else {
+                            Section::Unstaged
+                        }
+                    } else if repo.had_conflict_on_last_merge_head_change(&repo_path) {
                         Section::Conflict
                     } else if status.is_created() {
                         Section::New
@@ -1126,6 +1326,15 @@ impl GitPanel {
 
             (repo_path, section)
         };
+        let selected_section = self.selected_entry.and_then(|index| {
+            let selected_entry = self.entries.get(index)?.status_entry()?;
+            if selected_entry.repo_path == repo_path {
+                self.section_for_entry_index(index)
+            } else {
+                None
+            }
+        });
+        let section = selected_section.or(default_section);
 
         let mut needs_rebuild = false;
         if let (Some(section), Some(tree_state)) = (section, self.view_mode.tree_state_mut()) {
@@ -1136,8 +1345,8 @@ impl GitPanel {
                     path: RepoPath::from_rel_path(dir),
                 };
 
-                if tree_state.expanded_dirs.get(&key.path) == Some(&false) {
-                    tree_state.expanded_dirs.insert(key.path.clone(), true);
+                if tree_state.expanded_dirs.get(&key) == Some(&false) {
+                    tree_state.expanded_dirs.insert(key, true);
                     needs_rebuild = true;
                 }
 
@@ -1149,7 +1358,10 @@ impl GitPanel {
             self.update_visible_entries(window, cx);
         }
 
-        let Some(ix) = self.entry_by_path(&repo_path) else {
+        let Some(ix) = section
+            .and_then(|section| self.entry_by_path_in_section(&repo_path, section))
+            .or_else(|| self.entry_by_path(&repo_path))
+        else {
             return;
         };
 
@@ -1423,35 +1635,42 @@ impl GitPanel {
             return;
         }
 
-        if matches!(
-            self.entries.get(new_index.saturating_sub(1)),
-            Some(GitListEntry::Header(..))
-        ) && new_index == 0
-        {
-            return;
-        }
-
-        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
-            self.selected_entry = match &self.view_mode {
-                GitPanelViewMode::Flat => Some(new_index.saturating_sub(1)),
-                GitPanelViewMode::Tree(tree_view_state) => {
-                    maybe!({
-                        let current_logical_index = tree_view_state
-                            .logical_indices
-                            .iter()
-                            .position(|&i| i == new_index)?;
-
-                        tree_view_state
-                            .logical_indices
-                            .get(current_logical_index.saturating_sub(1))
-                            .copied()
-                    })
+        let candidate = match &self.view_mode {
+            GitPanelViewMode::Flat => {
+                let mut candidate = new_index;
+                loop {
+                    match self.entries.get(candidate) {
+                        Some(entry) if entry.is_selectable() => break Some(candidate),
+                        Some(_) => {
+                            if candidate == 0 {
+                                break None;
+                            }
+                            candidate -= 1;
+                        }
+                        None => break None,
+                    }
                 }
-            };
-        } else {
-            self.selected_entry = Some(new_index);
-        }
+            }
+            GitPanelViewMode::Tree(state) => {
+                let mut position = state.logical_indices.iter().position(|&i| i == new_index);
+                loop {
+                    let Some(current) = position else { break None };
+                    let Some(&index) = state.logical_indices.get(current) else {
+                        break None;
+                    };
+                    match self.entries.get(index) {
+                        Some(entry) if entry.is_selectable() => break Some(index),
+                        _ => position = current.checked_sub(1),
+                    }
+                }
+            }
+        };
 
+        let Some(candidate) = candidate else {
+            return;
+        };
+
+        self.selected_entry = Some(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
@@ -1499,18 +1718,54 @@ impl GitPanel {
             }
         };
 
-        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
-            self.selected_entry = Some(new_index.saturating_add(1));
-        } else {
-            self.selected_entry = Some(new_index);
-        }
+        let candidate = match &self.view_mode {
+            GitPanelViewMode::Flat => {
+                let mut candidate = new_index;
+                loop {
+                    match self.entries.get(candidate) {
+                        Some(entry) if entry.is_selectable() => break Some(candidate),
+                        Some(_) => candidate += 1,
+                        None => break None,
+                    }
+                }
+            }
+            GitPanelViewMode::Tree(state) => {
+                let mut position = state.logical_indices.iter().position(|&i| i == new_index);
+                loop {
+                    let Some(current) = position else { break None };
+                    let Some(&index) = state.logical_indices.get(current) else {
+                        break None;
+                    };
+                    match self.entries.get(index) {
+                        Some(entry) if entry.is_selectable() => break Some(index),
+                        _ => position = Some(current + 1),
+                    }
+                }
+            }
+        };
 
+        let Some(candidate) = candidate else {
+            return;
+        };
+
+        self.selected_entry = Some(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.last().is_some() {
-            self.selected_entry = Some(self.entries.len() - 1);
+        let last_entry = match &self.view_mode {
+            GitPanelViewMode::Flat => self.entries.iter().rposition(GitListEntry::is_selectable),
+            GitPanelViewMode::Tree(state) => {
+                state.logical_indices.iter().rev().copied().find(|&index| {
+                    self.entries
+                        .get(index)
+                        .is_some_and(GitListEntry::is_selectable)
+                })
+            }
+        };
+
+        if let Some(last_entry) = last_entry {
+            self.selected_entry = Some(last_entry);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -1519,13 +1774,34 @@ impl GitPanel {
     fn move_diff_to_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let workspace = self.workspace.upgrade()?;
+            let selected_index = self.selected_entry?;
+            let entry = self.entries.get(selected_index)?.status_entry()?.clone();
+            let target =
+                Self::diff_target_for_section(self.section_for_entry_index(selected_index));
 
-            if let Some(project_diff) = workspace.read(cx).item_of_type::<ProjectDiff>(cx) {
-                let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-
-                project_diff.update(cx, |project_diff, cx| {
-                    project_diff.move_to_entry(entry.clone(), window, cx);
-                });
+            match target {
+                DiffTarget::Staged => {
+                    if let Some(staged_diff) = workspace.read(cx).item_of_type::<StagedDiff>(cx) {
+                        staged_diff.update(cx, |staged_diff, cx| {
+                            staged_diff.move_to_entry(entry, window, cx);
+                        });
+                    }
+                }
+                DiffTarget::Unstaged => {
+                    if let Some(unstaged_diff) = workspace.read(cx).item_of_type::<UnstagedDiff>(cx)
+                    {
+                        unstaged_diff.update(cx, |unstaged_diff, cx| {
+                            unstaged_diff.move_to_entry(entry, window, cx);
+                        });
+                    }
+                }
+                DiffTarget::Uncommitted => {
+                    if let Some(project_diff) = workspace.read(cx).item_of_type::<ProjectDiff>(cx) {
+                        project_diff.update(cx, |project_diff, cx| {
+                            project_diff.move_to_entry(entry, window, cx);
+                        });
+                    }
+                }
             }
 
             Some(())
@@ -1591,6 +1867,14 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
+    fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
+        // A grouping can project one changed file into multiple list rows.
+        self.entries
+            .iter()
+            .filter_map(GitListEntry::status_entry)
+            .unique_by(|entry| entry.repo_path.clone())
+    }
+
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::History {
             self.open_selected_history_commit(window, cx);
@@ -1605,11 +1889,15 @@ impl GitPanel {
             return;
         }
         maybe!({
-            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+            let selected_index = self.selected_entry?;
+            let entry = self.entries.get(selected_index)?.status_entry()?;
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
+            let target =
+                Self::diff_target_for_section(self.section_for_entry_index(selected_index));
 
-            if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+            if target == DiffTarget::Uncommitted
+                && let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_project_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo
@@ -1623,8 +1911,16 @@ impl GitPanel {
             };
 
             self.workspace
-                .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                .update(cx, |workspace, cx| match target {
+                    DiffTarget::Uncommitted => {
+                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    }
+                    DiffTarget::Staged => {
+                        StagedDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    }
+                    DiffTarget::Unstaged => {
+                        UnstagedDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    }
                 })
                 .ok();
             self.focus_handle.focus(window, cx);
@@ -1861,7 +2157,7 @@ impl GitPanel {
                     let task = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
-                            .update(cx, |project, cx| project.delete_file(path, true, cx))
+                            .update(cx, |project, cx| project.trash_file(path, cx))
                     })?;
                     if let Some(task) = task {
                         task.await?;
@@ -1961,10 +2257,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let entries = self
-            .entries
-            .iter()
-            .filter_map(|entry| entry.status_entry().cloned())
+            .change_entries_by_path()
             .filter(|status_entry| !status_entry.status.is_created())
+            .cloned()
             .collect::<Vec<_>>();
 
         match entries.len() {
@@ -2011,9 +2306,7 @@ impl GitPanel {
             return;
         };
         let to_delete = self
-            .entries
-            .iter()
-            .filter_map(|entry| entry.status_entry())
+            .change_entries_by_path()
             .filter(|status_entry| status_entry.status.is_created())
             .cloned()
             .collect::<Vec<_>>();
@@ -2055,7 +2348,7 @@ impl GitPanel {
                             let project_path = active_repo
                                 .read(cx)
                                 .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.delete_file(project_path, true, cx)
+                            project.trash_file(project_path, cx)
                         })
                     })
                     .collect::<Vec<_>>()
@@ -2194,6 +2487,7 @@ impl GitPanel {
     fn toggle_staged_for_entry(
         &mut self,
         entry: &GitListEntry,
+        intent: StageIntent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2206,48 +2500,32 @@ impl GitPanel {
         let (stage, repo_paths) = {
             let repo = active_repository.read(cx);
             match entry {
-                GitListEntry::Status(status_entry) => {
+                GitListEntry::Status(status_entry)
+                | GitListEntry::TreeStatus(GitTreeStatusEntry {
+                    entry: status_entry,
+                    ..
+                }) => {
                     let repo_paths = vec![status_entry.clone()];
-                    let stage = match GitPanel::stage_status_for_entry(status_entry, &repo) {
-                        StageStatus::Staged => {
-                            if let Some(op) = self.bulk_staging.clone()
-                                && op.anchor == status_entry.repo_path
-                            {
-                                clear_anchor = Some(op.anchor);
-                            }
-                            false
-                        }
-                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
-                            set_anchor = Some(status_entry.repo_path.clone());
-                            true
-                        }
-                    };
-                    (stage, repo_paths)
-                }
-                GitListEntry::TreeStatus(status_entry) => {
-                    let repo_paths = vec![status_entry.entry.clone()];
-                    let stage = match GitPanel::stage_status_for_entry(&status_entry.entry, &repo) {
-                        StageStatus::Staged => {
-                            if let Some(op) = self.bulk_staging.clone()
-                                && op.anchor == status_entry.entry.repo_path
-                            {
-                                clear_anchor = Some(op.anchor);
-                            }
-                            false
-                        }
-                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
-                            set_anchor = Some(status_entry.entry.repo_path.clone());
-                            true
-                        }
-                    };
+                    let stage = intent
+                        .resolve_with(|| GitPanel::stage_status_for_entry(status_entry, &repo));
+
+                    if stage {
+                        set_anchor = Some(status_entry.repo_path.clone());
+                    } else if let Some(op) = self.bulk_staging.clone()
+                        && op.anchor == status_entry.repo_path
+                    {
+                        clear_anchor = Some(op.anchor);
+                    }
                     (stage, repo_paths)
                 }
                 GitListEntry::Header(section) => {
-                    let goal_staged_state = !self.header_state(section.header).selected();
+                    let goal_staged_state = match intent {
+                        StageIntent::Stage => true,
+                        StageIntent::Unstage => false,
+                        StageIntent::Toggle => !self.header_state(section.header).selected(),
+                    };
                     let entries = self
-                        .entries
-                        .iter()
-                        .filter_map(|entry| entry.status_entry())
+                        .change_entries_by_path()
                         .filter(|status_entry| {
                             section.contains(status_entry, &repo)
                                 && GitPanel::stage_status_for_entry(status_entry, &repo).as_bool()
@@ -2259,11 +2537,13 @@ impl GitPanel {
                     (goal_staged_state, entries)
                 }
                 GitListEntry::Directory(entry) => {
-                    let goal_staged_state = match self.stage_status_for_directory(entry, repo) {
-                        StageStatus::Staged => StageStatus::Unstaged,
-                        StageStatus::Unstaged | StageStatus::PartiallyStaged => StageStatus::Staged,
+                    let goal_stage =
+                        intent.resolve_with(|| self.stage_status_for_directory(entry, repo));
+                    let goal_staged_state = if goal_stage {
+                        StageStatus::Staged
+                    } else {
+                        StageStatus::Unstaged
                     };
-                    let goal_stage = goal_staged_state == StageStatus::Staged;
 
                     let entries = self
                         .view_mode
@@ -2279,6 +2559,7 @@ impl GitPanel {
                         .collect::<Vec<_>>();
                     (goal_stage, entries)
                 }
+                GitListEntry::EmptySection(_) => return,
             }
         };
         if let Some(anchor) = clear_anchor {
@@ -2312,6 +2593,7 @@ impl GitPanel {
                             let repo_paths = entries
                                 .iter()
                                 .map(|entry| entry.repo_path.clone())
+                                .unique()
                                 .collect();
                             if stage {
                                 repo.stage_entries(repo_paths, cx)
@@ -2425,16 +2707,27 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selected_entry) = self.get_selected_entry().cloned() {
-            self.toggle_staged_for_entry(&selected_entry, window, cx);
+        let Some(selected_index) = self.selected_entry else {
+            return;
+        };
+        let Some(selected_entry) = self.entries.get(selected_index).cloned() else {
+            return;
+        };
+
+        if self.is_resolved_conflict(selected_index, cx) {
+            return;
         }
+
+        let intent = self.stage_intent_for_entry_index(selected_index);
+        self.toggle_staged_for_entry(&selected_entry, intent, window, cx);
     }
 
     fn stage_range(&mut self, _: &git::StageRange, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.selected_entry else {
             return;
         };
-        self.stage_bulk(index, cx);
+        let stage = self.stage_intent_for_entry_index(index) != StageIntent::Unstage;
+        self.stage_bulk(index, stage, cx);
     }
 
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2665,9 +2958,7 @@ impl GitPanel {
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
-                .entries
-                .iter()
-                .filter_map(|entry| entry.status_entry())
+                .change_entries_by_path()
                 .filter(|status_entry| !status_entry.status.is_created())
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
@@ -2948,7 +3239,7 @@ impl GitPanel {
 
                 let worktree_snapshot = worktree.read(cx).snapshot();
                 for rules_name in RULES_FILE_NAMES {
-                    if let Ok(rel_path) = RelPath::unix(rules_name) {
+                    if let Ok(rel_path) = RelPath::from_unix_str(rules_name) {
                         if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
                             if entry.is_file() {
                                 return Some(ProjectPath {
@@ -3877,6 +4168,58 @@ impl GitPanel {
         }
     }
 
+    fn view_staged_changes(
+        &mut self,
+        _: &ViewStagedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self
+            .get_selected_entry()
+            .and_then(|entry| entry.status_entry())
+            .cloned();
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                StagedDiff::deploy_at(workspace, entry, window, cx);
+            });
+        }
+    }
+
+    fn view_unstaged_changes(
+        &mut self,
+        _: &ViewUnstagedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self
+            .get_selected_entry()
+            .and_then(|entry| entry.status_entry())
+            .cloned();
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                UnstagedDiff::deploy_at(workspace, entry, window, cx);
+            });
+        }
+    }
+
+    fn set_group_by_staging(
+        &mut self,
+        _: &SetGroupByStaging,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let fs = workspace.app_state().fs.clone();
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.update_settings_file(fs, move |settings, _cx| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                });
+            });
+        }
+    }
+
     fn toggle_tree_view(&mut self, _: &ToggleTreeView, _: &mut Window, cx: &mut Context<Self>) {
         let current_setting = GitPanelSettings::get_global(cx).tree_view;
         if let Some(workspace) = self.workspace.upgrade() {
@@ -3940,7 +4283,7 @@ impl GitPanel {
 
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.view_mode.tree_state_mut() {
-            let expanded = state.expanded_dirs.entry(key.path.clone()).or_insert(true);
+            let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
             *expanded = !*expanded;
             self.tree_expanded_dirs = state.expanded_dirs.clone();
             self.update_visible_entries(window, cx);
@@ -4002,13 +4345,20 @@ impl GitPanel {
         let new_active_repository = self.project.read(cx).active_repository(cx);
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
-        if active_repository_changed && self.amend_pending {
-            // Leaving a repository with a pending amend: undo it so the amend
-            // state doesn't carry over to the newly active repository. The
-            // commit editor still holds the previous repository's buffer here
-            // (`reopen_commit_buffer` swaps it asynchronously below), so this
-            // restores the pre-amend draft into that repository's buffer.
-            self.set_amend_pending(false, cx);
+        if active_repository_changed {
+            if self.amend_pending {
+                // Leaving a repository with a pending amend: undo it so the amend
+                // state doesn't carry over to the newly active repository. The
+                // commit editor still holds the previous repository's buffer here
+                // (`reopen_commit_buffer` swaps it asynchronously below), so this
+                // restores the pre-amend draft into that repository's buffer.
+                self.set_amend_pending(false, cx);
+            }
+            self.git_access = None;
+            self._repo_subscriptions.clear();
+            if self.active_tab == GitPanelTab::History {
+                self.set_commit_history(CommitHistory::Loading, cx);
+            }
         }
         self.active_repository = new_active_repository;
         self.reopen_commit_buffer(window, cx);
@@ -4125,18 +4475,17 @@ impl GitPanel {
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path_style = self.project.read(cx).path_style(cx);
+        let selected_change = self.selected_entry.and_then(|index| {
+            let entry = self.entries.get(index)?.status_entry()?;
+            Some((entry.repo_path.clone(), self.section_for_entry_index(index)))
+        });
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
             .and_then(|op| self.entry_by_path(&op.anchor));
 
-        let active_repository = self.project.read(cx).active_repository(cx);
-        if active_repository != self.active_repository {
-            self.active_repository = active_repository;
-            self.git_access = None;
-        }
         self.entries.clear();
-        self.entries_indices.clear();
+        self.projected_entries_by_path.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
         self.conflicted_count = 0;
@@ -4152,7 +4501,9 @@ impl GitPanel {
 
         let settings = GitPanelSettings::get_global(cx);
         let sort_by = settings.sort_by;
-        let group_by_status = settings.group_by == GitPanelGroupBy::Status;
+        let group_by = settings.group_by;
+        let group_by_file_status = group_by == GitPanelGroupBy::Status;
+        let group_by_staging_state = group_by == GitPanelGroupBy::Staging;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
 
         if let Some(active_repo) = self.active_repository.as_ref() {
@@ -4185,6 +4536,9 @@ impl GitPanel {
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
+        let mut staged_entries = Vec::new();
+        let mut unstaged_entries = Vec::new();
+        let mut tracked_entries = Vec::new();
         let mut single_staged_entry = None;
         let mut staged_count = 0;
         let mut seen_directories = HashSet::default();
@@ -4201,13 +4555,13 @@ impl GitPanel {
 
         self.stash_entries = repo.cached_stash();
 
-        for entry in repo.cached_status() {
+        for status_entry in repo.cached_status() {
             self.changes_count += 1;
-            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
-            let is_new = entry.status.is_created();
-            let staging = entry.status.staging();
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path);
+            let is_new = status_entry.status.is_created();
+            let staging = status_entry.status.staging();
 
-            if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
+            if let Some(pending) = repo.pending_ops_for_path(&status_entry.repo_path)
                 && pending
                     .ops
                     .iter()
@@ -4217,20 +4571,39 @@ impl GitPanel {
             }
 
             let entry = GitStatusEntry {
-                repo_path: entry.repo_path.clone(),
-                status: entry.status,
+                repo_path: status_entry.repo_path.clone(),
+                status: status_entry.status,
                 staging,
-                diff_stat: entry.diff_stat,
+                diff_stat: status_entry.diff_stat,
             };
+
+            if !is_conflict && !is_new {
+                tracked_entries.push(entry.clone());
+            }
 
             if staging.has_staged() {
                 staged_count += 1;
                 single_staged_entry = Some(entry.clone());
             }
 
-            if group_by_status && is_conflict {
+            if group_by_staging_state && is_conflict {
                 conflict_entries.push(entry);
-            } else if group_by_status && is_new {
+            } else if group_by_staging_state {
+                if staging.has_staged() {
+                    staged_entries.push(GitStatusEntry {
+                        diff_stat: status_entry.staged_diff_stat,
+                        ..entry.clone()
+                    });
+                }
+                if staging.has_unstaged() {
+                    unstaged_entries.push(GitStatusEntry {
+                        diff_stat: status_entry.unstaged_diff_stat,
+                        ..entry
+                    });
+                }
+            } else if group_by_file_status && is_conflict {
+                conflict_entries.push(entry);
+            } else if group_by_file_status && is_new {
                 new_entries.push(entry);
             } else {
                 changed_entries.push(entry);
@@ -4262,8 +4635,8 @@ impl GitPanel {
             }
         }
 
-        if conflict_entries.is_empty() && changed_entries.len() == 1 {
-            self.single_tracked_entry = changed_entries.first().cloned();
+        if tracked_entries.len() == 1 {
+            self.single_tracked_entry = tracked_entries.pop();
         }
 
         if !is_tree_view {
@@ -4280,11 +4653,14 @@ impl GitPanel {
             sort_entries(&mut conflict_entries);
             sort_entries(&mut changed_entries);
             sort_entries(&mut new_entries);
+            sort_entries(&mut staged_entries);
+            sort_entries(&mut unstaged_entries);
         }
 
         let mut push_entry =
             |this: &mut Self,
              entry: GitListEntry,
+             section: Section,
              is_visible: bool,
              logical_indices: Option<&mut Vec<usize>>| {
                 if let Some(estimate) =
@@ -4298,7 +4674,13 @@ impl GitPanel {
 
                 if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone())
                 {
-                    this.entries_indices.insert(repo_path, this.entries.len());
+                    this.projected_entries_by_path
+                        .entry(repo_path)
+                        .or_default()
+                        .push(ProjectedChangeEntry {
+                            section,
+                            index: this.entries.len(),
+                        });
                 }
 
                 if let (Some(indices), true) = (logical_indices, is_visible) {
@@ -4308,15 +4690,30 @@ impl GitPanel {
                 this.entries.push(entry);
             };
 
-        macro_rules! take_section_entries {
-            () => {
-                [
-                    (Section::Conflict, std::mem::take(&mut conflict_entries)),
-                    (Section::Tracked, std::mem::take(&mut changed_entries)),
-                    (Section::New, std::mem::take(&mut new_entries)),
-                ]
-            };
-        }
+        let section_entries = if group_by_staging_state {
+            vec![
+                (Section::Conflict, std::mem::take(&mut conflict_entries)),
+                (Section::Staged, std::mem::take(&mut staged_entries)),
+                (Section::Unstaged, std::mem::take(&mut unstaged_entries)),
+            ]
+        } else {
+            vec![
+                (Section::Conflict, std::mem::take(&mut conflict_entries)),
+                (Section::Tracked, std::mem::take(&mut changed_entries)),
+                (Section::New, std::mem::take(&mut new_entries)),
+            ]
+        };
+
+        // Keep Staged/Unstaged headers pinned even when empty (as long as there's
+        // anything to show at all) so the layout stays stable while staging.
+        let has_any_section_entries = section_entries
+            .iter()
+            .any(|(_, entries)| !entries.is_empty());
+        let show_when_empty = |section: Section| {
+            group_by_staging_state
+                && has_any_section_entries
+                && matches!(section, Section::Staged | Section::Unstaged)
+        };
 
         match &mut self.view_mode {
             GitPanelViewMode::Tree(tree_state) => {
@@ -4327,15 +4724,26 @@ impl GitPanel {
                 // because push_entry mutably borrows self
                 let mut tree_state = std::mem::take(tree_state);
 
-                for (section, entries) in take_section_entries!() {
-                    if entries.is_empty() {
+                for (section, entries) in section_entries {
+                    if entries.is_empty() && !show_when_empty(section) {
                         continue;
                     }
 
-                    if section != Section::Tracked || group_by_status {
+                    if section != Section::Tracked || group_by != GitPanelGroupBy::None {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
+                            section,
+                            true,
+                            Some(&mut tree_state.logical_indices),
+                        );
+                    }
+
+                    if entries.is_empty() {
+                        push_entry(
+                            self,
+                            GitListEntry::EmptySection(section),
+                            section,
                             true,
                             Some(&mut tree_state.logical_indices),
                         );
@@ -4347,39 +4755,47 @@ impl GitPanel {
                         push_entry(
                             self,
                             entry,
+                            section,
                             is_visible,
                             Some(&mut tree_state.logical_indices),
                         );
                     }
                 }
 
-                let seen_directory_paths = seen_directories
-                    .iter()
-                    .map(|directory| directory.path.clone())
-                    .collect::<HashSet<_>>();
                 tree_state
                     .expanded_dirs
-                    .retain(|path, _| seen_directory_paths.contains(path));
+                    .retain(|key, _| seen_directories.contains(key));
                 self.tree_expanded_dirs = tree_state.expanded_dirs.clone();
                 self.view_mode = GitPanelViewMode::Tree(tree_state);
             }
             GitPanelViewMode::Flat => {
-                for (section, entries) in take_section_entries!() {
-                    if entries.is_empty() {
+                for (section, entries) in section_entries {
+                    if entries.is_empty() && !show_when_empty(section) {
                         continue;
                     }
 
-                    if section != Section::Tracked || group_by_status {
+                    if section != Section::Tracked || group_by != GitPanelGroupBy::None {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
+                            section,
+                            true,
+                            None,
+                        );
+                    }
+
+                    if entries.is_empty() {
+                        push_entry(
+                            self,
+                            GitListEntry::EmptySection(section),
+                            section,
                             true,
                             None,
                         );
                     }
 
                     for entry in entries {
-                        push_entry(self, GitListEntry::Status(entry), true, None);
+                        push_entry(self, GitListEntry::Status(entry), section, true, None);
                     }
                 }
             }
@@ -4404,6 +4820,11 @@ impl GitPanel {
             self.bulk_staging = bulk_staging;
         }
 
+        if let Some((path, section)) = selected_change {
+            self.selected_entry = section
+                .and_then(|section| self.entry_by_path_in_section(&path, section))
+                .or_else(|| self.entry_by_path(&path));
+        }
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
 
@@ -4422,6 +4843,8 @@ impl GitPanel {
             Section::New => (self.new_staged_count, self.new_count),
             Section::Tracked => (self.tracked_staged_count, self.tracked_count),
             Section::Conflict => (self.conflicted_staged_count, self.conflicted_count),
+            Section::Staged => (self.entry_count, self.entry_count),
+            Section::Unstaged => (0, self.entry_count),
         };
         if staged_count == 0 {
             ToggleState::Unselected
@@ -4429,6 +4852,55 @@ impl GitPanel {
             ToggleState::Selected
         } else {
             ToggleState::Indeterminate
+        }
+    }
+
+    fn section_for_entry_index(&self, ix: usize) -> Option<Section> {
+        self.entries.get(..=ix)?.iter().rev().find_map(|entry| {
+            if let GitListEntry::Header(header) = entry {
+                Some(header.header)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn stage_intent_for_entry_index(&self, ix: usize) -> StageIntent {
+        self.section_for_entry_index(ix)
+            .map_or(StageIntent::Toggle, StageIntent::for_section)
+    }
+
+    // A conflict that has been marked resolved (fully staged) is locked
+    // against toggling: unstaging would rebuild the index entry from HEAD,
+    // silently discarding the unmerged (base/ours/theirs) stages — a
+    // round-trip git can't actually perform. The explicit git::UnstageFile
+    // action remains as an escape hatch.
+    fn is_resolved_conflict(&self, ix: usize, cx: &App) -> bool {
+        if self.section_for_entry_index(ix) != Some(Section::Conflict) {
+            return false;
+        }
+        let Some(entry) = self.entries.get(ix) else {
+            return false;
+        };
+        let Some(repo) = self.active_repository.as_ref() else {
+            return false;
+        };
+        let repo = repo.read(cx);
+        match entry {
+            GitListEntry::Directory(directory) => {
+                self.stage_status_for_directory(directory, repo) == StageStatus::Staged
+            }
+            entry => entry.status_entry().is_some_and(|status_entry| {
+                GitPanel::stage_status_for_entry(status_entry, repo) == StageStatus::Staged
+            }),
+        }
+    }
+
+    fn diff_target_for_section(section: Option<Section>) -> DiffTarget {
+        match section {
+            Some(Section::Staged) => DiffTarget::Staged,
+            Some(Section::Unstaged) => DiffTarget::Unstaged,
+            _ => DiffTarget::Uncommitted,
         }
     }
 
@@ -4443,7 +4915,8 @@ impl GitPanel {
         self.entry_count = 0;
         self.diff_stat_total = DiffStat::default();
 
-        for status_entry in self.entries.iter().filter_map(|entry| entry.status_entry()) {
+        let change_entries = self.change_entries_by_path().cloned().collect::<Vec<_>>();
+        for status_entry in change_entries {
             self.entry_count += 1;
             if let Some(diff_stat) = status_entry.diff_stat {
                 self.diff_stat_total.added =
@@ -4454,23 +4927,21 @@ impl GitPanel {
                     .saturating_add(diff_stat.deleted);
             }
 
-            let is_staging_or_staged = GitPanel::stage_status_for_entry(status_entry, repo)
-                .as_bool()
-                .unwrap_or(true);
+            let stage_status = GitPanel::stage_status_for_entry(&status_entry, repo);
 
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
-                if is_staging_or_staged {
+                if stage_status.has_staged() {
                     self.conflicted_staged_count += 1;
                 }
             } else if status_entry.status.is_created() {
                 self.new_count += 1;
-                if is_staging_or_staged {
+                if stage_status.has_staged() {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if is_staging_or_staged {
+                if stage_status.has_staged() {
                     self.tracked_staged_count += 1;
                 }
             }
@@ -4484,9 +4955,12 @@ impl GitPanel {
     }
 
     pub(crate) fn has_unstaged_changes(&self) -> bool {
-        self.tracked_count > self.tracked_staged_count
-            || self.new_count > self.new_staged_count
-            || self.conflicted_count > self.conflicted_staged_count
+        self.change_entries_by_path()
+            .any(|entry| entry.staging.has_unstaged())
+    }
+
+    fn primary_changes_action_stages(&self) -> bool {
+        self.entry_count == 0 || self.has_unstaged_changes()
     }
 
     fn has_tracked_changes(&self) -> bool {
@@ -4494,7 +4968,8 @@ impl GitPanel {
     }
 
     pub fn has_unstaged_conflicts(&self) -> bool {
-        self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
+        self.change_entries_by_path()
+            .any(|entry| entry.status.is_conflicted() && entry.staging.has_unstaged())
     }
 
     fn show_error_toast(&self, action: impl Into<SharedString>, e: anyhow::Error, cx: &mut App) {
@@ -4629,7 +5104,14 @@ impl GitPanel {
                         .color(Color::Muted),
                 );
                 match (style, is_push) {
+                    (PushPrLink { label, url }, _) => {
+                        this.action(label, move |_window, cx| cx.open_url(&url))
+                    }
                     (Toast | ToastWithLog { .. }, true) => {
+                        // If we were not able to parse a valid URL from the
+                        // output of a push command, we'll simply dispatch the
+                        // generic `CreatePullRequest` action when the toast
+                        // button is pressed.
                         this.action("Create Pull Request", move |window, cx| {
                             window
                                 .dispatch_action(Box::new(zed_actions::git::CreatePullRequest), cx);
@@ -4721,7 +5203,7 @@ impl GitPanel {
             GitListEntry::Directory(dir) => {
                 Some(Self::item_width_estimate(0, dir.name.len(), dir.depth))
             }
-            GitListEntry::Header(_) => None,
+            GitListEntry::Header(_) | GitListEntry::EmptySection(_) => None,
         }
     }
 
@@ -4734,7 +5216,7 @@ impl GitPanel {
 
         PopoverMenu::new(id.into())
             .trigger_with_tooltip(
-                IconButton::new("view-options-menu-trigger", IconName::Sliders)
+                IconButton::new("view-options-menu-trigger", IconName::Filter)
                     .icon_size(IconSize::Small),
                 Tooltip::text("View Options"),
             )
@@ -4869,23 +5351,17 @@ impl GitPanel {
         &self,
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        disabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let menu_open = self.commit_menu_handle.is_deployed();
+
         PopoverMenu::new(id.into())
             .trigger(
-                ui::ButtonLike::new_rounded_right("commit-split-button-right")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ButtonSize::None)
-                    .child(
-                        h_flex()
-                            .px_1()
-                            .h_full()
-                            .justify_center()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    ),
+                crate::render_split_button_chevron_trigger("commit-split-button-right", menu_open)
+                    .disabled(disabled),
             )
+            .with_handle(self.commit_menu_handle.clone())
             .menu({
                 let git_panel = cx.entity();
                 let has_previous_commit = self.head_commit(cx).is_some();
@@ -4927,10 +5403,20 @@ impl GitPanel {
                 }
             })
             .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            })
+    }
+
+    pub fn is_generating_commit_message(&self) -> bool {
+        self.generate_commit_message_task.is_some()
     }
 
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
-        if self.has_unstaged_conflicts() {
+        if self.generate_commit_message_task.is_some() {
+            (false, "Generating commit message...")
+        } else if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
         } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
             (false, "No changes to commit")
@@ -5012,19 +5498,16 @@ impl GitPanel {
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+
         let focus_handle = self.focus_handle.clone();
+        let menu_open = self.changes_actions_menu_handle.is_deployed();
 
         PopoverMenu::new(id.into())
-            .trigger(
-                ui::ButtonLike::new_rounded_right("git-changes-actions-split-button-right")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ButtonSize::None)
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    ),
-            )
+            .trigger(crate::render_split_button_chevron_trigger(
+                "changes-actions-split-button-right",
+                menu_open,
+            ))
+            .with_handle(self.changes_actions_menu_handle.clone())
             .menu(move |window, cx| {
                 Some(git_panel_context_menu(
                     has_tracked_changes,
@@ -5038,15 +5521,18 @@ impl GitPanel {
                 ))
             })
             .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            })
     }
 
     fn render_git_changes_actions_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (text, action, stage, tooltip) =
-            if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
-                ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
-            } else {
-                ("Stage All", StageAll.boxed_clone(), true, "git add --all")
-            };
+        let (text, action, stage, tooltip) = if self.primary_changes_action_stages() {
+            ("Stage All", StageAll.boxed_clone(), true, "git add --all")
+        } else {
+            ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
+        };
 
         SplitButton::new(
             ButtonLike::new_rounded_left("git-changes-actions-split-button-left")
@@ -5162,6 +5648,7 @@ impl GitPanel {
                         focus_handle,
                         true,
                         self.pending_remote_operation,
+                        self.remote_action_menu_handle.clone(),
                     ))
                 })
                 .into_any_element(),
@@ -5363,7 +5850,7 @@ impl GitPanel {
             Color::Default
         };
 
-        div()
+        h_flex()
             .id("commit-wrapper")
             .on_hover(cx.listener(move |this, hovered, _, cx| {
                 this.show_placeholders =
@@ -5371,60 +5858,59 @@ impl GitPanel {
                 cx.notify()
             }))
             .child(SplitButton::new(
-                ButtonLike::new_rounded_left(ElementId::Name(
-                    format!("split-button-left-{}", title).into(),
-                ))
-                .layer(ElevationIndex::ModalSurface)
-                .size(ButtonSize::Compact)
-                .child(
-                    Label::new(title)
-                        .size(LabelSize::Small)
-                        .color(label_color)
-                        .mr_0p5(),
-                )
-                .on_click({
-                    let git_panel = cx.weak_entity();
-                    move |_, window, cx| {
-                        telemetry::event!("Git Committed", source = "Git Panel");
-                        git_panel
-                            .update(cx, |git_panel, cx| {
-                                git_panel.commit_changes(
-                                    CommitOptions {
-                                        amend,
-                                        signoff,
-                                        allow_empty: false,
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    }
-                })
-                .disabled(!can_commit || self.modal_open)
-                .tooltip({
-                    let handle = commit_tooltip_focus_handle.clone();
-                    move |_window, cx| {
-                        if can_commit {
-                            Tooltip::with_meta_in(
-                                tooltip,
-                                Some(&git::Commit),
-                                format!(
-                                    "git commit{}{}",
-                                    if amend { " --amend" } else { "" },
-                                    if signoff { " --signoff" } else { "" }
-                                ),
-                                &handle.clone(),
-                                cx,
-                            )
-                        } else {
-                            Tooltip::simple(tooltip, cx)
+                ButtonLike::new_rounded_left(format!("split-button-left-{}", title))
+                    .layer(ElevationIndex::ModalSurface)
+                    .size(ButtonSize::Compact)
+                    .disabled(!can_commit || self.modal_open)
+                    .child(
+                        Label::new(title)
+                            .size(LabelSize::Small)
+                            .color(label_color)
+                            .mr_0p5(),
+                    )
+                    .on_click({
+                        let git_panel = cx.weak_entity();
+                        move |_, window, cx| {
+                            telemetry::event!("Git Committed", source = "Git Panel");
+                            git_panel
+                                .update(cx, |git_panel, cx| {
+                                    git_panel.commit_changes(
+                                        CommitOptions {
+                                            amend,
+                                            signoff,
+                                            allow_empty: false,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
                         }
-                    }
-                }),
+                    })
+                    .tooltip({
+                        let handle = commit_tooltip_focus_handle.clone();
+                        move |_window, cx| {
+                            if can_commit {
+                                Tooltip::with_meta_in(
+                                    tooltip,
+                                    Some(&git::Commit),
+                                    format!(
+                                        "git commit{}{}",
+                                        if amend { " --amend" } else { "" },
+                                        if signoff { " --signoff" } else { "" }
+                                    ),
+                                    &handle.clone(),
+                                    cx,
+                                )
+                            } else {
+                                Tooltip::simple(tooltip, cx)
+                            }
+                        }
+                    }),
                 self.render_git_commit_menu(
                     ElementId::Name(format!("split-button-right-{}", title).into()),
                     Some(commit_tooltip_focus_handle),
+                    self.generate_commit_message_task.is_some(),
                     cx,
                 )
                 .into_any_element(),
@@ -5619,7 +6105,11 @@ impl GitPanel {
                 GitPanelTab::Changes,
                 ActivateChangesTab.boxed_clone(),
             ))
-            .child(Divider::vertical().color(ui::DividerColor::BorderFaded))
+            .child(
+                Divider::vertical()
+                    .color(ui::DividerColor::BorderFaded)
+                    .h_full(),
+            )
             .child(tab(
                 ElementId::Name("history-tab".into()),
                 active_tab != GitPanelTab::Changes,
@@ -5633,41 +6123,43 @@ impl GitPanel {
     fn render_history_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
             let has_repo = self.active_repository.is_some();
-            let has_commits = self
-                .commit_history_shas
-                .as_ref()
-                .map_or(false, |shas| !shas.is_empty());
-            let is_loading = self.commit_history_shas.is_none() && has_repo;
-            if is_loading {
-                this.child(
-                    h_flex()
-                        .flex_1()
-                        .justify_center()
-                        .child(Label::new("Loading Commit History…").color(Color::Muted)),
-                )
-            } else if !has_repo || !has_commits {
-                this.child(
-                    h_flex()
-                        .flex_1()
-                        .justify_center()
-                        .child(Label::new("No commits yet").color(Color::Muted)),
-                )
-            } else {
-                match self.render_commit_history(window, cx) {
-                    Some(history) => this.child(history),
-                    None => this.child(
-                        h_flex()
-                            .flex_1()
-                            .justify_center()
-                            .child(Label::new("Failed to load commits").color(Color::Muted)),
-                    ),
+            match &self.commit_history {
+                _ if !has_repo => {
+                    this.child(Self::render_history_placeholder("No repository found"))
                 }
+                CommitHistory::Error(_) => this.child(Self::render_history_placeholder(
+                    "Failed to load commit history",
+                )),
+                CommitHistory::Loading => {
+                    this.child(Self::render_history_placeholder("Loading Commit History…"))
+                }
+                CommitHistory::Loaded(entries) if entries.is_empty() => {
+                    this.child(Self::render_history_placeholder("No commits yet"))
+                }
+                CommitHistory::Loaded(_) => match self.render_commit_history(window, cx) {
+                    Some(history) => this.child(history),
+                    None => this.child(Self::render_history_placeholder("Failed to load commits")),
+                },
             }
         })
     }
 
+    fn render_history_placeholder(message: &'static str) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .justify_center()
+            .child(Label::new(message).color(Color::Muted))
+    }
+
+    fn commit_history_entries(&self) -> &[CommitHistoryEntry] {
+        match &self.commit_history {
+            CommitHistory::Loaded(entries) => entries,
+            CommitHistory::Loading | CommitHistory::Error(_) => &[],
+        }
+    }
+
     fn select_next_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_shas.as_ref().map_or(0, Vec::len);
+        let count = self.commit_history_entries().len();
         if count == 0 {
             return;
         }
@@ -5683,7 +6175,7 @@ impl GitPanel {
     }
 
     fn select_previous_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_shas.as_ref().map_or(0, Vec::len);
+        let count = self.commit_history_entries().len();
         if count == 0 {
             return;
         }
@@ -5702,14 +6194,14 @@ impl GitPanel {
         let Some(index) = self.focused_history_entry else {
             return;
         };
-        let Some(sha) = self.commit_history_shas.as_ref().and_then(|s| s.get(index)) else {
+        let Some(entry) = self.commit_history_entries().get(index) else {
             return;
         };
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
         CommitView::open(
-            sha.to_string(),
+            entry.sha.to_string(),
             active_repository.downgrade(),
             self.workspace.clone(),
             None,
@@ -5717,6 +6209,37 @@ impl GitPanel {
             window,
             cx,
         );
+    }
+
+    fn deploy_history_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.commit_history_entries().get(index).cloned() else {
+            return;
+        };
+        let Some(repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let context_menu = commit_context_menu(
+            CommitContextMenuData {
+                sha: commit.sha,
+                tag_names: commit.tag_names,
+            },
+            CommitContextMenuSource::GitPanel,
+            None,
+            self.focus_handle.clone(),
+            Some(repository.downgrade()),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+        self.focused_history_entry = Some(index);
+        self.history_keyboard_nav = false;
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
     }
 
     fn activate_changes_tab(
@@ -5746,12 +6269,10 @@ impl GitPanel {
             GitPanelTab::History => {
                 self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
-                self.focused_history_entry = Some(0);
             }
             GitPanelTab::Changes => {
                 self.focus_handle.focus(window, cx);
-                self.commit_history_shas.take();
-                self.focused_history_entry = None;
+                self.set_commit_history(CommitHistory::Loading, cx);
                 self._repo_subscriptions.clear();
             }
         }
@@ -5763,12 +6284,9 @@ impl GitPanel {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+        let Some(log_source) = Self::commit_history_log_source(active_repository, cx) else {
             return;
         };
-
-        let branch_name = branch.name().to_string();
-        let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
         // Kick off the git log fetch so data is ready when the user switches to History.
@@ -5779,47 +6297,78 @@ impl GitPanel {
     }
 
     fn load_commit_history(&mut self, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
 
         if self._repo_subscriptions.is_empty() {
             self._repo_subscriptions.push(cx.subscribe(
-                active_repository,
+                &active_repository,
                 |this, _repo, event, cx| {
                     if let RepositoryEvent::GraphEvent(_, _) = event {
                         if this.active_tab == GitPanelTab::History {
-                            this.fetch_commit_history_shas(cx);
+                            this.fetch_commit_history_entries(cx);
                         }
                     }
                 },
             ));
             self._repo_subscriptions
-                .push(cx.observe(active_repository, |_this, _repo, cx| {
+                .push(cx.observe(&active_repository, |_this, _repo, cx| {
                     cx.notify();
                 }));
         }
 
-        self.fetch_commit_history_shas(cx);
+        self.fetch_commit_history_entries(cx);
     }
 
-    fn fetch_commit_history_shas(&mut self, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+    fn fetch_commit_history_entries(&mut self, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+        let Some(log_source) = Self::commit_history_log_source(&active_repository, cx) else {
+            // No HEAD commit at all (unborn/empty repository).
+            self.set_commit_history(CommitHistory::Loaded(Rc::from([])), cx);
             return;
         };
-
-        let branch_name = branch.name().to_string();
-        let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
-        self.commit_history_shas = Some(active_repository.update(cx, |repository, cx| {
+        let (entries, is_loading, error) = active_repository.update(cx, |repository, cx| {
             let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            response.commits.iter().map(|commit| commit.sha).collect()
-        }));
+            let entries: Rc<[CommitHistoryEntry]> = response
+                .commits
+                .iter()
+                .map(CommitHistoryEntry::from)
+                .collect();
+            (entries, response.is_loading, response.error)
+        });
+
+        self.set_commit_history(commit_history_from_response(entries, is_loading, error), cx);
+    }
+
+    fn set_commit_history(&mut self, commit_history: CommitHistory, cx: &mut Context<Self>) {
+        let changed = self.commit_history != commit_history;
+        self.commit_history = commit_history;
+        // Keep the focused entry within range as the history grows or clears.
+        let count = self.commit_history_entries().len();
+        let focused = self.focused_history_entry.unwrap_or(0);
+        self.focused_history_entry = (count > 0).then(|| focused.min(count - 1));
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn commit_history_log_source(
+        active_repository: &Entity<Repository>,
+        cx: &App,
+    ) -> Option<LogSource> {
+        let repository = active_repository.read(cx);
+        let head_commit = repository.head_commit.as_ref()?;
+        if let Some(branch) = repository.branch.as_ref() {
+            Some(LogSource::Branch(branch.name().to_string().into()))
+        } else {
+            Some(LogSource::Sha(head_commit.sha.as_ref().parse().ok()?))
+        }
     }
 
     fn git_remote(&self, cx: &mut App) -> Option<GitRemote> {
@@ -5839,17 +6388,25 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let shas = self.commit_history_shas.clone()?;
+        let CommitHistory::Loaded(entries) = &self.commit_history else {
+            return None;
+        };
+        let entries = entries.clone();
         let active_repository = self.active_repository.as_ref()?;
         let workspace = self.workspace.clone();
         let repo_weak = active_repository.downgrade();
-        let item_count = shas.len();
+        let item_count = entries.len();
         let commit_history_scroll_handle = self.commit_history_scroll_handle.clone();
         let remote = self.git_remote(cx);
 
         let focused_history_entry = self.focused_history_entry;
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
+        let has_context_menu = self.context_menu.is_some();
+        let context_menu_target_index = self
+            .context_menu
+            .as_ref()
+            .and_then(|context_menu| context_menu.target_entry_index);
 
         let ahead_count = active_repository
             .read(cx)
@@ -5877,10 +6434,11 @@ impl GitPanel {
 
                             let visible_data: Vec<Option<Arc<CommitData>>> = repo_weak
                                 .update(cx, |repository, cx| {
-                                    shas[range.clone()]
+                                    entries[range.clone()]
                                         .iter()
-                                        .map(|sha| {
-                                            match repository.fetch_commit_data(*sha, false, cx) {
+                                        .map(|entry| {
+                                            match repository.fetch_commit_data(entry.sha, false, cx)
+                                            {
                                                 CommitDataState::Loaded(data) => Some(data.clone()),
                                                 CommitDataState::Loading(_) => None,
                                             }
@@ -5889,16 +6447,17 @@ impl GitPanel {
                                 })
                                 .unwrap_or_default();
 
-                            shas[range.clone()]
+                            entries[range.clone()]
                                 .iter()
                                 .zip(visible_data)
                                 .enumerate()
-                                .map(|(ix, (sha, data))| {
+                                .map(|(ix, (entry, data))| {
                                     let index = range.start + ix;
-                                    let sha_string = sha.to_string();
+                                    let sha_string = entry.sha.to_string();
                                     let sha_shared: SharedString = sha_string.clone().into();
                                     let short_sha: SharedString =
                                         sha_string[..7.min(sha_string.len())].to_string().into();
+                                    let tag_names = entry.tag_names.clone();
 
                                     let (subject, author_name, author_email, timestamp): (
                                         SharedString,
@@ -5940,6 +6499,8 @@ impl GitPanel {
 
                                     let is_unpushed = index < ahead_count;
                                     let is_focused = focused_history_entry == Some(index);
+                                    let is_context_menu_target =
+                                        context_menu_target_index == Some(index);
                                     let workspace = workspace.clone();
                                     let repo = repo_weak.clone();
                                     let sha_for_click = sha_string;
@@ -5969,11 +6530,58 @@ impl GitPanel {
                                             },
                                         )
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                        .when(is_context_menu_target, |this| {
+                                            this.bg(cx.theme().colors().element_hover)
+                                        })
                                         .child(
                                             h_flex()
                                                 .gap_1()
                                                 .w_full()
+                                                .min_w_0()
                                                 .child(Label::new(subject).truncate())
+                                                .children((!tag_names.is_empty()).then(|| {
+                                                    let hidden_tag_count = tag_names
+                                                        .len()
+                                                        .saturating_sub(MAX_HISTORY_TAG_CHIPS);
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .min_w_0()
+                                                        .children(
+                                                            tag_names
+                                                                .iter()
+                                                                .take(MAX_HISTORY_TAG_CHIPS)
+                                                                .map(|tag_name| {
+                                                                    let tag_name = tag_name.clone();
+                                                                    Chip::new(tag_name.clone())
+                                                                        .truncate()
+                                                                        .when(
+                                                                            !has_context_menu,
+                                                                            |chip| {
+                                                                                chip.tooltip(
+                                                                                    Tooltip::text(
+                                                                                        tag_name,
+                                                                                    ),
+                                                                                )
+                                                                            },
+                                                                        )
+                                                                }),
+                                                        )
+                                                        .when(hidden_tag_count > 0, |this| {
+                                                            let hidden_tag_names = tag_names
+                                                                [MAX_HISTORY_TAG_CHIPS..]
+                                                                .join(", ");
+                                                            this.child(
+                                                                Chip::new(format!(
+                                                                    "+{hidden_tag_count}"
+                                                                ))
+                                                                .when(!has_context_menu, |chip| {
+                                                                    chip.tooltip(Tooltip::text(
+                                                                        hidden_tag_names,
+                                                                    ))
+                                                                }),
+                                                            )
+                                                        })
+                                                }))
                                                 .when(is_unpushed, |this| {
                                                     this.child(
                                                         Icon::new(IconName::ArrowUp)
@@ -6007,13 +6615,15 @@ impl GitPanel {
                                                         .color(Color::Muted),
                                                 ),
                                         )
-                                        .tooltip(move |_, cx| {
-                                            Tooltip::with_meta(
-                                                "View Commit",
-                                                None,
-                                                short_sha.clone(),
-                                                cx,
-                                            )
+                                        .when(!has_context_menu, |this| {
+                                            this.tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "View Commit",
+                                                    None,
+                                                    short_sha.clone(),
+                                                    cx,
+                                                )
+                                            })
                                         })
                                         .on_mouse_down(gpui::MouseButton::Left, {
                                             let git_panel = git_panel.clone();
@@ -6025,6 +6635,22 @@ impl GitPanel {
                                                         cx.notify();
                                                     })
                                                     .ok();
+                                            }
+                                        })
+                                        .on_mouse_down(MouseButton::Right, {
+                                            let git_panel = git_panel.clone();
+                                            move |event, window, cx| {
+                                                git_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.deploy_history_context_menu(
+                                                            event.position,
+                                                            index,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                                cx.stop_propagation();
                                             }
                                         })
                                         .on_click(move |_, window, cx| {
@@ -6079,7 +6705,7 @@ impl GitPanel {
                         .style(ButtonStyle::Outlined)
                         .on_click(move |_, _, cx| {
                             cx.defer(move |cx| {
-                                cx.dispatch_action(&BranchDiff);
+                                cx.dispatch_action(&DeployBranchDiff);
                             })
                         }),
                 )
@@ -6229,7 +6855,7 @@ impl GitPanel {
                 move |_, window, cx| {
                     git_panel
                         .update(cx, |this, cx| {
-                            this.toggle_staged_for_entry(&entry, window, cx);
+                            this.toggle_staged_for_entry(&entry, StageIntent::Toggle, window, cx);
                             cx.stop_propagation();
                         })
                         .ok();
@@ -6329,6 +6955,9 @@ impl GitPanel {
                                                 cx,
                                             ));
                                         }
+                                        Some(GitListEntry::EmptySection(section)) => {
+                                            items.push(this.render_empty_section(*section));
+                                        }
                                         None => {}
                                     }
                                 }
@@ -6337,43 +6966,15 @@ impl GitPanel {
                             }),
                         )
                         .when(is_tree_view, |list| {
-                            let indent_size = px(TREE_INDENT);
                             list.with_decoration(
-                                ui::indent_guides(indent_size, IndentGuideColors::panel(cx))
+                                ui::indent_guides(px(TREE_INDENT), IndentGuideColors::panel(cx))
+                                    .with_left_offset(INDENT_GUIDE_LEFT_OFFSET)
                                     .with_compute_indents_fn(
                                         cx.entity(),
                                         |this, range, _window, _cx| {
                                             this.compute_visible_depths(range)
                                         },
-                                    )
-                                    .with_render_fn(cx.entity(), |_, params, _, _| {
-                                        // Magic number to align the tree item is 3 here
-                                        // because we're using 12px as the left-side padding
-                                        // and 3 makes the alignment work with the bounding box of the icon
-                                        let left_offset = px(TREE_INDENT + 3_f32);
-                                        let indent_size = params.indent_size;
-                                        let item_height = params.item_height;
-
-                                        params
-                                            .indent_guides
-                                            .into_iter()
-                                            .map(|layout| {
-                                                let bounds = Bounds::new(
-                                                    point(
-                                                        layout.offset.x * indent_size + left_offset,
-                                                        layout.offset.y * item_height,
-                                                    ),
-                                                    size(px(1.), layout.length * item_height),
-                                                );
-                                                RenderedIndentGuide {
-                                                    bounds,
-                                                    layout,
-                                                    is_active: false,
-                                                    hitbox: None,
-                                                }
-                                            })
-                                            .collect()
-                                    }),
+                                    ),
                             )
                         })
                         .group("entries")
@@ -6402,7 +7003,7 @@ impl GitPanel {
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
-        Label::new(label.into()).color(color)
+        Label::new(label.into()).single_line().color(color)
     }
 
     fn list_item_height(&self) -> Rems {
@@ -6420,21 +7021,33 @@ impl GitPanel {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
         let checkbox_id: ElementId = ElementId::Name(format!("header_{}_checkbox", ix).into());
         let group_name: SharedString = format!("header_{}", ix).into();
-        let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
+        let stage_intent = StageIntent::for_section(section);
+        let toggle_state = stage_intent.checkbox_state(|| self.header_state(header.header));
+
+        let all_conflicts_resolved = section == Section::Conflict
+            && self.conflicted_count > 0
+            && self.conflicted_staged_count == self.conflicted_count;
+
+        let section_is_empty = !self
+            .entries
+            .get(ix + 1)
+            .is_some_and(GitListEntry::is_selectable);
 
         h_flex()
             .id(id)
-            .cursor_pointer()
             .group(group_name)
             .h(self.list_item_height())
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_2()
             .justify_between()
-            .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+            .when(!section_is_empty && !all_conflicts_resolved, |this| {
+                this.cursor_pointer()
+                    .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+            })
             .border_1()
             .border_r_2()
             .child(
@@ -6442,20 +7055,39 @@ impl GitPanel {
                     .color(Color::Muted)
                     .size(LabelSize::Small),
             )
-            .child(
-                Checkbox::new(checkbox_id, toggle_state)
-                    .disabled(!has_write_access)
+            .child(if section_is_empty {
+                gpui::Empty.into_any_element()
+            } else {
+                let checkbox = Checkbox::new(checkbox_id, toggle_state)
+                    .disabled(!has_write_access || all_conflicts_resolved)
                     .fill()
-                    .elevation(ElevationIndex::Surface),
-            )
+                    .elevation(ElevationIndex::Surface);
+                let tooltip_label = if all_conflicts_resolved {
+                    Some("All conflicts marked as resolved")
+                } else {
+                    match stage_intent {
+                        StageIntent::Stage => Some("Stage All"),
+                        StageIntent::Unstage => Some("Unstage All"),
+                        StageIntent::Toggle => None,
+                    }
+                };
+                if let Some(label) = tooltip_label {
+                    checkbox
+                        .tooltip(move |_window, cx| Tooltip::simple(label, cx))
+                        .into_any_element()
+                } else {
+                    checkbox.into_any_element()
+                }
+            })
             .on_click(move |_, window, cx| {
-                if !has_write_access {
+                if !has_write_access || section_is_empty || all_conflicts_resolved {
                     return;
                 }
 
                 weak.update(cx, |this, cx| {
                     this.toggle_staged_for_entry(
                         &GitListEntry::Header(GitHeaderEntry { header: section }),
+                        stage_intent,
                         window,
                         cx,
                     );
@@ -6463,6 +7095,26 @@ impl GitPanel {
                 })
                 .ok();
             })
+            .into_any_element()
+    }
+
+    fn render_empty_section(&self, section: Section) -> AnyElement {
+        let message = match section {
+            Section::Staged => "No staged changes yet",
+            Section::Unstaged => "No unstaged changes",
+            _ => "No changes",
+        };
+        h_flex()
+            .h(self.list_item_height())
+            .w_full()
+            .pl_2p5()
+            .pr_1()
+            .opacity(0.8)
+            .child(
+                Label::new(message)
+                    .color(Color::Placeholder)
+                    .size(LabelSize::Small),
+            )
             .into_any_element()
     }
 
@@ -6487,13 +7139,20 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let stage_intent = self.stage_intent_for_entry_index(ix);
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = if entry.status.staging().is_fully_staged() {
-            "Unstage File"
-        } else {
+        // Resolve against the pending-op-aware status (like the checkboxes do)
+        // so the menu label can't lag behind a just-clicked checkbox.
+        let repo = self.active_repository.as_ref().map(|repo| repo.read(cx));
+        let stage_title = if stage_intent.resolve_with(|| match repo {
+            Some(repo) => GitPanel::stage_status_for_entry(entry, repo),
+            None => entry.status.staging(),
+        }) {
             "Stage File"
+        } else {
+            "Unstage File"
         };
         let restore_title = if entry.status.is_created() {
             "Trash File"
@@ -6507,6 +7166,9 @@ impl GitPanel {
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
                 .separator()
+                .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
+                .action("Staged Changes", ViewStagedChanges.boxed_clone())
+                .separator()
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
@@ -6519,7 +7181,7 @@ impl GitPanel {
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
-                .action("Open Diff (File)", menu::SecondaryConfirm.boxed_clone())
+                .action("Open File Diff", menu::SecondaryConfirm.boxed_clone())
                 .action("View File", ViewFile.boxed_clone())
                 .when(!is_created, |context_menu| {
                     context_menu
@@ -6528,7 +7190,7 @@ impl GitPanel {
                 })
         });
         self.selected_entry = Some(ix);
-        self.set_context_menu(context_menu, position, window, cx);
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn deploy_panel_context_menu(
@@ -6553,22 +7215,28 @@ impl GitPanel {
             window,
             cx,
         );
-        self.set_context_menu(context_menu, position, window, cx);
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        window: &Window,
+        target_entry_index: Option<usize>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&context_menu.focus_handle(cx), cx);
+
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
             |this, _, _: &DismissEvent, window, cx| {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                    context_menu
+                        .menu
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
                 }) {
                     cx.focus_self(window);
                 }
@@ -6576,7 +7244,12 @@ impl GitPanel {
                 cx.notify();
             },
         );
-        self.context_menu = Some((context_menu, position, subscription));
+        self.context_menu = Some(GitPanelContextMenu {
+            menu: context_menu,
+            position,
+            target_entry_index,
+            _subscription: subscription,
+        });
         cx.notify();
     }
 
@@ -6641,14 +7314,19 @@ impl GitPanel {
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
-        let mut is_staged: ToggleState = match stage_status {
-            StageStatus::Staged => ToggleState::Selected,
-            StageStatus::Unstaged => ToggleState::Unselected,
-            StageStatus::PartiallyStaged => ToggleState::Indeterminate,
-        };
-        if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
-            is_staged = ToggleState::Selected;
-        }
+        let stage_intent = self.stage_intent_for_entry_index(ix);
+        let resolved_conflict = self.is_resolved_conflict(ix, cx);
+        let toggle_state = stage_intent.checkbox_state(|| {
+            if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
+                ToggleState::Selected
+            } else {
+                match stage_status {
+                    StageStatus::Staged => ToggleState::Selected,
+                    StageStatus::Unstaged => ToggleState::Unselected,
+                    StageStatus::PartiallyStaged => ToggleState::Indeterminate,
+                }
+            }
+        });
 
         let handle = cx.weak_entity();
 
@@ -6725,7 +7403,7 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_1p5()
             .border_1()
@@ -6754,20 +7432,24 @@ impl GitPanel {
                     .occlude()
                     .cursor_pointer()
                     .child(
-                        Checkbox::new(checkbox_id, is_staged)
-                            .disabled(!has_write_access)
+                        Checkbox::new(checkbox_id, toggle_state)
                             .fill()
                             .elevation(ElevationIndex::Surface)
+                            .disabled(!has_write_access || resolved_conflict)
                             .on_click_ext({
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
                                 move |_, click, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        if !has_write_access {
+                                        if !has_write_access || resolved_conflict {
                                             return;
                                         }
                                         if click.modifiers().shift {
-                                            this.stage_bulk(ix, cx);
+                                            this.stage_bulk(
+                                                ix,
+                                                stage_intent != StageIntent::Unstage,
+                                                cx,
+                                            );
                                         } else {
                                             let list_entry =
                                                 if GitPanelSettings::get_global(cx).tree_view {
@@ -6778,7 +7460,12 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(&list_entry, window, cx);
+                                            this.toggle_staged_for_entry(
+                                                &list_entry,
+                                                stage_intent,
+                                                window,
+                                                cx,
+                                            );
                                         }
                                         cx.stop_propagation();
                                     })
@@ -6786,13 +7473,12 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
-                                let tooltip_name = action.to_string();
-
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
+                                if resolved_conflict {
+                                    Tooltip::simple("Conflict marked as resolved", cx)
+                                } else {
+                                    let action = stage_intent.label(|| stage_status);
+                                    Tooltip::for_action(action, &ToggleStaged, cx)
+                                }
                             }),
                     ),
             )
@@ -6890,11 +7576,13 @@ impl GitPanel {
             StageStatus::PartiallyStaged
         };
 
-        let toggle_state: ToggleState = match stage_status {
+        let stage_intent = StageIntent::for_section(entry.key.section);
+        let resolved_conflict = self.is_resolved_conflict(ix, cx);
+        let toggle_state = stage_intent.checkbox_state(|| match stage_status {
             StageStatus::Staged => ToggleState::Selected,
             StageStatus::Unstaged => ToggleState::Unselected,
             StageStatus::PartiallyStaged => ToggleState::Indeterminate,
-        };
+        });
 
         let name_row = h_flex()
             .min_w_0()
@@ -6920,7 +7608,7 @@ impl GitPanel {
             .h(self.list_item_height())
             .min_w_0()
             .w_full()
-            .pl_3()
+            .pl_2p5()
             .pr_1()
             .gap_1p5()
             .justify_between()
@@ -6941,7 +7629,7 @@ impl GitPanel {
                     .cursor_pointer()
                     .child(
                         Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
+                            .disabled(!has_write_access || resolved_conflict)
                             .fill()
                             .elevation(ElevationIndex::Surface)
                             .on_click({
@@ -6949,11 +7637,12 @@ impl GitPanel {
                                 let this = cx.weak_entity();
                                 move |_, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        if !has_write_access {
+                                        if !has_write_access || resolved_conflict {
                                             return;
                                         }
                                         this.toggle_staged_for_entry(
                                             &GitListEntry::Directory(entry.clone()),
+                                            stage_intent,
                                             window,
                                             cx,
                                         );
@@ -6963,11 +7652,12 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
-                                Tooltip::simple(format!("{action} folder"), cx)
+                                if resolved_conflict {
+                                    Tooltip::simple("Conflicts marked as resolved", cx)
+                                } else {
+                                    let action = stage_intent.label(|| stage_status);
+                                    Tooltip::simple(format!("{action} Folder"), cx)
+                                }
                             }),
                     ),
             )
@@ -7115,14 +7805,17 @@ impl GitPanel {
         })
     }
 
-    fn stage_bulk(&mut self, mut index: usize, cx: &mut Context<'_, Self>) {
+    fn stage_bulk(&mut self, mut index: usize, stage: bool, cx: &mut Context<'_, Self>) {
         let Some(op) = self.bulk_staging.as_ref() else {
             return;
         };
         let Some(mut anchor_index) = self.entry_by_path(&op.anchor) else {
             return;
         };
-        if let Some(entry) = self.entries.get(index)
+        // Only a staged anchor survives the next entries refresh, so there's no
+        // point re-anchoring on the entry we're about to unstage.
+        if stage
+            && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
         {
             self.set_bulk_staging_anchor(entry.repo_path.clone(), cx);
@@ -7130,14 +7823,21 @@ impl GitPanel {
         if index < anchor_index {
             std::mem::swap(&mut index, &mut anchor_index);
         }
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let repo = repo.read(cx);
+        // Conflicts only change staging via their own explicit controls; a
+        // range sweep must neither mark them resolved nor un-resolve them.
         let entries = self
             .entries
             .get(anchor_index..=index)
             .unwrap_or_default()
             .iter()
             .filter_map(|entry| entry.status_entry().cloned())
+            .filter(|entry| !repo.had_conflict_on_last_merge_head_change(&entry.repo_path))
             .collect::<Vec<_>>();
-        self.change_file_stage(true, entries, cx);
+        self.change_file_stage(stage, entries, cx);
     }
 
     fn set_bulk_staging_anchor(&mut self, path: RepoPath, cx: &mut Context<'_, GitPanel>) {
@@ -7291,6 +7991,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_solo_diff))
             .on_action(cx.listener(Self::view_file))
+            .on_action(cx.listener(Self::view_unstaged_changes))
+            .on_action(cx.listener(Self::view_staged_changes))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
@@ -7301,6 +8003,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::set_sort_by_name))
             .on_action(cx.listener(Self::set_group_by_none))
             .on_action(cx.listener(Self::set_group_by_status))
+            .on_action(cx.listener(Self::set_group_by_staging))
             .on_action(cx.listener(Self::toggle_tree_view))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
@@ -7346,12 +8049,12 @@ impl Render for GitPanel {
                     })
                     .into_any_element(),
             )
-            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+            .children(self.context_menu.as_ref().map(|context_menu| {
                 deferred(
                     anchored()
-                        .position(*position)
+                        .position(context_menu.position)
                         .anchor(Anchor::TopLeft)
-                        .child(menu.clone()),
+                        .child(context_menu.menu.clone()),
                 )
                 .with_priority(1)
             }))
@@ -7525,6 +8228,7 @@ impl GitPanelMessageTooltip {
                         remote_url.as_deref(),
                         provider_registry,
                     )),
+                    tag_names: Vec::new(),
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
@@ -8062,20 +8766,23 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 
 #[cfg(test)]
 mod tests {
+    use editor::SplittableEditor;
     use git::{
         repository::repo_path,
-        status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
+        status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
+    use search::{BufferSearchBar, buffer_search::Deploy};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::any::TypeId;
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation};
 
     use super::*;
 
@@ -8090,6 +8797,61 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[test]
+    fn test_tree_view_directory_expansion_is_scoped_to_section() {
+        let entry = |path, status| GitStatusEntry {
+            repo_path: repo_path(path),
+            status,
+            staging: StageStatus::Unstaged,
+            diff_stat: None,
+        };
+        let mut state = TreeViewState::default();
+        let mut seen_directories = HashSet::default();
+
+        state.build_tree_entries(
+            Section::Tracked,
+            vec![entry("src/tracked.rs", StatusCode::Modified.worktree())],
+            &mut seen_directories,
+        );
+        state.build_tree_entries(
+            Section::New,
+            vec![entry("src/new.rs", FileStatus::Untracked)],
+            &mut seen_directories,
+        );
+
+        let tracked_key = TreeKey {
+            section: Section::Tracked,
+            path: repo_path("src"),
+        };
+        let new_key = TreeKey {
+            section: Section::New,
+            path: repo_path("src"),
+        };
+        state.expanded_dirs.insert(tracked_key.clone(), false);
+
+        let tracked_entries = state.build_tree_entries(
+            Section::Tracked,
+            vec![entry("src/tracked.rs", StatusCode::Modified.worktree())],
+            &mut seen_directories,
+        );
+        let new_entries = state.build_tree_entries(
+            Section::New,
+            vec![entry("src/new.rs", FileStatus::Untracked)],
+            &mut seen_directories,
+        );
+
+        assert_eq!(state.expanded_dirs.get(&tracked_key), Some(&false));
+        assert_eq!(state.expanded_dirs.get(&new_key), Some(&true));
+        assert!(matches!(
+            tracked_entries.first(),
+            Some((GitListEntry::Directory(entry), _)) if !entry.expanded
+        ));
+        assert!(matches!(
+            new_entries.first(),
+            Some((GitListEntry::Directory(entry), _)) if entry.expanded
+        ));
     }
 
     fn register_git_commit_language(project: &Entity<Project>, cx: &mut VisualTestContext) {
@@ -8360,6 +9122,47 @@ mod tests {
         assert_editor_opened_with_path(&workspace, Path::new("src/a/foo.rs"), &mut cx);
     }
 
+    async fn history_panel_for_project(
+        fs: Arc<FakeFs>,
+        cx: &mut TestAppContext,
+    ) -> Entity<GitPanel> {
+        let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        cx.run_until_parked();
+        panel
+    }
+
+    async fn wait_for_commit_history_to_settle(panel: &Entity<GitPanel>, cx: &mut TestAppContext) {
+        cx.condition(panel, |panel, _| {
+            !matches!(panel.commit_history, CommitHistory::Loading)
+        })
+        .await;
+    }
+
     #[test]
     fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
         let rpc_error = RpcError::from_proto(
@@ -8402,6 +9205,154 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_history_tab_stops_loading_for_unborn_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        fs.set_branch_name(dot_git, Some("main"));
+        fs.with_git_state(dot_git, false, |state| {
+            state.refs.remove("HEAD");
+        })
+        .unwrap();
+
+        let panel = history_panel_for_project(fs.clone(), cx).await;
+
+        wait_for_commit_history_to_settle(&panel, cx).await;
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.commit_history, CommitHistory::Loaded(Rc::from([])));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_loads_detached_head(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
+        fs.with_git_state(dot_git, false, |state| {
+            state.current_branch_name = None;
+            state.refs.insert("HEAD".into(), sha.to_string());
+            state.graph_commits = vec![Arc::new(git::repository::InitialGraphCommitData {
+                sha,
+                parents: SmallVec::new(),
+                ref_names: Vec::new(),
+            })];
+        })
+        .unwrap();
+
+        let panel = history_panel_for_project(fs.clone(), cx).await;
+
+        wait_for_commit_history_to_settle(&panel, cx).await;
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.commit_history,
+                CommitHistory::Loaded(Rc::from([CommitHistoryEntry {
+                    sha,
+                    tag_names: Vec::new(),
+                }]))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_surfaces_load_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
+        fs.with_git_state(dot_git, false, |state| {
+            state.current_branch_name = None;
+            state.refs.insert("HEAD".into(), sha.to_string());
+            state.graph_commits = vec![Arc::new(git::repository::InitialGraphCommitData {
+                sha,
+                parents: SmallVec::new(),
+                ref_names: Vec::new(),
+            })];
+        })
+        .unwrap();
+        fs.set_graph_error(dot_git, Some("simulated git log failure".into()));
+
+        let panel = history_panel_for_project(fs.clone(), cx).await;
+
+        wait_for_commit_history_to_settle(&panel, cx).await;
+        panel.read_with(cx, |panel, _| {
+            assert!(matches!(panel.commit_history, CommitHistory::Error(_)));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_without_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": {} })).await;
+
+        let panel = history_panel_for_project(fs.clone(), cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.commit_history, CommitHistory::Loading);
+        });
+    }
+
+    #[test]
+    fn test_commit_history_from_response() {
+        let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
+        let error = SharedString::from("git log failed");
+        let entries: Rc<[CommitHistoryEntry]> = Rc::from([CommitHistoryEntry {
+            sha,
+            tag_names: Vec::new(),
+        }]);
+        let no_entries: Rc<[CommitHistoryEntry]> = Rc::from([]);
+
+        // Commits win even while the fetch task still reports `is_loading`.
+        assert_eq!(
+            commit_history_from_response(entries.clone(), true, None),
+            CommitHistory::Loaded(entries.clone())
+        );
+        assert_eq!(
+            commit_history_from_response(entries.clone(), false, None),
+            CommitHistory::Loaded(entries.clone())
+        );
+        // Commits also take precedence over a concurrently reported error.
+        assert_eq!(
+            commit_history_from_response(entries.clone(), true, Some(error.clone())),
+            CommitHistory::Loaded(entries)
+        );
+
+        // With no commits a terminal error beats the loading state.
+        assert_eq!(
+            commit_history_from_response(no_entries.clone(), true, Some(error.clone())),
+            CommitHistory::Error(error.clone())
+        );
+        assert_eq!(
+            commit_history_from_response(no_entries.clone(), false, Some(error.clone())),
+            CommitHistory::Error(error)
+        );
+
+        // When no commits and no error, loading vs. finished-empty hinges on `is_loading`.
+        assert_eq!(
+            commit_history_from_response(no_entries.clone(), true, None),
+            CommitHistory::Loading
+        );
+        assert_eq!(
+            commit_history_from_response(no_entries.clone(), false, None),
+            CommitHistory::Loaded(no_entries)
+        );
+    }
+
+    #[gpui::test]
     async fn test_entry_worktree_paths(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -8430,7 +9381,6 @@ mod tests {
                 ("crates/util/util.rs", StatusCode::Modified.worktree()),
             ],
         );
-
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
         let window_handle =
@@ -8592,6 +9542,872 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_group_by_staging_section_membership_and_order(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.rs": "conflicted content",
+                "new.rs": "new content",
+                "partial.rs": "partial content",
+                "partial_new.rs": "partial new content",
+                "staged.rs": "staged content",
+                "unstaged.rs": "unstaged content",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "conflict.rs",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+                ("new.rs", FileStatus::Untracked),
+                (
+                    "partial.rs",
+                    TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                (
+                    "partial_new.rs",
+                    TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.head_contents.insert(
+                repo_path("partial.rs"),
+                "head one\nhead two\nhead three\nhead four".into(),
+            );
+            state
+                .index_contents
+                .insert(repo_path("partial.rs"), "index one\nindex two".into());
+        })
+        .expect("fake repository should exist");
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        let entries = panel.read_with(&mut cx, |panel, _| {
+            assert_eq!(panel.entry_count, 6);
+            assert_eq!(
+                panel
+                    .change_entries_by_path()
+                    .filter(|entry| entry.status.is_created())
+                    .map(|entry| &*entry.repo_path)
+                    .sorted()
+                    .collect::<Vec<_>>(),
+                [rel_path("new.rs"), rel_path("partial_new.rs")]
+            );
+
+            let partial_path = repo_path("partial.rs");
+            let projections = panel
+                .projected_entries_by_path
+                .get(&partial_path)
+                .expect("partially staged entry should have projections");
+            assert_eq!(
+                projections.as_slice(),
+                &[
+                    ProjectedChangeEntry {
+                        section: Section::Staged,
+                        index: 3,
+                    },
+                    ProjectedChangeEntry {
+                        section: Section::Unstaged,
+                        index: 8,
+                    },
+                ]
+            );
+            assert_eq!(
+                panel.stage_intent_for_entry_index(projections[0].index),
+                StageIntent::Unstage
+            );
+            assert_eq!(
+                panel.stage_intent_for_entry_index(projections[1].index),
+                StageIntent::Stage
+            );
+            assert_eq!(
+                panel.entries[projections[0].index]
+                    .status_entry()
+                    .and_then(|entry| entry.diff_stat),
+                Some(DiffStat {
+                    added: 2,
+                    deleted: 4,
+                })
+            );
+            assert_eq!(
+                panel.entries[projections[1].index]
+                    .status_entry()
+                    .and_then(|entry| entry.diff_stat),
+                Some(DiffStat {
+                    added: 1,
+                    deleted: 2,
+                })
+            );
+            panel.entries.clone()
+        });
+
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Conflict }),
+                Status(GitStatusEntry { status: FileStatus::Unmerged(..), staging: StageStatus::Unstaged, .. }),
+                Header(GitHeaderEntry { header: Section::Staged }),
+                Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Header(GitHeaderEntry { header: Section::Unstaged }),
+                Status(GitStatusEntry { status: FileStatus::Untracked, staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+        assert_entry_paths(
+            &entries,
+            &[
+                None,
+                Some("conflict.rs"),
+                None,
+                Some("partial.rs"),
+                Some("partial_new.rs"),
+                Some("staged.rs"),
+                None,
+                Some("new.rs"),
+                Some("partial.rs"),
+                Some("partial_new.rs"),
+                Some("unstaged.rs"),
+            ],
+        );
+
+        let worktree_id =
+            cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_entry_by_path(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("partial.rs").into_arc(),
+                },
+                window,
+                cx,
+            );
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.selected_entry,
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Staged)
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry =
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Unstaged);
+            panel.select_entry_by_path(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("partial.rs").into_arc(),
+                },
+                window,
+                cx,
+            );
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.selected_entry,
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Unstaged)
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, _window, _cx| {
+            panel.selected_entry =
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Staged);
+        });
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "conflict.rs",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+                ("new.rs", FileStatus::Untracked),
+                ("partial.rs", StatusCode::Modified.worktree()),
+                (
+                    "partial_new.rs",
+                    TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&cx, |panel, _| {
+            let selected_entry = panel
+                .get_selected_entry()
+                .and_then(GitListEntry::status_entry)
+                .expect("selected change should remain selected");
+            assert_eq!(selected_entry.repo_path, repo_path("partial.rs"));
+            assert_eq!(
+                panel.selected_entry,
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Unstaged)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_staging_conflict_mark_resolved_transition(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.rs": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+
+        let unresolved_status = FileStatus::Unmerged(UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        });
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("conflict.rs", unresolved_status)],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        let conflict_entry = panel.read_with(&cx, |panel, _| {
+            pretty_assertions::assert_matches!(
+                panel.entries.as_slice(),
+                &[
+                    Header(GitHeaderEntry {
+                        header: Section::Conflict
+                    }),
+                    Status(GitStatusEntry {
+                        status: FileStatus::Unmerged(..),
+                        ..
+                    }),
+                    Header(GitHeaderEntry {
+                        header: Section::Staged
+                    }),
+                    EmptySection(Section::Staged),
+                    Header(GitHeaderEntry {
+                        header: Section::Unstaged
+                    }),
+                    EmptySection(Section::Unstaged),
+                ],
+            );
+            panel
+                .entries
+                .get(1)
+                .and_then(GitListEntry::status_entry)
+                .cloned()
+                .expect("conflict entry should exist")
+        });
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.change_file_stage(true, vec![conflict_entry.clone()], cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _| {
+            assert!(matches!(
+                panel.entries.as_slice(),
+                [
+                    Header(GitHeaderEntry {
+                        header: Section::Conflict
+                    }),
+                    Status(GitStatusEntry {
+                        status: FileStatus::Unmerged(..),
+                        ..
+                    }),
+                    Header(GitHeaderEntry {
+                        header: Section::Staged
+                    }),
+                    EmptySection(Section::Staged),
+                    Header(GitHeaderEntry {
+                        header: Section::Unstaged
+                    }),
+                    EmptySection(Section::Unstaged),
+                ]
+            ));
+        });
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("conflict.rs", FileStatus::index(StatusCode::Modified))],
+        );
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&cx, |panel, _| {
+            pretty_assertions::assert_matches!(
+                panel.entries.as_slice(),
+                &[
+                    Header(GitHeaderEntry {
+                        header: Section::Staged
+                    }),
+                    Status(GitStatusEntry {
+                        staging: StageStatus::Staged,
+                        ..
+                    }),
+                    Header(GitHeaderEntry {
+                        header: Section::Unstaged
+                    }),
+                    EmptySection(Section::Unstaged),
+                ],
+            );
+            assert_eq!(panel.entry_count, 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_resolved_conflict_is_locked_against_unstaging(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.rs": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+                "staged.rs": "staged content",
+                "unstaged.rs": "unstaged content",
+            }),
+        )
+        .await;
+
+        let unresolved_status = FileStatus::Unmerged(UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        });
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("conflict.rs", unresolved_status),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+        // With MERGE_HEAD present (an in-progress merge), a resolved conflict
+        // keeps rendering under the Conflict section instead of moving to Staged.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.refs.insert("MERGE_HEAD".into(), "merge-sha".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        fn stage_status_of(
+            panel: &Entity<GitPanel>,
+            cx: &VisualTestContext,
+            path: &str,
+        ) -> StageStatus {
+            panel.read_with(cx, |panel, cx| {
+                let repo = panel
+                    .active_repository
+                    .as_ref()
+                    .expect("active repository should exist")
+                    .read(cx);
+                let entry = panel
+                    .change_entries_by_path()
+                    .find(|entry| entry.repo_path == repo_path(path))
+                    .expect("entry should exist")
+                    .clone();
+                GitPanel::stage_status_for_entry(&entry, repo)
+            })
+        }
+
+        let conflict_entry = panel.read_with(&cx, |panel, _| {
+            pretty_assertions::assert_matches!(
+                panel.entries.as_slice(),
+                &[
+                    Header(GitHeaderEntry {
+                        header: Section::Conflict
+                    }),
+                    Status(GitStatusEntry {
+                        status: FileStatus::Unmerged(..),
+                        ..
+                    }),
+                    Header(GitHeaderEntry {
+                        header: Section::Staged
+                    }),
+                    Status(GitStatusEntry {
+                        staging: StageStatus::Staged,
+                        ..
+                    }),
+                    Header(GitHeaderEntry {
+                        header: Section::Unstaged
+                    }),
+                    Status(GitStatusEntry {
+                        staging: StageStatus::Unstaged,
+                        ..
+                    }),
+                ],
+            );
+            panel
+                .entries
+                .get(1)
+                .and_then(GitListEntry::status_entry)
+                .cloned()
+                .expect("conflict entry should exist")
+        });
+
+        // Resolve the conflict: simulate what `git add` does to the status.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(
+                &GitListEntry::Status(conflict_entry.clone()),
+                StageIntent::Toggle,
+                window,
+                cx,
+            );
+        });
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("conflict.rs", FileStatus::index(StatusCode::Modified)),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        // The resolved conflict stays in the Conflict section, staged.
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.section_for_entry_index(
+                    panel
+                        .entry_by_path(&repo_path("conflict.rs"))
+                        .expect("conflict entry should exist")
+                ),
+                Some(Section::Conflict)
+            );
+            assert!(
+                panel.is_resolved_conflict(
+                    panel.entry_by_path(&repo_path("conflict.rs")).unwrap(),
+                    cx
+                )
+            );
+        });
+        assert_eq!(
+            stage_status_of(&panel, &cx, "conflict.rs"),
+            StageStatus::Staged
+        );
+
+        // The keyboard toggle must not unstage a resolved conflict.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = panel.entry_by_path(&repo_path("conflict.rs"));
+            panel.toggle_staged_for_selected(&ToggleStaged, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            stage_status_of(&panel, &cx, "conflict.rs"),
+            StageStatus::Staged
+        );
+
+        // "Unstage All" on the Staged header must skip resolved conflicts while
+        // still unstaging regular staged files.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(
+                &GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Staged,
+                }),
+                StageIntent::Unstage,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            stage_status_of(&panel, &cx, "staged.rs"),
+            StageStatus::Unstaged
+        );
+        assert_eq!(
+            stage_status_of(&panel, &cx, "conflict.rs"),
+            StageStatus::Staged
+        );
+
+        // A shift-click range sweep anchored at the conflict must skip it too.
+        let staged_entry = panel.read_with(&cx, |panel, _| {
+            panel
+                .change_entries_by_path()
+                .find(|entry| entry.repo_path == repo_path("staged.rs"))
+                .cloned()
+                .expect("staged entry should exist")
+        });
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.change_file_stage(true, vec![staged_entry], cx);
+        });
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.set_bulk_staging_anchor(repo_path("conflict.rs"), cx);
+            let last_index = panel.entries.len() - 1;
+            panel.stage_bulk(last_index, false, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            stage_status_of(&panel, &cx, "staged.rs"),
+            StageStatus::Unstaged
+        );
+        assert_eq!(
+            stage_status_of(&panel, &cx, "conflict.rs"),
+            StageStatus::Staged
+        );
+    }
+
+    #[gpui::test]
+    async fn test_group_by_staging_primary_action_stages_partially_staged_files(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "partial.rs": "partial content",
+                "staged.rs": "staged content",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "partial.rs",
+                    TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&mut cx, |panel, _| {
+            assert_eq!(panel.entry_count, 2);
+            assert_eq!(panel.total_staged_count(), panel.entry_count);
+            assert!(panel.has_unstaged_changes());
+            assert!(panel.primary_changes_action_stages());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_group_by_staging_open_diff_uses_section_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(search::buffer_search::init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "partial.rs": "partial content",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "partial.rs",
+                TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry =
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Staged);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<StagedDiff>(cx).is_some());
+            assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
+            assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 0);
+            assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let search_bar = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar.clone(), window, cx)
+                });
+            });
+            search_bar
+        });
+
+        let split_editor = workspace.read_with(&cx, |workspace, cx| {
+            let solo_diff = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("SoloDiffView should be active");
+            let searchable = solo_diff
+                .read(cx)
+                .as_searchable(&solo_diff, cx)
+                .expect("SoloDiffView should expose its editor to buffer search");
+            let split_editor = searchable
+                .act_as_type(TypeId::of::<SplittableEditor>(), cx)
+                .and_then(|entity| entity.downcast::<SplittableEditor>().ok())
+                .expect("the split editor should be the searchable item");
+            assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 1);
+            split_editor
+        });
+
+        let mut search_bar_events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
+        cx.dispatch_action(Deploy::find());
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!search_bar.read(cx).is_dismissed()));
+        assert_eq!(
+            search_bar_events
+                .try_recv()
+                .expect("search bar location event"),
+            ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary)
+        );
+
+        search_bar
+            .update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.search("partial", None, false, window, cx)
+            })
+            .await
+            .expect("buffer search should complete");
+
+        let focused_editor = cx.read(|cx| split_editor.read(cx).focused_editor().clone());
+        focused_editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.search_background_highlights(cx).len(), 1);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry =
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Unstaged);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<UnstagedDiff>(cx).is_some());
+            assert_eq!(workspace.items_of_type::<StagedDiff>(cx).count(), 1);
+            assert_eq!(workspace.items_of_type::<UnstagedDiff>(cx).count(), 1);
+            assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+    }
+
+    #[gpui::test]
     async fn test_bulk_staging(cx: &mut TestAppContext) {
         use GitListEntry::*;
 
@@ -8689,7 +10505,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -8738,7 +10554,7 @@ mod tests {
 
         let third_status_entry = entries[4].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&third_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&third_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -8900,7 +10716,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.update(|_window, cx| {
@@ -8968,7 +10784,7 @@ mod tests {
 
         let third_status_entry = entries[4].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&third_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&third_status_entry, StageIntent::Toggle, window, cx);
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -9776,14 +11592,14 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&src_key.path).copied(), Some(false));
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(false));
         });
 
         let worktree_id =
             cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
         let project_path = ProjectPath {
             worktree_id,
-            path: RelPath::unix("src/a/foo.rs").unwrap().into_arc(),
+            path: RelPath::from_unix_str("src/a/foo.rs").unwrap().into_arc(),
         };
 
         panel.update_in(cx, |panel, window, cx| {
@@ -9795,7 +11611,7 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&src_key.path).copied(), Some(true));
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(true));
 
             let selected_ix = panel.selected_entry.expect("selection should be set");
             assert!(state.logical_indices.contains(&selected_ix));
@@ -9904,7 +11720,7 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&foo_key.path).copied(), Some(false));
+            assert_eq!(state.expanded_dirs.get(&foo_key).copied(), Some(false));
 
             let foo_idx = panel
                 .entries
@@ -10111,7 +11927,7 @@ mod tests {
 
         let first_status_entry = entries[1].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&first_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -10148,7 +11964,7 @@ mod tests {
 
         let second_status_entry = entries[3].clone();
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -10185,7 +12001,7 @@ mod tests {
         assert!(message.is_none());
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&first_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&first_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -10221,7 +12037,7 @@ mod tests {
         assert_eq!(message, Some("Create untracked".to_string()));
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&second_status_entry, window, cx);
+            panel.toggle_staged_for_entry(&second_status_entry, StageIntent::Toggle, window, cx);
         });
 
         cx.read(|cx| {
@@ -10253,6 +12069,19 @@ mod tests {
         //
         // The commit message should now read:
         // "Update tracked"
+        let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
+        assert_eq!(message, Some("Update tracked".to_string()));
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                });
+            });
+        });
+        await_git_panel_entries(&panel, cx).await;
+
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
     }

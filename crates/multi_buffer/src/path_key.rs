@@ -49,7 +49,7 @@ impl PathKey {
         } else {
             Self {
                 sort_prefix: None,
-                path: RelPath::unix(&buffer.entity_id().to_string())
+                path: RelPath::from_unix_str(&buffer.entity_id().to_string())
                     .unwrap()
                     .into_arc(),
             }

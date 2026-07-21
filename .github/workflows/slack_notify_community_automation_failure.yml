@@ -18,6 +18,9 @@ on:
       - "Guild New PR Notification"
     types: [completed]
 
+permissions:
+  contents: read
+
 jobs:
   notify-slack:
     if: >-
