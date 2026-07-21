@@ -38,6 +38,7 @@ use language_model::{
 };
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
@@ -50,6 +51,7 @@ use super::elicitation::{
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+const MAX_MIN_PANEL_CONTENT_WIDTH: Pixels = px(360.);
 
 #[derive(Default)]
 struct ThreadFeedbackState {
@@ -4295,6 +4297,7 @@ impl ThreadView {
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
+                    .min_w_0()
                     .when(fills_container, |this| this.h_full())
                     .px_2()
                     .flex_shrink_1()
@@ -4374,6 +4377,28 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    pub(crate) fn minimum_panel_width(&self, window: &Window, cx: &App) -> Pixels {
+        let message_editor = self.message_editor.read(cx);
+        let placeholder = message_editor.placeholder_text();
+        let settings = ThemeSettings::get_global(cx);
+        let text_run = TextRun {
+            len: placeholder.len(),
+            font: settings.buffer_font.clone(),
+            ..Default::default()
+        };
+        let placeholder_width = window
+            .text_system()
+            .shape_line(
+                placeholder.into(),
+                settings.agent_buffer_font_size(cx),
+                &[text_run],
+                None,
+            )
+            .width;
+
+        placeholder_width.min(MAX_MIN_PANEL_CONTENT_WIDTH) + rems(4.).to_pixels(window.rem_size())
     }
 
     fn render_queue_steer_button(

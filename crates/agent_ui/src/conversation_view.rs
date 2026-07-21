@@ -635,6 +635,11 @@ impl ConversationView {
         }
     }
 
+    pub(crate) fn minimum_panel_width(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        self.active_thread()
+            .map(|thread| thread.read(cx).minimum_panel_width(window, cx))
+    }
+
     pub fn pending_tool_call<'a>(
         &'a self,
         cx: &'a App,

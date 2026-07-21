@@ -4991,7 +4991,14 @@ impl Panel for AgentPanel {
 
     fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => Some(MIN_PANEL_WIDTH),
+            DockPosition::Left | DockPosition::Right => Some(
+                self.active_conversation_view()
+                    .and_then(|conversation_view| {
+                        conversation_view.read(cx).minimum_panel_width(window, cx)
+                    })
+                    .unwrap_or(MIN_PANEL_WIDTH)
+                    .max(MIN_PANEL_WIDTH),
+            ),
             DockPosition::Bottom => None,
         }
     }

@@ -202,6 +202,7 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
+    placeholder: SharedString,
     workspace: WeakEntity<Workspace>,
     session_capabilities: SharedSessionCapabilities,
     local_commands: SharedLocalCommands,
@@ -459,6 +460,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let placeholder = SharedString::from(placeholder);
         let language_registry = project
             .upgrade()
             .map(|project| project.read(cx).languages().clone());
@@ -474,7 +476,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text(placeholder, window, cx);
+            editor.set_placeholder_text(&placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
@@ -603,6 +605,7 @@ impl MessageEditor {
 
         Self {
             editor,
+            placeholder,
             mention_set,
             workspace,
             session_capabilities,
@@ -616,6 +619,10 @@ impl MessageEditor {
 
     pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
         *self.local_commands.write() = commands;
+    }
+
+    pub fn placeholder_text(&self) -> &str {
+        &self.placeholder
     }
 
     pub fn set_session_capabilities(
