@@ -839,6 +839,14 @@ impl SyntaxSnapshot {
                                 text,
                             );
                         }
+                        let parent_included_ranges: Vec<Range<usize>> = tree
+                            .included_ranges()
+                            .into_iter()
+                            .map(|range| {
+                                (range.start_byte + step_start_byte)
+                                    ..(range.end_byte + step_start_byte)
+                            })
+                            .collect();
                         get_injections(
                             config,
                             text,
@@ -847,6 +855,7 @@ impl SyntaxSnapshot {
                                 step_start_byte,
                                 step_start_point.to_ts_point(),
                             ),
+                            &parent_included_ranges,
                             registry,
                             step.depth + 1,
                             &expanded_ranges,
@@ -1552,12 +1561,38 @@ fn parse_text(
     })
 }
 
+fn clip_range_to_parent(
+    range: tree_sitter::Range,
+    parent_included_ranges: &[Range<usize>],
+    text: &BufferSnapshot,
+    out: &mut Vec<tree_sitter::Range>,
+) {
+    for parent in parent_included_ranges {
+        let start = range.start_byte.max(parent.start);
+        let end = range.end_byte.min(parent.end);
+        if start >= end {
+            continue;
+        }
+        if start == range.start_byte && end == range.end_byte {
+            out.push(range);
+        } else {
+            out.push(tree_sitter::Range {
+                start_byte: start,
+                end_byte: end,
+                start_point: text.offset_to_point(start).to_ts_point(),
+                end_point: text.offset_to_point(end).to_ts_point(),
+            });
+        }
+    }
+}
+
 #[ztracing::instrument(skip_all)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
     outer_range: Range<Anchor>,
     node: Node,
+    parent_included_ranges: &[Range<usize>],
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
@@ -1585,10 +1620,15 @@ fn get_injections(
         query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end + 1);
         let mut matches = query_cursor.matches(&config.query, node, TextProvider(text.as_rope()));
         while let Some(mat) = matches.next() {
-            let content_ranges = mat
-                .nodes_for_capture_index(config.content_capture_ix)
-                .map(|node| node.range())
-                .collect::<Vec<_>>();
+            let mut content_ranges = Vec::new();
+            for node in mat.nodes_for_capture_index(config.content_capture_ix) {
+                clip_range_to_parent(
+                    node.range(),
+                    parent_included_ranges,
+                    text,
+                    &mut content_ranges,
+                );
+            }
             if content_ranges.is_empty() {
                 continue;
             }
