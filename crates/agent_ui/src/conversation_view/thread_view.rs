@@ -4298,6 +4298,7 @@ impl ThreadView {
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
+                    .min_w_0()
                     .when(fills_container, |this| this.h_full())
                     .px_2()
                     .flex_shrink_1()
@@ -4349,11 +4350,14 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .w_full()
+                            .min_w_0()
                             .flex_none()
                             .flex_wrap()
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
+                                    .flex_wrap()
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
@@ -4362,6 +4366,7 @@ impl ThreadView {
                             )
                             .child(
                                 h_flex()
+                                    .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
