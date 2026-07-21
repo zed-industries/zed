@@ -9618,6 +9618,9 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
         .update(cx, |project, cx| project.create_buffer(None, true, cx))
         .await
         .unwrap();
+    buffer.update(cx, |buffer, _| {
+        buffer.set_content_language_detection_enabled(true);
+    });
     let window = cx.add_window(|window, cx| {
         let editor = Editor::for_buffer(buffer.clone(), None, window, cx);
         window.focus(&editor.focus_handle(cx), cx);
