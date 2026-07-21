@@ -2453,6 +2453,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "breadpaper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gpui",
+ "log",
+ "menu",
+ "project",
+ "serde",
+ "tempfile",
+ "toml 0.8.23",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "brush-parser"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -23162,6 +23180,7 @@ dependencies = [
  "auto_update",
  "auto_update_ui",
  "breadcrumbs",
+ "breadpaper",
  "call",
  "channel",
  "chrono",

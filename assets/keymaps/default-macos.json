@@ -710,7 +710,7 @@
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::Toggle",
       "cmd-1": ["workspace::ActivatePane", 0],
-      "cmd-2": ["workspace::ActivatePane", 1],
+      "cmd-2": "breadpaper::ToggleFocus",
       "cmd-3": ["workspace::ActivatePane", 2],
       "cmd-4": ["workspace::ActivatePane", 3],
       "cmd-5": ["workspace::ActivatePane", 4],
