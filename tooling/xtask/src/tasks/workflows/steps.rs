@@ -177,6 +177,7 @@ pub fn setup_node() -> Step<Use> {
     )
     .add_with(("node-version", "24"))
     .add_with(("check-latest", true))
+    .add_with(("package-manager-cache", false))
 }
 
 pub fn setup_sentry() -> Step<Use> {
@@ -784,6 +785,7 @@ pub fn download_artifact() -> DownloadArtifactStep {
 pub(crate) enum TokenPermissions {
     Contents,
     Issues,
+    Members,
     PullRequests,
     Workflows,
 }
@@ -793,38 +795,70 @@ impl TokenPermissions {
         match self {
             TokenPermissions::Contents => "permission-contents",
             TokenPermissions::Issues => "permission-issues",
+            TokenPermissions::Members => "permission-members",
             TokenPermissions::PullRequests => "permission-pull-requests",
             TokenPermissions::Workflows => "permission-workflows",
         }
     }
 }
 
-pub(crate) struct GenerateAppToken<'a> {
+pub(crate) struct Unset;
+
+pub(crate) struct GenerateAppToken<'a, Target = Unset, Permissions = Unset> {
     job_name: String,
     app_id: &'a str,
     app_secret: &'a str,
-    repository_target: Option<RepositoryTarget>,
-    permissions: Option<Vec<(TokenPermissions, Level)>>,
+    repository_target: Target,
+    permissions: Permissions,
 }
 
-impl<'a> GenerateAppToken<'a> {
-    pub fn for_repository(self, repository_target: RepositoryTarget) -> Self {
-        Self {
-            repository_target: Some(repository_target),
-            ..self
-        }
-    }
-
-    pub fn with_permissions(self, permissions: impl Into<Vec<(TokenPermissions, Level)>>) -> Self {
-        Self {
-            permissions: Some(permissions.into()),
-            ..self
+impl<'a, Permissions> GenerateAppToken<'a, Unset, Permissions> {
+    pub fn for_repository(
+        self,
+        repository_target: RepositoryTarget,
+    ) -> GenerateAppToken<'a, RepositoryTarget, Permissions> {
+        GenerateAppToken {
+            job_name: self.job_name,
+            app_id: self.app_id,
+            app_secret: self.app_secret,
+            repository_target,
+            permissions: self.permissions,
         }
     }
 }
 
-impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
-    fn from(token: GenerateAppToken<'a>) -> Self {
+impl<'a, Target> GenerateAppToken<'a, Target, Unset> {
+    pub fn with_permissions(
+        self,
+        permissions: impl Into<Vec<(TokenPermissions, Level)>>,
+    ) -> GenerateAppToken<'a, Target, Vec<(TokenPermissions, Level)>> {
+        GenerateAppToken {
+            job_name: self.job_name,
+            app_id: self.app_id,
+            app_secret: self.app_secret,
+            repository_target: self.repository_target,
+            permissions: permissions.into(),
+        }
+    }
+}
+
+impl<'a> From<GenerateAppToken<'a, RepositoryTarget, Vec<(TokenPermissions, Level)>>>
+    for (Step<Use>, StepOutput)
+{
+    fn from(token: GenerateAppToken<'a, RepositoryTarget, Vec<(TokenPermissions, Level)>>) -> Self {
+        let input = token.permissions.into_iter().fold(
+            Input::default()
+                .add("app-id", token.app_id)
+                .add("private-key", token.app_secret)
+                .add("owner", token.repository_target.owner)
+                .add("repositories", token.repository_target.repositories),
+            |input, (permission, level)| {
+                input.add(
+                    permission.environment_name(),
+                    serde_json::to_value(&level).unwrap_or_default(),
+                )
+            },
+        );
         let step = Step::new(token.job_name)
             .uses(
                 "actions",
@@ -832,35 +866,7 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
                 "f8d387b68d61c58ab83c6c016672934102569859",
             )
             .id("generate-token")
-            .add_with(
-                Input::default()
-                    .add("app-id", token.app_id)
-                    .add("private-key", token.app_secret)
-                    .when_some(
-                        token.repository_target,
-                        |input,
-                         RepositoryTarget {
-                             owner,
-                             repositories,
-                         }| {
-                            input
-                                .when_some(owner, |input, owner| input.add("owner", owner))
-                                .when_some(repositories, |input, repositories| {
-                                    input.add("repositories", repositories)
-                                })
-                        },
-                    )
-                    .when_some(token.permissions, |input, permissions| {
-                        permissions
-                            .into_iter()
-                            .fold(input, |input, (permission, level)| {
-                                input.add(
-                                    permission.environment_name(),
-                                    serde_json::to_value(&level).unwrap_or_default(),
-                                )
-                            })
-                    }),
-            );
+            .add_with(input);
 
         let generated_token = StepOutput::new(&step, "token");
         (step, generated_token)
@@ -868,23 +874,23 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
 }
 
 pub(crate) struct RepositoryTarget {
-    owner: Option<String>,
-    repositories: Option<String>,
+    owner: String,
+    repositories: String,
 }
 
 impl RepositoryTarget {
     pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
         Self {
-            owner: Some(owner.to_string()),
-            repositories: Some(repositories.join("\n")),
+            owner: owner.to_string(),
+            repositories: repositories.join("\n"),
         }
     }
 
     pub fn current() -> Self {
-        Self {
-            owner: None,
-            repositories: None,
-        }
+        Self::new(
+            "${{ github.repository_owner }}",
+            &["${{ github.event.repository.name }}"],
+        )
     }
 }
 
@@ -907,8 +913,8 @@ fn generate_token_with_job_name<'a>(
         job_name: function_name(1),
         app_id: app_id_source,
         app_secret: app_secret_source,
-        repository_target: None,
-        permissions: None,
+        repository_target: Unset,
+        permissions: Unset,
     }
 }
 
