@@ -768,9 +768,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
         "(source_file (expression_statement (block)))"
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(json_lang())), cx)
-    });
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(json_lang()), cx));
     cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
@@ -1434,9 +1432,7 @@ fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut Ap
         "fixture should exceed the bounded tree-sitter query window"
     );
 
-    let buffer = cx.new(|cx| {
-        Buffer::local(text.clone(), cx).with_language(Arc::new(json_lang_with_brackets()), cx)
-    });
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(json_lang(), cx));
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     let late_open_offset = property_object_open_offsets[400];
@@ -4438,38 +4434,6 @@ fn erb_lang() -> Language {
         "#,
     )
     .unwrap()
-}
-
-fn json_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Json".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_json::LANGUAGE.into()),
-    )
-}
-
-fn json_lang_with_brackets() -> Language {
-    json_lang()
-        .with_brackets_query(
-            r#"
-            ("[" @open
-              "]" @close)
-
-            ("{" @open
-              "}" @close)
-
-            (("\"" @open
-              "\"" @close)
-              (#set! rainbow.exclude))
-            "#,
-        )
-        .expect("valid JSON brackets query")
 }
 
 fn color_index_for_open(

@@ -4858,7 +4858,8 @@ impl BufferSnapshot {
             // only traverse the syntax tree spine around each edge.
             let boundary_queries = [chunk_range.start, chunk_range.end].map(|offset| {
                 (
-                    offset.saturating_sub(1)..offset.saturating_add(1).min(self.len()),
+                    self.clip_offset(offset.saturating_sub(1), Bias::Left)
+                        ..self.clip_offset(offset.saturating_add(1), Bias::Right),
                     TreeSitterOptions::default(),
                 )
             });
