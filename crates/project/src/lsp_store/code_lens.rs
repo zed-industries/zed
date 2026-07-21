@@ -144,37 +144,27 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let existing_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_servers = self
+            .relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .collect::<HashSet<_>>();
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_lens) = &mut lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let missing_servers = existing_servers.as_ref().map(|current_servers| {
-                        cached_lens
-                            .lens
-                            .retain(|server_id, _| current_servers.contains(server_id));
-                        current_servers
-                            .iter()
-                            .copied()
-                            .filter(|server_id| !cached_lens.lens.contains_key(server_id))
-                            .collect::<HashSet<_>>()
-                    });
-                    match missing_servers {
-                        Some(missing_servers) if !missing_servers.is_empty() => {
-                            servers_to_query = Some(missing_servers);
-                        }
-                        _ => {
-                            return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens))))
-                                .shared();
-                        }
+                    cached_lens
+                        .lens
+                        .retain(|server_id, _| current_servers.contains(server_id));
+                    let missing_servers = current_servers
+                        .iter()
+                        .copied()
+                        .filter(|server_id| !cached_lens.lens.contains_key(server_id))
+                        .collect::<HashSet<_>>();
+                    if missing_servers.is_empty() {
+                        return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
                     }
+                    servers_to_query = Some(missing_servers);
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
                     if !version_queried_for.changed_since(updating_for) {
                         return running_update.clone();
@@ -212,6 +202,7 @@ impl LspStore {
                                     .lsp_data
                                     .get_mut(&buffer_id)
                                     .and_then(|lsp_data| lsp_data.code_lens.as_mut())
+                                    && lens_lsp_data.generation == query_generation
                                 {
                                     lens_lsp_data.update = None;
                                 }

@@ -49,7 +49,10 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use unindent::Unindent as _;
 use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
@@ -1185,6 +1188,146 @@ async fn test_remote_code_lens_fetch_after_lsp_starts(
     assert_eq!(
         actions.values().next().unwrap().lsp_action.title(),
         "1 reference",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_code_lens_refetch_after_refresh(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    let lens_generation = Arc::new(AtomicUsize::new(0));
+    let mut fake_lsp_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            capabilities,
+            Some(Box::new({
+                let lens_generation = lens_generation.clone();
+                move |fake_lsp| {
+                    let lens_generation = lens_generation.clone();
+                    fake_lsp.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                        move |_, _| {
+                            let generation = lens_generation.load(Ordering::Acquire);
+                            async move {
+                                Ok(Some(vec![lsp::CodeLens {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 9),
+                                    ),
+                                    command: Some(lsp::Command {
+                                        title: format!("{generation} references"),
+                                        command: "lens_cmd".to_string(),
+                                        arguments: None,
+                                    }),
+                                    data: None,
+                                }]))
+                            }
+                        },
+                    );
+                }
+            })),
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let fake_lsp = fake_lsp_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap()
+        .expect("Should have code lens actions after the initial fetch");
+    assert_eq!(
+        actions
+            .values()
+            .map(|action| action.lsp_action.title().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["0 references".to_string()],
+        "Expected the initial code lens data on the client",
+    );
+
+    lens_generation.store(1, Ordering::Release);
+    fake_lsp
+        .request::<lsp::request::CodeLensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap()
+        .expect("Should have code lens actions after the refresh");
+    assert_eq!(
+        actions
+            .values()
+            .map(|action| action.lsp_action.title().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["1 references".to_string()],
+        "Expected the client to re-fetch code lens data after the server-initiated refresh, without any buffer edits",
     );
 }
 

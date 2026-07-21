@@ -18,7 +18,7 @@ use util::ResultExt;
 
 use crate::DocumentSymbol;
 use crate::lsp_command::{GetDocumentSymbols, LspCommand as _};
-use crate::lsp_store::LspStore;
+use crate::lsp_store::{LspStore, LspStoreEvent};
 use crate::project_settings::ProjectSettings;
 
 pub(super) type DocumentSymbolsTask =
@@ -58,7 +58,7 @@ impl LspStore {
             }
         }
 
-        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentSymbols {
+        cx.emit(LspStoreEvent::RefreshDocumentSymbols {
             server_id: for_server,
         });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
@@ -101,47 +101,38 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_servers = self
+            .relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .collect::<HashSet<_>>();
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id)
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
             && let Some(cached) = &mut lsp_data.document_symbols
         {
-            let missing_servers = current_language_servers.as_ref().map(|current_servers| {
-                cached
-                    .symbols
-                    .retain(|server_id, _| current_servers.contains(server_id));
-                current_servers
-                    .iter()
-                    .copied()
-                    .filter(|server_id| !cached.symbols.contains_key(server_id))
-                    .collect::<HashSet<_>>()
-            });
-            match missing_servers {
-                Some(missing_servers) if !missing_servers.is_empty() => {
-                    servers_to_query = Some(missing_servers);
-                }
-                _ => {
-                    let snapshot = buffer.read(cx).snapshot();
-                    return Task::ready(
-                        cached
-                            .symbols
-                            .values()
-                            .flatten()
-                            .unique()
-                            .cloned()
-                            .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
-                            .collect(),
-                    );
-                }
+            cached
+                .symbols
+                .retain(|server_id, _| current_servers.contains(server_id));
+            let missing_servers = current_servers
+                .iter()
+                .copied()
+                .filter(|server_id| !cached.symbols.contains_key(server_id))
+                .collect::<HashSet<_>>();
+            if missing_servers.is_empty() {
+                let snapshot = buffer.read(cx).snapshot();
+                return Task::ready(
+                    cached
+                        .symbols
+                        .values()
+                        .flatten()
+                        .unique()
+                        .cloned()
+                        .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
+                        .collect(),
+                );
             }
+            servers_to_query = Some(missing_servers);
         }
 
         let doc_symbols_data = self
@@ -179,10 +170,11 @@ impl LspStore {
                     Err(e) => {
                         lsp_store
                             .update(cx, |lsp_store, _| {
-                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
-                                    if let Some(document_symbols) = &mut lsp_data.document_symbols {
-                                        document_symbols.symbols_update = None;
-                                    }
+                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id)
+                                    && let Some(document_symbols) = &mut lsp_data.document_symbols
+                                    && document_symbols.generation == query_generation
+                                {
+                                    document_symbols.symbols_update = None;
                                 }
                             })
                             .ok();

@@ -22,6 +22,7 @@ use worktree::File;
 use crate::{
     ColorPresentation, DocumentColor, LspStore,
     lsp_command::{GetDocumentColor, LspCommand as _, make_text_document_identifier},
+    lsp_store::LspStoreEvent,
     project_settings::ProjectSettings,
 };
 
@@ -67,7 +68,7 @@ impl LspStore {
             }
         }
 
-        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentColors {
+        cx.emit(LspStoreEvent::RefreshDocumentColors {
             server_id: for_server,
         });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
@@ -101,42 +102,33 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_servers = self
+            .relevant_server_ids_for_capability_check(&buffer, cx)
+            .into_iter()
+            .collect::<HashSet<_>>();
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id)
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
             && let Some(cached_colors) = &mut lsp_data.document_colors
         {
-            let missing_servers = current_language_servers.as_ref().map(|current_servers| {
-                cached_colors
-                    .colors
-                    .retain(|server_id, _| current_servers.contains(server_id));
-                current_servers
-                    .iter()
-                    .copied()
-                    .filter(|server_id| !cached_colors.colors.contains_key(server_id))
-                    .collect::<HashSet<_>>()
-            });
-            match missing_servers {
-                Some(missing_servers) if !missing_servers.is_empty() => {
-                    servers_to_query = Some(missing_servers);
-                }
-                _ => {
-                    return Some(
-                        Task::ready(Ok(DocumentColors {
-                            colors: cached_colors.colors.values().flatten().cloned().collect(),
-                        }))
-                        .shared(),
-                    );
-                }
+            cached_colors
+                .colors
+                .retain(|server_id, _| current_servers.contains(server_id));
+            let missing_servers = current_servers
+                .iter()
+                .copied()
+                .filter(|server_id| !cached_colors.colors.contains_key(server_id))
+                .collect::<HashSet<_>>();
+            if missing_servers.is_empty() {
+                return Some(
+                    Task::ready(Ok(DocumentColors {
+                        colors: cached_colors.colors.values().flatten().cloned().collect(),
+                    }))
+                    .shared(),
+                );
             }
+            servers_to_query = Some(missing_servers);
         }
 
         let color_lsp_data = self
@@ -174,10 +166,11 @@ impl LspStore {
                     Err(e) => {
                         lsp_store
                             .update(cx, |lsp_store, _| {
-                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
-                                    if let Some(document_colors) = &mut lsp_data.document_colors {
-                                        document_colors.colors_update = None;
-                                    }
+                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id)
+                                    && let Some(document_colors) = &mut lsp_data.document_colors
+                                    && document_colors.generation == query_generation
+                                {
+                                    document_colors.colors_update = None;
                                 }
                             })
                             .ok();
