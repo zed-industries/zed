@@ -68,6 +68,7 @@ pub struct ActivePaneModifiers {
     // TODO: make this not an option, it is never None
     pub inactive_opacity: Option<InactiveOpacity>,
 }
+
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
 pub struct ActivePanelModifiers {
     /// Size of the border surrounding the focused dock panel.

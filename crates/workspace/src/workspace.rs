@@ -8090,7 +8090,7 @@ impl Workspace {
             .center
             .panes()
             .iter()
-            .any(|pane| pane.focus_handle(cx).contains_focused(window, cx))
+            .any(|pane| pane_group::pane_has_focus(pane, window, cx))
         {
             return Some(FocusedSurface::PaneGroup);
         }
@@ -14308,7 +14308,10 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert_eq!(workspace.active_pane(), &second_pane);
             let result = render_center_group(workspace, window, cx);
-            assert!(result.contains_active_pane);
+            assert!(
+                !result.contains_active_pane,
+                "a group with no truly-focused pane should not report one"
+            );
             assert_eq!(
                 result.decorated_pane_ix, None,
                 "an unfocused group should not decorate its active pane"
@@ -14876,6 +14879,55 @@ mod tests {
                 workspace.focused_surface(window, cx),
                 Some(FocusedSurface::Dock(DockPosition::Right)),
                 "The dock should still be considered the focused surface"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_highlight_overlay(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.active_panel_modifiers =
+                        Some(settings::settings_content::ActivePanelModifiers {
+                            border_size: Some(2.0),
+                            inactive_opacity: Some(settings::settings_content::InactiveOpacity(
+                                0.5,
+                            )),
+                        });
+                });
+            });
+
+            assert!(
+                panel_highlight_overlay(
+                    Some(FocusedSurface::Dock(DockPosition::Left)),
+                    FocusedSurface::Dock(DockPosition::Left),
+                    cx,
+                )
+                .is_some(),
+                "the focused dock should get a border overlay"
+            );
+
+            assert!(
+                panel_highlight_overlay(
+                    Some(FocusedSurface::Dock(DockPosition::Right)),
+                    FocusedSurface::Dock(DockPosition::Left),
+                    cx,
+                )
+                .is_some(),
+                "an unfocused dock should get a dimming overlay when something else has focus"
+            );
+
+            assert!(
+                panel_highlight_overlay(None, FocusedSurface::Dock(DockPosition::Left), cx)
+                    .is_none(),
+                "no overlay should be drawn when nothing in the workspace has focus"
             );
         });
     }
