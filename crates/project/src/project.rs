@@ -405,6 +405,10 @@ pub enum Event {
         request_id: Option<usize>,
     },
     RefreshCodeLens,
+    RefreshDocumentColors,
+    RefreshDocumentLinks,
+    RefreshFoldingRanges,
+    RefreshDocumentSymbols,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -3681,6 +3685,10 @@ impl Project {
                 request_id: *request_id,
             }),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::RefreshDocumentColors => cx.emit(Event::RefreshDocumentColors),
+            LspStoreEvent::RefreshDocumentLinks => cx.emit(Event::RefreshDocumentLinks),
+            LspStoreEvent::RefreshFoldingRanges => cx.emit(Event::RefreshFoldingRanges),
+            LspStoreEvent::RefreshDocumentSymbols => cx.emit(Event::RefreshDocumentSymbols),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }

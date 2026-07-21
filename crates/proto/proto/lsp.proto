@@ -586,6 +586,22 @@ message RefreshCodeLens {
   uint64 project_id = 1;
 }
 
+message RefreshDocumentColors {
+  uint64 project_id = 1;
+}
+
+message RefreshDocumentLinks {
+  uint64 project_id = 1;
+}
+
+message RefreshFoldingRanges {
+  uint64 project_id = 1;
+}
+
+message RefreshDocumentSymbols {
+  uint64 project_id = 1;
+}
+
 message MarkupContent {
   bool is_markdown = 1;
   string value = 2;

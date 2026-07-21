@@ -7,10 +7,11 @@ use clock::Global;
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::{Shared, join_all};
-use gpui::{AppContext as _, Context, Entity, Task};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, OutlineItem};
 use lsp::LanguageServerId;
+use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use text::{Anchor, Bias, PointUtf16};
 use util::ResultExt;
@@ -36,6 +37,33 @@ impl DocumentSymbolsData {
 }
 
 impl LspStore {
+    pub(super) fn refresh_document_symbols(&mut self, cx: &mut Context<Self>) {
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.document_symbols = None;
+        }
+
+        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentSymbols);
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshDocumentSymbols {
+                    project_id: *project_id,
+                })
+                .context("sending refresh document symbols downstream")
+                .log_err();
+        }
+    }
+
+    pub(super) async fn handle_refresh_document_symbols(
+        lsp_store: Entity<Self>,
+        _: TypedEnvelope<proto::RefreshDocumentSymbols>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<proto::Ack> {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.refresh_document_symbols(cx);
+        });
+        Ok(proto::Ack {})
+    }
+
     /// Returns a task that resolves to the document symbol outline items for
     /// the given buffer.
     ///

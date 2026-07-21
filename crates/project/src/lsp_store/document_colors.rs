@@ -46,6 +46,33 @@ impl DocumentColorData {
 }
 
 impl LspStore {
+    pub(super) fn refresh_document_colors(&mut self, cx: &mut Context<Self>) {
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.document_colors = None;
+        }
+
+        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentColors);
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshDocumentColors {
+                    project_id: *project_id,
+                })
+                .context("sending refresh document colors downstream")
+                .log_err();
+        }
+    }
+
+    pub(super) async fn handle_refresh_document_colors(
+        lsp_store: Entity<Self>,
+        _: TypedEnvelope<proto::RefreshDocumentColors>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.refresh_document_colors(cx);
+        });
+        Ok(proto::Ack {})
+    }
+
     pub fn document_colors(
         &mut self,
         buffer: Entity<Buffer>,

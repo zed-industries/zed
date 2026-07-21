@@ -60,6 +60,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use project::{
     Event, TaskContexts,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
+    lsp_store::RefreshForServer,
     search::{SearchQuery, SearchResult},
     task_store::{TaskSettingsLocation, TaskStore},
     *,
@@ -2932,98 +2933,671 @@ async fn test_multi_registration_restores_static_capability(cx: &mut gpui::TestA
     );
 }
 
-async fn setup_dynamic_registration_test(
-    cx: &mut gpui::TestAppContext,
-    capabilities: lsp::ServerCapabilities,
-) -> (Entity<Project>, lsp::FakeLanguageServer) {
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
-        .await;
+#[gpui::test]
+async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/inlayHint";
 
-    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            name: "the-language-server",
-            capabilities,
-            ..Default::default()
-        },
+    let options_a = lsp::InlayHintOptions {
+        resolve_provider: Some(true),
+        ..lsp::InlayHintOptions::default()
+    };
+    let options_b = lsp::InlayHintOptions {
+        resolve_provider: Some(false),
+        ..lsp::InlayHintOptions::default()
+    };
+    let options_a_replacement = lsp::InlayHintOptions::default();
+
+    register_capability(
+        &fake_server,
+        method,
+        "inlay-hint-a",
+        serde_json::to_value(&options_a).ok(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "inlay-hint-b",
+        serde_json::to_value(&options_b).ok(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "inlay-hint-a",
+        serde_json::to_value(&options_a_replacement).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        Some(lsp::OneOf::Right(
+            lsp::InlayHintServerCapabilities::Options(options_b)
+        )),
+        "expected the latest distinct registration to stay active after a duplicate ID replaced an older one",
     );
 
+    unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
     cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        Some(lsp::OneOf::Right(
+            lsp::InlayHintServerCapabilities::Options(options_a_replacement)
+        )),
+        "expected the replaced registration's options to be restored",
+    );
 
-    project
+    unregister_capabilities(&fake_server, method, &["inlay-hint-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        None,
+        "expected inlay hint provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_completion_triggers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let method = "textDocument/completion";
+
+    let (buffer, _lsp_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
         })
         .await
         .unwrap();
+    let buffer_triggers = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
 
-    let fake_server = fake_servers.next().await.unwrap();
+    let options_a = lsp::CompletionOptions {
+        trigger_characters: Some(vec![".".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+    let options_b = lsp::CompletionOptions {
+        trigger_characters: Some(vec![":".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-a",
+        serde_json::to_value(&options_a).ok(),
+    )
+    .await;
     cx.executor().run_until_parked();
-    (project, fake_server)
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the first registration's triggers to be applied",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-b",
+        serde_json::to_value(&options_b).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([":".to_string()]),
+        "expected the second registration's triggers to replace the first ones",
+    );
+
+    unregister_capabilities(&fake_server, method, &["completion-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the remaining registration's triggers to be restored",
+    );
+
+    unregister_capabilities(&fake_server, method, &["completion-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::new(),
+        "expected completion triggers to be cleared after unregistering the last registration",
+    );
 }
 
-async fn register_capability(
-    fake_server: &lsp::FakeLanguageServer,
-    method: &str,
-    id: &str,
-    register_options: Option<serde_json::Value>,
-) {
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: id.to_string(),
-                    method: method.to_string(),
-                    register_options,
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
+#[gpui::test]
+async fn test_multi_registration_middle_removal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/inlayHint";
+
+    let options_a = lsp::InlayHintOptions {
+        resolve_provider: Some(true),
+        ..lsp::InlayHintOptions::default()
+    };
+    let options_b = lsp::InlayHintOptions {
+        resolve_provider: Some(false),
+        ..lsp::InlayHintOptions::default()
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "inlay-hint-a",
+        serde_json::to_value(&options_a).ok(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "inlay-hint-b",
+        serde_json::to_value(&options_b).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    unregister_capabilities(&fake_server, method, &["inlay-hint-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        Some(lsp::OneOf::Right(
+            lsp::InlayHintServerCapabilities::Options(options_b)
+        )),
+        "expected the latest registration to stay active after removing an older one from the middle",
+    );
+
+    unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        None,
+        "expected inlay hint provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_unregister_with_static_only(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let server_id = fake_server.server.server_id();
+
+    unregister_capabilities(&fake_server, "textDocument/inlayHint", &["unknown-id"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).inlay_hint_provider,
+        Some(lsp::OneOf::Left(true)),
+        "expected the static capability to survive unregistering an unknown ID",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_completion_static_restore(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let static_options = lsp::CompletionOptions {
+        trigger_characters: Some(vec![".".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+    let (project, fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            completion_provider: Some(static_options.clone()),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/completion";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
         .await
-        .into_response()
         .unwrap();
+    let buffer_triggers = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the static trigger characters before any dynamic registration",
+    );
+
+    let dynamic_options = lsp::CompletionOptions {
+        trigger_characters: Some(vec![":".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+    register_capability(
+        &fake_server,
+        method,
+        "completion-dynamic",
+        serde_json::to_value(&dynamic_options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([":".to_string()]),
+        "expected the dynamic registration's triggers to override the static ones",
+    );
+
+    unregister_capabilities(&fake_server, method, &["completion-dynamic"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).completion_provider,
+        Some(static_options),
+        "expected the static completion provider to be restored",
+    );
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the static trigger characters to be restored",
+    );
 }
 
-async fn unregister_capabilities(
-    fake_server: &lsp::FakeLanguageServer,
-    method: &str,
-    ids: &[&str],
-) {
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: ids
-                    .iter()
-                    .map(|id| lsp::Unregistration {
-                        id: id.to_string(),
-                        method: method.to_string(),
-                    })
-                    .collect(),
+#[gpui::test]
+async fn test_multi_registration_same_id_different_methods(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+
+    let code_lens_options = lsp::CodeLensOptions {
+        resolve_provider: Some(true),
+    };
+    register_capability(&fake_server, "textDocument/inlayHint", "shared-id", None).await;
+    register_capability(
+        &fake_server,
+        "textDocument/codeLens",
+        "shared-id",
+        serde_json::to_value(code_lens_options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    unregister_capabilities(&fake_server, "textDocument/codeLens", &["shared-id"]).await;
+    cx.executor().run_until_parked();
+    let capabilities = server_capabilities(&project, server_id, cx);
+    assert_eq!(
+        capabilities.code_lens_provider, None,
+        "expected the code lens registration to be removed",
+    );
+    assert_eq!(
+        capabilities.inlay_hint_provider,
+        Some(lsp::OneOf::Left(true)),
+        "expected the inlay hint registration with the same ID to stay intact",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_diagnostics(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/diagnostic";
+    fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+        move |_, _| async move {
+            Ok(lsp::DocumentDiagnosticReportResult::Report(
+                lsp::DocumentDiagnosticReport::Full(
+                    lsp::RelatedFullDocumentDiagnosticReport::default(),
+                ),
+            ))
+        },
+    );
+
+    let options_a = lsp::DiagnosticServerCapabilities::Options(lsp::DiagnosticOptions {
+        identifier: Some("diagnostics-a".to_string()),
+        ..lsp::DiagnosticOptions::default()
+    });
+    let options_b = lsp::DiagnosticServerCapabilities::Options(lsp::DiagnosticOptions {
+        identifier: Some("diagnostics-b".to_string()),
+        ..lsp::DiagnosticOptions::default()
+    });
+
+    register_capability(
+        &fake_server,
+        method,
+        "diag-a",
+        serde_json::to_value(&options_a).ok(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "diag-b",
+        serde_json::to_value(&options_b).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).diagnostic_provider,
+        Some(options_b),
+        "expected the latest diagnostic registration to be active",
+    );
+
+    unregister_capabilities(&fake_server, method, &["diag-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).diagnostic_provider,
+        Some(options_a.clone()),
+        "expected the remaining diagnostic registration to be restored",
+    );
+
+    unregister_capabilities(&fake_server, method, &["unknown-id"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).diagnostic_provider,
+        Some(options_a),
+        "expected an unknown unregistration ID to leave the diagnostic provider intact",
+    );
+
+    unregister_capabilities(&fake_server, method, &["diag-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).diagnostic_provider,
+        None,
+        "expected the diagnostic provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut static_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "static-server",
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                document_link_provider: Some(lsp::DocumentLinkOptions {
+                    resolve_provider: None,
+                    work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+                }),
+                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: None,
+                }),
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
             },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-}
+            ..Default::default()
+        },
+    );
+    let mut dynamic_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "dynamic-server",
+            ..Default::default()
+        },
+    );
+    cx.executor().run_until_parked();
 
-fn server_capabilities(
-    project: &Entity<Project>,
-    server_id: LanguageServerId,
-    cx: &mut gpui::TestAppContext,
-) -> lsp::ServerCapabilities {
-    project.read_with(cx, |project, cx| {
-        project
-            .lsp_store()
-            .read(cx)
-            .language_server_for_id(server_id)
-            .unwrap()
-            .capabilities()
-    })
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let static_server = static_servers.next().await.unwrap();
+    let dynamic_server = dynamic_servers.next().await.unwrap();
+    let dynamic_server_id = dynamic_server.server.server_id();
+    cx.executor().run_until_parked();
+
+    let static_counters = count_lsp_requests(&static_server);
+    let dynamic_counters = count_lsp_requests(&dynamic_server);
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    let buffer_triggers = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    fetch_lsp_data(&project, &buffer, None, cx).await;
+    assert_eq!(
+        static_counters.snapshot(),
+        LspRequestCounts {
+            colors: 1,
+            links: 1,
+            folding_ranges: 1,
+            document_symbols: 1,
+            code_lens: 1,
+            semantic_tokens: 1,
+        },
+        "expected the initial fetch to query the statically capable server",
+    );
+    assert_eq!(
+        dynamic_counters.snapshot(),
+        LspRequestCounts::default(),
+        "expected the initial fetch to skip the server without capabilities",
+    );
+    assert_eq!(buffer_triggers(cx), BTreeSet::from([".".to_string()]));
+    assert_eq!(refresh_events.lock().as_slice(), &[] as &[String]);
+
+    register_capability(
+        &dynamic_server,
+        "textDocument/documentColor",
+        "colors",
+        None,
+    )
+    .await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/documentLink",
+        "links",
+        serde_json::to_value(lsp::DocumentLinkOptions {
+            resolve_provider: None,
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/foldingRange",
+        "folding",
+        None,
+    )
+    .await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/documentSymbol",
+        "symbols",
+        None,
+    )
+    .await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/codeLens",
+        "code-lens",
+        serde_json::to_value(lsp::CodeLensOptions {
+            resolve_provider: None,
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/semanticTokens",
+        "tokens",
+        serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+            text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                document_selector: None,
+            },
+            semantic_tokens_options: lsp::SemanticTokensOptions {
+                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                ..lsp::SemanticTokensOptions::default()
+            },
+            static_registration_options: lsp::StaticRegistrationOptions::default(),
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(&dynamic_server, "textDocument/inlayHint", "hints", None).await;
+    register_capability(
+        &dynamic_server,
+        "textDocument/completion",
+        "completions",
+        serde_json::to_value(lsp::CompletionOptions {
+            trigger_characters: Some(vec![":".to_string()]),
+            ..lsp::CompletionOptions::default()
+        })
+        .ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        sorted(refresh_events.lock().drain(..)),
+        vec![
+            "code_lens".to_string(),
+            "document_colors".to_string(),
+            "document_links".to_string(),
+            "document_symbols".to_string(),
+            "folding_ranges".to_string(),
+            format!("inlay_hints({dynamic_server_id})"),
+            format!("semantic_tokens({dynamic_server_id})"),
+        ],
+        "expected every dynamic registration to trigger the corresponding refresh",
+    );
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string(), ":".to_string()]),
+        "expected trigger characters from both servers to be combined",
+    );
+
+    fetch_lsp_data(
+        &project,
+        &buffer,
+        Some(RefreshForServer {
+            server_id: dynamic_server_id,
+            request_id: Some(1),
+        }),
+        cx,
+    )
+    .await;
+    assert_eq!(
+        dynamic_counters.snapshot(),
+        LspRequestCounts {
+            colors: 1,
+            links: 1,
+            folding_ranges: 1,
+            document_symbols: 1,
+            code_lens: 1,
+            semantic_tokens: 1,
+        },
+        "expected the newly registered server to be queried after the refreshes",
+    );
+    assert_eq!(
+        static_counters.snapshot(),
+        LspRequestCounts {
+            colors: 2,
+            links: 2,
+            folding_ranges: 2,
+            document_symbols: 2,
+            code_lens: 2,
+            semantic_tokens: 1,
+        },
+        "expected buffer-wide refreshes to re-query the static server, but the per-server semantic tokens refresh to skip it",
+    );
+
+    unregister_capabilities(&dynamic_server, "textDocument/documentColor", &["colors"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/documentLink", &["links"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/foldingRange", &["folding"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/documentSymbol", &["symbols"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/codeLens", &["code-lens"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/semanticTokens", &["tokens"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/inlayHint", &["hints"]).await;
+    unregister_capabilities(&dynamic_server, "textDocument/completion", &["completions"]).await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        sorted(refresh_events.lock().drain(..)),
+        vec![
+            "code_lens".to_string(),
+            "document_colors".to_string(),
+            "document_links".to_string(),
+            "document_symbols".to_string(),
+            "folding_ranges".to_string(),
+            format!("inlay_hints({dynamic_server_id})"),
+            format!("semantic_tokens({dynamic_server_id})"),
+        ],
+        "expected every unregistration to trigger the corresponding refresh",
+    );
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected only the static server's trigger characters to remain",
+    );
+
+    fetch_lsp_data(
+        &project,
+        &buffer,
+        Some(RefreshForServer {
+            server_id: dynamic_server_id,
+            request_id: Some(2),
+        }),
+        cx,
+    )
+    .await;
+    assert_eq!(
+        dynamic_counters.snapshot(),
+        LspRequestCounts {
+            colors: 1,
+            links: 1,
+            folding_ranges: 1,
+            document_symbols: 1,
+            code_lens: 1,
+            semantic_tokens: 1,
+        },
+        "expected the unregistered server to not be queried anymore",
+    );
+    assert_eq!(
+        static_counters.snapshot(),
+        LspRequestCounts {
+            colors: 3,
+            links: 3,
+            folding_ranges: 3,
+            document_symbols: 3,
+            code_lens: 3,
+            semantic_tokens: 1,
+        },
+        "expected the static server to keep serving buffer-wide requests",
+    );
 }
 
 #[gpui::test]
@@ -3071,55 +3645,33 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     let file_changes = Arc::new(Mutex::new(Vec::new()));
 
     // Register two separate watched file registrations.
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/src/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
+    register_capability(
+        &fake_server,
+        "workspace/didChangeWatchedFiles",
+        "reg-1",
+        serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![lsp::FileSystemWatcher {
+                glob_pattern: lsp::GlobPattern::String(path!("/root/src/*.rs").to_string()),
+                kind: None,
+            }],
+        })
+        .ok(),
+    )
+    .await;
 
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-2".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/docs/*.md").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
+    register_capability(
+        &fake_server,
+        "workspace/didChangeWatchedFiles",
+        "reg-2",
+        serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![lsp::FileSystemWatcher {
+                glob_pattern: lsp::GlobPattern::String(path!("/root/docs/*.md").to_string()),
+                kind: None,
+            }],
+        })
+        .ok(),
+    )
+    .await;
 
     fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
         let file_changes = file_changes.clone();
@@ -3157,19 +3709,7 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     file_changes.lock().clear();
 
     // Unregister the first registration.
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: vec![lsp::Unregistration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
+    unregister_capabilities(&fake_server, "workspace/didChangeWatchedFiles", &["reg-1"]).await;
     cx.executor().run_until_parked();
 
     // Only the second registration should still match.
@@ -16662,4 +17202,252 @@ async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppConte
             (row(12, 13), HasSecondaryHunk),
         ]
     );
+}
+
+async fn setup_dynamic_registration_test(
+    cx: &mut gpui::TestAppContext,
+    capabilities: lsp::ServerCapabilities,
+) -> (Entity<Project>, lsp::FakeLanguageServer) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            capabilities,
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    (project, fake_server)
+}
+
+async fn register_capability(
+    fake_server: &lsp::FakeLanguageServer,
+    method: &str,
+    id: &str,
+    register_options: Option<serde_json::Value>,
+) {
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: id.to_string(),
+                    method: method.to_string(),
+                    register_options,
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+}
+
+async fn unregister_capabilities(
+    fake_server: &lsp::FakeLanguageServer,
+    method: &str,
+    ids: &[&str],
+) {
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: ids
+                    .iter()
+                    .map(|id| lsp::Unregistration {
+                        id: id.to_string(),
+                        method: method.to_string(),
+                    })
+                    .collect(),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+}
+
+fn server_capabilities(
+    project: &Entity<Project>,
+    server_id: LanguageServerId,
+    cx: &mut gpui::TestAppContext,
+) -> lsp::ServerCapabilities {
+    project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_for_id(server_id)
+            .unwrap()
+            .capabilities()
+    })
+}
+
+#[derive(Default)]
+struct LspRequestCounters {
+    colors: Arc<atomic::AtomicUsize>,
+    links: Arc<atomic::AtomicUsize>,
+    folding_ranges: Arc<atomic::AtomicUsize>,
+    document_symbols: Arc<atomic::AtomicUsize>,
+    code_lens: Arc<atomic::AtomicUsize>,
+    semantic_tokens: Arc<atomic::AtomicUsize>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct LspRequestCounts {
+    colors: usize,
+    links: usize,
+    folding_ranges: usize,
+    document_symbols: usize,
+    code_lens: usize,
+    semantic_tokens: usize,
+}
+
+impl LspRequestCounters {
+    fn snapshot(&self) -> LspRequestCounts {
+        LspRequestCounts {
+            colors: self.colors.load(atomic::Ordering::Acquire),
+            links: self.links.load(atomic::Ordering::Acquire),
+            folding_ranges: self.folding_ranges.load(atomic::Ordering::Acquire),
+            document_symbols: self.document_symbols.load(atomic::Ordering::Acquire),
+            code_lens: self.code_lens.load(atomic::Ordering::Acquire),
+            semantic_tokens: self.semantic_tokens.load(atomic::Ordering::Acquire),
+        }
+    }
+}
+
+fn count_lsp_requests(fake_server: &lsp::FakeLanguageServer) -> LspRequestCounters {
+    let counters = LspRequestCounters::default();
+    fake_server.set_request_handler::<lsp::request::DocumentColor, _, _>({
+        let count = counters.colors.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(Vec::new()) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::DocumentLinkRequest, _, _>({
+        let count = counters.links.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(None) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::FoldingRangeRequest, _, _>({
+        let count = counters.folding_ranges.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(None) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+        let count = counters.document_symbols.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(None) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+        let count = counters.code_lens.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(None) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let count = counters.semantic_tokens.clone();
+        move |_, _| {
+            count.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens::default(),
+                )))
+            }
+        }
+    });
+    counters
+}
+
+fn observe_refresh_events(
+    project: &Entity<Project>,
+    cx: &mut gpui::TestAppContext,
+) -> (Arc<Mutex<Vec<String>>>, gpui::Subscription) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let subscription = cx.update({
+        let events = events.clone();
+        let project = project.clone();
+        move |cx| {
+            cx.subscribe(&project, move |_, event, _| {
+                let event = match event {
+                    Event::RefreshInlayHints { server_id, .. } => {
+                        format!("inlay_hints({server_id})")
+                    }
+                    Event::RefreshSemanticTokens { server_id, .. } => {
+                        format!("semantic_tokens({server_id})")
+                    }
+                    Event::RefreshCodeLens => "code_lens".to_string(),
+                    Event::RefreshDocumentColors => "document_colors".to_string(),
+                    Event::RefreshDocumentLinks => "document_links".to_string(),
+                    Event::RefreshFoldingRanges => "folding_ranges".to_string(),
+                    Event::RefreshDocumentSymbols => "document_symbols".to_string(),
+                    _ => return,
+                };
+                events.lock().push(event);
+            })
+        }
+    });
+    (events, subscription)
+}
+
+async fn fetch_lsp_data(
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
+    refresh_semantic_tokens_for: Option<RefreshForServer>,
+    cx: &mut gpui::TestAppContext,
+) {
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let colors = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.document_colors(buffer.clone(), cx)
+    });
+    let links = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_document_links(buffer, cx)
+    });
+    let folding_ranges = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_folding_ranges(buffer, cx)
+    });
+    let document_symbols = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_document_symbols(buffer, cx)
+    });
+    let code_lens = lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
+    let semantic_tokens = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.semantic_tokens(buffer.clone(), refresh_semantic_tokens_for, cx)
+    });
+    if let Some(colors) = colors {
+        colors.await.unwrap();
+    }
+    links.await;
+    folding_ranges.await;
+    document_symbols.await;
+    code_lens.await.unwrap();
+    semantic_tokens.await.unwrap();
+}
+
+fn sorted(events: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut events = events.into_iter().collect::<Vec<_>>();
+    events.sort();
+    events
 }

@@ -4451,6 +4451,100 @@ fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
     });
 }
 
+#[gpui::test]
+fn test_completion_triggers_across_language_servers(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let replica = cx.new(|cx| {
+        Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            buffer.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
+    });
+    replica.update(cx, |_, cx| {
+        cx.subscribe(&buffer, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    let server_a = LanguageServerId(1);
+    let server_b = LanguageServerId(2);
+    let triggers = |buffer: &Entity<Buffer>, cx: &mut TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([".".to_string()]), cx);
+        buffer.set_completion_triggers(server_b, BTreeSet::from_iter([":".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([".".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected triggers from both servers to be combined",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to combine triggers from both servers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([",".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([",".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected replaced triggers to not linger in the combined set",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to not keep replaced triggers in the combined set",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::new(), cx);
+    });
+    let expected = BTreeSet::from_iter([":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected the other server's triggers to survive clearing one server's triggers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to keep the other server's triggers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_b, BTreeSet::new(), cx);
+    });
+    assert_eq!(
+        triggers(&buffer, cx),
+        BTreeSet::new(),
+        "expected no triggers after clearing all servers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        BTreeSet::new(),
+        "expected no triggers on the replica after clearing all servers",
+    );
+}
+
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
 #[track_caller]
 fn assert_bracket_pairs(

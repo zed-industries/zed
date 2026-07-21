@@ -286,16 +286,47 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
+#[derive(Debug)]
+enum RegistrationSource {
+    Static,
+    Dynamic(String),
+}
+
+impl RegistrationSource {
+    fn registration_id(&self) -> Option<&str> {
+        match self {
+            RegistrationSource::Static => None,
+            RegistrationSource::Dynamic(id) => Some(id),
+        }
+    }
+}
+
+type CapabilityRegistrations<T> = Vec<(RegistrationSource, T)>;
+
 #[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashSet<String>,
-    diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
-    inlay_hint: Vec<(
-        Option<String>,
-        OneOf<bool, lsp::InlayHintServerCapabilities>,
-    )>,
-    code_lens: Vec<(Option<String>, lsp::CodeLensOptions)>,
-    document_symbol: Vec<(Option<String>, OneOf<bool, lsp::DocumentSymbolOptions>)>,
+    diagnostics: CapabilityRegistrations<DiagnosticServerCapabilities>,
+    workspace_folders: CapabilityRegistrations<lsp::WorkspaceFoldersServerCapabilities>,
+    workspace_symbol: CapabilityRegistrations<OneOf<bool, lsp::WorkspaceSymbolOptions>>,
+    file_operations: CapabilityRegistrations<lsp::WorkspaceFileOperationsServerCapabilities>,
+    execute_command: CapabilityRegistrations<lsp::ExecuteCommandOptions>,
+    range_formatting: CapabilityRegistrations<OneOf<bool, lsp::DocumentRangeFormattingOptions>>,
+    on_type_formatting: CapabilityRegistrations<lsp::DocumentOnTypeFormattingOptions>,
+    formatting: CapabilityRegistrations<OneOf<bool, lsp::DocumentFormattingOptions>>,
+    rename: CapabilityRegistrations<OneOf<bool, lsp::RenameOptions>>,
+    code_action: CapabilityRegistrations<lsp::CodeActionProviderCapability>,
+    definition: CapabilityRegistrations<OneOf<bool, lsp::DefinitionOptions>>,
+    completion: CapabilityRegistrations<lsp::CompletionOptions>,
+    hover: CapabilityRegistrations<lsp::HoverProviderCapability>,
+    signature_help: CapabilityRegistrations<lsp::SignatureHelpOptions>,
+    color: CapabilityRegistrations<lsp::ColorProviderCapability>,
+    folding_range: CapabilityRegistrations<lsp::FoldingRangeProviderCapability>,
+    document_link: CapabilityRegistrations<lsp::DocumentLinkOptions>,
+    semantic_tokens: CapabilityRegistrations<lsp::SemanticTokensServerCapabilities>,
+    inlay_hint: CapabilityRegistrations<OneOf<bool, lsp::InlayHintServerCapabilities>>,
+    code_lens: CapabilityRegistrations<lsp::CodeLensOptions>,
+    document_symbol: CapabilityRegistrations<OneOf<bool, lsp::DocumentSymbolOptions>>,
 }
 
 pub struct LocalLspStore {
@@ -1108,26 +1139,11 @@ impl LocalLspStore {
                     let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
-                        lsp_store
-                            .update(&mut cx, |lsp_store, cx| {
-                                let request_id =
-                                    Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
-                                cx.emit(LspStoreEvent::RefreshInlayHints {
-                                    server_id,
-                                    request_id,
-                                });
-                                lsp_store
-                                    .downstream_client
-                                    .as_ref()
-                                    .map(|(client, project_id)| {
-                                        client.send(proto::RefreshInlayHints {
-                                            project_id: *project_id,
-                                            server_id: server_id.to_proto(),
-                                            request_id: request_id.map(|id| id as u64),
-                                        })
-                                    })
-                            })?
-                            .transpose()?;
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
+                            let request_id =
+                                Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
+                            lsp_store.refresh_inlay_hints(server_id, request_id, cx);
+                        })?;
                         Ok(())
                     }
                 }
@@ -4234,6 +4250,10 @@ pub enum LspStoreEvent {
         request_id: Option<usize>,
     },
     RefreshCodeLens,
+    RefreshDocumentColors,
+    RefreshDocumentLinks,
+    RefreshFoldingRanges,
+    RefreshDocumentSymbols,
     DiagnosticsUpdated {
         server_id: LanguageServerId,
         paths: Vec<ProjectPath>,
@@ -4329,6 +4349,10 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
         client.add_entity_request_handler(Self::handle_refresh_semantic_tokens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
+        client.add_entity_request_handler(Self::handle_refresh_document_colors);
+        client.add_entity_request_handler(Self::handle_refresh_document_links);
+        client.add_entity_request_handler(Self::handle_refresh_folding_ranges);
+        client.add_entity_request_handler(Self::handle_refresh_document_symbols);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
@@ -7487,7 +7511,13 @@ impl LspStore {
                             .language_server_dynamic_registrations
                             .get(&server_id)
                             .into_iter()
-                            .flat_map(|registrations| registrations.diagnostics.clone())
+                            .flat_map(|registrations| &registrations.diagnostics)
+                            .map(|(source, dynamic_caps)| {
+                                (
+                                    source.registration_id().map(str::to_string),
+                                    dynamic_caps.clone(),
+                                )
+                            })
                             .collect::<Vec<_>>();
                         Some(
                             providers_with_identifiers
@@ -7896,8 +7926,9 @@ impl LspStore {
         else {
             return false;
         };
-        let registration_key = registration_id.as_ref().map(|s| s.to_string());
-        registrations.diagnostics.contains_key(&registration_key)
+        registrations.diagnostics.iter().any(|(source, _)| {
+            source.registration_id() == registration_id.as_ref().map(|id| id.as_ref())
+        })
     }
 
     pub fn pull_diagnostics_for_buffer(
@@ -11595,6 +11626,9 @@ impl LspStore {
         }
         local.language_server_watched_paths.remove(&server_id);
         local
+            .language_server_paths_watched_for_rename
+            .remove(&server_id);
+        local
             .language_server_dynamic_registrations
             .remove(&server_id);
 
@@ -12120,13 +12154,17 @@ impl LspStore {
             .capabilities()
             .diagnostic_provider
             .and_then(|provider| {
-                local
+                let diagnostics = &mut local
                     .language_server_dynamic_registrations
                     .entry(server_id)
                     .or_default()
-                    .diagnostics
-                    .entry(None)
-                    .or_insert(provider.clone());
+                    .diagnostics;
+                if !diagnostics
+                    .iter()
+                    .any(|(source, _)| source.registration_id().is_none())
+                {
+                    diagnostics.push((RegistrationSource::Static, provider.clone()));
+                }
                 let workspace_refresher =
                     lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)?;
 
@@ -13110,12 +13148,14 @@ impl LspStore {
     fn register_dynamic_capability<T: Clone>(
         &mut self,
         server: &LanguageServer,
-        server_id: LanguageServerId,
+        method: &str,
         registration_id: String,
         options: T,
-        registrations_of: impl FnOnce(&mut DynamicRegistrations) -> &mut Vec<(Option<String>, T)>,
+        cx: &mut Context<Self>,
+        registrations_of: impl FnOnce(&mut DynamicRegistrations) -> &mut CapabilityRegistrations<T>,
         capability_of: impl Fn(&mut lsp::ServerCapabilities) -> &mut Option<T>,
     ) -> anyhow::Result<()> {
+        let server_id = server.server_id();
         let local = self
             .as_local_mut()
             .context("Expected LSP Store to be local")?;
@@ -13128,47 +13168,126 @@ impl LspStore {
         if registrations.is_empty() {
             let mut initial_capabilities = server.capabilities();
             if let Some(static_options) = capability_of(&mut initial_capabilities).take() {
-                registrations.push((None, static_options));
+                registrations.push((RegistrationSource::Static, static_options));
             }
         }
-        registrations.retain(|(id, _)| id.as_deref() != Some(registration_id.as_str()));
-        registrations.push((Some(registration_id), options.clone()));
-        server.update_capabilities(|capabilities| *capability_of(capabilities) = Some(options));
+        if let Some((_, existing_options)) = registrations
+            .iter_mut()
+            .find(|(source, _)| source.registration_id() == Some(registration_id.as_str()))
+        {
+            log::warn!(
+                "Received a duplicate {method} registration with ID {registration_id}, replacing the previous one"
+            );
+            *existing_options = options;
+        } else {
+            registrations.push((RegistrationSource::Dynamic(registration_id), options));
+        }
+        let active = registrations.last().map(|(_, options)| options.clone());
+        server.update_capabilities(|capabilities| *capability_of(capabilities) = active);
+        notify_server_capabilities_updated(server, cx);
         Ok(())
     }
 
     fn unregister_dynamic_capability<T: Clone>(
         &mut self,
         server: &LanguageServer,
-        server_id: LanguageServerId,
         unregistration: &lsp::Unregistration,
-        registrations_of: impl FnOnce(&mut DynamicRegistrations) -> &mut Vec<(Option<String>, T)>,
+        cx: &mut Context<Self>,
+        registrations_of: impl FnOnce(&mut DynamicRegistrations) -> &mut CapabilityRegistrations<T>,
         capability_of: impl FnOnce(&mut lsp::ServerCapabilities) -> &mut Option<T>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
+        let server_id = server.server_id();
         let local = self
             .as_local_mut()
             .context("Expected LSP Store to be local")?;
-        let registrations = registrations_of(
-            local
-                .language_server_dynamic_registrations
-                .entry(server_id)
-                .or_default(),
-        );
-        let Some(index) = registrations
-            .iter()
-            .position(|(id, _)| id.as_deref() == Some(unregistration.id.as_str()))
-        else {
+        let registrations = local
+            .language_server_dynamic_registrations
+            .get_mut(&server_id)
+            .map(registrations_of);
+        let index = registrations.as_ref().and_then(|registrations| {
+            registrations.iter().position(|(source, _)| {
+                source.registration_id() == Some(unregistration.id.as_str())
+            })
+        });
+        let (Some(registrations), Some(index)) = (registrations, index) else {
             log::warn!(
                 "Attempted to unregister non-existent {} registration with ID {}",
                 unregistration.method,
                 unregistration.id
             );
-            return Ok(());
+            return Ok(false);
         };
         registrations.remove(index);
         let restored = registrations.last().map(|(_, options)| options.clone());
         server.update_capabilities(|capabilities| *capability_of(capabilities) = restored);
-        Ok(())
+        notify_server_capabilities_updated(server, cx);
+        Ok(true)
+    }
+
+    fn update_paths_watched_for_rename(&mut self, server: &LanguageServer) {
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        let watcher = server
+            .capabilities()
+            .workspace
+            .and_then(|workspace| workspace.file_operations)
+            .and_then(|file_operations| {
+                let did_rename_caps = file_operations.did_rename.as_ref();
+                let will_rename_caps = file_operations.will_rename.as_ref();
+                did_rename_caps.or(will_rename_caps)?;
+                Some(
+                    RenamePathsWatchedForServer::default()
+                        .with_did_rename_patterns(did_rename_caps)
+                        .with_will_rename_patterns(will_rename_caps),
+                )
+            });
+        match watcher {
+            Some(watcher) => {
+                local
+                    .language_server_paths_watched_for_rename
+                    .insert(server.server_id(), watcher);
+            }
+            None => {
+                local
+                    .language_server_paths_watched_for_rename
+                    .remove(&server.server_id());
+            }
+        }
+    }
+
+    fn apply_completion_triggers(
+        &self,
+        server_id: LanguageServerId,
+        options: Option<CompletionOptions>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(local) = self.as_local() else {
+            return;
+        };
+        let mut buffers_with_language_server = Vec::new();
+        for handle in self.buffer_store.read(cx).buffers() {
+            let buffer_id = handle.read(cx).remote_id();
+            if local
+                .buffers_opened_in_servers
+                .get(&buffer_id)
+                .filter(|s| s.contains(&server_id))
+                .is_some()
+            {
+                buffers_with_language_server.push(handle);
+            }
+        }
+        let triggers = options
+            .and_then(|options| options.trigger_characters)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        for handle in buffers_with_language_server {
+            let triggers = triggers.clone();
+            handle.update(cx, move |buffer, cx| {
+                buffer.set_completion_triggers(server_id, triggers, cx);
+            });
+        }
     }
 
     fn register_server_capabilities(
@@ -13204,50 +13323,80 @@ impl LspStore {
                     // In this case register options is an empty object, we can ignore it
                     let caps = lsp::WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
-                        change_notifications: Some(OneOf::Right(reg.id)),
+                        change_notifications: Some(OneOf::Right(reg.id.clone())),
                     };
-                    server.update_capabilities(|capabilities| {
-                        capabilities
-                            .workspace
-                            .get_or_insert_default()
-                            .workspace_folders = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        caps,
+                        cx,
+                        |registrations| &mut registrations.workspace_folders,
+                        |capabilities| {
+                            &mut capabilities
+                                .workspace
+                                .get_or_insert_default()
+                                .workspace_folders
+                        },
+                    )?;
                 }
                 "workspace/symbol" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.workspace_symbol_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
+                        |registrations| &mut registrations.workspace_symbol,
+                        |capabilities| &mut capabilities.workspace_symbol_provider,
+                    )?;
                 }
                 "workspace/fileOperations" => {
                     if let Some(options) = reg.register_options {
                         let caps = serde_json::from_value(options)?;
-                        server.update_capabilities(|capabilities| {
-                            capabilities
-                                .workspace
-                                .get_or_insert_default()
-                                .file_operations = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            caps,
+                            cx,
+                            |registrations| &mut registrations.file_operations,
+                            |capabilities| {
+                                &mut capabilities
+                                    .workspace
+                                    .get_or_insert_default()
+                                    .file_operations
+                            },
+                        )?;
+                        self.update_paths_watched_for_rename(&server);
                     }
                 }
                 "workspace/executeCommand" => {
                     if let Some(options) = reg.register_options {
                         let options = serde_json::from_value(options)?;
-                        server.update_capabilities(|capabilities| {
-                            capabilities.execute_command_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            options,
+                            cx,
+                            |registrations| &mut registrations.execute_command,
+                            |capabilities| &mut capabilities.execute_command_provider,
+                        )?;
                     }
                 }
                 "textDocument/rangeFormatting" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_range_formatting_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
+                        |registrations| &mut registrations.range_formatting,
+                        |capabilities| &mut capabilities.document_range_formatting_provider,
+                    )?;
                 }
                 "textDocument/onTypeFormatting" => {
                     if let Some(options) = reg
@@ -13255,69 +13404,94 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_on_type_formatting_provider = Some(options);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            options,
+                            cx,
+                            |registrations| &mut registrations.on_type_formatting,
+                            |capabilities| &mut capabilities.document_on_type_formatting_provider,
+                        )?;
                     }
                 }
                 "textDocument/formatting" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_formatting_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
-                }
-                "textDocument/rename" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.rename_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
-                }
-                "textDocument/inlayHint" => {
-                    let registration_id = reg.id.clone();
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     self.register_dynamic_capability(
                         &server,
-                        server_id,
-                        registration_id,
+                        &reg.method,
+                        reg.id,
                         options,
+                        cx,
+                        |registrations| &mut registrations.formatting,
+                        |capabilities| &mut capabilities.document_formatting_provider,
+                    )?;
+                }
+                "textDocument/rename" => {
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
+                        |registrations| &mut registrations.rename,
+                        |capabilities| &mut capabilities.rename_provider,
+                    )?;
+                }
+                "textDocument/inlayHint" => {
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
                         |registrations| &mut registrations.inlay_hint,
                         |capabilities| &mut capabilities.inlay_hint_provider,
                     )?;
-                    notify_server_capabilities_updated(&server, cx);
+                    self.refresh_inlay_hints(server_id, None, cx);
                 }
                 "textDocument/documentSymbol" => {
-                    let registration_id = reg.id.clone();
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     self.register_dynamic_capability(
                         &server,
-                        server_id,
-                        registration_id,
+                        &reg.method,
+                        reg.id,
                         options,
+                        cx,
                         |registrations| &mut registrations.document_symbol,
                         |capabilities| &mut capabilities.document_symbol_provider,
                     )?;
-                    notify_server_capabilities_updated(&server, cx);
+                    self.refresh_document_symbols(cx);
                 }
                 "textDocument/codeAction" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::CodeActionProviderCapability::Simple(value),
                         OneOf::Right(caps) => caps,
                     };
-                    server.update_capabilities(|capabilities| {
-                        capabilities.code_action_provider = Some(provider);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        provider,
+                        cx,
+                        |registrations| &mut registrations.code_action,
+                        |capabilities| &mut capabilities.code_action_provider,
+                    )?;
                 }
                 "textDocument/definition" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.definition_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
+                        |registrations| &mut registrations.definition,
+                        |capabilities| &mut capabilities.definition_provider,
+                    )?;
                 }
                 "textDocument/completion" => {
                     if let Some(caps) = reg
@@ -13325,48 +13499,33 @@ impl LspStore {
                         .map(serde_json::from_value::<CompletionOptions>)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.completion_provider = Some(caps.clone());
-                        });
-
-                        if let Some(local) = self.as_local() {
-                            let mut buffers_with_language_server = Vec::new();
-                            for handle in self.buffer_store.read(cx).buffers() {
-                                let buffer_id = handle.read(cx).remote_id();
-                                if local
-                                    .buffers_opened_in_servers
-                                    .get(&buffer_id)
-                                    .filter(|s| s.contains(&server_id))
-                                    .is_some()
-                                {
-                                    buffers_with_language_server.push(handle);
-                                }
-                            }
-                            let triggers = caps
-                                .trigger_characters
-                                .unwrap_or_default()
-                                .into_iter()
-                                .collect::<BTreeSet<_>>();
-                            for handle in buffers_with_language_server {
-                                let triggers = triggers.clone();
-                                let _ = handle.update(cx, move |buffer, cx| {
-                                    buffer.set_completion_triggers(server_id, triggers, cx);
-                                });
-                            }
-                        }
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            caps.clone(),
+                            cx,
+                            |registrations| &mut registrations.completion,
+                            |capabilities| &mut capabilities.completion_provider,
+                        )?;
+                        self.apply_completion_triggers(server_id, Some(caps), cx);
                     }
                 }
                 "textDocument/hover" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::HoverProviderCapability::Simple(value),
                         OneOf::Right(caps) => caps,
                     };
-                    server.update_capabilities(|capabilities| {
-                        capabilities.hover_provider = Some(provider);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        provider,
+                        cx,
+                        |registrations| &mut registrations.hover,
+                        |capabilities| &mut capabilities.hover_provider,
+                    )?;
                 }
                 "textDocument/signatureHelp" => {
                     if let Some(caps) = reg
@@ -13374,10 +13533,15 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.signature_help_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            caps,
+                            cx,
+                            |registrations| &mut registrations.signature_help,
+                            |capabilities| &mut capabilities.signature_help_provider,
+                        )?;
                     }
                 }
                 "textDocument/didChange" => {
@@ -13434,13 +13598,13 @@ impl LspStore {
                     {
                         self.register_dynamic_capability(
                             &server,
-                            server_id,
+                            &reg.method,
                             reg.id,
                             options,
+                            cx,
                             |registrations| &mut registrations.code_lens,
                             |capabilities| &mut capabilities.code_lens_provider,
                         )?;
-                        notify_server_capabilities_updated(&server, cx);
                         self.refresh_code_lens(cx);
                     }
                 }
@@ -13450,19 +13614,16 @@ impl LspStore {
                         .map(serde_json::from_value::<DiagnosticServerCapabilities>)
                         .transpose()?
                     {
-                        let local = self
-                            .as_local_mut()
-                            .context("Expected LSP Store to be local")?;
-                        let state = local
-                            .language_servers
-                            .get_mut(&server_id)
-                            .context("Could not obtain Language Servers state")?;
-                        local
-                            .language_server_dynamic_registrations
-                            .entry(server_id)
-                            .or_default()
-                            .diagnostics
-                            .insert(Some(reg.id.clone()), caps.clone());
+                        let registration_id = reg.id.clone();
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            caps.clone(),
+                            cx,
+                            |registrations| &mut registrations.diagnostics,
+                            |capabilities| &mut capabilities.diagnostic_provider,
+                        )?;
 
                         let supports_workspace_diagnostics =
                             |capabilities: &DiagnosticServerCapabilities| match capabilities {
@@ -13479,51 +13640,65 @@ impl LspStore {
                             };
 
                         if supports_workspace_diagnostics(&caps) {
+                            let local = self
+                                .as_local_mut()
+                                .context("Expected LSP Store to be local")?;
+                            let state = local
+                                .language_servers
+                                .get_mut(&server_id)
+                                .context("Could not obtain Language Servers state")?;
                             if let LanguageServerState::Running {
                                 workspace_diagnostics_refresh_tasks,
                                 ..
                             } = state
                                 && let Some(task) = lsp_workspace_diagnostics_refresh(
-                                    Some(reg.id.clone()),
-                                    caps.clone(),
+                                    Some(registration_id.clone()),
+                                    caps,
                                     server.clone(),
                                     cx,
                                 )
                             {
-                                workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
+                                workspace_diagnostics_refresh_tasks
+                                    .insert(Some(registration_id), task);
                             }
                         }
-
-                        server.update_capabilities(|capabilities| {
-                            capabilities.diagnostic_provider = Some(caps);
-                        });
-
-                        notify_server_capabilities_updated(&server, cx);
 
                         let _ = self.pull_document_diagnostics_for_server(server_id, None, cx);
                     }
                 }
                 "textDocument/documentColor" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::ColorProviderCapability::Simple(value),
                         OneOf::Right(caps) => caps,
                     };
-                    server.update_capabilities(|capabilities| {
-                        capabilities.color_provider = Some(provider);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        provider,
+                        cx,
+                        |registrations| &mut registrations.color,
+                        |capabilities| &mut capabilities.color_provider,
+                    )?;
+                    self.refresh_document_colors(cx);
                 }
                 "textDocument/foldingRange" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let options = parse_register_capabilities(reg.register_options)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::FoldingRangeProviderCapability::Simple(value),
                         OneOf::Right(caps) => caps,
                     };
-                    server.update_capabilities(|capabilities| {
-                        capabilities.folding_range_provider = Some(provider);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        provider,
+                        cx,
+                        |registrations| &mut registrations.folding_range,
+                        |capabilities| &mut capabilities.folding_range_provider,
+                    )?;
+                    self.refresh_folding_ranges(cx);
                 }
                 "textDocument/documentLink" => {
                     if let Some(caps) = reg
@@ -13531,10 +13706,16 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.document_link_provider = Some(caps);
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            caps,
+                            cx,
+                            |registrations| &mut registrations.document_link,
+                            |capabilities| &mut capabilities.document_link_provider,
+                        )?;
+                        self.refresh_document_links(cx);
                     }
                 }
                 "textDocument/semanticTokens" => {
@@ -13543,12 +13724,15 @@ impl LspStore {
                         .map(serde_json::from_value::<lsp::SemanticTokensRegistrationOptions>)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            capabilities.semantic_tokens_provider = Some(
-                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(caps),
-                            );
-                        });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_capability(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(caps),
+                            cx,
+                            |registrations| &mut registrations.semantic_tokens,
+                            |capabilities| &mut capabilities.semantic_tokens_provider,
+                        )?;
                         // Re-query already-open buffers, which would otherwise keep
                         // tree-sitter-only highlighting until edited.
                         self.refresh_semantic_tokens(server_id, None, cx);
@@ -13588,98 +13772,147 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/didChangeWorkspaceFolders" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities
-                            .workspace
-                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
-                                workspace_folders: None,
-                                file_operations: None,
-                            })
-                            .workspace_folders = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.workspace_folders,
+                        |capabilities| {
+                            &mut capabilities
+                                .workspace
+                                .get_or_insert_default()
+                                .workspace_folders
+                        },
+                    )?;
                 }
                 "workspace/symbol" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.workspace_symbol_provider = None
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.workspace_symbol,
+                        |capabilities| &mut capabilities.workspace_symbol_provider,
+                    )?;
                 }
                 "workspace/fileOperations" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities
-                            .workspace
-                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
-                                workspace_folders: None,
-                                file_operations: None,
-                            })
-                            .file_operations = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.file_operations,
+                        |capabilities| {
+                            &mut capabilities
+                                .workspace
+                                .get_or_insert_default()
+                                .file_operations
+                        },
+                    )? {
+                        self.update_paths_watched_for_rename(&server);
+                    }
                 }
                 "workspace/executeCommand" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.execute_command_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.execute_command,
+                        |capabilities| &mut capabilities.execute_command_provider,
+                    )?;
                 }
                 "textDocument/rangeFormatting" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_range_formatting_provider = None
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.range_formatting,
+                        |capabilities| &mut capabilities.document_range_formatting_provider,
+                    )?;
                 }
                 "textDocument/onTypeFormatting" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_on_type_formatting_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.on_type_formatting,
+                        |capabilities| &mut capabilities.document_on_type_formatting_provider,
+                    )?;
                 }
                 "textDocument/formatting" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_formatting_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.formatting,
+                        |capabilities| &mut capabilities.document_formatting_provider,
+                    )?;
                 }
                 "textDocument/rename" => {
-                    server.update_capabilities(|capabilities| capabilities.rename_provider = None);
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.rename,
+                        |capabilities| &mut capabilities.rename_provider,
+                    )?;
                 }
                 "textDocument/codeAction" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.code_action_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.code_action,
+                        |capabilities| &mut capabilities.code_action_provider,
+                    )?;
                 }
                 "textDocument/definition" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.definition_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.definition,
+                        |capabilities| &mut capabilities.definition_provider,
+                    )?;
                 }
                 "textDocument/completion" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.completion_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.completion,
+                        |capabilities| &mut capabilities.completion_provider,
+                    )? {
+                        let restored = server.capabilities().completion_provider;
+                        self.apply_completion_triggers(server_id, restored, cx);
+                    }
                 }
                 "textDocument/hover" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.hover_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.hover,
+                        |capabilities| &mut capabilities.hover_provider,
+                    )?;
                 }
                 "textDocument/signatureHelp" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.signature_help_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.signature_help,
+                        |capabilities| &mut capabilities.signature_help_provider,
+                    )?;
                 }
                 "textDocument/semanticTokens" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.semantic_tokens_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.semantic_tokens,
+                        |capabilities| &mut capabilities.semantic_tokens_provider,
+                    )? {
+                        self.refresh_semantic_tokens(server_id, None, cx);
+                    }
                 }
                 "textDocument/didChange" => {
                     server.update_capabilities(|capabilities| {
@@ -13700,98 +13933,100 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
-                    self.unregister_dynamic_capability(
+                    if self.unregister_dynamic_capability(
                         &server,
-                        server_id,
                         unreg,
+                        cx,
                         |registrations| &mut registrations.inlay_hint,
                         |capabilities| &mut capabilities.inlay_hint_provider,
-                    )?;
-                    notify_server_capabilities_updated(&server, cx);
+                    )? {
+                        self.refresh_inlay_hints(server_id, None, cx);
+                    }
                 }
                 "textDocument/documentSymbol" => {
-                    self.unregister_dynamic_capability(
+                    if self.unregister_dynamic_capability(
                         &server,
-                        server_id,
                         unreg,
+                        cx,
                         |registrations| &mut registrations.document_symbol,
                         |capabilities| &mut capabilities.document_symbol_provider,
-                    )?;
-                    notify_server_capabilities_updated(&server, cx);
+                    )? {
+                        self.refresh_document_symbols(cx);
+                    }
                 }
                 "textDocument/codeLens" => {
-                    self.unregister_dynamic_capability(
+                    if self.unregister_dynamic_capability(
                         &server,
-                        server_id,
                         unreg,
+                        cx,
                         |registrations| &mut registrations.code_lens,
                         |capabilities| &mut capabilities.code_lens_provider,
-                    )?;
-                    notify_server_capabilities_updated(&server, cx);
+                    )? {
+                        self.refresh_code_lens(cx);
+                    }
                 }
                 "textDocument/diagnostic" => {
-                    let local = self
-                        .as_local_mut()
-                        .context("Expected LSP Store to be local")?;
-
-                    let state = local
-                        .language_servers
-                        .get_mut(&server_id)
-                        .context("Could not obtain Language Servers state")?;
-                    let registrations = local
-                        .language_server_dynamic_registrations
-                        .get_mut(&server_id)
-                        .with_context(|| {
-                            format!("Expected dynamic registration to exist for server {server_id}")
-                        })?;
-                    registrations.diagnostics
-                        .remove(&Some(unreg.id.clone()))
-                        .with_context(|| format!(
-                            "Attempted to unregister non-existent diagnostic registration with ID {}",
-                            unreg.id)
-                        )?;
-                    let removed_last_diagnostic_provider = registrations.diagnostics.is_empty();
-
-                    if let LanguageServerState::Running {
-                        workspace_diagnostics_refresh_tasks,
-                        ..
-                    } = state
-                    {
-                        workspace_diagnostics_refresh_tasks.remove(&Some(unreg.id.clone()));
-                    }
-
-                    self.clear_unregistered_diagnostics(
-                        server_id,
-                        SharedString::from(unreg.id.clone()),
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
                         cx,
-                    )?;
+                        |registrations| &mut registrations.diagnostics,
+                        |capabilities| &mut capabilities.diagnostic_provider,
+                    )? {
+                        let local = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?;
+                        let state = local
+                            .language_servers
+                            .get_mut(&server_id)
+                            .context("Could not obtain Language Servers state")?;
+                        if let LanguageServerState::Running {
+                            workspace_diagnostics_refresh_tasks,
+                            ..
+                        } = state
+                        {
+                            workspace_diagnostics_refresh_tasks.remove(&Some(unreg.id.clone()));
+                        }
 
-                    if removed_last_diagnostic_provider {
-                        server.update_capabilities(|capabilities| {
-                            debug_assert!(capabilities.diagnostic_provider.is_some());
-                            capabilities.diagnostic_provider = None;
-                        });
+                        self.clear_unregistered_diagnostics(
+                            server_id,
+                            SharedString::from(unreg.id.clone()),
+                            cx,
+                        )?;
                     }
-
-                    notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.color_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.color,
+                        |capabilities| &mut capabilities.color_provider,
+                    )? {
+                        self.refresh_document_colors(cx);
+                    }
                 }
                 "textDocument/foldingRange" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.folding_range_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.folding_range,
+                        |capabilities| &mut capabilities.folding_range_provider,
+                    )? {
+                        self.refresh_folding_ranges(cx);
+                    }
                 }
                 "textDocument/documentLink" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_link_provider = None;
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.document_link,
+                        |capabilities| &mut capabilities.document_link_provider,
+                    )? {
+                        self.refresh_document_links(cx);
+                    }
                 }
                 _ => log::warn!("unhandled capability unregistration: {unreg:?}"),
             }
@@ -14169,9 +14404,9 @@ impl LspStore {
 // Registration with registerOptions as null, should fallback to true.
 // https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/client.ts#L2133
 fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
-    reg: lsp::Registration,
+    register_options: Option<serde_json::Value>,
 ) -> Result<OneOf<bool, T>> {
-    Ok(match reg.register_options {
+    Ok(match register_options {
         Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
         None => OneOf::Left(true),
     })
