@@ -1978,8 +1978,11 @@ impl SearchableItem for Editor {
                     let query = query.clone();
 
                     let mut results = Vec::new();
+                    // SAFETY: the `scoped` future is awaited immediately below, so the
+                    // spawned futures — which borrow this frame for `'scope` — never
+                    // outlive it, and the future is not leaked (which would skip that await).
                     executor
-                        .scoped(|scope| {
+                        .scoped(|scope| unsafe {
                             for search_range in chunk_search_range(
                                 search_buffer.text.clone(),
                                 &query,

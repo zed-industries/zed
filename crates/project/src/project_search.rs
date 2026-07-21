@@ -346,8 +346,11 @@ impl Search {
                     let num_cpus = _executor.num_cpus();
 
                     assert!(num_cpus > 0);
+                    // SAFETY: the `scoped` future is awaited immediately below, so the
+                    // spawned futures — which borrow this frame for `'scope` — never
+                    // outlive it, and the future is not leaked (which would skip that await).
                     _executor
-                        .scoped(|scope| {
+                        .scoped(|scope| unsafe {
                             let worker_count = (num_cpus - 1).max(1);
                             for _ in 0..worker_count {
                                 let worker = Worker {

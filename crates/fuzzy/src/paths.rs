@@ -181,8 +181,11 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
+    // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+    // futures — which borrow this frame for `'scope` — never outlive it, and the
+    // future is not leaked (which would skip that await and free the frame early).
     executor
-        .scoped(|scope| {
+        .scoped(|scope| unsafe {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;

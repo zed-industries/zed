@@ -1809,7 +1809,9 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    cx.foreground_executor().block_on(executor.scoped(|scope| {
+    // SAFETY: `load_fonts` is driven to completion by `block_on` below (never
+    // leaked), so the spawned futures' `'scope` borrows of this frame stay valid.
+    let load_fonts = executor.scoped(|scope| unsafe {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
@@ -1820,7 +1822,8 @@ fn load_embedded_fonts(cx: &App) {
                 embedded_fonts.lock().push(font_bytes);
             });
         }
-    }));
+    });
+    cx.foreground_executor().block_on(load_fonts);
 
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())

@@ -711,7 +711,12 @@ pub struct App {
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
-    pub(crate) element_arena: RefCell<Arena>,
+    ///
+    /// This is an `Rc` so that the `ArenaClearNeeded` token returned by
+    /// `Window::draw` can hold a strong reference to it. That keeps the arena
+    /// alive even if the token outlives the `App`, so clearing it can never
+    /// dereference freed memory.
+    pub(crate) element_arena: Rc<RefCell<Arena>>,
     /// Per-App event arena.
     pub(crate) event_arena: Arena,
 
@@ -847,7 +852,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
-                element_arena: RefCell::new(Arena::new(1024 * 1024)),
+                element_arena: Rc::new(RefCell::new(Arena::new(1024 * 1024))),
                 event_arena: Arena::new(1024 * 1024),
 
                 #[cfg(any(test, feature = "leak-detection"))]

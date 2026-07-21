@@ -322,23 +322,24 @@ impl Drop for ElementArenaScope {
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
 pub struct ArenaClearNeeded {
-    arena: *const RefCell<Arena>,
+    // Hold a strong reference to the arena rather than a raw pointer, so that a
+    // token which outlives its `App` keeps the arena alive instead of pointing
+    // at freed memory. Construction and clearing happen once per frame, so the
+    // reference count churn is not on the hot path.
+    arena: Rc<RefCell<Arena>>,
 }
 
 impl ArenaClearNeeded {
     /// Create a new ArenaClearNeeded that will clear the given arena.
-    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+    pub(crate) fn new(arena: &Rc<RefCell<Arena>>) -> Self {
         Self {
-            arena: arena as *const RefCell<Arena>,
+            arena: arena.clone(),
         }
     }
 
     /// Clear the element arena.
     pub fn clear(self) {
-        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
-        // at the end of draw() and must be cleared before the next draw.
-        let arena_cell = unsafe { &*self.arena };
-        arena_cell.borrow_mut().clear();
+        self.arena.borrow_mut().clear();
     }
 }
 

@@ -5097,8 +5097,11 @@ impl BackgroundScanner {
         }
 
         let progress_update_count = AtomicUsize::new(0);
+        // SAFETY: the `scoped_priority` future is awaited immediately below, so the
+        // spawned futures — which borrow this frame for `'scope` — never outlive it,
+        // and the future is not leaked (which would skip that await).
         self.executor
-            .scoped_priority(Priority::Low, |scope| {
+            .scoped_priority(Priority::Low, |scope| unsafe {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         let mut last_progress_update_count = 0;
@@ -5680,8 +5683,11 @@ impl BackgroundScanner {
         }
         drop(ignore_queue_tx);
 
+        // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+        // futures — which borrow this frame for `'scope` — never outlive it, and the
+        // future is not leaked (which would skip that await).
         self.executor
-            .scoped(|scope| {
+            .scoped(|scope| unsafe {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         loop {

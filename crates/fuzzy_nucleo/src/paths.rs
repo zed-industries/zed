@@ -295,8 +295,11 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
     let mut matchers = matcher::get_matchers(num_cpus, config);
+    // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+    // futures — which borrow this frame for `'scope` — never outlive it, and the
+    // future is not leaked (which would skip that await and free the frame early).
     executor
-        .scoped(|scope| {
+        .scoped(|scope| unsafe {
             for (segment_idx, (results, matcher)) in segment_results
                 .iter_mut()
                 .zip(matchers.iter_mut())

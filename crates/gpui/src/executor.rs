@@ -115,6 +115,12 @@ impl BackgroundExecutor {
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
+    ///
+    /// The returned future spawns the futures registered by `scheduler` onto
+    /// the background executor and then awaits them all. It MUST be polled to
+    /// completion and MUST NOT be leaked (see the safety contract on
+    /// [`Scope::spawn`]), because the spawned futures borrow the caller's frame
+    /// for `'scope`.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
@@ -132,6 +138,9 @@ impl BackgroundExecutor {
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
+    ///
+    /// See [`Self::scoped`]: the returned future must be polled to completion
+    /// and must not be leaked.
     pub async fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
@@ -409,15 +418,29 @@ impl<'a> Scope<'a> {
     }
 
     /// Spawn a future into this scope.
+    ///
+    /// # Safety
+    ///
+    /// `f` may borrow data that only lives for `'a`, but it is transmuted to a
+    /// `'static` future and spawned onto the background executor. The `'a`
+    /// borrow is only guaranteed to outlive the spawned future because
+    /// [`BackgroundExecutor::scoped`]/[`BackgroundExecutor::scoped_priority`]
+    /// await every spawned future (and `Scope::drop` blocks on them) before
+    /// returning. The caller must therefore ensure the enclosing `scoped`
+    /// future is polled to completion and NOT leaked (e.g. via `mem::forget`):
+    /// leaking it would skip that await/drop and free the borrowed frame while
+    /// the background threads are still reading it. Every in-tree caller
+    /// satisfies this by awaiting the `scoped` future immediately.
     #[track_caller]
-    pub fn spawn<F>(&mut self, f: F)
+    pub unsafe fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,
     {
         let tx = self.tx.clone().unwrap();
 
         // SAFETY: The 'a lifetime is guaranteed to outlive any of these futures because
-        // dropping this `Scope` blocks until all of the futures have resolved.
+        // dropping this `Scope` blocks until all of the futures have resolved,
+        // provided the caller upholds the contract documented above.
         let f = unsafe {
             mem::transmute::<
                 Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
@@ -433,6 +456,13 @@ impl<'a> Scope<'a> {
 
 impl Drop for Scope<'_> {
     fn drop(&mut self) {
+        // Drop any futures that were registered but never spawned (for example
+        // if the `scheduler` closure panicked before they were spawned). Each
+        // un-spawned future holds a clone of `tx`, so we must drop them before
+        // blocking on `rx` below; otherwise those senders would keep the
+        // channel open forever and this drop would deadlock.
+        self.futures.clear();
+
         self.tx.take().unwrap();
 
         // Wait until the channel is closed, which means that all of the spawned
