@@ -17748,6 +17748,231 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     );
 }
 
+async fn setup_code_action_test(
+    cx: &mut TestAppContext,
+    initial_content: &str,
+) -> (
+    Entity<Editor>,
+    lsp::FakeLanguageServer,
+    &'static mut gpui::VisualTestContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), initial_content.as_bytes().to_vec())
+        .await;
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    // `into_mut` heap-allocates the visual cx so the helper can return a
+    // reference to it. Same trick `add_window_view` uses internally.
+    let cx = gpui::VisualTestContext::from_window(*window, cx).into_mut();
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(language::rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("file.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    cx.executor().run_until_parked();
+    let fake_server = fake_servers.next().await.unwrap();
+    (editor, fake_server, cx)
+}
+
+fn quickfix(
+    title: &str,
+    range: lsp::Range,
+    replacement: &str,
+    uri: lsp::Uri,
+) -> lsp::CodeActionOrCommand {
+    lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+        title: title.into(),
+        kind: Some(lsp::CodeActionKind::QUICKFIX),
+        edit: Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(uri, vec![lsp::TextEdit::new(range, replacement.into())])]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+fn lsp_range(start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> lsp::Range {
+    lsp::Range::new(
+        lsp::Position::new(start_line, start_col),
+        lsp::Position::new(end_line, end_col),
+    )
+}
+
+#[gpui::test]
+async fn test_code_action_first_applies_one_and_filters_by_kind(cx: &mut TestAppContext) {
+    let (editor, fake_server, cx) = setup_code_action_test(cx, "AAAA\nBBBB\n").await;
+
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        |params, _| async move {
+            // Only the kind-filtered call returns canned actions; the editor's
+            // unfiltered auto-refresh hits this handler too and gets nothing.
+            if params.context.only.as_deref() != Some(&[lsp::CodeActionKind::QUICKFIX][..]) {
+                return Ok(Some(vec![]));
+            }
+            let uri = params.text_document.uri;
+            Ok(Some(vec![
+                quickfix("first", lsp_range(0, 0, 0, 4), "FIRST", uri.clone()),
+                quickfix("second", lsp_range(1, 0, 1, 4), "SECOND", uri),
+            ]))
+        },
+    );
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.code_action(
+                &crate::actions::CodeAction {
+                    kind: "quickfix".into(),
+                    apply: ApplyMode::First,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "FIRST\nBBBB\n");
+        assert!(editor.context_menu().borrow().is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_code_action_if_single_applies_when_one_match(cx: &mut TestAppContext) {
+    let (editor, fake_server, cx) = setup_code_action_test(cx, "AAAA\n").await;
+
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        |params, _| async move {
+            let uri = params.text_document.uri;
+            Ok(Some(vec![quickfix(
+                "only",
+                lsp_range(0, 0, 0, 4),
+                "ONLY",
+                uri,
+            )]))
+        },
+    );
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.code_action(
+                &crate::actions::CodeAction {
+                    kind: "quickfix".into(),
+                    apply: ApplyMode::IfSingle,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "ONLY\n");
+        assert!(editor.context_menu().borrow().is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_code_action_if_single_opens_menu_when_multiple(cx: &mut TestAppContext) {
+    let (editor, fake_server, cx) = setup_code_action_test(cx, "AAAA\n").await;
+
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        |params, _| async move {
+            let uri = params.text_document.uri;
+            Ok(Some(vec![
+                quickfix("first", lsp_range(0, 0, 0, 4), "FIRST", uri.clone()),
+                quickfix("second", lsp_range(0, 0, 0, 4), "SECOND", uri),
+            ]))
+        },
+    );
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.code_action(
+                &crate::actions::CodeAction {
+                    kind: "quickfix".into(),
+                    apply: ApplyMode::IfSingle,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "AAAA\n");
+        assert!(editor.context_menu().borrow().is_some());
+    });
+}
+
+#[gpui::test]
+async fn test_code_action_zero_matches_is_noop(cx: &mut TestAppContext) {
+    let (editor, fake_server, cx) = setup_code_action_test(cx, "AAAA\n").await;
+
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+        Ok(Some(vec![]))
+    });
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.code_action(
+                &crate::actions::CodeAction {
+                    kind: "quickfix".into(),
+                    apply: ApplyMode::IfSingle,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "AAAA\n");
+        assert!(editor.context_menu().borrow().is_none());
+    });
+}
+
 #[gpui::test]
 async fn test_formatter_failure_does_not_abort_subsequent_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {

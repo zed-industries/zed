@@ -11448,21 +11448,7 @@ impl LspStore {
                 let buffer_id = BufferId::new(*buffer_id)?;
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
-            let kind = match envelope.payload.kind.as_str() {
-                "" => CodeActionKind::EMPTY,
-                "quickfix" => CodeActionKind::QUICKFIX,
-                "refactor" => CodeActionKind::REFACTOR,
-                "refactor.extract" => CodeActionKind::REFACTOR_EXTRACT,
-                "refactor.inline" => CodeActionKind::REFACTOR_INLINE,
-                "refactor.rewrite" => CodeActionKind::REFACTOR_REWRITE,
-                "source" => CodeActionKind::SOURCE,
-                "source.organizeImports" => CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
-                "source.fixAll" => CodeActionKind::SOURCE_FIX_ALL,
-                _ => anyhow::bail!(
-                    "Invalid code action kind {}",
-                    envelope.payload.kind.as_str()
-                ),
-            };
+            let kind = CodeActionKind::from(envelope.payload.kind);
             anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
         })?;
 

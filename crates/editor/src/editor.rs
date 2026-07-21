@@ -8182,6 +8182,104 @@ impl Editor {
         ))
     }
 
+    fn code_action(
+        &mut self,
+        action: &crate::actions::CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        let project = self.project.clone()?;
+        let kind = CodeActionKind::from(action.kind.clone());
+        match action.apply {
+            ApplyMode::All => Some(self.perform_code_action_kind(project, kind, window, cx)),
+            ApplyMode::First | ApplyMode::IfSingle | ApplyMode::Never => {
+                self.dispatch_code_action_by_kind(project, kind, action.apply, window, cx)
+            }
+        }
+    }
+
+    fn dispatch_code_action_by_kind(
+        &mut self,
+        project: Entity<Project>,
+        kind: CodeActionKind,
+        mode: ApplyMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let display_snapshot = self.display_snapshot(cx);
+        let selection = self.selections.newest_adjusted(&display_snapshot);
+        let multi_buffer = self.buffer.read(cx);
+        let (buffer, start) = multi_buffer.text_anchor_for_position(selection.start, cx)?;
+        let (end_buffer, end) = multi_buffer.text_anchor_for_position(selection.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        // Per the LSP spec, source.* kinds apply to the whole file; other
+        // kinds target the cursor or selection.
+        let range = if kind.as_str().starts_with("source.") {
+            let snapshot = buffer.read(cx);
+            snapshot.anchor_before(0)..snapshot.anchor_before(snapshot.len())
+        } else {
+            start..end
+        };
+
+        let actions = project.update(cx, |project, cx| {
+            project.code_actions(&buffer, range, Some(vec![kind]), cx)
+        });
+        let workspace = self.workspace()?.downgrade();
+
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let actions = actions.await?.unwrap_or_default();
+            if actions.is_empty() {
+                return Ok(());
+            }
+            let apply_first = match mode {
+                ApplyMode::First => true,
+                ApplyMode::IfSingle => actions.len() == 1,
+                ApplyMode::Never => false,
+                ApplyMode::All => unreachable!(),
+            };
+            if apply_first {
+                let action = actions.into_iter().next().expect("non-empty checked above");
+                let title = action.lsp_action.title().to_owned();
+                let apply = project.update(cx, |project, cx| {
+                    project.apply_code_action(buffer, action, true, cx)
+                });
+                let transaction = apply.await?;
+                return Self::open_project_transaction(
+                    &editor, workspace, transaction, title, cx,
+                )
+                .await;
+            }
+            let provider: Rc<dyn CodeActionProvider> = Rc::new(project);
+            let available: Rc<[AvailableCodeAction]> = actions
+                .into_iter()
+                .map(|action| AvailableCodeAction {
+                    action,
+                    provider: provider.clone(),
+                })
+                .collect();
+            editor.update(cx, |editor, cx| {
+                let contents =
+                    CodeActionContents::new(None, Some(available), Vec::new(), Default::default());
+                *editor.context_menu.borrow_mut() =
+                    Some(CodeContextMenu::CodeActions(CodeActionsMenu {
+                        buffer,
+                        actions: contents,
+                        selected_item: Default::default(),
+                        scroll_handle: UniformListScrollHandle::default(),
+                        deployed_from: None,
+                    }));
+                cx.notify();
+            })?;
+            Ok(())
+        }))
+    }
+
     fn perform_code_action_kind(
         &mut self,
         project: Entity<Project>,
