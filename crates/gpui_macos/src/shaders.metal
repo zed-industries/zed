@@ -663,8 +663,10 @@ fragment float4 monochrome_sprite_fragment(
     return float4(0.0);
   }
 
-  constexpr sampler atlas_texture_sampler(mag_filter::linear,
-                                          min_filter::linear);
+  // Monochrome glyphs already bake subpixel variants into atlas tiles, so
+  // nearest avoids redundant blur; polychrome sprites keep linear sampling.
+  constexpr sampler atlas_texture_sampler(mag_filter::nearest,
+                                          min_filter::nearest);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float4 color = input.color;
