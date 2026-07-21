@@ -14,8 +14,8 @@ use git::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
-        commit_hash_search_query,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, SearchCommitQuery,
+        Worktree, parse_search_commit_query,
     },
     stash::GitStash,
     status::{
@@ -1523,12 +1523,20 @@ impl GitRepository for FakeGitRepository {
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         async move {
-            let hash_query = commit_hash_search_query(search_args.query.as_str())
-                .map(|query| query.to_ascii_lowercase());
-            let message_query = if search_args.case_sensitive {
-                search_args.query.to_string()
-            } else {
-                search_args.query.to_lowercase()
+            let search_query = parse_search_commit_query(search_args.query.as_str());
+            if matches!(search_query, SearchCommitQuery::Empty) {
+                return Ok(());
+            }
+            let normalized_query = match search_query {
+                SearchCommitQuery::Hash(query) => query.to_ascii_lowercase(),
+                SearchCommitQuery::Author(query) | SearchCommitQuery::Message(query) => {
+                    if search_args.case_sensitive {
+                        query.to_string()
+                    } else {
+                        query.to_lowercase()
+                    }
+                }
+                SearchCommitQuery::Empty => String::new(),
             };
 
             let matching_shas = self.fs.with_git_state(&self.dot_git_path, false, |state| {
@@ -1539,19 +1547,36 @@ impl GitRepository for FakeGitRepository {
                         let FakeCommitDataEntry::Success(commit_data) = entry else {
                             return None;
                         };
-                        if let Some(hash_query) = hash_query.as_ref() {
-                            return sha
+                        match search_query {
+                            SearchCommitQuery::Hash(_) => sha
                                 .to_string()
                                 .to_ascii_lowercase()
-                                .starts_with(hash_query)
-                                .then_some(*sha);
+                                .starts_with(&normalized_query)
+                                .then_some(*sha),
+                            SearchCommitQuery::Author(_) => {
+                                let author_name;
+                                let author_email;
+                                if search_args.case_sensitive {
+                                    author_name = commit_data.author_name.to_string();
+                                    author_email = commit_data.author_email.to_string();
+                                } else {
+                                    author_name = commit_data.author_name.to_lowercase();
+                                    author_email = commit_data.author_email.to_lowercase();
+                                }
+                                (author_name.contains(&normalized_query)
+                                    || author_email.contains(&normalized_query))
+                                .then_some(*sha)
+                            }
+                            SearchCommitQuery::Message(_) => {
+                                let message = if search_args.case_sensitive {
+                                    commit_data.message.to_string()
+                                } else {
+                                    commit_data.message.to_lowercase()
+                                };
+                                message.contains(&normalized_query).then_some(*sha)
+                            }
+                            SearchCommitQuery::Empty => None,
                         }
-                        let message = if search_args.case_sensitive {
-                            commit_data.message.to_string()
-                        } else {
-                            commit_data.message.to_lowercase()
-                        };
-                        message.contains(&message_query).then_some(*sha)
                     })
                     .collect::<Vec<_>>()
             })?;

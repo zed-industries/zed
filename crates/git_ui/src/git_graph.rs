@@ -13,7 +13,7 @@ use git::{
     parse_git_remote_url,
     repository::{
         CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
-        SearchCommitArgs,
+        SearchCommitArgs, SearchCommitQuery, parse_search_commit_query,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
@@ -1850,43 +1850,69 @@ impl GitGraph {
                         .truncate()
                         .into_any_element()
                 };
+                let highlight_ranges = |label: &str, query: &str| {
+                    if self.search_state.case_sensitive {
+                        label
+                            .match_indices(query)
+                            .map(|(start, matched)| start..start + matched.len())
+                            .collect::<Vec<_>>()
+                    } else {
+                        let query = query.to_lowercase();
+                        let label_lower = label.to_lowercase();
 
-                let subject_label = if is_matched {
-                    let query = match &self.search_state.state {
+                        label_lower
+                            .match_indices(&query)
+                            .filter_map(|(start, matched)| {
+                                let end = start + matched.len();
+                                label
+                                    .is_char_boundary(start)
+                                    .then_some(())
+                                    .and_then(|_| label.is_char_boundary(end).then_some(start..end))
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                };
+                let query = if is_matched {
+                    match &self.search_state.state {
                         QueryState::Confirmed((query, _)) => Some(query.clone()),
                         _ => None,
-                    };
-                    let highlight_ranges = query
-                        .and_then(|q| {
-                            let ranges = if self.search_state.case_sensitive {
-                                subject
-                                    .match_indices(q.as_str())
-                                    .map(|(start, matched)| start..start + matched.len())
-                                    .collect::<Vec<_>>()
-                            } else {
-                                let q = q.to_lowercase();
-                                let subject_lower = subject.to_lowercase();
+                    }
+                } else {
+                    None
+                };
+                let (subject_highlight_ranges, author_highlight_ranges) = query
+                    .map(|query| match parse_search_commit_query(query.as_ref()) {
+                        SearchCommitQuery::Message(query) => {
+                            (highlight_ranges(subject.as_ref(), query), Vec::new())
+                        }
+                        SearchCommitQuery::Author(query) => {
+                            let mut ranges = highlight_ranges(author_name.as_ref(), query);
+                            if ranges.is_empty() && !author_name.is_empty() {
+                                ranges.push(0..author_name.len());
+                            }
+                            (Vec::new(), ranges)
+                        }
+                        SearchCommitQuery::Hash(_) | SearchCommitQuery::Empty => {
+                            (Vec::new(), Vec::new())
+                        }
+                    })
+                    .unwrap_or_default();
 
-                                subject_lower
-                                    .match_indices(&q)
-                                    .filter_map(|(start, matched)| {
-                                        let end = start + matched.len();
-                                        subject.is_char_boundary(start).then_some(()).and_then(
-                                            |_| subject.is_char_boundary(end).then_some(start..end),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                            };
-
-                            (!ranges.is_empty()).then_some(ranges)
-                        })
-                        .unwrap_or_default();
-                    HighlightedLabel::from_ranges(subject, highlight_ranges)
+                let subject_label = if subject_highlight_ranges.is_empty() {
+                    column_label(subject)
+                } else {
+                    HighlightedLabel::from_ranges(subject, subject_highlight_ranges)
                         .when(!is_selected, |c| c.color(Color::Muted))
                         .truncate()
                         .into_any_element()
+                };
+                let author_label = if author_highlight_ranges.is_empty() {
+                    column_label(author_name)
                 } else {
-                    column_label(subject)
+                    HighlightedLabel::from_ranges(author_name, author_highlight_ranges)
+                        .when(!is_selected, |c| c.color(Color::Muted))
+                        .truncate()
+                        .into_any_element()
                 };
 
                 vec![
@@ -1916,7 +1942,7 @@ impl GitGraph {
                         )
                         .into_any_element(),
                     column_label(formatted_time.into()),
-                    column_label(author_name),
+                    author_label,
                     column_label(short_sha.into()),
                 ]
             })
@@ -6146,8 +6172,8 @@ mod tests {
                     CommitData {
                         sha: target_sha,
                         parents: smallvec![third_sha],
-                        author_name: "Author".into(),
-                        author_email: "author@example.com".into(),
+                        author_name: "Alice Smith".into(),
+                        author_email: "alice@example.com".into(),
                         commit_timestamp: 2,
                         subject: "Fix branch loading".into(),
                         message: "Fix branch loading".into(),
@@ -6215,6 +6241,24 @@ mod tests {
 
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.search_matches_for_test(), vec![third_sha]);
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("author:alice".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![target_sha]);
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("author:\"Alice Smith\"".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![target_sha]);
         });
     }
 

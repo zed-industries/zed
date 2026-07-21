@@ -835,6 +835,36 @@ pub struct SearchCommitArgs {
     pub case_sensitive: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchCommitQuery<'a> {
+    Hash(&'a str),
+    Author(&'a str),
+    Message(&'a str),
+    Empty,
+}
+
+pub fn parse_search_commit_query(query: &str) -> SearchCommitQuery<'_> {
+    if let Some(author_query) = query.trim().strip_prefix("author:") {
+        let author_query = author_query.trim();
+        let author_query = author_query
+            .strip_prefix('"')
+            .and_then(|query| query.strip_suffix('"'))
+            .unwrap_or(author_query)
+            .trim();
+        return if author_query.is_empty() {
+            SearchCommitQuery::Empty
+        } else {
+            SearchCommitQuery::Author(author_query)
+        };
+    }
+
+    if let Some(hash_query) = commit_hash_search_query(query) {
+        SearchCommitQuery::Hash(hash_query)
+    } else {
+        SearchCommitQuery::Message(query)
+    }
+}
+
 pub fn commit_hash_search_query(query: &str) -> Option<&str> {
     let query = query.trim();
     (7..=40)
@@ -3239,18 +3269,35 @@ impl GitRepository for RealGitRepository {
         async move {
             let log_source_args = log_source.get_args();
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
-            let hash_query = commit_hash_search_query(search_args.query.as_str())
-                .map(|query| query.to_ascii_lowercase());
+            let search_query = parse_search_commit_query(search_args.query.as_str());
+            if matches!(search_query, SearchCommitQuery::Empty) {
+                return Ok(());
+            }
+            let hash_query = match search_query {
+                SearchCommitQuery::Hash(query) => Some(query.to_ascii_lowercase()),
+                _ => None,
+            };
 
-            if hash_query.is_none() {
-                args.push("--fixed-strings");
+            match search_query {
+                SearchCommitQuery::Hash(_) | SearchCommitQuery::Empty => {}
+                SearchCommitQuery::Author(query) => {
+                    if !search_args.case_sensitive {
+                        args.push("--regexp-ignore-case");
+                    }
 
-                if !search_args.case_sensitive {
-                    args.push("--regexp-ignore-case");
+                    args.push("--author");
+                    args.push(query);
                 }
+                SearchCommitQuery::Message(query) => {
+                    args.push("--fixed-strings");
 
-                args.push("--grep");
-                args.push(search_args.query.as_str());
+                    if !search_args.case_sensitive {
+                        args.push("--regexp-ignore-case");
+                    }
+
+                    args.push("--grep");
+                    args.push(query);
+                }
             }
 
             args.extend(log_source_args.iter().map(|arg| arg.as_ref()));
