@@ -36,8 +36,8 @@ use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
     DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
-    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor,
-    Tooltip, prelude::*, tooltip_container,
+    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, ScrollAxes, Scrollbars,
+    Tab, TintColor, Tooltip, WithScrollbar, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -2816,7 +2816,7 @@ impl CollabPanel {
         }
     }
 
-    fn render_signed_in(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn render_signed_in(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
@@ -2852,30 +2852,40 @@ impl CollabPanel {
                     }),
             )
             .child(
-                uniform_list(
-                    "collab-panel-entries",
-                    self.entries.len(),
-                    cx.processor(|this, range: Range<usize>, window, cx| {
-                        range
-                            .map(|ix| this.render_list_entry(ix, window, cx))
-                            .collect()
-                    }),
-                )
-                .size_full()
-                .track_scroll(&self.scroll_handle)
-                .with_decoration(
-                    ui::indent_guides(px(20.), IndentGuideColors::panel(cx))
-                        .with_left_offset(ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET)
-                        .with_compute_indents_fn(cx.entity(), |this, range, _, _| {
-                            range
-                                .map(|ix| match this.entries.get(ix) {
-                                    Some(ListEntry::Channel { depth, .. })
-                                    | Some(ListEntry::ChannelEditor { depth }) => *depth,
-                                    _ => 0,
-                                })
-                                .collect()
-                        }),
-                ),
+                div()
+                    .size_full()
+                    .child(
+                        uniform_list(
+                            "collab-panel-entries",
+                            self.entries.len(),
+                            cx.processor(|this, range: Range<usize>, window, cx| {
+                                range
+                                    .map(|ix| this.render_list_entry(ix, window, cx))
+                                    .collect()
+                            }),
+                        )
+                        .size_full()
+                        .track_scroll(&self.scroll_handle)
+                        .with_decoration(
+                            ui::indent_guides(px(20.), IndentGuideColors::panel(cx))
+                                .with_left_offset(ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET)
+                                .with_compute_indents_fn(cx.entity(), |this, range, _, _| {
+                                    range
+                                        .map(|ix| match this.entries.get(ix) {
+                                            Some(ListEntry::Channel { depth, .. })
+                                            | Some(ListEntry::ChannelEditor { depth }) => *depth,
+                                            _ => 0,
+                                        })
+                                        .collect()
+                                }),
+                        ),
+                    )
+                    .custom_scrollbars(
+                        Scrollbars::new(ScrollAxes::Vertical)
+                            .tracked_scroll_handle(&self.scroll_handle),
+                        window,
+                        cx,
+                    ),
             )
     }
 
