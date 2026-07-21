@@ -506,7 +506,7 @@ fn active_pane_modifiers_overlay(
     any_pane_focused: bool,
     cx: &App,
 ) -> Option<Div> {
-    let modifiers = WorkspaceSettings::get(None, cx).active_pane_modifiers;
+    let modifiers = WorkspaceSettings::get_global(cx).active_pane_modifiers;
     let border = modifiers
         .border_size
         .and_then(|border_size| (border_size > 0.).then_some(border_size));
