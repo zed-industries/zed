@@ -550,6 +550,7 @@ impl WindowsWindow {
             // On Windows, windows created on the same thread share the default IME context,
             // so avoid committing an active IME composition in another window.
             unsafe {
+                // `hwnd` is a valid window handle created above, and a null `HIMC` detaches its IME context.
                 ImmAssociateContextEx(hwnd, HIMC::default(), 0)
                     .ok()
                     .context("unable to disable IME for non-activating popup")?;
