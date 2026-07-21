@@ -12,7 +12,7 @@ use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
-    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point,
+    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point, px,
 };
 use language::LanguageRegistry;
 use markdown::{
@@ -21,20 +21,24 @@ use markdown::{
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath};
-use settings::{SeedQuerySetting, Settings};
+use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
+use workspace::notifications::NotifyResultExt;
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
+use workspace::{ItemId, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items};
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
+    CloseAndReturnToEditor, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown,
+    ScrollDownByItem,
 };
 use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
@@ -206,7 +210,7 @@ impl MarkdownPreviewView {
         None
     }
 
-    fn create_markdown_view(
+    pub fn create_markdown_view(
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -333,6 +337,43 @@ impl MarkdownPreviewView {
         {
             self.set_editor(editor, window, cx);
         }
+    }
+
+    pub fn is_markdown_path(path: impl AsRef<Path>) -> bool {
+        path.as_ref().extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+        })
+    }
+
+    pub fn open_for_project_path(
+        project_path: ProjectPath,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let open_buffer = workspace
+            .project()
+            .update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+        cx.spawn_in(window, async move |workspace, mut cx| {
+            let Some(buffer) = open_buffer
+                .await
+                .notify_workspace_async_err(workspace.clone(), &mut cx)
+            else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                    let preview = Self::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview), true, true, None, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
     }
 
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
@@ -556,9 +597,10 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn move_cursor_to_source_index(
+    fn change_selection_to_source_index(
         editor: &Entity<Editor>,
         source_index: usize,
+        move_focus: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -570,7 +612,9 @@ impl MarkdownPreviewView {
                 cx,
                 |selections| selections.select_ranges(vec![selection]),
             );
-            window.focus(&editor.focus_handle(cx), cx);
+            if move_focus {
+                window.focus(&editor.focus_handle(cx), cx);
+            }
         });
     }
 
@@ -589,7 +633,64 @@ impl MarkdownPreviewView {
 
     fn line_scroll_amount(&self, cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
-        settings.buffer_font_size(cx) * settings.buffer_line_height.value()
+        settings.markdown_preview_font_size(cx) * settings.buffer_line_height.value()
+    }
+
+    fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(1.0), cx);
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(-1.0), cx);
+    }
+
+    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            let Ok(fs) = self
+                .workspace
+                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+            else {
+                return;
+            };
+            update_settings_file(fs, cx, move |settings, cx| {
+                let size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx) + delta;
+                settings.theme.markdown_preview_font_size =
+                    Some(f32::from(theme_settings::clamp_font_size(size)).into());
+            });
+        } else {
+            theme_settings::adjust_markdown_preview_font_size(cx, |size| size + delta);
+        }
+    }
+
+    fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            let Ok(fs) = self
+                .workspace
+                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+            else {
+                return;
+            };
+            update_settings_file(fs, cx, move |settings, _| {
+                settings.theme.markdown_preview_font_size = None;
+            });
+        } else {
+            theme_settings::reset_markdown_preview_font_size(cx);
+        }
     }
 
     fn scroll_by_amount(&self, distance: Pixels) {
@@ -706,6 +807,40 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
+    fn close_and_return_to_editor(
+        &mut self,
+        _: &CloseAndReturnToEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self
+            .active_editor
+            .as_ref()
+            .map(|state| state.editor.clone())
+        else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let preview_id = cx.entity_id();
+
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                if !workspace.activate_item(&editor, true, true, window, cx) {
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                }
+
+                if let Some(pane) = workspace.pane_for_item_id(preview_id) {
+                    pane.update(cx, |pane, cx| {
+                        pane.close_item_by_id(preview_id, SaveIntent::Skip, window, cx)
+                    })
+                    .detach_and_log_err(cx);
+                }
+            });
+        });
+    }
+
     /// Returns the theme chosen in `markdown_preview_theme`, or `None` if the
     /// user hasn't set one or it can't be resolved.
     fn resolve_preview_theme(&self, cx: &App) -> Option<Arc<Theme>> {
@@ -785,12 +920,16 @@ impl MarkdownPreviewView {
             let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
                 .on_source_click(move |source_index, click_count, window, cx| {
-                    if click_count == 2 {
-                        Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
-                        true
-                    } else {
-                        false
+                    if click_count == 1 {
+                        Self::change_selection_to_source_index(
+                            &active_editor,
+                            source_index,
+                            false,
+                            window,
+                            cx,
+                        );
                     }
+                    false
                 })
                 .on_checkbox_toggle(move |source_range, new_checked, window, cx| {
                     Self::apply_checkbox_toggle_to_editor(
@@ -879,9 +1018,10 @@ fn handle_url_click(
 
                     if let Some(source_index) = source_index {
                         if let Some(editor) = active_editor {
-                            MarkdownPreviewView::move_cursor_to_source_index(
+                            MarkdownPreviewView::change_selection_to_source_index(
                                 &editor,
                                 source_index,
+                                true,
                                 window,
                                 cx,
                             );
@@ -1127,6 +1267,7 @@ impl Render for MarkdownPreviewView {
             .as_ref()
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
+        let preview_font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -1140,44 +1281,88 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
+            .on_action(cx.listener(MarkdownPreviewView::close_and_return_to_editor))
+            .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
             .w_full()
             .flex_1()
             .min_h_0()
             .bg(bg_color)
             .child(
-                div()
-                    .id("markdown-preview-scroll-container")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .p_4()
-                    .child({
-                        let markdown_element =
-                            self.render_markdown_element(&preview_theme, window, cx);
-                        let markdown = self.markdown.clone();
-                        let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
-                        let content = right_click_menu("markdown-preview-context-menu")
-                            .trigger(move |_, _, _| markdown_element)
-                            .menu(move |window, cx| {
-                                let focus = window.focused(cx);
-                                let context_menu_link =
-                                    markdown.read(cx).context_menu_link().cloned();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                    menu.when_some(focus, |menu, focus| menu.context(focus))
-                                        .when_some(context_menu_link, |menu, url| {
-                                            menu.entry("Copy Link", None, move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.to_string(),
-                                                ));
+                WithRemSize::new(preview_font_size).size_full().child(
+                    div()
+                        .id("markdown-preview-scroll-container")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .p_4()
+                        .child({
+                            let markdown_element =
+                                self.render_markdown_element(&preview_theme, window, cx);
+                            let markdown = self.markdown.clone();
+                            let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
+                            let content = right_click_menu("markdown-preview-context-menu")
+                                .trigger(move |_, _, _| markdown_element)
+                                .maybe_menu(move |window, cx| {
+                                    let focus = window.focused(cx);
+                                    let markdown = markdown.read(cx);
+                                    let context_menu_link = markdown.context_menu_link().cloned();
+                                    let selected_text =
+                                        markdown.context_menu_selected_text().cloned();
+                                    let selected_markdown =
+                                        markdown.context_menu_selected_markdown().cloned();
+                                    if context_menu_link.is_none()
+                                        && selected_text.is_none()
+                                        && selected_markdown.is_none()
+                                    {
+                                        return None;
+                                    }
+                                    Some(ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                            .when_some(selected_text, |menu, text| {
+                                                menu.entry(
+                                                    "Copy",
+                                                    Some(Box::new(markdown::Copy)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                text.to_string(),
+                                                            ),
+                                                        );
+                                                    },
+                                                )
                                             })
-                                        })
+                                            .when_some(selected_markdown, |menu, text| {
+                                                menu.entry(
+                                                    "Copy as Markdown",
+                                                    Some(Box::new(markdown::CopyAsMarkdown)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                text.to_string(),
+                                                            ),
+                                                        );
+                                                    },
+                                                )
+                                            })
+                                            .when_some(context_menu_link, |menu, url| {
+                                                menu.entry("Copy Link", None, move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(url.to_string()),
+                                                    );
+                                                })
+                                            })
+                                    }))
+                                });
+                            div()
+                                .w_full()
+                                .when_some(max_width, |this, max_width| {
+                                    this.max_w(max_width).mx_auto()
                                 })
-                            });
-                        div()
-                            .w_full()
-                            .when_some(max_width, |this, max_width| this.max_w(max_width).mx_auto())
-                            .child(content)
-                    }),
+                                .child(content)
+                        }),
+                ),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
@@ -1244,7 +1429,11 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        self.markdown.read(cx).selected_text().unwrap_or_default()
+        self.markdown
+            .read(cx)
+            .selected_source()
+            .unwrap_or_default()
+            .to_string()
     }
 
     fn activate_match(
@@ -1473,12 +1662,13 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use crate::CloseAndReturnToEditor;
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
     use buffer_diff::BufferDiff;
     use editor::Editor;
-    use gpui::{AppContext as _, Entity, TestAppContext};
+    use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, WindowHandle};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1758,6 +1948,69 @@ mod tests {
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
         );
+    }
+
+    #[gpui::test]
+    async fn close_and_return_to_editor_closes_preview_and_focuses_source_editor(
+        cx: &mut TestAppContext,
+    ) {
+        let (multi_workspace, editor) =
+            open_markdown_file(cx, "note.md", "# Note\n\nBody text\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        dispatch_close_and_return_to_editor(cx, &multi_workspace, &preview);
+        cx.run_until_parked();
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
+    }
+
+    #[gpui::test]
+    async fn close_and_return_to_editor_reopens_source_editor_when_editor_tab_was_closed(
+        cx: &mut TestAppContext,
+    ) {
+        let (multi_workspace, editor) = open_markdown_file(cx, "note.md", "# Note\n").await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        let close_editor_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(editor.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        close_editor_task.await.unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "preview should remain focused after closing the source editor tab"
+                );
+                assert!(
+                    workspace
+                        .items_of_type::<Editor>(cx)
+                        .all(|open_editor| open_editor != editor),
+                    "source editor should no longer be open in any pane"
+                );
+                assert_eq!(
+                    workspace.items_of_type::<MarkdownPreviewView>(cx).count(),
+                    1
+                );
+            })
+            .unwrap();
+
+        dispatch_close_and_return_to_editor(cx, &multi_workspace, &preview);
+        cx.run_until_parked();
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
     }
 
     #[gpui::test]
@@ -2105,6 +2358,119 @@ mod tests {
             "a Default preview must stay bound to the editor it was opened from, not another \
              editor that happens to share the same buffer in a different split"
         );
+    }
+
+    async fn open_markdown_file(
+        cx: &mut TestAppContext,
+        file_name: &str,
+        contents: &str,
+    ) -> (WindowHandle<MultiWorkspace>, Entity<Editor>) {
+        let app_state = init_test(cx);
+        let mut entries = serde_json::Map::new();
+        entries.insert(file_name.to_string(), json!(contents));
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), serde_json::Value::Object(entries))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir")).join(file_name)],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item_as::<Editor>(cx)
+                    .unwrap()
+            })
+            .unwrap();
+        (multi_workspace, editor)
+    }
+
+    fn open_preview_for_active_editor(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+    ) -> Entity<MarkdownPreviewView> {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let editor: Entity<Editor> = workspace.active_item_as(cx).unwrap();
+                    let preview =
+                        MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                })
+            })
+            .unwrap()
+    }
+
+    fn dispatch_close_and_return_to_editor(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        preview: &Entity<MarkdownPreviewView>,
+    ) {
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "preview must be focused for the keyboard action to dispatch to it"
+                );
+                window.dispatch_action(Box::new(CloseAndReturnToEditor), cx);
+            })
+            .unwrap();
+    }
+
+    fn assert_editor_is_active_and_focused(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        expected_editor: &Entity<Editor>,
+    ) {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(active_editor, *expected_editor);
+                assert!(
+                    expected_editor
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx),
+                    "source editor should be focused"
+                );
+            })
+            .unwrap();
+    }
+
+    fn assert_no_markdown_preview_items(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+    ) {
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .items_of_type::<MarkdownPreviewView>(cx)
+                        .count(),
+                    0
+                );
+            })
+            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

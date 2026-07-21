@@ -14,7 +14,7 @@ use language::{
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::{LanguageServerBinary, Uri};
+use lsp::{CompletionItemKind, LanguageServerBinary, Uri};
 use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
@@ -90,14 +90,14 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
         let mut outermost_workspace_root = None;
 
         for path in path.ancestors().take(depth) {
-            let pyproject_path = path.join(RelPath::unix("pyproject.toml").unwrap());
+            let pyproject_path = path.join(RelPath::from_unix_str("pyproject.toml").unwrap());
             if delegate.exists(&pyproject_path, Some(false)) {
                 if innermost_pyproject.is_none() {
                     innermost_pyproject = Some(Arc::from(path));
                 }
 
                 let has_lockfile = WORKSPACE_LOCKFILES.iter().any(|lockfile| {
-                    let lockfile_path = path.join(RelPath::unix(lockfile).unwrap());
+                    let lockfile_path = path.join(RelPath::from_unix_str(lockfile).unwrap());
                     delegate.exists(&lockfile_path, Some(false))
                 });
                 if has_lockfile {
@@ -193,16 +193,8 @@ fn label_for_pyright_completion(
     let label = &item.label;
     let label_len = label.len();
     let grammar = language.grammar()?;
-    let highlight_id = match item.kind? {
-        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-        _ => {
-            return None;
-        }
-    };
+    let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
+
     let mut text = label.clone();
     if let Some(completion_details) = item
         .label_details
@@ -228,19 +220,19 @@ fn label_for_python_symbol(
 ) -> Option<language::CodeLabel> {
     let name = &symbol.name;
     let (text, filter_range, display_range) = match symbol.kind {
-        lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+        language::SymbolKind::Method | language::SymbolKind::Function => {
             let text = format!("def {}():\n", name);
             let filter_range = 4..4 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CLASS => {
+        language::SymbolKind::Class => {
             let text = format!("class {}:", name);
             let filter_range = 6..6 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CONSTANT => {
+        language::SymbolKind::Constant => {
             let text = format!("{} = 0", name);
             let filter_range = 0..name.len();
             let display_range = 0..filter_range.end;
@@ -253,6 +245,24 @@ fn label_for_python_symbol(
         filter_range,
         language.highlight_text(&text.as_str().into(), display_range),
     ))
+}
+
+/// Returns the highlight ID for the given completion item kind, if it is supported.
+///
+/// The outer `Option` is `None` if the item kind returned by the language server is not covered.
+/// The inner `Option` is `None` if the item kind is covered, but the highlight name is not present in the grammar.
+fn highlight_id_for_completion(
+    item_kind: CompletionItemKind,
+    grammar: &Arc<language::Grammar>,
+) -> Option<Option<language::HighlightId>> {
+    match item_kind {
+        CompletionItemKind::METHOD => Some(grammar.highlight_id_for_name("function.method.call")),
+        CompletionItemKind::FUNCTION => Some(grammar.highlight_id_for_name("function.call")),
+        CompletionItemKind::CLASS => Some(grammar.highlight_id_for_name("type")),
+        CompletionItemKind::CONSTANT => Some(grammar.highlight_id_for_name("constant")),
+        CompletionItemKind::VARIABLE => Some(grammar.highlight_id_for_name("variable")),
+        _ => None,
+    }
 }
 
 pub struct TyLspAdapter {
@@ -320,16 +330,7 @@ impl LspAdapter for TyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
 
         let mut text = label.clone();
         if let Some(completion_details) = item
@@ -668,7 +669,7 @@ impl LspAdapter for PyrightLspAdapter {
             // If we have a detected toolchain, configure Pyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
                 user_settings.as_object().is_none_or(|object| {
-                    [
+                    ![
                         "venvPath",
                         "venv",
                         "python",
@@ -1113,7 +1114,7 @@ impl PythonContextProvider {
 
 fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
     let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
-    let path_with_dots = rel_path.display(PathStyle::Posix).replace('/', ".");
+    let path_with_dots = rel_path.display(PathStyle::Unix).replace('/', ".");
     Some(
         path_with_dots
             .strip_suffix(".py")
@@ -1814,13 +1815,7 @@ impl LspAdapter for PyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)??;
         Some(language::CodeLabel::filtered(
             label.clone(),
             label_len,
@@ -2117,10 +2112,10 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
-            // If we have a detected toolchain, configure Pyright to use it
+            // If we have a detected toolchain, configure BasedPyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
                 user_settings.as_object().is_none_or(|object| {
-                    [
+                    ![
                         "venvPath",
                         "venv",
                         "python",
@@ -3270,7 +3265,7 @@ mod tests {
             });
             let provider = PyprojectTomlManifestProvider;
             provider.search(ManifestQuery {
-                path: RelPath::unix(query_path).unwrap().into(),
+                path: RelPath::from_unix_str(query_path).unwrap().into(),
                 depth: 10,
                 delegate,
             })
@@ -3279,7 +3274,7 @@ mod tests {
         #[test]
         fn test_simple_project_no_lockfile() {
             let result = search(&["project/pyproject.toml"], "project/src/main.py");
-            assert_eq!(result.as_deref(), RelPath::unix("project").ok());
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("project").ok());
         }
 
         #[test]
@@ -3292,7 +3287,7 @@ mod tests {
                 ],
                 "packages/subproject/src/main.py",
             );
-            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
         }
 
         #[test]
@@ -3301,7 +3296,7 @@ mod tests {
                 &["pyproject.toml", "poetry.lock", "libs/mylib/pyproject.toml"],
                 "libs/mylib/src/main.py",
             );
-            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
         }
 
         #[test]
@@ -3314,7 +3309,7 @@ mod tests {
                 ],
                 "packages/mypackage/src/main.py",
             );
-            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
         }
 
         #[test]
@@ -3323,13 +3318,19 @@ mod tests {
                 &["project-a/pyproject.toml", "project-b/pyproject.toml"],
                 "project-a/src/main.py",
             );
-            assert_eq!(result_a.as_deref(), RelPath::unix("project-a").ok());
+            assert_eq!(
+                result_a.as_deref(),
+                RelPath::from_unix_str("project-a").ok()
+            );
 
             let result_b = search(
                 &["project-a/pyproject.toml", "project-b/pyproject.toml"],
                 "project-b/src/main.py",
             );
-            assert_eq!(result_b.as_deref(), RelPath::unix("project-b").ok());
+            assert_eq!(
+                result_b.as_deref(),
+                RelPath::from_unix_str("project-b").ok()
+            );
         }
 
         #[test]
@@ -3350,7 +3351,7 @@ mod tests {
                 ],
                 "packages/sub/src/main.py",
             );
-            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
         }
 
         #[test]
@@ -3365,11 +3366,16 @@ mod tests {
             //   "deep/nested/src/main.py", "deep/nested/src", and "deep/nested"
             // It won't reach "deep" or root ""
             let result = provider.search(ManifestQuery {
-                path: RelPath::unix("deep/nested/src/main.py").unwrap().into(),
+                path: RelPath::from_unix_str("deep/nested/src/main.py")
+                    .unwrap()
+                    .into(),
                 depth: 3,
                 delegate,
             });
-            assert_eq!(result.as_deref(), RelPath::unix("deep/nested").ok());
+            assert_eq!(
+                result.as_deref(),
+                RelPath::from_unix_str("deep/nested").ok()
+            );
         }
     }
 }

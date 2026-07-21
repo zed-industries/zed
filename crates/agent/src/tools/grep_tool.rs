@@ -1,5 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use acp_thread::MentionUri;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
@@ -174,7 +175,7 @@ impl AgentTool for GrepTool {
             let project = project.downgrade();
             // Keep the search alive for the duration of result iteration. Dropping this task is the
             // cancellation mechanism; we intentionally do not detach it.
-            let SearchResults {rx, _task_handle}  = results;
+            let SearchResults {rx, ..}  = results;
             futures::pin_mut!(rx);
 
             let mut output = String::new();
@@ -327,10 +328,15 @@ impl AgentTool for GrepTool {
                     output.push_str("\n```\n");
 
                     if let Some(abs_path) = &abs_path {
+                        let uri = MentionUri::Selection {
+                            abs_path: Some(abs_path.clone()),
+                            line_range: range.start.row..=end_row,
+                            column: None,
+                        };
                         content.push(acp::ToolCallContent::Content(acp::Content::new(
                             acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                                 format!("{}#{}", path.display(), line_label),
-                                format!("file://{}#{}", abs_path.display(), line_label),
+                                uri.to_uri().to_string(),
                             )),
                         )));
                         locations.push(
@@ -393,6 +399,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::PathBuf;
     use unindent::Unindent;
     use util::path;
 
@@ -611,21 +618,30 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(links.len(), 2, "expected one resource link per match");
 
-        let alpha_uri = format!("file://{}#L1", path!("/root/src/alpha.txt"));
+        let selection_uri = |abs_path: &str| {
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(abs_path)),
+                line_range: 0..=0,
+                column: None,
+            }
+            .to_uri()
+            .to_string()
+        };
+
+        let alpha_uri = selection_uri(path!("/root/src/alpha.txt"));
         assert!(
             links.iter().any(|link| {
-                link.name.replace('\\', "/") == "root/src/alpha.txt#L1"
-                    && link.uri.replace('\\', "/") == alpha_uri.replace('\\', "/")
+                link.name.replace('\\', "/") == "root/src/alpha.txt#L1" && link.uri == alpha_uri
             }),
             "missing clickable link for alpha.txt, got: {links:?}"
         );
 
-        let beta_uri = format!("file://{}#L1", path!("/root/beta.txt"));
+        let beta_uri = selection_uri(path!("/root/beta.txt"));
         assert!(
-            links.iter().any(|link| {
-                link.name.replace('\\', "/") == "root/beta.txt#L1"
-                    && link.uri.replace('\\', "/") == beta_uri.replace('\\', "/")
-            }),
+            links
+                .iter()
+                .any(|link| link.name.replace('\\', "/") == "root/beta.txt#L1"
+                    && link.uri == beta_uri),
             "missing clickable link for beta.txt, got: {links:?}"
         );
 

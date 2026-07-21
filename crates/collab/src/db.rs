@@ -487,7 +487,6 @@ pub struct RejoinedRoom {
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
     pub channel: Option<channel::Model>,
-    pub role: ChannelRole,
 }
 
 pub struct ResharedProject {
@@ -526,6 +525,8 @@ impl RejoinedProject {
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
                     root_repo_common_dir: None,
+                    // todo(collab): Get this field from database
+                    root_repo_is_linked_worktree: false,
                 })
                 .collect(),
             collaborators: self
@@ -731,6 +732,10 @@ fn db_status_to_proto(
         }),
         diff_stat_added: entry.lines_added.map(|v| v as u32),
         diff_stat_deleted: entry.lines_deleted.map(|v| v as u32),
+        staged_diff_stat_added: None,
+        staged_diff_stat_deleted: None,
+        unstaged_diff_stat_added: None,
+        unstaged_diff_stat_deleted: None,
     })
 }
 

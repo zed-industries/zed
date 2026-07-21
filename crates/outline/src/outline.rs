@@ -7,11 +7,11 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, rems,
 };
-use language::{Outline, OutlineItem, OutlineSearchEntry};
-use picker::{Picker, PickerDelegate};
+use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
+use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
 use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
@@ -143,7 +143,6 @@ impl ModalView for OutlineView {
 impl Render for OutlineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(34.))
             .on_action(cx.listener(
                 |_this: &mut OutlineView,
                  _: &zed_actions::outline::ToggleOutline,
@@ -177,10 +176,20 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> OutlineView {
+        let project = editor.read(cx).project().cloned();
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .max_height(Some(vh(0.75, window)))
+            let picker = if let Some(project) = project {
+                let preview = picker_preview::editor_preview(project, window, cx);
+                Picker::uniform_list_with_preview(delegate, preview, window, cx)
+            } else {
+                Picker::uniform_list(delegate, window, cx)
+            };
+            picker
+                .max_height(Rems::from_pixels(
+                    window.viewport_size().height * 0.75,
+                    window,
+                ))
                 .show_scrollbar(true)
         });
         OutlineView { picker }
@@ -262,6 +271,10 @@ impl OutlineViewDelegate {
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "outline view"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
     }
@@ -285,6 +298,30 @@ impl PickerDelegate for OutlineViewDelegate {
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
         self.set_selected_index(ix, true, cx);
+    }
+
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<PreviewUpdate> {
+        let selected_match = self.matches.get(self.selected_match_index)?;
+        let outline_item = self.outline.items.get(selected_match.candidate_id())?;
+        let multi_buffer = self.active_editor.read(cx).buffer().clone();
+        let (buffer, start) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.selection_range.start, cx)?;
+        let (end_buffer, end) = multi_buffer
+            .read(cx)
+            .text_anchor_for_position(outline_item.selection_range.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        let range = (start..end).to_offset(&buffer.read(cx).text_snapshot());
+        Some(PreviewUpdate::from_buffer(
+            buffer,
+            MatchLocation {
+                anchor_range: start..end,
+                range,
+            },
+        ))
     }
 
     fn update_matches(

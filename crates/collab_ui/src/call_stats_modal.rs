@@ -144,24 +144,12 @@ impl Render for CallStatsModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let room = active_room(cx);
         let is_connected = room.is_some();
-        let Some(stats) = room.and_then(|room| {
-            let diagnostics = room.read(cx).diagnostics()?;
-            Some(diagnostics.read(cx).stats().clone())
-        }) else {
-            return v_flex()
-                .key_context("CallStatsModal")
-                .on_action(cx.listener(Self::dismiss))
-                .track_focus(&self.focus_handle)
-                .elevation_3(cx)
-                .w(rems(24.))
-                .p_4()
-                .gap_3()
-                .child(
-                    Label::new("Unable to fetch call statistics")
-                        .size(LabelSize::Large)
-                        .color(Color::Error),
-                );
-        };
+        let stats = room
+            .and_then(|room| {
+                let diagnostics = room.read(cx).diagnostics()?;
+                Some(diagnostics.read(cx).stats().clone())
+            })
+            .unwrap_or_default();
 
         let (quality_text, quality_color) = quality_label(stats.connection_quality);
 

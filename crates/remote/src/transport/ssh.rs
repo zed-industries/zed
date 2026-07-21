@@ -26,7 +26,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::command::{Child, Stdio};
@@ -36,6 +36,9 @@ use util::{
     shell::ShellKind,
 };
 
+/// How long to wait for SSH to connect when no askpass prompt has opened.
+const SSH_CONNECTION_PROMPT_TIMEOUT: Duration = Duration::from_secs(17);
+
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<MasterProcess>>,
@@ -44,6 +47,7 @@ pub(crate) struct SshRemoteConnection {
     killed: AtomicBool,
     remote_binary_path: Option<Arc<RelPath>>,
     ssh_platform: RemotePlatform,
+    ssh_os_version: Option<String>,
     ssh_path_style: PathStyle,
     ssh_shell: String,
     ssh_shell_kind: ShellKind,
@@ -495,7 +499,9 @@ impl RemoteConnection for SshRemoteConnection {
         {
             Ok(process) => process,
             Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                return Task::ready(Err(
+                    anyhow::Error::new(error).context("failed to spawn remote server")
+                ));
             }
         };
 
@@ -510,6 +516,14 @@ impl RemoteConnection for SshRemoteConnection {
 
     fn path_style(&self) -> PathStyle {
         self.ssh_path_style
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        self.ssh_platform
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        self.ssh_os_version.clone()
     }
 
     fn has_wsl_interop(&self) -> bool {
@@ -643,7 +657,7 @@ impl SshRemoteConnection {
             )?;
 
             let result = select_biased! {
-                result = askpass.run().fuse() => {
+                result = askpass.run(Some(SSH_CONNECTION_PROMPT_TIMEOUT)).fuse() => {
                     match result {
                         AskPassResult::CancelledByUser => {
                             master_process.as_mut().kill().ok();
@@ -701,7 +715,7 @@ impl SshRemoteConnection {
             )?;
 
             let result = select_biased! {
-                result = askpass.run().fuse() => {
+                result = askpass.run(Some(SSH_CONNECTION_PROMPT_TIMEOUT)).fuse() => {
                     match result {
                         AskPassResult::CancelledByUser => {
                             master_process.as_mut().kill().ok();
@@ -757,9 +771,12 @@ impl SshRemoteConnection {
         let ssh_platform = socket.platform(ssh_shell_kind, is_windows).await?;
         log::info!("Remote platform discovered: {:?}", ssh_platform);
 
+        let ssh_os_version = socket.os_version(ssh_platform.os, ssh_shell_kind).await;
+        log::info!("Remote OS version discovered: {:?}", ssh_os_version);
+
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
             RemoteOs::Windows => (PathStyle::Windows, ssh_shell.clone()),
-            _ => (PathStyle::Posix, String::from("/bin/sh")),
+            _ => (PathStyle::Unix, String::from("/bin/sh")),
         };
 
         let mut this = Self {
@@ -770,6 +787,7 @@ impl SshRemoteConnection {
             remote_binary_path: None,
             ssh_path_style,
             ssh_platform,
+            ssh_os_version,
             ssh_shell,
             ssh_shell_kind,
             ssh_default_system_shell,
@@ -807,7 +825,7 @@ impl SshRemoteConnection {
             }
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
             .socket
@@ -830,7 +848,7 @@ impl SshRemoteConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::unix(&format!(
+                RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -841,11 +859,11 @@ impl SshRemoteConnection {
                 .await?;
             self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -860,7 +878,7 @@ impl SshRemoteConnection {
         })?;
 
         let tmp_path_compressed = remote_server_dir_relative().join(
-            RelPath::unix(&format!(
+            RelPath::from_unix_str(&format!(
                 "{}-download-{}.{}",
                 binary_name,
                 std::process::id(),
@@ -890,7 +908,7 @@ impl SshRemoteConnection {
                     self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
                         .await
                         .context("extracting server binary")?;
-                    return Ok(dst_path);
+                    return Ok(dst_path.into());
                 }
                 Err(e) => {
                     log::error!(
@@ -915,7 +933,7 @@ impl SshRemoteConnection {
         self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("extracting server binary")?;
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn download_binary_on_server(
@@ -1409,6 +1427,20 @@ impl SshSocket {
             .await
             .context("Failed to run 'uname -sm' to determine platform")?;
         parse_platform(&output)
+    }
+
+    /// Best-effort detection of the remote OS version. Failures are logged and
+    /// result in `None` rather than failing the connection, since this is only
+    /// used for telemetry.
+    async fn os_version(&self, os: RemoteOs, shell: ShellKind) -> Option<String> {
+        let (program, args) = super::os_version_command(os);
+        match self.run_command(shell, program, args, false).await {
+            Ok(output) => super::parse_os_version(os, &output),
+            Err(error) => {
+                log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
     }
 
     async fn platform_windows(&self, shell: ShellKind) -> Result<RemotePlatform> {
@@ -2012,7 +2044,7 @@ mod tests {
             Some("~/work".to_string()),
             None,
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
@@ -2032,7 +2064,7 @@ mod tests {
             Some("~/work".to_string()),
             None,
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
@@ -2067,7 +2099,7 @@ mod tests {
             None,
             Some((1, "foo".to_owned(), 2)),
             env.clone(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
@@ -2107,7 +2139,7 @@ mod tests {
             None,
             None,
             HashMap::default(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec![],
@@ -2262,7 +2294,7 @@ mod tests {
             None,
             Some((8080, "::1".to_owned(), 80)),
             HashMap::default(),
-            PathStyle::Posix,
+            PathStyle::Unix,
             "/bin/bash",
             ShellKind::Posix,
             vec![],

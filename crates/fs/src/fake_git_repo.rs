@@ -15,6 +15,7 @@ use git::{
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
         PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -161,28 +162,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .index_contents
-                .get(&path)
-                .context("not present in index")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .head_contents
-                .get(&path)
-                .context("not present in HEAD")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
         async { Ok(None) }.boxed()
     }
@@ -263,9 +242,38 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+        let fut = self.with_state_async(false, move |state| {
+            Ok(revisions
+                .into_iter()
+                .map(|rev| {
+                    let (prefix, path) = rev.split_once(':')?;
+                    let repo_path = RepoPath::new(path).ok()?;
+                    match prefix {
+                        "" => state.index_contents.get(&repo_path).cloned(),
+                        "HEAD" => state.head_contents.get(&repo_path).cloned(),
+                        _ => None,
+                    }
+                })
+                .collect())
+        });
+        self.executor.spawn(fut).boxed()
+    }
+
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         self.with_state_async(false, move |state| {
-            let sha = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let sha = match state.refs.get(&commit) {
+                Some(sha) => sha.clone(),
+                // Real git fails to show an unresolvable revision (e.g. HEAD on an
+                // unborn branch), so only fall back to treating the input as a sha.
+                None => {
+                    anyhow::ensure!(
+                        commit.parse::<Oid>().is_ok(),
+                        "unable to resolve revision: {commit}"
+                    );
+                    commit
+                }
+            };
             Ok(CommitDetails {
                 sha: sha.into(),
                 message: "initial commit".into(),
@@ -1148,6 +1156,7 @@ impl GitRepository for FakeGitRepository {
 
     fn diff_stat(
         &self,
+        diff: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1195,22 +1204,43 @@ impl GitRepository for FakeGitRepository {
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
-                .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
-                .collect();
+            let (old_files, new_files) = match diff {
+                git::repository::DiffStatType::HeadToIndex => {
+                    (&state.head_contents, &state.index_contents)
+                }
+                git::repository::DiffStatType::HeadToWorktree => {
+                    (&state.head_contents, &worktree_files)
+                }
+                git::repository::DiffStatType::IndexToWorktree => {
+                    (&state.index_contents, &worktree_files)
+                }
+            };
+            let all_paths: HashSet<&RepoPath> = match diff {
+                git::repository::DiffStatType::HeadToIndex => state
+                    .head_contents
+                    .keys()
+                    .chain(state.index_contents.keys())
+                    .collect(),
+                git::repository::DiffStatType::HeadToWorktree => state
+                    .head_contents
+                    .keys()
+                    .chain(
+                        worktree_files
+                            .keys()
+                            .filter(|path| state.index_contents.contains_key(*path)),
+                    )
+                    .collect(),
+                git::repository::DiffStatType::IndexToWorktree => {
+                    state.index_contents.keys().collect()
+                }
+            };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let old_file = old_files.get(path);
+                let new_file = new_files.get(path);
+                match (old_file, new_file) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),
@@ -1491,7 +1521,9 @@ impl GitRepository for FakeGitRepository {
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         async move {
-            let query = if search_args.case_sensitive {
+            let hash_query = commit_hash_search_query(search_args.query.as_str())
+                .map(|query| query.to_ascii_lowercase());
+            let message_query = if search_args.case_sensitive {
                 search_args.query.to_string()
             } else {
                 search_args.query.to_lowercase()
@@ -1505,12 +1537,19 @@ impl GitRepository for FakeGitRepository {
                         let FakeCommitDataEntry::Success(commit_data) = entry else {
                             return None;
                         };
+                        if let Some(hash_query) = hash_query.as_ref() {
+                            return sha
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .starts_with(hash_query)
+                                .then_some(*sha);
+                        }
                         let message = if search_args.case_sensitive {
                             commit_data.message.to_string()
                         } else {
                             commit_data.message.to_lowercase()
                         };
-                        message.contains(&query).then_some(*sha)
+                        message.contains(&message_query).then_some(*sha)
                     })
                     .collect::<Vec<_>>()
             })?;

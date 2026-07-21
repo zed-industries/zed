@@ -17,7 +17,7 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
@@ -36,7 +36,6 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
-use ui_input::ErasedEditor;
 use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
@@ -46,8 +45,8 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
-    RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, RecentWorkspace,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -604,7 +603,6 @@ pub fn add_wsl_distro(
 
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
-    rem_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -633,6 +631,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
+                .initial_width(rems(rem_width))
                 .show_scrollbar(true)
         });
 
@@ -677,7 +676,6 @@ impl RecentProjects {
         .detach();
         Self {
             picker,
-            rem_width,
             _subscriptions: subscriptions,
         }
     }
@@ -706,7 +704,7 @@ impl RecentProjects {
                 ProjectPickerStyle::Modal,
             );
 
-            Self::new(delegate, fs, 34., window, cx)
+            Self::new(delegate, fs, 42., window, cx)
         })
     }
 
@@ -852,7 +850,6 @@ impl Render for RecentProjects {
             .on_action(cx.listener(Self::handle_toggle_open_menu))
             .on_action(cx.listener(Self::handle_remove_selected))
             .on_action(cx.listener(Self::handle_add_to_workspace))
-            .w(rems(self.rem_width))
             .child(self.picker.clone())
     }
 }
@@ -932,24 +929,12 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+    fn name() -> &'static str {
+        "recent projects"
     }
 
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search projects…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -1579,7 +1564,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
+                            IconButton::new("add_to_workspace", IconName::FolderInclude)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = self.focus_handle.clone();
@@ -2448,14 +2433,24 @@ impl RecentProjectsDelegate {
             .any(|key| key.matches(&workspace.project_group_key()))
     }
 
-    fn is_open_folder(&self, paths: &PathList) -> bool {
+    fn is_open_folder(&self, workspace: &RecentWorkspace) -> bool {
         if self.open_folders.is_empty() {
             return false;
         }
 
-        for workspace_path in paths.paths() {
+        let workspace_host = match &workspace.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(options) => Some(options),
+        };
+
+        for workspace_path in workspace.paths.paths() {
             for open_folder in &self.open_folders {
-                if workspace_path == &open_folder.path {
+                if workspace_path == &open_folder.path
+                    && same_remote_connection_identity(
+                        workspace_host,
+                        open_folder.connection_options.as_ref(),
+                    )
+                {
                     return true;
                 }
             }
@@ -2471,7 +2466,7 @@ impl RecentProjectsDelegate {
     ) -> bool {
         !self.is_current_workspace(workspace.workspace_id, cx)
             && !self.is_in_current_window_groups(workspace)
-            && !self.is_open_folder(&workspace.paths)
+            && !self.is_open_folder(workspace)
     }
 }
 
@@ -2482,7 +2477,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{AppState, open_paths};
+    use workspace::{AppState, PathList, open_paths};
 
     use super::*;
 
@@ -2569,7 +2564,7 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .max_height(Some(px(240.).into()))
+                .max_height(Rems::from_pixels(px(240.0), window))
         });
         draw(cx);
         (picker, cx)
@@ -2692,6 +2687,53 @@ mod tests {
             icon_for_project_group(&delegate.window_project_groups[1]),
             IconName::Server
         );
+    }
+
+    #[gpui::test]
+    fn is_open_folder_distinguishes_local_and_remote(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let shared_path = PathBuf::from("/repo");
+        let local_open_folder = OpenFolderEntry {
+            worktree_id: WorktreeId::from_usize(0),
+            name: "repo".into(),
+            path: shared_path.clone(),
+            branch: None,
+            is_active: false,
+            connection_options: None,
+        };
+
+        let delegate = RecentProjectsDelegate::new(
+            WeakEntity::new_invalid(),
+            false,
+            cx.update(|cx| cx.focus_handle()),
+            vec![local_open_folder],
+            Vec::new(),
+            ProjectPickerStyle::Modal,
+        );
+
+        let paths = PathList::new(&[shared_path]);
+        let local_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(1),
+            location: SerializedWorkspaceLocation::Local,
+            paths: paths.clone(),
+            identity_paths: paths.clone(),
+            timestamp: Utc::now(),
+        };
+        let remote_workspace = RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(2),
+            location: SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 0 },
+            )),
+            paths: paths.clone(),
+            identity_paths: paths,
+            timestamp: Utc::now(),
+        };
+
+        // A local open folder should hide only the matching local recent
+        // project, not a remote checkout that shares the same path.
+        assert!(delegate.is_open_folder(&local_workspace));
+        assert!(!delegate.is_open_folder(&remote_workspace));
     }
 
     #[gpui::test]
