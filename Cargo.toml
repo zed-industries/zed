@@ -562,6 +562,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 brush-parser = "0.3"
+cbindgen = { version = "0.28.0", default-features = false }
 cfg-if = "1.0.3"
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
