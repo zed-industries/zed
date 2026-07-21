@@ -2223,7 +2223,7 @@ fn diagnostics_crease_label(
     diagnostics_label(summary, include_errors, include_warnings).into()
 }
 
-fn pluralize(noun: &str, count: usize) -> String {
+pub(crate) fn pluralize(noun: &str, count: usize) -> String {
     if count == 1 {
         noun.to_string()
     } else {

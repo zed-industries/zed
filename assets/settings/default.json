@@ -548,6 +548,8 @@
     "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
+    // Whether to show the worktree name button in the titlebar.
+    "show_worktree_name": true,
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
@@ -1689,6 +1691,10 @@
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true,
+    },
+    "file_diff": {
+      // Whether newly opened file diffs show the full file instead of changes only.
+      "show_full_file": true,
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:

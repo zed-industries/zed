@@ -3804,8 +3804,15 @@ impl ProjectPanel {
         if let Some((file_path1, file_path2)) = selected_files {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    FileDiffView::open(file_path1, file_path2, workspace.weak_handle(), window, cx)
-                        .detach_and_log_err(cx);
+                    FileDiffView::open(
+                        file_path1,
+                        file_path2,
+                        None,
+                        workspace.weak_handle(),
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
                 })
                 .ok();
         }
