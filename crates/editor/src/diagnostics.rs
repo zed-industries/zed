@@ -833,6 +833,34 @@ mod tests {
             );
         });
 
+        let initial_show = cx.update_editor(|editor, _, _| editor.show_inline_diagnostics());
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                !initial_show,
+                "inline diagnostics visibility should flip after dispatching ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should still be available after toggling it, \
+                 so the user can toggle it back"
+            );
+        });
+
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                initial_show,
+                "inline diagnostics visibility should flip back after a second dispatch of ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should remain available after toggling it back"
+            );
+        });
+
         cx.update_editor(|editor, _, cx| {
             editor.disable_inline_diagnostics();
             cx.notify();

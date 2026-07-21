@@ -491,7 +491,7 @@ impl EditorElement {
         if editor.read(cx).lsp_data_enabled() {
             register_action(editor, window, Editor::toggle_diagnostics);
         }
-        if editor.read(cx).diagnostics_enabled() {
+        if editor.read(cx).inline_diagnostics_enabled() {
             register_action(editor, window, Editor::toggle_inline_diagnostics);
         }
         if editor.read(cx).supports_minimap(cx) {
