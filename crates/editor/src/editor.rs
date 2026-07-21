@@ -190,7 +190,6 @@ use language::{
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
-use language_detection::detect_language;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -297,8 +296,6 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
-const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
-const MIN_LANGUAGE_DETECTION_CONFIDENCE: f32 = 0.5;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -1002,6 +999,7 @@ pub struct Editor {
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
     gutter_highlights: TypeIdHashMap<GutterHighlight>,
+    allow_git_diff_scrollbar_markers: bool,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -2305,6 +2303,7 @@ impl Editor {
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
             gutter_highlights: Default::default(),
+            allow_git_diff_scrollbar_markers: false,
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -9557,9 +9556,8 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
-                    let buffer_id = buffer.read(cx).remote_id();
-
                     if self.project.is_some() {
+                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -9567,8 +9565,6 @@ impl Editor {
                             cx,
                         );
                     }
-
-                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -10820,46 +10816,6 @@ impl Editor {
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
-    }
-
-    fn detect_buffer_language(&self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return;
-        }
-
-        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
-            return;
-        };
-
-        let buffer = buffer_entity.read(cx);
-        if buffer.file().is_some() {
-            return;
-        }
-
-        let buffer_snapshot = buffer.snapshot();
-        if buffer_snapshot.len() < MIN_LANGUAGE_DETECTION_LEN {
-            return;
-        }
-
-        let Some(language_registry) = buffer.language_registry() else {
-            return;
-        };
-        let buffer_version = buffer_snapshot.version().clone();
-        let detected_language = detect_language(buffer_snapshot, language_registry, cx);
-
-        cx.spawn(async move |_, cx| {
-            if let Some((detected_language, confidence)) = detected_language.await {
-                if confidence < MIN_LANGUAGE_DETECTION_CONFIDENCE {
-                    return;
-                }
-                buffer_entity.update(cx, |buffer, cx| {
-                    if buffer.file().is_none() && !buffer.version().changed_since(&buffer_version) {
-                        buffer.set_language(Some(detected_language), cx);
-                    }
-                });
-            }
-        })
-        .detach();
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {

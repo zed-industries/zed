@@ -1690,6 +1690,10 @@
     "branch_picker": {
       "show_author_name": true,
     },
+    "file_diff": {
+      // Whether newly opened file diffs show the full file instead of changes only.
+      "show_full_file": true,
+    },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
     //
