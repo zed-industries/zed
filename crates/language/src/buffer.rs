@@ -966,6 +966,49 @@ impl<T> BracketMatch<T> {
     }
 }
 
+/// A single bracket pair candidate produced by a brackets query, before
+/// bogus tree-sitter matches are repaired and color indices are assigned.
+#[derive(Clone, Debug)]
+struct BracketMatchCandidate {
+    bracket_match: BracketMatch<usize>,
+    pattern: BracketPatternKey,
+    rainbow_exclude: bool,
+}
+
+impl BracketMatchCandidate {
+    fn open_delimiter(&self) -> BracketDelimiter {
+        BracketDelimiter {
+            start: self.bracket_match.open_range.start,
+            end: self.bracket_match.open_range.end,
+            pattern: self.pattern,
+        }
+    }
+
+    fn close_delimiter(&self) -> BracketDelimiter {
+        BracketDelimiter {
+            start: self.bracket_match.close_range.start,
+            end: self.bracket_match.close_range.end,
+            pattern: self.pattern,
+        }
+    }
+}
+
+/// Identifies a brackets query pattern, unique across all grammars of a syntax map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BracketPatternKey {
+    grammar_index: usize,
+    pattern_index: usize,
+}
+
+/// One delimiter (open or close) of a bracket pair candidate.
+/// Ordered by buffer position first, so sorting yields document order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BracketDelimiter {
+    start: usize,
+    end: usize,
+    pattern: BracketPatternKey,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
@@ -4797,7 +4840,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut all_brackets: Vec<(BracketMatch<usize>, usize, bool)> = Vec::new();
+            let mut all_brackets = Vec::new();
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
@@ -4816,16 +4859,20 @@ impl BufferSnapshot {
                 .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                 .collect::<Vec<_>>();
 
-            // Group matches by open range so we can either trust grammar output
+            // Group matches by open delimiter so we can either trust grammar output
             // or repair it by picking a single closest close per open.
-            let mut open_to_close_ranges = BTreeMap::new();
+            let mut close_delimiters_by_open = BTreeMap::new();
+            let mut bogus_patterns = HashSet::default();
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
                 let syntax_layer_depth = mat.depth;
-                let pattern_index = mat.pattern_index;
+                let pattern_key = BracketPatternKey {
+                    grammar_index: mat.grammar_index,
+                    pattern_index: mat.pattern_index,
+                };
                 let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[pattern_index];
+                let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -4845,157 +4892,138 @@ impl BufferSnapshot {
                     continue;
                 }
 
-                open_to_close_ranges
-                    .entry((open_range.start, open_range.end, pattern_index))
-                    .or_insert_with(BTreeMap::new)
-                    .insert(
-                        (close_range.start, close_range.end),
-                        BracketMatch {
-                            open_range: open_range.clone(),
-                            close_range: close_range.clone(),
-                            syntax_layer_depth,
-                            newline_only: pattern.newline_only,
-                            color_index: None,
-                        },
-                    );
-
-                all_brackets.push((
-                    BracketMatch {
+                let candidate = BracketMatchCandidate {
+                    bracket_match: BracketMatch {
                         open_range,
                         close_range,
                         syntax_layer_depth,
                         newline_only: pattern.newline_only,
                         color_index: None,
                     },
-                    pattern_index,
-                    pattern.rainbow_exclude,
-                ));
+                    pattern: pattern_key,
+                    rainbow_exclude: pattern.rainbow_exclude,
+                };
+
+                let close_delimiters = close_delimiters_by_open
+                    .entry(candidate.open_delimiter())
+                    .or_insert_with(BTreeSet::new);
+                close_delimiters.insert(candidate.close_delimiter());
+                if close_delimiters.len() > 1 {
+                    bogus_patterns.insert(pattern_key);
+                }
+
+                all_brackets.push(candidate);
             }
 
-            let has_bogus_matches = open_to_close_ranges
-                .iter()
-                .any(|(_, end_ranges)| end_ranges.len() > 1);
-            if has_bogus_matches {
-                // Grammar is producing bogus matches where one open is paired with multiple
-                // closes. Build a valid stack by walking through positions in order.
+            if !bogus_patterns.is_empty() {
+                // Certain patterns produce bogus matches where one open is paired with multiple
+                // closes (e.g. same-character delimiters inside a single parent node).
+                // Repair only those patterns, keeping trustworthy grammar output intact:
+                // clean patterns may legitimately pair an open in one chunk with a close in
+                // another, and must not be dropped by the chunk-local repair below.
                 // For each close, we know the expected open_len from tree-sitter matches.
+                let is_bogus =
+                    |candidate: &BracketMatchCandidate| bogus_patterns.contains(&candidate.pattern);
 
                 // Map each close to its expected open length (for inferring opens)
-                let close_to_open_len: HashMap<(usize, usize, usize), usize> = all_brackets
+                let close_to_open_len = all_brackets
                     .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
+                    .filter(|candidate| is_bogus(candidate))
+                    .map(|candidate| {
                         (
-                            (
-                                bracket_match.close_range.start,
-                                bracket_match.close_range.end,
-                                *pattern_index,
-                            ),
-                            bracket_match.open_range.len(),
+                            candidate.close_delimiter(),
+                            candidate.bracket_match.open_range.len(),
                         )
                     })
-                    .collect();
+                    .collect::<HashMap<_, _>>();
 
                 // Collect unique opens and closes within this chunk
-                let mut unique_opens: HashSet<(usize, usize, usize)> = all_brackets
+                let unique_opens = all_brackets
                     .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.open_range.start,
-                            bracket_match.open_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
+                    .filter(|candidate| is_bogus(candidate))
+                    .map(|candidate| candidate.open_delimiter())
+                    .filter(|open| chunk_range.contains(&open.start))
+                    .collect::<HashSet<_>>();
 
-                let mut unique_closes: Vec<(usize, usize, usize)> = all_brackets
+                let mut unique_closes = all_brackets
                     .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.close_range.start,
-                            bracket_match.close_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
+                    .filter(|candidate| is_bogus(candidate))
+                    .map(|candidate| candidate.close_delimiter())
+                    .filter(|close| chunk_range.contains(&close.start))
+                    .collect::<Vec<_>>();
                 unique_closes.sort_unstable();
                 unique_closes.dedup();
 
                 // Build valid pairs by walking through closes in order
-                let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
-                unique_opens_vec.sort();
+                let mut sorted_opens = unique_opens.into_iter().collect::<Vec<_>>();
+                sorted_opens.sort_unstable();
 
-                let mut valid_pairs: HashSet<((usize, usize, usize), (usize, usize, usize))> =
-                    HashSet::default();
-                let mut open_stacks: HashMap<usize, Vec<(usize, usize)>> = HashMap::default();
+                let mut valid_pairs = HashSet::default();
+                let mut open_stacks = HashMap::default();
                 let mut open_idx = 0;
 
                 for close in &unique_closes {
                     // Push all opens before this close onto stack
-                    while open_idx < unique_opens_vec.len()
-                        && unique_opens_vec[open_idx].0 < close.0
+                    while open_idx < sorted_opens.len()
+                        && sorted_opens[open_idx].start < close.start
                     {
-                        let (start, end, pattern_index) = unique_opens_vec[open_idx];
+                        let open = sorted_opens[open_idx];
                         open_stacks
-                            .entry(pattern_index)
-                            .or_default()
-                            .push((start, end));
+                            .entry(open.pattern)
+                            .or_insert_with(Vec::new)
+                            .push(open);
                         open_idx += 1;
                     }
 
                     // Try to match with most recent open
-                    let (close_start, close_end, pattern_index) = *close;
                     if let Some(open) = open_stacks
-                        .get_mut(&pattern_index)
+                        .get_mut(&close.pattern)
                         .and_then(|open_stack| open_stack.pop())
                     {
-                        valid_pairs.insert(((open.0, open.1, pattern_index), *close));
+                        valid_pairs.insert((open, *close));
                     } else if let Some(&open_len) = close_to_open_len.get(close) {
                         // No open on stack - infer one based on expected open_len
-                        if close_start >= open_len {
-                            let inferred = (close_start - open_len, close_start, pattern_index);
-                            unique_opens.insert(inferred);
+                        if close.start >= open_len {
+                            let inferred = BracketDelimiter {
+                                start: close.start - open_len,
+                                end: close.start,
+                                pattern: close.pattern,
+                            };
                             valid_pairs.insert((inferred, *close));
-                            all_brackets.push((
-                                BracketMatch {
-                                    open_range: inferred.0..inferred.1,
-                                    close_range: close_start..close_end,
-                                    newline_only: false,
+                            let pattern = &configs[close.pattern.grammar_index].patterns
+                                [close.pattern.pattern_index];
+                            all_brackets.push(BracketMatchCandidate {
+                                bracket_match: BracketMatch {
+                                    open_range: inferred.start..inferred.end,
+                                    close_range: close.start..close.end,
+                                    newline_only: pattern.newline_only,
                                     syntax_layer_depth: 0,
                                     color_index: None,
                                 },
-                                pattern_index,
-                                false,
-                            ));
+                                pattern: close.pattern,
+                                rainbow_exclude: pattern.rainbow_exclude,
+                            });
                         }
                     }
                 }
 
-                all_brackets.retain(|(bracket_match, pattern_index, _)| {
-                    let open = (
-                        bracket_match.open_range.start,
-                        bracket_match.open_range.end,
-                        *pattern_index,
-                    );
-                    let close = (
-                        bracket_match.close_range.start,
-                        bracket_match.close_range.end,
-                        *pattern_index,
-                    );
-                    valid_pairs.contains(&(open, close))
+                all_brackets.retain(|candidate| {
+                    !is_bogus(candidate)
+                        || valid_pairs
+                            .contains(&(candidate.open_delimiter(), candidate.close_delimiter()))
                 });
             }
 
             let mut all_brackets = all_brackets
                 .into_iter()
                 .enumerate()
-                .map(|(index, (bracket_match, _, rainbow_exclude))| {
+                .map(|(index, candidate)| {
+                    let bracket_match = candidate.bracket_match;
                     // Certain languages have "brackets" that are not brackets, e.g. tags. and such
                     // bracket will match the entire tag with all text inside.
                     // For now, avoid highlighting any pair that has more than single char in each bracket.
                     // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                    let should_color = !rainbow_exclude
+                    let should_color = !candidate.rainbow_exclude
                         && (bracket_match.open_range.len() == 1
                             || bracket_match.close_range.len() == 1);
                     if should_color {

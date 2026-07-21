@@ -6333,6 +6333,7 @@ dependencies = [
  "util",
  "wasm-encoder 0.252.0",
  "wasmparser 0.252.0",
+ "which 6.0.3",
  "ztracing",
 ]
 
@@ -16393,6 +16394,7 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "regex",
  "serde",
  "serde_json",
  "settings",
