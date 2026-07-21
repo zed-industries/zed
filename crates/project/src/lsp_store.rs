@@ -4749,6 +4749,8 @@ impl LspStore {
             self.detect_language_for_buffer(&buffer, cx);
         }
 
+        self.on_buffer_edited(buffer.clone(), cx);
+
         let buffer_id = buffer.read(cx).remote_id();
         let task = self.pull_diagnostics_for_buffer(buffer, cx);
         self.buffer_reload_tasks.insert(buffer_id, task);
@@ -12501,19 +12503,21 @@ impl LspStore {
         language_server_ids.sort_unstable();
         language_server_ids.dedup();
 
+        let absolutized_paths: Vec<PathBuf> = changes
+            .iter()
+            .map(|(path, _, _)| worktree_handle.read(cx).absolutize(path))
+            .collect();
+
         // let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
                 local.language_servers.get(server_id)
-                && let Some(watched_paths) = local
-                    .language_server_watched_paths
-                    .get_mut(server_id)
-                    .and_then(|paths| paths.worktree_paths.get_mut(&worktree_id))
             {
                 let params = lsp::DidChangeWatchedFilesParams {
                     changes: changes
                         .iter()
-                        .filter_map(|(path, _, change)| {
+                        .zip(absolutized_paths.iter())
+                        .filter_map(|((path, _, change), abs_path)| {
                             let typ = match change {
                                 PathChange::Loaded => return None,
                                 PathChange::Added => lsp::FileChangeType::CREATED,
@@ -12521,13 +12525,41 @@ impl LspStore {
                                 PathChange::Updated => lsp::FileChangeType::CHANGED,
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
-                            if !watched_paths.is_match(path.as_std_path()) {
+
+                            let mut is_match = false;
+
+                            // Check worktree-relative paths
+                            if let Some(watched) = local
+                                .language_server_watched_paths
+                                .get_mut(server_id)
+                                .and_then(|paths| paths.worktree_paths.get_mut(&worktree_id))
+                            {
+                                if watched.is_match(path.as_std_path()) {
+                                    is_match = true;
+                                }
+                            }
+
+                            // Also check absolute paths (fixes background file generation)
+                            if !is_match {
+                                if let Some(watched) = local
+                                    .language_server_watched_paths
+                                    .get_mut(server_id)
+                                {
+                                    for (watch_path, (glob, _)) in &mut watched.abs_paths {
+                                        if let Ok(relative_path) = abs_path.strip_prefix(watch_path.as_ref()) {
+                                            if glob.is_match(relative_path) {
+                                                is_match = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !is_match {
                                 return None;
                             }
-                            let uri = lsp::Uri::from_file_path(
-                                worktree_handle.read(cx).absolutize(&path),
-                            )
-                            .ok()?;
+                            let uri = lsp::Uri::from_file_path(abs_path).ok()?;
                             Some(lsp::FileEvent { uri, typ })
                         })
                         .collect(),
