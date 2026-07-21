@@ -129,18 +129,9 @@ impl SoloDiffView {
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_id = repository.read(cx).id;
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::without_headers(buffer.read(cx).capability());
-            multibuffer.set_excerpts_for_path(
-                PathKey::for_buffer(&buffer, cx),
-                buffer.clone(),
-                Self::hunk_ranges(&buffer, &diff, cx),
-                excerpt_context_lines(cx),
-                cx,
-            );
-            multibuffer.add_diff(diff.clone(), cx);
-            multibuffer
-        });
+        let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
+        let multibuffer = cx
+            .new(|cx| Self::build_multibuffer(buffer.clone(), diff.clone(), showing_full_file, cx));
         let editor = cx.new(|cx| {
             let editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -152,6 +143,7 @@ impl SoloDiffView {
             );
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_should_serialize(false, cx);
+                editor.set_allow_git_diff_scrollbar_markers(showing_full_file, cx);
                 let snapshot = editor.snapshot(window, cx);
                 editor.go_to_hunk_before_or_after_position(
                     &snapshot,
@@ -188,8 +180,39 @@ impl SoloDiffView {
             diff,
             editor,
             workspace: workspace.downgrade(),
-            showing_full_file: false,
+            showing_full_file,
             _settings_subscription: settings_subscription,
+        }
+    }
+
+    fn build_multibuffer(
+        buffer: Entity<Buffer>,
+        diff: Entity<buffer_diff::BufferDiff>,
+        showing_full_file: bool,
+        cx: &mut Context<MultiBuffer>,
+    ) -> MultiBuffer {
+        let (ranges, context_line_count) =
+            Self::excerpt_ranges(&buffer, &diff, showing_full_file, cx);
+
+        let mut multibuffer = MultiBuffer::without_headers(buffer.read(cx).capability());
+        multibuffer.set_excerpts_for_buffer(buffer, ranges, context_line_count, cx);
+        multibuffer.add_diff(diff, cx);
+        multibuffer
+    }
+
+    fn excerpt_ranges(
+        buffer: &Entity<Buffer>,
+        diff: &Entity<buffer_diff::BufferDiff>,
+        showing_full_file: bool,
+        cx: &App,
+    ) -> (Vec<Range<Point>>, u32) {
+        if showing_full_file {
+            (vec![Point::zero()..buffer.read(cx).max_point()], 0)
+        } else {
+            (
+                Self::hunk_ranges(buffer, diff, cx),
+                excerpt_context_lines(cx),
+            )
         }
     }
 
@@ -215,17 +238,8 @@ impl SoloDiffView {
             return;
         }
 
-        let ranges = if showing_full_file {
-            let buffer = self.buffer.read(cx);
-            vec![Point::zero()..buffer.max_point()]
-        } else {
-            Self::hunk_ranges(&self.buffer, &self.diff, cx)
-        };
-        let context_line_count = if showing_full_file {
-            0
-        } else {
-            excerpt_context_lines(cx)
-        };
+        let (ranges, context_line_count) =
+            Self::excerpt_ranges(&self.buffer, &self.diff, showing_full_file, cx);
 
         self.editor.update(cx, |editor, cx| {
             let path = PathKey::for_buffer(&self.buffer, cx);
@@ -238,6 +252,9 @@ impl SoloDiffView {
                 self.diff.clone(),
                 cx,
             );
+            editor.rhs_editor().update(cx, |editor, cx| {
+                editor.set_allow_git_diff_scrollbar_markers(showing_full_file, cx);
+            });
         });
 
         self.showing_full_file = showing_full_file;
@@ -435,7 +452,7 @@ impl Item for SoloDiffView {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        None
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
@@ -701,6 +718,47 @@ struct SoloDiffButtonStates {
     selection: bool,
     stage_file: bool,
     unstage_file: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use multi_buffer::MultiBufferRow;
+
+    #[gpui::test]
+    fn test_changes_only_multibuffer_has_one_buffer_and_expand_controls(cx: &mut TestAppContext) {
+        let base_text = (0..20)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let current_text = base_text.replace("line 10", "changed line 10");
+        let buffer = cx.new(|cx| Buffer::local(current_text, cx));
+        let diff = cx.new(|cx| {
+            buffer_diff::BufferDiff::new_with_base_text(
+                &base_text,
+                &buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let multibuffer = cx.new(|cx| SoloDiffView::build_multibuffer(buffer, diff, false, cx));
+
+        let (is_singleton, buffer_count, has_expand_controls) =
+            multibuffer.update(cx, |multibuffer, cx| {
+                (
+                    multibuffer.is_singleton(),
+                    multibuffer.snapshot(cx).all_buffer_ids().count(),
+                    multibuffer
+                        .snapshot(cx)
+                        .row_infos(MultiBufferRow(0))
+                        .any(|row| row.expand_info.is_some()),
+                )
+            });
+
+        assert!(!is_singleton);
+        assert_eq!(buffer_count, 1);
+        assert!(has_expand_controls);
+    }
 }
 
 impl Render for SoloDiffGitToolbar {

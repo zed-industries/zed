@@ -104,8 +104,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings,
-    OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
+    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -131,8 +131,6 @@ actions!(
         OpenDefaultSettings,
         /// Opens project-specific settings file.
         OpenProjectSettingsFile,
-        /// Opens the project tasks configuration.
-        OpenProjectTasks,
         /// Opens the tasks panel.
         OpenTasks,
         /// Opens debug tasks configuration.
@@ -436,6 +434,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 
     init_cursor_hide_mode(cx);
+    init_reduce_motion(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -1228,6 +1227,7 @@ fn register_actions(
         })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(open_worktree_setup_tasks_file)
         .register_action(open_project_debug_tasks_file)
         .register_action(
             |workspace: &mut Workspace,
@@ -2018,6 +2018,24 @@ fn init_cursor_hide_mode(cx: &mut App) {
     cx.observe_global::<SettingsStore>(apply).detach();
 }
 
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct ReduceMotionSetting(settings::ReduceMotionMode);
+
+impl Settings for ReduceMotionSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(content.reduce_motion.unwrap_or_default())
+    }
+}
+
+fn init_reduce_motion(cx: &mut App) {
+    let apply = |cx: &mut App| {
+        let reduce_motion = ReduceMotionSetting::get_global(cx).0 == settings::ReduceMotionMode::On;
+        cx.set_reduce_motion(reduce_motion);
+    };
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
 /// Starts watching `~/.config/zed/AGENTS.md` (or the platform equivalent) and
 /// surfaces any read errors using the same notification UI as settings errors.
 ///
@@ -2373,13 +2391,15 @@ fn open_project_settings_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_settings_file_relative_path(),
         initial_project_settings_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
 }
 
 fn open_project_tasks_file(
@@ -2388,13 +2408,64 @@ fn open_project_tasks_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_tasks_file_relative_path(),
         initial_tasks_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
+}
+
+fn open_worktree_setup_tasks_file(
+    workspace: &mut Workspace,
+    _: &zed_actions::OpenWorktreeSetupTasks,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // Kept harmless on purpose: tasks with the `create_worktree` hook run automatically
+    // when a worktree is created, so the example must be safe to save unedited.
+    const WORKTREE_SETUP_TASK_EXAMPLE: &str = r#"  {
+    // Runs automatically after Zed creates a new git worktree.
+    // $ZED_WORKTREE_ROOT is the new worktree's root directory, and
+    // $ZED_MAIN_GIT_WORKTREE is the original repository's working directory.
+    "label": "Set up new worktree",
+    "command": "echo \"Setting up $ZED_WORKTREE_ROOT — edit this command\"",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"]
+  }"#;
+
+    let Some(open_task) = open_local_file(
+        workspace,
+        local_tasks_file_relative_path(),
+        settings::initial_worktree_setup_tasks_content(),
+        window,
+        cx,
+    ) else {
+        return;
+    };
+
+    cx.spawn_in(window, async move |_, cx| {
+        let editor = open_task.await?;
+        editor.update_in(cx, |editor, window, cx| {
+            // Skip insertion if the file already mentions the hook (even in a comment,
+            // like the seeded template's example — uncommenting it beats duplicating it).
+            // `create_git_worktree` is a serde alias for the same hook.
+            let text = editor.text(cx);
+            if text.contains("create_worktree") || text.contains("create_git_worktree") {
+                return anyhow::Ok(());
+            }
+            tasks_ui::insert_task_json_into_editor(
+                editor,
+                WORKTREE_SETUP_TASK_EXAMPLE.to_string(),
+                window,
+                cx,
+            )
+        })?
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_project_debug_tasks_file(
@@ -2403,13 +2474,15 @@ fn open_project_debug_tasks_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_local_file(
+    if let Some(task) = open_local_file(
         workspace,
         local_debug_file_relative_path(),
         initial_local_debug_tasks_content(),
         window,
         cx,
-    )
+    ) {
+        task.detach_and_log_err(cx);
+    }
 }
 
 fn open_local_file(
@@ -2418,7 +2491,7 @@ fn open_local_file(
     initial_contents: Cow<'static, str>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Option<gpui::Task<anyhow::Result<Entity<Editor>>>> {
     let project = workspace.project().clone();
     let worktree = project
         .read(cx)
@@ -2426,7 +2499,7 @@ fn open_local_file(
         .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
-        cx.spawn_in(window, async move |workspace, cx| {
+        Some(cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
                 let full_path = worktree.read_with(cx, |tree, _| {
@@ -2474,28 +2547,25 @@ fn open_local_file(
                 .downcast::<Editor>()
                 .context("unexpected item type: expected editor item")?;
 
-            editor
-                .downgrade()
-                .update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton()
-                        && buffer.read(cx).is_empty()
-                    {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..0, initial_contents)], None, cx)
-                        });
-                    }
-                })
-                .ok();
+            editor.update(cx, |editor, cx| {
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton()
+                    && buffer.read(cx).is_empty()
+                {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(0..0, initial_contents)], None, cx)
+                    });
+                }
+            });
 
-            anyhow::Ok(())
-        })
-        .detach();
+            anyhow::Ok(editor)
+        }))
     } else {
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
-        })
+        });
+        None
     }
 }
 
@@ -5114,6 +5184,94 @@ mod tests {
 
     actions!(test_only, [ActionA, ActionB]);
 
+    /// The actions the emacs keymap resolves for `keystroke` in `context`.
+    fn emacs_bindings_for(keystroke: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
+        cx.update(|cx| {
+            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            let mut emacs_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/linux/emacs.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut emacs_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            bindings.extend(emacs_bindings);
+
+            gpui::Keymap::new(bindings)
+                .bindings_for_input(
+                    &[gpui::Keystroke::parse(keystroke).unwrap()],
+                    &[gpui::KeyContext::parse(context).unwrap()],
+                )
+                .0
+                .iter()
+                .map(|binding| binding.action().name().to_string())
+                .collect()
+        })
+    }
+
+    /// `editor::MoveDown` and `editor::MoveUp` propagate when the cursor doesn't move, which at the
+    /// ends of a buffer let `ctrl-n` and `ctrl-p` fall through to the default bindings and open a
+    /// new file / the file finder.
+    #[gpui::test]
+    fn test_emacs_cursor_keys_do_not_fall_back_to_default_bindings(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        let ctrl_n = emacs_bindings_for("ctrl-n", "Workspace Editor", cx);
+        assert!(
+            ctrl_n.contains(&"editor::MoveDown".to_string()),
+            "ctrl-n should still move down, got {ctrl_n:?}"
+        );
+        assert!(
+            !ctrl_n.contains(&"workspace::NewFile".to_string()),
+            "ctrl-n should not fall through to workspace::NewFile, got {ctrl_n:?}"
+        );
+
+        let ctrl_p = emacs_bindings_for("ctrl-p", "Workspace Editor", cx);
+        assert!(
+            ctrl_p.contains(&"editor::MoveUp".to_string()),
+            "ctrl-p should still move up, got {ctrl_p:?}"
+        );
+        assert!(
+            !ctrl_p.contains(&"file_finder::Toggle".to_string()),
+            "ctrl-p should not fall through to file_finder::Toggle, got {ctrl_p:?}"
+        );
+    }
+
+    /// The unbind above only targets `workspace::NewFile` / `file_finder::Toggle`, so the narrower
+    /// `ctrl-n` and `ctrl-p` bindings still win where they apply.
+    #[gpui::test]
+    fn test_emacs_cursor_keys_keep_narrower_bindings(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        let completions = "Workspace Editor showing_completions";
+        assert_eq!(
+            emacs_bindings_for("ctrl-n", completions, cx).first(),
+            Some(&"editor::ContextMenuNext".to_string())
+        );
+        assert_eq!(
+            emacs_bindings_for("ctrl-p", completions, cx).first(),
+            Some(&"editor::ContextMenuPrevious".to_string())
+        );
+
+        let selection_mode = "Workspace Editor selection_mode";
+        assert_eq!(
+            emacs_bindings_for("ctrl-n", selection_mode, cx).first(),
+            Some(&"editor::SelectDown".to_string())
+        );
+        assert_eq!(
+            emacs_bindings_for("ctrl-p", selection_mode, cx).first(),
+            Some(&"editor::SelectUp".to_string())
+        );
+    }
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
@@ -5688,6 +5846,7 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             search::init(cx);
+            lsp_locations::init(cx);
             cx.set_global(workspace::PaneSearchBarCallbacks {
                 setup_search_bar: |languages, toolbar, window, cx| {
                     let search_bar =
@@ -6201,6 +6360,95 @@ mod tests {
             })
             .unwrap();
         assert_eq!(cx.windows().len(), 1, "Should still have only 1 window");
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_in_gitignored_dir_opens_new_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    ".git": {},
+                    ".gitignore": ".checkouts/\n",
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    },
+                    ".checkouts": {
+                        "worktrees": {
+                            "foo": {
+                                "README.md": "hello"
+                            }
+                        }
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // Opening a directory inside a gitignored folder must not be treated
+        // as contained by the open project: its contents were never scanned,
+        // and it may be an independent checkout (e.g. a git worktree kept in
+        // an ignored directory). It should become its own workspace root
+        // instead.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project/.checkouts/worktrees/foo"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let workspace_roots = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .flat_map(|window| {
+                    let mut roots = Vec::new();
+                    if let Ok(multi_workspace) = window.read(cx) {
+                        for workspace in multi_workspace.workspaces() {
+                            roots.push(
+                                workspace
+                                    .read(cx)
+                                    .worktrees(cx)
+                                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    roots
+                })
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            workspace_roots.contains(&vec![PathBuf::from(path!(
+                "/project/.checkouts/worktrees/foo"
+            ))]),
+            "the gitignored directory should be the root of its own workspace, got {workspace_roots:?}"
+        );
+        assert!(
+            workspace_roots.contains(&vec![PathBuf::from(path!("/project"))]),
+            "the original project workspace should be unchanged, got {workspace_roots:?}"
+        );
     }
 
     #[gpui::test]
