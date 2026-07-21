@@ -1297,20 +1297,20 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        enum SuggestedQuery {
-            /// A query the user explicitly typed into the buffer search bar.
-            /// Carried over verbatim, even if the project search's regex mode
-            /// differs from the buffer search's: rewriting a query the user
-            /// wrote on purpose would be more surprising than any mode mismatch.
-            BufferSearch(String),
-            /// Literal text implicitly seeded from the editor's selection or
-            /// the word under the cursor, so it gets escaped in regex mode.
-            EditorSuggestion(String),
+        enum QuerySeed {
+            /// Content of the buffer search bar: already query syntax, with
+            /// escaping already applied if it was seeded in regex mode, so it
+            /// must never be re-escaped. It's carried over verbatim even if
+            /// the buffer search's mode differs from the project search's.
+            Query(String),
+            /// Raw text from the editor's selection or the word under the
+            /// cursor, so it gets escaped when entering a regex query.
+            Text(String),
         }
 
-        let suggested_query = workspace.active_item(cx).and_then(|item| {
+        let query_seed = workspace.active_item(cx).and_then(|item| {
             if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
-                return Some(SuggestedQuery::BufferSearch(buffer_search_query));
+                return Some(QuerySeed::Query(buffer_search_query));
             }
 
             let editor = item.act_as::<Editor>(cx)?;
@@ -1318,7 +1318,7 @@ impl ProjectSearchView {
             if query.is_empty() {
                 None
             } else {
-                Some(SuggestedQuery::EditorSuggestion(query))
+                Some(QuerySeed::Text(query))
             }
         });
 
@@ -1370,15 +1370,15 @@ impl ProjectSearchView {
             }
             if let Some(query) = action.query.as_deref().filter(|query| !query.is_empty()) {
                 search.set_query(query, window, cx);
-            } else if let Some(suggested_query) = suggested_query {
-                let query = match suggested_query {
-                    SuggestedQuery::BufferSearch(query) => query,
-                    SuggestedQuery::EditorSuggestion(query)
+            } else if let Some(query_seed) = query_seed {
+                let query = match query_seed {
+                    QuerySeed::Query(query) => query,
+                    QuerySeed::Text(text)
                         if search.search_options.contains(SearchOptions::REGEX) =>
                     {
-                        regex::escape(&query)
+                        regex::escape(&text)
                     }
-                    SuggestedQuery::EditorSuggestion(query) => query,
+                    QuerySeed::Text(text) => text,
                 };
                 search.set_query(&query, window, cx);
             }
