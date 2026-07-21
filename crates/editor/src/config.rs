@@ -276,12 +276,7 @@ impl Editor {
         }
     }
 
-    pub fn toggle_soft_wrap(
-        &mut self,
-        _: &ToggleSoftWrap,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
         } else {
