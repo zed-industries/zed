@@ -1095,6 +1095,48 @@ async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_action_include_ignored_param(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let cases = [
+        (None, Some(true), Some(true)),
+        (None, Some(false), Some(false)),
+        (None, None, None),
+        (Some(true), Some(false), Some(false)),
+        (Some(false), Some(true), Some(true)),
+        (Some(true), None, Some(true)),
+    ];
+    for (setting, action_param, expected) in cases {
+        cx.update(|_, cx| {
+            let settings = *FileFinderSettings::get_global(cx);
+            FileFinderSettings::override_global(
+                FileFinderSettings {
+                    include_ignored: setting,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        cx.dispatch_action(ToggleFileFinder {
+            separate_history: false,
+            include_ignored: action_param,
+        });
+        let picker = active_file_picker(&workspace, cx);
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.include_ignored, expected,
+                "setting: {setting:?}, action param: {action_param:?}"
+            );
+        });
+        cx.dispatch_action(menu::Cancel);
+    }
+}
+
+#[gpui::test]
 async fn test_ignored_root(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -4513,6 +4555,7 @@ pub(crate) fn open_file_picker(
 ) -> Entity<Picker<FileFinderDelegate>> {
     cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
+        include_ignored: None,
     });
     active_file_picker(workspace, cx)
 }
