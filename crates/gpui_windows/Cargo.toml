@@ -39,11 +39,11 @@ uuid.workspace = true
 windows.workspace = true
 windows-core.workspace = true
 windows-numerics = "0.2"
-windows-registry = "0.5"
+windows-registry.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies.scap]
 workspace = true
 optional = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-windows-registry = "0.5"
+windows-registry.workspace = true

@@ -6276,7 +6276,7 @@ version = "0.1.0"
 dependencies = [
  "windows 0.61.3",
  "windows-core 0.61.2",
- "windows-registry 0.5.3",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -8089,7 +8089,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-core 0.61.2",
  "windows-numerics 0.2.0",
- "windows-registry 0.5.3",
+ "windows-registry 0.6.1",
  "zed-scap",
 ]
 
@@ -21821,17 +21821,6 @@ dependencies = [
  "windows-result 0.3.4",
  "windows-strings 0.3.1",
  "windows-targets 0.53.5",
-]
-
-[[package]]
-name = "windows-registry"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b8a9ed28765efc97bbc954883f4e6796c33a06546ebafacbabee9696967499e"
-dependencies = [
- "windows-link 0.1.3",
- "windows-result 0.3.4",
- "windows-strings 0.4.2",
 ]
 
 [[package]]
