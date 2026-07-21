@@ -6,7 +6,7 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
@@ -50,10 +50,10 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::rc::Retained;
+use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
-    NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
-    NSWindowButton as Objc2NSWindowButton,
+    NSAlert, NSAlertStyle, NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView,
+    NSWindow as Objc2NSWindow, NSWindowButton as Objc2NSWindowButton,
 };
 use objc2_foundation::{NSPoint as Objc2NSPoint, NSRect as Objc2NSRect};
 use parking_lot::Mutex;
@@ -1380,6 +1380,8 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
+        use objc2_foundation::{NSInteger, NSString};
+
         // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
         // focus (and therefore Space) defaults to Cancel, leaving the middle button of
         // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
@@ -1392,69 +1394,68 @@ impl PlatformWindow for MacWindow {
             .map(|(ix, _)| ix)
             .filter(|&ix| ix > 0);
 
-        unsafe {
-            let alert: id = msg_send![class!(NSAlert), alloc];
-            let alert: id = msg_send![alert, init];
-            let alert_style = match level {
-                PromptLevel::Info => 1,
-                PromptLevel::Warning => 0,
-                PromptLevel::Critical => 2,
-            };
-            let _: () = msg_send![alert, setAlertStyle: alert_style];
-            let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            if let Some(detail) = detail {
-                let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
-            }
+        let marker = MainThreadMarker::new().expect("alert not on main thread");
+        let alert = NSAlert::new(marker);
+        alert.setAlertStyle(match level {
+            PromptLevel::Critical => NSAlertStyle::Critical,
+            PromptLevel::Warning => NSAlertStyle::Warning,
+            PromptLevel::Info => NSAlertStyle::Informational,
+        });
+        let message = NSString::from_str(msg);
+        alert.setMessageText(message.as_ref());
 
-            let mut initial_focus_button: Option<id> = None;
-            for (ix, answer) in answers.iter().enumerate() {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
-
-                if answer.is_cancel() {
-                    if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
-                        let _: () =
-                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
-                    }
-                } else if Some(ix) == initial_focus_ix {
-                    initial_focus_button = Some(button);
-                }
-            }
-
-            if let Some(button) = initial_focus_button {
-                let alert_window: id = msg_send![alert, window];
-                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
-            }
-
-            let (done_tx, done_rx) = oneshot::channel();
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |answer: NSInteger| {
-                let _: () = msg_send![alert, release];
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(answer.try_into().unwrap());
-                }
-            });
-            let block = block.copy();
-            let lock = self.0.lock();
-            let native_window = lock.native_window;
-            let closed = lock.closed.clone();
-            let executor = lock.foreground_executor.clone();
-            executor
-                .spawn(async move {
-                    if !closed.load(Ordering::Acquire) {
-                        let _: () = msg_send![
-                            alert,
-                            beginSheetModalForWindow: native_window
-                            completionHandler: block
-                        ];
-                    } else {
-                        let _: () = msg_send![alert, release];
-                    }
-                })
-                .detach();
-
-            Some(done_rx)
+        if let Some(detail) = detail {
+            let detail_text = NSString::from_str(detail);
+            alert.setInformativeText(detail_text.as_ref());
         }
+
+        let mut initial_focus_button: Option<Retained<Objc2NSButton>> = None;
+        for (ix, answer) in answers.iter().enumerate() {
+            let title = NSString::from_str(answer.label());
+            let button = alert.addButtonWithTitle(&title);
+            button.setTag(ix as NSInteger);
+
+            if answer.is_cancel() {
+                if let Some(key) = core::char::from_u32(crate::events::ESCAPE_KEY as u32) {
+                    let key = NSString::from_str(&key.to_string());
+                    button.setKeyEquivalent(&key);
+                }
+            } else if Some(ix) == initial_focus_ix {
+                initial_focus_button = Some(button);
+            }
+        }
+
+        if let Some(button) = initial_focus_button {
+            alert.window().setInitialFirstResponder(Some(&button));
+        }
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let done_tx = Cell::new(Some(done_tx));
+
+        let block = RcBlock::new(move |answer: NSInteger| {
+            if let Some(done_tx) = done_tx.take() {
+                let _ = done_tx.send(answer.try_into().unwrap());
+            }
+        });
+
+        let lock = self.0.lock();
+        let native_window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
+        executor
+            .spawn(async move {
+                if !closed.load(Ordering::Acquire) {
+                    // SAFETY: `native_window` is an Objective-C `NSWindow` pointer
+                    // owned by the platform window; bridge it into objc2.
+                    let sheet_window: &Objc2NSWindow =
+                        unsafe { &*(native_window as *const Objc2NSWindow) };
+
+                    alert.beginSheetModalForWindow_completionHandler(sheet_window, Some(&block));
+                }
+            })
+            .detach();
+
+        Some(done_rx)
     }
 
     fn activate(&self) {
