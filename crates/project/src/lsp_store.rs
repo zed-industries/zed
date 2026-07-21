@@ -1155,7 +1155,7 @@ impl LocalLspStore {
                 let lsp_store = lsp_store.clone();
                 move |(), cx| {
                     let result = lsp_store.update(cx, |lsp_store, cx| {
-                        lsp_store.refresh_code_lens(cx);
+                        lsp_store.refresh_code_lens(Some(server_id), cx);
                     });
                     async move { result }
                 }
@@ -4207,7 +4207,7 @@ impl BufferLspData {
         }
 
         if let Some(folding_ranges) = &mut self.folding_ranges {
-            folding_ranges.ranges.remove(&for_server);
+            folding_ranges.remove_server_data(for_server);
         }
 
         if let Some(document_links) = &mut self.document_links {
@@ -4249,11 +4249,21 @@ pub enum LspStoreEvent {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
-    RefreshCodeLens,
-    RefreshDocumentColors,
-    RefreshDocumentLinks,
-    RefreshFoldingRanges,
-    RefreshDocumentSymbols,
+    RefreshCodeLens {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentColors {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentLinks {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshFoldingRanges {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentSymbols {
+        server_id: Option<LanguageServerId>,
+    },
     DiagnosticsUpdated {
         server_id: LanguageServerId,
         paths: Vec<ProjectPath>,
@@ -9411,6 +9421,23 @@ impl LspStore {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
+        self.request_filtered_lsp_locally(buffer, position, request, None, cx)
+    }
+
+    fn request_filtered_lsp_locally<P, R>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: Option<P>,
+        request: R,
+        only_servers: Option<&HashSet<LanguageServerId>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<(LanguageServerId, R::Response)>>
+    where
+        P: ToOffset,
+        R: LspCommand + Clone,
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+        <R::LspRequest as lsp::request::Request>::Params: Send,
+    {
         let Some(local) = self.as_local() else {
             return Task::ready(Vec::new());
         };
@@ -9428,6 +9455,9 @@ impl LspStore {
                         .unwrap_or(true)
                 })
                 .map(|(_, server)| server.server_id())
+                .filter(|server_id| {
+                    only_servers.is_none_or(|only_servers| only_servers.contains(server_id))
+                })
                 .filter(|server_id| {
                     self.as_local().is_none_or(|local| {
                         local
@@ -13463,7 +13493,7 @@ impl LspStore {
                         |registrations| &mut registrations.document_symbol,
                         |capabilities| &mut capabilities.document_symbol_provider,
                     )?;
-                    self.refresh_document_symbols(cx);
+                    self.refresh_document_symbols(Some(server_id), cx);
                 }
                 "textDocument/codeAction" => {
                     let options = parse_register_capabilities(reg.register_options)?;
@@ -13605,7 +13635,7 @@ impl LspStore {
                             |registrations| &mut registrations.code_lens,
                             |capabilities| &mut capabilities.code_lens_provider,
                         )?;
-                        self.refresh_code_lens(cx);
+                        self.refresh_code_lens(Some(server_id), cx);
                     }
                 }
                 "textDocument/diagnostic" => {
@@ -13681,7 +13711,7 @@ impl LspStore {
                         |registrations| &mut registrations.color,
                         |capabilities| &mut capabilities.color_provider,
                     )?;
-                    self.refresh_document_colors(cx);
+                    self.refresh_document_colors(Some(server_id), cx);
                 }
                 "textDocument/foldingRange" => {
                     let options = parse_register_capabilities(reg.register_options)?;
@@ -13698,7 +13728,7 @@ impl LspStore {
                         |registrations| &mut registrations.folding_range,
                         |capabilities| &mut capabilities.folding_range_provider,
                     )?;
-                    self.refresh_folding_ranges(cx);
+                    self.refresh_folding_ranges(Some(server_id), cx);
                 }
                 "textDocument/documentLink" => {
                     if let Some(caps) = reg
@@ -13715,7 +13745,7 @@ impl LspStore {
                             |registrations| &mut registrations.document_link,
                             |capabilities| &mut capabilities.document_link_provider,
                         )?;
-                        self.refresh_document_links(cx);
+                        self.refresh_document_links(Some(server_id), cx);
                     }
                 }
                 "textDocument/semanticTokens" => {
@@ -13951,7 +13981,7 @@ impl LspStore {
                         |registrations| &mut registrations.document_symbol,
                         |capabilities| &mut capabilities.document_symbol_provider,
                     )? {
-                        self.refresh_document_symbols(cx);
+                        self.refresh_document_symbols(Some(server_id), cx);
                     }
                 }
                 "textDocument/codeLens" => {
@@ -13962,7 +13992,7 @@ impl LspStore {
                         |registrations| &mut registrations.code_lens,
                         |capabilities| &mut capabilities.code_lens_provider,
                     )? {
-                        self.refresh_code_lens(cx);
+                        self.refresh_code_lens(Some(server_id), cx);
                     }
                 }
                 "textDocument/diagnostic" => {
@@ -14003,7 +14033,7 @@ impl LspStore {
                         |registrations| &mut registrations.color,
                         |capabilities| &mut capabilities.color_provider,
                     )? {
-                        self.refresh_document_colors(cx);
+                        self.refresh_document_colors(Some(server_id), cx);
                     }
                 }
                 "textDocument/foldingRange" => {
@@ -14014,7 +14044,7 @@ impl LspStore {
                         |registrations| &mut registrations.folding_range,
                         |capabilities| &mut capabilities.folding_range_provider,
                     )? {
-                        self.refresh_folding_ranges(cx);
+                        self.refresh_folding_ranges(Some(server_id), cx);
                     }
                 }
                 "textDocument/documentLink" => {
@@ -14025,7 +14055,7 @@ impl LspStore {
                         |registrations| &mut registrations.document_link,
                         |capabilities| &mut capabilities.document_link_provider,
                     )? {
-                        self.refresh_document_links(cx);
+                        self.refresh_document_links(Some(server_id), cx);
                     }
                 }
                 _ => log::warn!("unhandled capability unregistration: {unreg:?}"),

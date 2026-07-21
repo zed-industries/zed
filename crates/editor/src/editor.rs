@@ -2002,19 +2002,19 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens => {
+                    project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
-                    project::Event::RefreshDocumentColors => {
+                    project::Event::RefreshDocumentColors { .. } => {
                         editor.refresh_document_colors(None, window, cx);
                     }
-                    project::Event::RefreshDocumentLinks => {
+                    project::Event::RefreshDocumentLinks { .. } => {
                         editor.refresh_document_links(None, cx);
                     }
-                    project::Event::RefreshFoldingRanges => {
+                    project::Event::RefreshFoldingRanges { .. } => {
                         editor.refresh_folding_ranges(None, window, cx);
                     }
-                    project::Event::RefreshDocumentSymbols => {
+                    project::Event::RefreshDocumentSymbols { .. } => {
                         editor.refresh_document_symbols(None, cx);
                     }
                     project::Event::RefreshInlayHints {

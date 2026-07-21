@@ -51,12 +51,25 @@ pub(super) struct CodeLensData {
     pub(super) next_id: u64,
     pub(super) update: Option<(Global, CodeLensTask)>,
     pub(super) resolving: HashMap<(LanguageServerId, CodeLensActionId), CodeLensResolveTask>,
+    generation: u64,
 }
 
 impl CodeLensData {
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
         self.lens.remove(&server_id);
         self.resolving.retain(|(s, _), _| *s != server_id);
+    }
+
+    fn evict(&mut self, for_server: Option<LanguageServerId>) {
+        match for_server {
+            Some(server_id) => self.remove_server_data(server_id),
+            None => {
+                self.lens.clear();
+                self.resolving.clear();
+            }
+        }
+        self.update = None;
+        self.generation += 1;
     }
 }
 
@@ -72,16 +85,25 @@ fn flatten_cache(lens: &HashMap<LanguageServerId, CodeLensActions>) -> CodeLensA
 }
 
 impl LspStore {
-    pub(super) fn refresh_code_lens(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_code_lens(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
         for lsp_data in self.lsp_data.values_mut() {
-            lsp_data.code_lens = None;
+            if let Some(code_lens) = &mut lsp_data.code_lens {
+                code_lens.evict(for_server);
+            }
         }
 
-        cx.emit(LspStoreEvent::RefreshCodeLens);
+        cx.emit(LspStoreEvent::RefreshCodeLens {
+            server_id: for_server,
+        });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::RefreshCodeLens {
                     project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
                 })
                 .context("sending refresh code lens downstream")
                 .log_err();
@@ -122,24 +144,36 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let existing_servers = if let Some(local) = self.as_local() {
+        let existing_servers = self.as_local().map(|local| {
             local
                 .buffers_opened_in_servers
                 .get(&buffer_id)
                 .cloned()
                 .unwrap_or_default()
-        } else {
-            self.relevant_server_ids_for_capability_check(buffer, cx)
-                .into_iter()
-                .collect()
-        };
+        });
 
+        let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
-            if let Some(cached_lens) = &lsp_data.code_lens {
+            if let Some(cached_lens) = &mut lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let cached_servers = cached_lens.lens.keys().copied().collect::<HashSet<_>>();
-                    if existing_servers == cached_servers {
-                        return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
+                    let missing_servers = existing_servers.as_ref().map(|current_servers| {
+                        cached_lens
+                            .lens
+                            .retain(|server_id, _| current_servers.contains(server_id));
+                        current_servers
+                            .iter()
+                            .copied()
+                            .filter(|server_id| !cached_lens.lens.contains_key(server_id))
+                            .collect::<HashSet<_>>()
+                    });
+                    match missing_servers {
+                        Some(missing_servers) if !missing_servers.is_empty() => {
+                            servers_to_query = Some(missing_servers);
+                        }
+                        _ => {
+                            return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens))))
+                                .shared();
+                        }
                     }
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
                     if !version_queried_for.changed_since(updating_for) {
@@ -153,6 +187,7 @@ impl LspStore {
             .latest_lsp_data(buffer, cx)
             .code_lens
             .get_or_insert_default();
+        let query_generation = lens_lsp_data.generation;
         let buffer = buffer.clone();
         let query_version_queried_for = version_queried_for.clone();
         let new_task = cx
@@ -162,7 +197,7 @@ impl LspStore {
                     .await;
                 let fetched_lens = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_code_lens_for_buffer(&buffer, cx)
+                        lsp_store.fetch_code_lens_for_buffer(&buffer, servers_to_query, cx)
                     })
                     .map_err(Arc::new)?
                     .await
@@ -190,6 +225,9 @@ impl LspStore {
                     .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
                         let code_lens = lsp_data.code_lens.as_mut()?;
+                        if code_lens.generation != query_generation {
+                            return Some(flatten_cache(&code_lens.lens));
+                        }
                         if let Some(fetched_lens) = fetched_lens {
                             let mut tagged: HashMap<LanguageServerId, CodeLensActions> =
                                 HashMap::default();
@@ -226,6 +264,7 @@ impl LspStore {
     fn fetch_code_lens_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
+        for_servers: Option<HashSet<LanguageServerId>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<HashMap<LanguageServerId, Vec<CodeAction>>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -286,8 +325,13 @@ impl LspStore {
                 Ok(Some(code_lens_actions))
             })
         } else {
-            let code_lens_actions_task =
-                self.request_multiple_lsp_locally(buffer, None::<usize>, GetCodeLens, cx);
+            let code_lens_actions_task = self.request_filtered_lsp_locally(
+                buffer,
+                None::<usize>,
+                GetCodeLens,
+                for_servers.as_ref(),
+                cx,
+            );
             cx.background_spawn(async move {
                 Ok(Some(code_lens_actions_task.await.into_iter().collect()))
             })
@@ -453,11 +497,12 @@ impl LspStore {
 
     pub(super) async fn handle_refresh_code_lens(
         lsp_store: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshCodeLens>,
+        envelope: TypedEnvelope<proto::RefreshCodeLens>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |lsp_store, cx| {
-            lsp_store.refresh_code_lens(cx);
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_code_lens(server_id, cx);
         });
         Ok(proto::Ack {})
     }

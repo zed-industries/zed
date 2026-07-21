@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::FutureExt as _;
 use futures::future::{Shared, join_all};
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
@@ -28,25 +28,44 @@ pub(super) type DocumentSymbolsTask =
 pub(super) struct DocumentSymbolsData {
     symbols: HashMap<LanguageServerId, Vec<OutlineItem<Anchor>>>,
     symbols_update: Option<(Global, DocumentSymbolsTask)>,
+    generation: u64,
 }
 
 impl DocumentSymbolsData {
     pub(super) fn remove_server_data(&mut self, for_server: LanguageServerId) {
         self.symbols.remove(&for_server);
     }
+
+    fn evict(&mut self, for_server: Option<LanguageServerId>) {
+        match for_server {
+            Some(server_id) => self.remove_server_data(server_id),
+            None => self.symbols.clear(),
+        }
+        self.symbols_update = None;
+        self.generation += 1;
+    }
 }
 
 impl LspStore {
-    pub(super) fn refresh_document_symbols(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_document_symbols(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
         for lsp_data in self.lsp_data.values_mut() {
-            lsp_data.document_symbols = None;
+            if let Some(document_symbols) = &mut lsp_data.document_symbols {
+                document_symbols.evict(for_server);
+            }
         }
 
-        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentSymbols);
+        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentSymbols {
+            server_id: for_server,
+        });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::RefreshDocumentSymbols {
                     project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
                 })
                 .context("sending refresh document symbols downstream")
                 .log_err();
@@ -55,11 +74,12 @@ impl LspStore {
 
     pub(super) async fn handle_refresh_document_symbols(
         lsp_store: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshDocumentSymbols>,
+        envelope: TypedEnvelope<proto::RefreshDocumentSymbols>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<proto::Ack> {
         lsp_store.update(&mut cx, |lsp_store, cx| {
-            lsp_store.refresh_document_symbols(cx);
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_document_symbols(server_id, cx);
         });
         Ok(proto::Ack {})
     }
@@ -89,26 +109,37 @@ impl LspStore {
                 .unwrap_or_default()
         });
 
-        if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
-            if let Some(cached) = &lsp_data.document_symbols {
-                if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let has_different_servers =
-                        current_language_servers.is_some_and(|current_language_servers| {
-                            current_language_servers != cached.symbols.keys().copied().collect()
-                        });
-                    if !has_different_servers {
-                        let snapshot = buffer.read(cx).snapshot();
-                        return Task::ready(
-                            cached
-                                .symbols
-                                .values()
-                                .flatten()
-                                .unique()
-                                .cloned()
-                                .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
-                                .collect(),
-                        );
-                    }
+        let mut servers_to_query = None;
+        if let Some(lsp_data) = self.current_lsp_data(buffer_id)
+            && !version_queried_for.changed_since(&lsp_data.buffer_version)
+            && let Some(cached) = &mut lsp_data.document_symbols
+        {
+            let missing_servers = current_language_servers.as_ref().map(|current_servers| {
+                cached
+                    .symbols
+                    .retain(|server_id, _| current_servers.contains(server_id));
+                current_servers
+                    .iter()
+                    .copied()
+                    .filter(|server_id| !cached.symbols.contains_key(server_id))
+                    .collect::<HashSet<_>>()
+            });
+            match missing_servers {
+                Some(missing_servers) if !missing_servers.is_empty() => {
+                    servers_to_query = Some(missing_servers);
+                }
+                _ => {
+                    let snapshot = buffer.read(cx).snapshot();
+                    return Task::ready(
+                        cached
+                            .symbols
+                            .values()
+                            .flatten()
+                            .unique()
+                            .cloned()
+                            .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
+                            .collect(),
+                    );
                 }
             }
         }
@@ -125,6 +156,7 @@ impl LspStore {
             }
         }
 
+        let query_generation = doc_symbols_data.generation;
         let buffer = buffer.clone();
         let query_version = version_queried_for.clone();
         let new_task = cx
@@ -135,7 +167,7 @@ impl LspStore {
 
                 let fetched = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_symbols_for_buffer(&buffer, cx)
+                        lsp_store.fetch_document_symbols_for_buffer(&buffer, servers_to_query, cx)
                     })
                     .map_err(Arc::new)?
                     .await
@@ -164,23 +196,25 @@ impl LspStore {
                         let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                         let doc_symbols = lsp_data.document_symbols.get_or_insert_default();
 
-                        if let Some(fetched_symbols) = fetched {
-                            let converted = fetched_symbols
-                                .iter()
-                                .map(|(&server_id, symbols)| {
-                                    let mut items = Vec::new();
-                                    flatten_document_symbols(symbols, &snapshot, 0, &mut items);
-                                    (server_id, items)
-                                })
-                                .collect();
-                            if lsp_data.buffer_version == query_version {
-                                doc_symbols.symbols.extend(converted);
-                            } else if !lsp_data.buffer_version.changed_since(&query_version) {
-                                lsp_data.buffer_version = query_version;
-                                doc_symbols.symbols = converted;
+                        if doc_symbols.generation == query_generation {
+                            if let Some(fetched_symbols) = fetched {
+                                let converted = fetched_symbols
+                                    .iter()
+                                    .map(|(&server_id, symbols)| {
+                                        let mut items = Vec::new();
+                                        flatten_document_symbols(symbols, &snapshot, 0, &mut items);
+                                        (server_id, items)
+                                    })
+                                    .collect();
+                                if lsp_data.buffer_version == query_version {
+                                    doc_symbols.symbols.extend(converted);
+                                } else if !lsp_data.buffer_version.changed_since(&query_version) {
+                                    lsp_data.buffer_version = query_version;
+                                    doc_symbols.symbols = converted;
+                                }
                             }
+                            doc_symbols.symbols_update = None;
                         }
-                        doc_symbols.symbols_update = None;
                         doc_symbols
                             .symbols
                             .values()
@@ -202,6 +236,7 @@ impl LspStore {
     fn fetch_document_symbols_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
+        for_servers: Option<HashSet<LanguageServerId>>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Option<HashMap<LanguageServerId, Vec<DocumentSymbol>>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -263,8 +298,13 @@ impl LspStore {
                 Ok(Some(result))
             })
         } else {
-            let symbols_task =
-                self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentSymbols, cx);
+            let symbols_task = self.request_filtered_lsp_locally(
+                buffer,
+                None::<usize>,
+                GetDocumentSymbols,
+                for_servers.as_ref(),
+                cx,
+            );
             cx.background_spawn(async move { Ok(Some(symbols_task.await.into_iter().collect())) })
         }
     }

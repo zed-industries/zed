@@ -37,25 +37,44 @@ pub(super) type DocumentColorTask =
 pub(super) struct DocumentColorData {
     pub(super) colors: HashMap<LanguageServerId, HashSet<DocumentColor>>,
     pub(super) colors_update: Option<(Global, DocumentColorTask)>,
+    pub(super) generation: u64,
 }
 
 impl DocumentColorData {
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
         self.colors.remove(&server_id);
     }
+
+    fn evict(&mut self, for_server: Option<LanguageServerId>) {
+        match for_server {
+            Some(server_id) => self.remove_server_data(server_id),
+            None => self.colors.clear(),
+        }
+        self.colors_update = None;
+        self.generation += 1;
+    }
 }
 
 impl LspStore {
-    pub(super) fn refresh_document_colors(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_document_colors(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
         for lsp_data in self.lsp_data.values_mut() {
-            lsp_data.document_colors = None;
+            if let Some(document_colors) = &mut lsp_data.document_colors {
+                document_colors.evict(for_server);
+            }
         }
 
-        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentColors);
+        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentColors {
+            server_id: for_server,
+        });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::RefreshDocumentColors {
                     project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
                 })
                 .context("sending refresh document colors downstream")
                 .log_err();
@@ -64,11 +83,12 @@ impl LspStore {
 
     pub(super) async fn handle_refresh_document_colors(
         lsp_store: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshDocumentColors>,
+        envelope: TypedEnvelope<proto::RefreshDocumentColors>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |lsp_store, cx| {
-            lsp_store.refresh_document_colors(cx);
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_document_colors(server_id, cx);
         });
         Ok(proto::Ack {})
     }
@@ -89,22 +109,32 @@ impl LspStore {
                 .unwrap_or_default()
         });
 
-        if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
-            if let Some(cached_colors) = &lsp_data.document_colors {
-                if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let has_different_servers =
-                        current_language_servers.is_some_and(|current_language_servers| {
-                            current_language_servers
-                                != cached_colors.colors.keys().copied().collect()
-                        });
-                    if !has_different_servers {
-                        return Some(
-                            Task::ready(Ok(DocumentColors {
-                                colors: cached_colors.colors.values().flatten().cloned().collect(),
-                            }))
-                            .shared(),
-                        );
-                    }
+        let mut servers_to_query = None;
+        if let Some(lsp_data) = self.current_lsp_data(buffer_id)
+            && !version_queried_for.changed_since(&lsp_data.buffer_version)
+            && let Some(cached_colors) = &mut lsp_data.document_colors
+        {
+            let missing_servers = current_language_servers.as_ref().map(|current_servers| {
+                cached_colors
+                    .colors
+                    .retain(|server_id, _| current_servers.contains(server_id));
+                current_servers
+                    .iter()
+                    .copied()
+                    .filter(|server_id| !cached_colors.colors.contains_key(server_id))
+                    .collect::<HashSet<_>>()
+            });
+            match missing_servers {
+                Some(missing_servers) if !missing_servers.is_empty() => {
+                    servers_to_query = Some(missing_servers);
+                }
+                _ => {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_colors.colors.values().flatten().cloned().collect(),
+                        }))
+                        .shared(),
+                    );
                 }
             }
         }
@@ -118,6 +148,7 @@ impl LspStore {
         {
             return Some(running_update.clone());
         }
+        let query_generation = color_lsp_data.generation;
         let buffer_version_queried_for = version_queried_for.clone();
         let new_task = cx
             .spawn(async move |lsp_store, cx| {
@@ -126,7 +157,7 @@ impl LspStore {
                     .await;
                 let fetched_colors = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_colors_for_buffer(&buffer, cx)
+                        lsp_store.fetch_document_colors_for_buffer(&buffer, servers_to_query, cx)
                     })?
                     .await
                     .context("fetching document colors")
@@ -159,18 +190,20 @@ impl LspStore {
                         let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                         let lsp_colors = lsp_data.document_colors.get_or_insert_default();
 
-                        if let Some(fetched_colors) = fetched_colors {
-                            if lsp_data.buffer_version == buffer_version_queried_for {
-                                lsp_colors.colors.extend(fetched_colors);
-                            } else if !lsp_data
-                                .buffer_version
-                                .changed_since(&buffer_version_queried_for)
-                            {
-                                lsp_data.buffer_version = buffer_version_queried_for;
-                                lsp_colors.colors = fetched_colors;
+                        if lsp_colors.generation == query_generation {
+                            if let Some(fetched_colors) = fetched_colors {
+                                if lsp_data.buffer_version == buffer_version_queried_for {
+                                    lsp_colors.colors.extend(fetched_colors);
+                                } else if !lsp_data
+                                    .buffer_version
+                                    .changed_since(&buffer_version_queried_for)
+                                {
+                                    lsp_data.buffer_version = buffer_version_queried_for;
+                                    lsp_colors.colors = fetched_colors;
+                                }
                             }
+                            lsp_colors.colors_update = None;
                         }
-                        lsp_colors.colors_update = None;
                         let colors = lsp_colors
                             .colors
                             .values()
@@ -293,6 +326,7 @@ impl LspStore {
     pub(super) fn fetch_document_colors_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
+        for_servers: Option<HashSet<LanguageServerId>>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Option<HashMap<LanguageServerId, HashSet<DocumentColor>>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -352,8 +386,13 @@ impl LspStore {
                 Ok(Some(colors))
             })
         } else {
-            let document_colors_task =
-                self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentColor, cx);
+            let document_colors_task = self.request_filtered_lsp_locally(
+                buffer,
+                None::<usize>,
+                GetDocumentColor,
+                for_servers.as_ref(),
+                cx,
+            );
             cx.background_spawn(async move {
                 Ok(Some(
                     document_colors_task

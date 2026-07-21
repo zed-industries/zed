@@ -3484,15 +3484,15 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
     assert_eq!(
         sorted(refresh_events.lock().drain(..)),
         vec![
-            "code_lens".to_string(),
-            "document_colors".to_string(),
-            "document_links".to_string(),
-            "document_symbols".to_string(),
-            "folding_ranges".to_string(),
+            format!("code_lens({dynamic_server_id})"),
+            format!("document_colors({dynamic_server_id})"),
+            format!("document_links({dynamic_server_id})"),
+            format!("document_symbols({dynamic_server_id})"),
+            format!("folding_ranges({dynamic_server_id})"),
             format!("inlay_hints({dynamic_server_id})"),
             format!("semantic_tokens({dynamic_server_id})"),
         ],
-        "expected every dynamic registration to trigger the corresponding refresh",
+        "expected every dynamic registration to trigger the corresponding per-server refresh",
     );
     assert_eq!(
         buffer_triggers(cx),
@@ -3525,14 +3525,14 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
     assert_eq!(
         static_counters.snapshot(),
         LspRequestCounts {
-            colors: 2,
-            links: 2,
-            folding_ranges: 2,
-            document_symbols: 2,
-            code_lens: 2,
+            colors: 1,
+            links: 1,
+            folding_ranges: 1,
+            document_symbols: 1,
+            code_lens: 1,
             semantic_tokens: 1,
         },
-        "expected buffer-wide refreshes to re-query the static server, but the per-server semantic tokens refresh to skip it",
+        "expected per-server refreshes to leave the static server's cached data untouched",
     );
 
     unregister_capabilities(&dynamic_server, "textDocument/documentColor", &["colors"]).await;
@@ -3548,15 +3548,15 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
     assert_eq!(
         sorted(refresh_events.lock().drain(..)),
         vec![
-            "code_lens".to_string(),
-            "document_colors".to_string(),
-            "document_links".to_string(),
-            "document_symbols".to_string(),
-            "folding_ranges".to_string(),
+            format!("code_lens({dynamic_server_id})"),
+            format!("document_colors({dynamic_server_id})"),
+            format!("document_links({dynamic_server_id})"),
+            format!("document_symbols({dynamic_server_id})"),
+            format!("folding_ranges({dynamic_server_id})"),
             format!("inlay_hints({dynamic_server_id})"),
             format!("semantic_tokens({dynamic_server_id})"),
         ],
-        "expected every unregistration to trigger the corresponding refresh",
+        "expected every unregistration to trigger the corresponding per-server refresh",
     );
     assert_eq!(
         buffer_triggers(cx),
@@ -3589,14 +3589,14 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
     assert_eq!(
         static_counters.snapshot(),
         LspRequestCounts {
-            colors: 3,
-            links: 3,
-            folding_ranges: 3,
-            document_symbols: 3,
-            code_lens: 3,
+            colors: 1,
+            links: 1,
+            folding_ranges: 1,
+            document_symbols: 1,
+            code_lens: 1,
             semantic_tokens: 1,
         },
-        "expected the static server to keep serving buffer-wide requests",
+        "expected the static server to never be re-queried by another server's capability changes",
     );
 }
 
@@ -17392,6 +17392,11 @@ fn observe_refresh_events(
         let project = project.clone();
         move |cx| {
             cx.subscribe(&project, move |_, event, _| {
+                let label = |name: &str, server_id: &Option<LanguageServerId>| {
+                    let server_id = server_id
+                        .map_or_else(|| "all".to_string(), |server_id| server_id.to_string());
+                    format!("{name}({server_id})")
+                };
                 let event = match event {
                     Event::RefreshInlayHints { server_id, .. } => {
                         format!("inlay_hints({server_id})")
@@ -17399,11 +17404,15 @@ fn observe_refresh_events(
                     Event::RefreshSemanticTokens { server_id, .. } => {
                         format!("semantic_tokens({server_id})")
                     }
-                    Event::RefreshCodeLens => "code_lens".to_string(),
-                    Event::RefreshDocumentColors => "document_colors".to_string(),
-                    Event::RefreshDocumentLinks => "document_links".to_string(),
-                    Event::RefreshFoldingRanges => "folding_ranges".to_string(),
-                    Event::RefreshDocumentSymbols => "document_symbols".to_string(),
+                    Event::RefreshCodeLens { server_id } => label("code_lens", server_id),
+                    Event::RefreshDocumentColors { server_id } => {
+                        label("document_colors", server_id)
+                    }
+                    Event::RefreshDocumentLinks { server_id } => label("document_links", server_id),
+                    Event::RefreshFoldingRanges { server_id } => label("folding_ranges", server_id),
+                    Event::RefreshDocumentSymbols { server_id } => {
+                        label("document_symbols", server_id)
+                    }
                     _ => return,
                 };
                 events.lock().push(event);

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::FutureExt as _;
 use futures::future::{Shared, join_all};
 use gpui::{AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
@@ -46,6 +46,7 @@ pub(super) struct DocumentLinksData {
     pub(super) next_id: u64,
     links_update: Option<(Global, DocumentLinksTask)>,
     pub(super) link_resolves: HashMap<(LanguageServerId, DocumentLinkId), DocumentLinkResolveTask>,
+    generation: u64,
 }
 
 impl DocumentLinksData {
@@ -53,6 +54,18 @@ impl DocumentLinksData {
         self.links.remove(&server_id);
         self.link_resolves
             .retain(|(resolved_server, _), _| *resolved_server != server_id);
+    }
+
+    fn evict(&mut self, for_server: Option<LanguageServerId>) {
+        match for_server {
+            Some(server_id) => self.remove_server_data(server_id),
+            None => {
+                self.links.clear();
+                self.link_resolves.clear();
+            }
+        }
+        self.links_update = None;
+        self.generation += 1;
     }
 }
 
@@ -66,16 +79,25 @@ pub enum ResolvedDocumentLink {
 }
 
 impl LspStore {
-    pub(super) fn refresh_document_links(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_document_links(
+        &mut self,
+        for_server: Option<LanguageServerId>,
+        cx: &mut Context<Self>,
+    ) {
         for lsp_data in self.lsp_data.values_mut() {
-            lsp_data.document_links = None;
+            if let Some(document_links) = &mut lsp_data.document_links {
+                document_links.evict(for_server);
+            }
         }
 
-        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentLinks);
+        cx.emit(crate::lsp_store::LspStoreEvent::RefreshDocumentLinks {
+            server_id: for_server,
+        });
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::RefreshDocumentLinks {
                     project_id: *project_id,
+                    server_id: for_server.map(|server_id| server_id.to_proto()),
                 })
                 .context("sending refresh document links downstream")
                 .log_err();
@@ -84,11 +106,12 @@ impl LspStore {
 
     pub(super) async fn handle_refresh_document_links(
         lsp_store: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshDocumentLinks>,
+        envelope: TypedEnvelope<proto::RefreshDocumentLinks>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<proto::Ack> {
         lsp_store.update(&mut cx, |lsp_store, cx| {
-            lsp_store.refresh_document_links(cx);
+            let server_id = envelope.payload.server_id.map(LanguageServerId::from_proto);
+            lsp_store.refresh_document_links(server_id, cx);
         });
         Ok(proto::Ack {})
     }
@@ -112,16 +135,26 @@ impl LspStore {
                 .unwrap_or_default()
         });
 
+        let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id)
-            && let Some(cached) = &lsp_data.document_links
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
+            && let Some(cached) = &mut lsp_data.document_links
         {
-            let has_different_servers =
-                current_language_servers.is_some_and(|current_language_servers| {
-                    current_language_servers != cached.links.keys().copied().collect()
-                });
-            if !has_different_servers {
-                return Task::ready(Some(cached.links.clone()));
+            let missing_servers = current_language_servers.as_ref().map(|current_servers| {
+                cached
+                    .links
+                    .retain(|server_id, _| current_servers.contains(server_id));
+                current_servers
+                    .iter()
+                    .copied()
+                    .filter(|server_id| !cached.links.contains_key(server_id))
+                    .collect::<HashSet<_>>()
+            });
+            match missing_servers {
+                Some(missing_servers) if !missing_servers.is_empty() => {
+                    servers_to_query = Some(missing_servers);
+                }
+                _ => return Task::ready(Some(cached.links.clone())),
             }
         }
 
@@ -136,6 +169,7 @@ impl LspStore {
             return cx.background_spawn(async move { running.await.ok().flatten() });
         }
 
+        let query_generation = links_lsp_data.generation;
         let buffer = buffer.clone();
         let query_version = version_queried_for.clone();
         let new_task = cx
@@ -146,7 +180,7 @@ impl LspStore {
 
                 let fetched = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_links_for_buffer(&buffer, cx)
+                        lsp_store.fetch_document_links_for_buffer(&buffer, servers_to_query, cx)
                     })
                     .map_err(Arc::new)?
                     .await
@@ -173,6 +207,9 @@ impl LspStore {
                     .update(cx, |lsp_store, cx| {
                         let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                         let links_data = lsp_data.document_links.get_or_insert_default();
+                        if links_data.generation != query_generation {
+                            return Some(links_data.links.clone());
+                        }
                         links_data.links_update = None;
 
                         let Some(fetched_links) = fetched else {
@@ -228,6 +265,7 @@ impl LspStore {
     fn fetch_document_links_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
+        for_servers: Option<HashSet<LanguageServerId>>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Option<HashMap<LanguageServerId, Vec<LspDocumentLink>>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -290,8 +328,13 @@ impl LspStore {
                 Ok(Some(result))
             })
         } else {
-            let links_task =
-                self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentLinks, cx);
+            let links_task = self.request_filtered_lsp_locally(
+                buffer,
+                None::<usize>,
+                GetDocumentLinks,
+                for_servers.as_ref(),
+                cx,
+            );
             cx.background_spawn(async move { Ok(Some(links_task.await.into_iter().collect())) })
         }
     }
