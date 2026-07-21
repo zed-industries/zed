@@ -8582,6 +8582,17 @@ impl Element for EditorElement {
                             if !editor.show_git_blame_inline {
                                 return None;
                             }
+                            // When soft wrap bounds rows to the editor width, the longest
+                            // row already fills the viewport, so reserving extra width for
+                            // inline blame would allow spurious horizontal scrolling in a
+                            // mode that should never scroll horizontally (#24752). The
+                            // blame text is clipped at the viewport edge instead.
+                            if matches!(
+                                editor.soft_wrap_mode(cx),
+                                SoftWrap::EditorWidth | SoftWrap::Bounded(_)
+                            ) {
+                                return None;
+                            }
                             let blame = editor.blame.as_ref()?;
                             let (_, blame_entry) = blame
                                 .update(cx, |blame, cx| {
@@ -10980,6 +10991,186 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_soft_wrap_editor_width_no_scroll_with_inline_blame(cx: &mut TestAppContext) {
+        struct FixedWidthBlameRenderer;
+
+        impl BlameRenderer for FixedWidthBlameRenderer {
+            fn max_author_length(&self) -> usize {
+                20
+            }
+
+            fn render_blame_entry(
+                &self,
+                _: &gpui::TextStyle,
+                _: BlameEntry,
+                _: Option<ParsedCommitMessage>,
+                _: Vec<SharedString>,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: Entity<Editor>,
+                _: usize,
+                _: Hsla,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                None
+            }
+
+            fn render_inline_blame_entry(
+                &self,
+                _: &gpui::TextStyle,
+                _: BlameEntry,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                Some(div().w(px(160.)).into_any_element())
+            }
+
+            fn render_blame_entry_popover(
+                &self,
+                _: BlameEntry,
+                _: ScrollHandle,
+                _: Option<ParsedCommitMessage>,
+                _: Vec<SharedString>,
+                _: Entity<Markdown>,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                None
+            }
+
+            fn open_blame_commit(
+                &self,
+                _: BlameEntry,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+            }
+        }
+
+        init_test(cx, |_| {});
+        cx.update(|cx| crate::git::set_blame_renderer(FixedWidthBlameRenderer, cx));
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/my-repo"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "a ".repeat(100),
+            }),
+        )
+        .await;
+        fs.set_blame_for_repo(
+            std::path::Path::new(util::path!("/my-repo/.git")),
+            vec![(
+                git::repository::repo_path("file.txt"),
+                git::blame::Blame {
+                    entries: vec![BlameEntry {
+                        sha: "1b1b1b".parse().unwrap(),
+                        range: 0..1,
+                        original_line_number: 0,
+                        author: None,
+                        author_mail: None,
+                        author_time: None,
+                        author_tz: None,
+                        committer_name: None,
+                        committer_email: None,
+                        committer_time: None,
+                        committer_tz: None,
+                        summary: None,
+                        previous: None,
+                        filename: String::new(),
+                    }],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let project = project::Project::test(fs, [util::path!("/my-repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(util::path!("/my-repo/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let window = cx.add_window(|window, cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, Some(project), window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        cx.update(|window, cx| window.focus(&editor.read(cx).focus_handle(cx), cx));
+        editor.update(cx, |editor, cx| {
+            editor
+                .blame()
+                .expect("inline blame should be running")
+                .clone()
+                .update(cx, |blame, cx| blame.focus(cx))
+        });
+        cx.executor().run_until_parked();
+
+        // Ensure the blame entry actually loaded, so a broken setup can't let
+        // this test pass vacuously with a zero-width blame reservation.
+        editor.update(cx, |editor, cx| {
+            assert!(editor.show_git_blame_inline);
+            let blame = editor
+                .blame()
+                .expect("inline blame should be running")
+                .clone();
+            let entry = blame.update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_row: Some(0),
+                            buffer_id: Some(buffer_id),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+                    .flatten()
+            });
+            assert!(entry.is_some(), "blame entry should be available");
+        });
+
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        for x in 1..=100 {
+            let (_, state) = cx.draw(
+                Default::default(),
+                size(px(200. + 0.13 * x as f32), px(500.)),
+                |_, _| EditorElement::new(&editor, style.clone()),
+            );
+
+            assert!(
+                state.position_map.scroll_max.x == 0.,
+                "Soft wrapped editor should have no horizontal scrolling even with inline blame enabled!"
+            );
+        }
+
+        // Without soft wrap the blame width reservation is legitimate: long
+        // lines really do scroll horizontally (the original #23374 behavior).
+        editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
+        });
+
+        let (_, state) = cx.draw(Default::default(), size(px(226.), px(500.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        assert!(
+            state.position_map.scroll_max.x > 0.,
+            "Without soft wrap the blame width should still be reserved"
+        );
     }
 
     #[gpui::test]
