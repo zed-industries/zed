@@ -54,7 +54,7 @@ zed_actions.workspace = true
 indoc.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-registry.workspace = true
+windows-registry = "0.6.0"
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
