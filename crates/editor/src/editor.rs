@@ -298,7 +298,6 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
-const MIN_LANGUAGE_DETECTION_CONFIDENCE: f32 = 0.5;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -10899,10 +10898,7 @@ impl Editor {
         let detected_language = detect_language(buffer_snapshot, language_registry, cx);
 
         cx.spawn(async move |_, cx| {
-            if let Some((detected_language, confidence)) = detected_language.await {
-                if confidence < MIN_LANGUAGE_DETECTION_CONFIDENCE {
-                    return;
-                }
+            if let Some(detected_language) = detected_language.await {
                 buffer_entity.update(cx, |buffer, cx| {
                     if buffer.file().is_none()
                         && buffer.content_language_detection_enabled()
