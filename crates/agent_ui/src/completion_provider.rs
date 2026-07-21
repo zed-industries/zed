@@ -281,7 +281,7 @@ impl PromptContextType {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
-            Self::Fetch => IconName::Web,
+            Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
             Self::Skill => IconName::Sparkle,
             Self::Diagnostics => IconName::Warning,
