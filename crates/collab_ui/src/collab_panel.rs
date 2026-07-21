@@ -2865,6 +2865,7 @@ impl CollabPanel {
                 .track_scroll(&self.scroll_handle)
                 .with_decoration(
                     ui::indent_guides(px(20.), IndentGuideColors::panel(cx))
+                        .with_left_offset(ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET)
                         .with_compute_indents_fn(cx.entity(), |this, range, _, _| {
                             range
                                 .map(|ix| match this.entries.get(ix) {
@@ -2873,64 +2874,6 @@ impl CollabPanel {
                                     _ => 0,
                                 })
                                 .collect()
-                        })
-                        .with_render_fn(cx.entity(), |this, params, _, _| {
-                            let left_offset = px(18.) + ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET;
-                            let indent_size = params.indent_size;
-                            let item_height = params.item_height;
-
-                            let mut rendered = SmallVec::new();
-                            for layout in params.indent_guides {
-                                let level = layout.offset.x;
-                                let start = layout.offset.y;
-                                let end = start + layout.length;
-
-                                let row_masks_guide = |row: usize| {
-                                    this.entries.get(row).is_some_and(|entry| match entry {
-                                        ListEntry::Channel {
-                                            channel,
-                                            depth,
-                                            has_children,
-                                            is_favorite,
-                                            ..
-                                        } => {
-                                            *depth == level + 1
-                                                && *has_children
-                                                && (this.is_channel_collapsed(channel.id)
-                                                    || this.hovered_channel
-                                                        == Some((channel.id, *is_favorite)))
-                                        }
-                                        _ => false,
-                                    })
-                                };
-
-                                let mut segment_start = start;
-                                for row in start..=end {
-                                    if row == end || row_masks_guide(row) {
-                                        if segment_start < row {
-                                            let length = row - segment_start;
-                                            rendered.push(ui::RenderedIndentGuide {
-                                                bounds: Bounds::new(
-                                                    point(
-                                                        indent_size * level as f32 + left_offset,
-                                                        item_height * segment_start as f32,
-                                                    ),
-                                                    size(px(1.), item_height * length as f32),
-                                                ),
-                                                layout: ui::IndentGuideLayout {
-                                                    offset: point(level, segment_start),
-                                                    length,
-                                                    continues_offscreen: false,
-                                                },
-                                                is_active: false,
-                                                hitbox: None,
-                                            });
-                                        }
-                                        segment_start = row + 1;
-                                    }
-                                }
-                            }
-                            rendered
                         }),
                 ),
             )
@@ -2989,10 +2932,10 @@ impl CollabPanel {
                     channel_link = Some(channel.link(cx));
                     (channel_icon, channel_tooltip_text) = match channel.visibility {
                         proto::ChannelVisibility::Public => {
-                            (Some("icons/public.svg"), Some("Copy public channel link."))
+                            (Some(IconName::Hash), Some("Copy Public Channel Link"))
                         }
                         proto::ChannelVisibility::Members => {
-                            (Some("icons/hash.svg"), Some("Copy private channel link."))
+                            (Some(IconName::Lock), Some("Copy Private Channel Link"))
                         }
                     };
 
@@ -3069,7 +3012,7 @@ impl CollabPanel {
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_contact_finder(window, cx)),
                     )
-                    .tooltip(Tooltip::text("Search for new contact"))
+                    .tooltip(Tooltip::text("Search for New Contact"))
                     .into_any_element(),
             ),
             Section::Channels => {
@@ -3117,14 +3060,15 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_flex().w_full().group("section-header").child(
+        h_flex().group("section-header").w_full().child(
             ListHeader::new(text)
                 .when(can_collapse, |header| {
-                    header.toggle(Some(!is_collapsed)).on_toggle(cx.listener(
-                        move |this, _, _, cx| {
+                    header
+                        .toggle(Some(!is_collapsed))
+                        .disclosure_shape(IconButtonShape::Square)
+                        .on_toggle(cx.listener(move |this, _, _, cx| {
                             this.toggle_section_expanded(section, cx);
-                        },
-                    ))
+                        }))
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
@@ -3446,36 +3390,49 @@ impl CollabPanel {
             IconName::Lock
         };
 
-        let is_hovered = self.hovered_channel == Some((channel_id, is_favorite_entry));
-        let overlay_bg = if is_selected || is_active {
+        let icon_knockout_bg = if is_selected || is_active {
             cx.theme().colors().ghost_element_selected
-        } else if is_hovered {
-            cx.theme().colors().ghost_element_hover
         } else {
             cx.theme().colors().panel_background
         };
 
-        let icon = if has_notes_notification {
-            DecoratedIcon::new(
-                Icon::new(icon_name)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-                Some(
-                    IconDecoration::new(IconDecorationKind::Dot, overlay_bg, cx)
-                        .color(cx.theme().colors().text_accent)
-                        .position(Point {
-                            x: px(-3.),
-                            y: px(6.),
-                        }),
-                ),
-            )
-            .into_any_element()
-        } else {
-            Icon::new(icon_name)
-                .size(IconSize::Small)
-                .color(Color::Muted)
-                .into_any_element()
-        };
+        let is_hovered = self.hovered_channel == Some((channel_id, is_favorite_entry));
+
+        let icon_slot = h_flex().size_4().flex_none().justify_center().map(|slot| {
+            if has_children && is_hovered {
+                slot.child(
+                    h_flex()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            Disclosure::new("toggle", disclosed.unwrap_or(false))
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.toggle_channel_collapsed(channel_id, window, cx)
+                                })),
+                        ),
+                )
+            } else if has_notes_notification {
+                slot.child(DecoratedIcon::new(
+                    Icon::new(icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                    Some(
+                        IconDecoration::new(IconDecorationKind::Dot, icon_knockout_bg, cx)
+                            .color(cx.theme().colors().text_accent)
+                            .position(Point {
+                                x: px(-3.),
+                                y: px(6.),
+                            }),
+                    ),
+                ))
+            } else {
+                slot.child(
+                    Icon::new(icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+            }
+        });
 
         h_flex()
             .id(ix)
@@ -3520,11 +3477,9 @@ impl CollabPanel {
             .child(
                 ListItem::new(ix)
                     .height(height)
-                    // Add one level of depth for the disclosure arrow.
-                    .indent_level(depth + 1)
+                    .indent_level(depth)
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
-                    .toggle(disclosed)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if is_active {
                             this.open_channel_notes(channel_id, window, cx)
@@ -3543,34 +3498,13 @@ impl CollabPanel {
                             )
                         },
                     ))
-                    .when_some(disclosed, |this, is_open| {
-                        if is_open && !is_hovered {
-                            this.disclosure_slot(Empty)
-                        } else {
-                            this.disclosure_slot(deferred(
-                                h_flex()
-                                    .bg(overlay_bg)
-                                    .child(
-                                        Disclosure::new("toggle", is_open)
-                                            .shape(IconButtonShape::Square)
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.toggle_channel_collapsed(
-                                                    channel_id, window, cx,
-                                                )
-                                            })),
-                                    )
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    }),
-                            ))
-                        }
-                    })
                     .child(
                         h_flex()
                             .id(format!("inside-{}", channel_id.0))
                             .w_full()
                             .gap_1()
-                            .child(icon)
+                            .pl_0p5()
+                            .child(icon_slot)
                             .child(
                                 h_flex()
                                     .id(channel_id.0 as usize)
@@ -3600,6 +3534,7 @@ impl CollabPanel {
             .child(
                 h_flex()
                     .visible_on_hover("")
+                    .block_mouse_except_scroll()
                     .h_full()
                     .absolute()
                     .right_0()
@@ -3649,8 +3584,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let item = ListItem::new("channel-editor")
             .inset(false)
-            // Add one level of depth for the disclosure arrow.
-            .indent_level(depth + 1)
+            .indent_level(depth)
             .indent_step_size(px(20.))
             .start_slot(
                 Icon::new(IconName::Hash)
@@ -4135,9 +4069,9 @@ impl Render for DraggedChannelView {
             .child(
                 Icon::new(
                     if self.channel.visibility == proto::ChannelVisibility::Public {
-                        IconName::Public
-                    } else {
                         IconName::Hash
+                    } else {
+                        IconName::Lock
                     },
                 )
                 .size(IconSize::Small)
