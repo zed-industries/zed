@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::notes::NoteKind;
 
@@ -77,6 +78,7 @@ struct VaultConfigContent {
     schema: Option<u32>,
     daily: NotesConfigContent,
     weekly: NotesConfigContent,
+    history: HistoryConfigContent,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -97,11 +99,48 @@ impl NotesConfigContent {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct HistoryConfigContent {
+    enabled: Option<bool>,
+    idle_debounce_seconds: Option<u64>,
+    heartbeat_minutes: Option<u64>,
+    max_file_bytes: Option<u64>,
+}
+
+impl HistoryConfigContent {
+    fn resolve(self) -> HistoryConfig {
+        HistoryConfig {
+            enabled: self.enabled.unwrap_or(true),
+            idle_debounce: Duration::from_secs(self.idle_debounce_seconds.unwrap_or(20)),
+            heartbeat: Duration::from_secs(self.heartbeat_minutes.unwrap_or(5) * 60),
+            max_file_bytes: self.max_file_bytes.unwrap_or(2_000_000),
+        }
+    }
+}
+
+/// Settings for the invisible checkpoint history (the `[history]` table).
+/// Every field has a default, so the table may be entirely absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryConfig {
+    pub enabled: bool,
+    pub idle_debounce: Duration,
+    pub heartbeat: Duration,
+    pub max_file_bytes: u64,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        HistoryConfigContent::default().resolve()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VaultConfig {
     pub schema: u32,
     pub daily: NotesConfig,
     pub weekly: NotesConfig,
+    pub history: HistoryConfig,
 }
 
 impl Default for VaultConfig {
@@ -116,6 +155,7 @@ impl VaultConfigContent {
             schema: self.schema.unwrap_or(1),
             daily: self.daily.resolve(NotesConfig::daily_default()),
             weekly: self.weekly.resolve(NotesConfig::weekly_default()),
+            history: self.history.resolve(),
         }
     }
 }
@@ -295,6 +335,28 @@ mod tests {
             fs::read_to_string(dir.path().join(WELCOME_FILE)).unwrap(),
             "my own welcome"
         );
+    }
+
+    #[test]
+    fn history_config_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[history]\nenabled = false\nidle_debounce_seconds = 5\n",
+        )
+        .unwrap();
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                assert!(!vault.config.history.enabled);
+                assert_eq!(vault.config.history.idle_debounce, Duration::from_secs(5));
+                // Unspecified keys keep their defaults.
+                assert_eq!(vault.config.history.heartbeat, Duration::from_secs(300));
+                assert_eq!(vault.config.history.max_file_bytes, 2_000_000);
+            }
+            other => panic!("expected valid vault, got {other:?}"),
+        }
     }
 
     #[test]

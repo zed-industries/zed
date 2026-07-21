@@ -4748,6 +4748,26 @@ impl BackgroundScanner {
                 if self.track_git_repositories {
                     for ancestor in abs_path.as_path().ancestors() {
                         if is_dot_git(ancestor, self.fs.as_ref()).await {
+                            // An entry literally named `.git` is always
+                            // tracked (the default file_scan_exclusions cover
+                            // `.git`, yet its metadata must still update).
+                            // The bare-repository heuristic, however, must
+                            // not register repositories the user has excluded
+                            // from scanning, such as tool-managed repos
+                            // inside hidden state directories.
+                            if ancestor.file_name() != Some(OsStr::new(DOT_GIT)) {
+                                let ancestor_sanitized = SanitizedPath::new(ancestor);
+                                let relative_path = ancestor_sanitized
+                                    .strip_prefix(&root_canonical_path)
+                                    .or_else(|_| ancestor_sanitized.strip_prefix(&root_path))
+                                    .ok()
+                                    .and_then(|path| RelPath::new(path, PathStyle::local()).ok());
+                                if relative_path
+                                    .is_some_and(|path| self.settings.is_path_excluded(&path))
+                                {
+                                    continue;
+                                }
+                            }
                             let path_in_git_dir = abs_path
                                 .as_path()
                                 .strip_prefix(ancestor)

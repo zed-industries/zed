@@ -1223,6 +1223,10 @@ pub struct RealGitRepository {
     any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
     is_trusted: Arc<AtomicBool>,
+    /// When true, the git-dir is not named `.git` and cannot be discovered
+    /// from the working directory, so commands are scoped to the repository
+    /// with `GIT_DIR`/`GIT_WORK_TREE` environment variables instead.
+    separate_git_dir: bool,
 }
 
 #[derive(Debug)]
@@ -1312,7 +1316,82 @@ impl RealGitRepository {
             executor,
             any_git_binary_help_output: Arc::new(Mutex::new(None)),
             is_trusted: Arc::new(AtomicBool::new(false)),
+            separate_git_dir: false,
         })
+    }
+
+    /// Opens a repository whose git-dir lives at an arbitrary path (not named
+    /// `.git`) with its work tree at `work_tree`, like a repository created by
+    /// [`Self::init_separate_git_dir`]. Such a repository cannot be discovered
+    /// by walking up from the working directory, so every command is scoped to
+    /// it explicitly via `GIT_DIR`/`GIT_WORK_TREE`.
+    pub fn new_with_separate_git_dir(
+        git_dir: PathBuf,
+        work_tree: PathBuf,
+        bundled_git_binary_path: Option<PathBuf>,
+        system_git_binary_path: Option<PathBuf>,
+        executor: BackgroundExecutor,
+    ) -> Result<Self> {
+        let any_git_binary_path = system_git_binary_path
+            .clone()
+            .or(bundled_git_binary_path)
+            .context("no git binary available")?;
+        let git_dir = normalize_git_metadata_path(git_dir)?;
+        Ok(Self {
+            common_dir: git_dir.clone(),
+            git_dir,
+            working_directory: Some(normalize_git_metadata_path(work_tree)?),
+            system_git_binary_path,
+            any_git_binary_path,
+            executor,
+            any_git_binary_help_output: Arc::new(Mutex::new(None)),
+            is_trusted: Arc::new(AtomicBool::new(false)),
+            separate_git_dir: true,
+        })
+    }
+
+    /// Initializes a repository with its git-dir at `git_dir` and its work
+    /// tree at `work_tree`, without creating any `.git` entry inside the work
+    /// tree. `HEAD` is left pointing at the (unborn) `branch`.
+    pub async fn init_separate_git_dir(
+        git_dir: &Path,
+        work_tree: &Path,
+        git_binary_path: &Path,
+        branch: &str,
+        executor: BackgroundExecutor,
+    ) -> Result<()> {
+        // `git init` creates the git-dir itself but not its parents.
+        smol::fs::create_dir_all(git_dir).await?;
+        let git = GitBinary::new(
+            git_binary_path.to_path_buf(),
+            work_tree.to_path_buf(),
+            git_dir.to_path_buf(),
+            executor,
+            false,
+        )
+        .envs(HashMap::from_iter([(
+            "GIT_DIR".to_string(),
+            git_dir.to_string_lossy().into_owned(),
+        )]));
+        git.run(&["init", "-b", branch])
+            .await
+            .context("initializing repository with separate git-dir")?;
+        Ok(())
+    }
+
+    fn separate_git_dir_envs(&self) -> HashMap<String, String> {
+        let mut envs = HashMap::default();
+        envs.insert(
+            "GIT_DIR".to_string(),
+            self.git_dir.to_string_lossy().into_owned(),
+        );
+        if let Some(work_tree) = &self.working_directory {
+            envs.insert(
+                "GIT_WORK_TREE".to_string(),
+                work_tree.to_string_lossy().into_owned(),
+            );
+        }
+        envs
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
@@ -1328,23 +1407,31 @@ impl RealGitRepository {
     }
 
     fn git_binary_in_worktree(&self) -> Result<GitBinary> {
-        Ok(GitBinary::new(
+        let mut git = GitBinary::new(
             self.any_git_binary_path.clone(),
             self.working_directory()?,
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
-        ))
+        );
+        if self.separate_git_dir {
+            git = git.envs(self.separate_git_dir_envs());
+        }
+        Ok(git)
     }
 
     fn git_binary(&self) -> GitBinary {
-        GitBinary::new(
+        let mut git = GitBinary::new(
             self.any_git_binary_path.clone(),
             self.command_directory(),
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
-        )
+        );
+        if self.separate_git_dir {
+            git = git.envs(self.separate_git_dir_envs());
+        }
+        git
     }
 
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
@@ -1372,6 +1459,73 @@ impl RealGitRepository {
             .into();
         *self.any_git_binary_help_output.lock() = Some(output.clone());
         output
+    }
+
+    /// Records a checkpoint of the working tree as a commit on `ref_name`,
+    /// parented on the current `HEAD`, using a temporary index so the real
+    /// index is never touched. Files matching `checkpoint.gitignore` or whose
+    /// size is at least `max_file_bytes` are excluded from the snapshot.
+    ///
+    /// Unlike [`GitRepository::checkpoint`], the commit is not left dangling:
+    /// `ref_name` advances to it, forming a walkable chain. The ref is only
+    /// updated after the commit is fully written, so an interruption at any
+    /// point leaves the previous checkpoint as the head.
+    ///
+    /// Returns `Ok(None)` without committing when the tree is identical to
+    /// the current `HEAD`'s tree.
+    pub fn checkpoint_onto_ref(
+        &self,
+        ref_name: String,
+        message: String,
+        author_name: String,
+        author_email: String,
+        max_file_bytes: u64,
+    ) -> BoxFuture<'static, Result<Option<GitRepositoryCheckpoint>>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let mut git = git?.envs(commit_identity_envs(&author_name, &author_email));
+                let checkpoint = git
+                    .with_temp_index(async |git| {
+                        let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
+                        let mut excludes = exclude_files(git, max_file_bytes).await?;
+                        git.run(&["add", "--all"]).await?;
+                        let tree = git.run(&["write-tree"]).await?;
+                        excludes.restore_original().await?;
+
+                        if let Some(head_sha) = head_sha.as_deref() {
+                            let head_tree =
+                                git.run(&["rev-parse", &format!("{head_sha}^{{tree}}")]).await?;
+                            if head_tree == tree {
+                                return Ok(None);
+                            }
+                        }
+
+                        let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
+                            git.run(&["commit-tree", &tree, "-p", head_sha, "-m", &message])
+                                .await?
+                        } else {
+                            git.run(&["commit-tree", &tree, "-m", &message]).await?
+                        };
+                        git.run(&["update-ref", &ref_name, &checkpoint_sha]).await?;
+
+                        Ok(Some(GitRepositoryCheckpoint {
+                            commit_sha: checkpoint_sha.parse()?,
+                        }))
+                    })
+                    .await?;
+
+                if checkpoint.is_some() {
+                    // Plumbing commands never trigger git's automatic GC, so
+                    // loose objects would otherwise accumulate forever.
+                    // `--auto` is a fast no-op below git's thresholds, and a
+                    // GC failure must never fail the checkpoint.
+                    git.run(&["gc", "--auto", "--quiet"]).await.log_err();
+                }
+
+                Ok(checkpoint)
+            })
+            .boxed()
     }
 }
 
@@ -2845,7 +2999,7 @@ impl GitRepository for RealGitRepository {
                 let mut git = git?.envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = exclude_files(git).await?;
+                    let mut excludes = exclude_files(git, DEFAULT_MAX_CHECKPOINT_FILE_SIZE).await?;
 
                     git.run(&["add", "--all"]).await?;
                     let tree = git.run(&["write-tree"]).await?;
@@ -3527,9 +3681,10 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
-/// Temporarily git-ignore commonly ignored files and files over 2MB
-async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
-    const MAX_SIZE: u64 = 2 * 1024 * 1024; // 2 MB
+const DEFAULT_MAX_CHECKPOINT_FILE_SIZE: u64 = 2 * 1024 * 1024; // 2 MB
+
+/// Temporarily git-ignore commonly ignored files and files of at least `max_file_bytes`
+async fn exclude_files(git: &GitBinary, max_file_bytes: u64) -> Result<GitExcludeOverride> {
     let mut excludes = git.with_exclude_overrides().await?;
     excludes
         .add_excludes(include_str!("./checkpoint.gitignore"))
@@ -3542,7 +3697,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
         smol::spawn(async move {
             let full_path = working_directory.join(path.clone());
             match smol::fs::metadata(&full_path).await {
-                Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => {
+                Ok(metadata) if metadata.is_file() && metadata.len() >= max_file_bytes => {
                     Some(PathBuf::from("/").join(path.clone()))
                 }
                 _ => None,
@@ -3608,7 +3763,7 @@ impl GitBinary {
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
-        self.envs = envs;
+        self.envs.extend(envs);
         self
     }
 
@@ -3979,11 +4134,15 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
 }
 
 fn checkpoint_author_envs() -> HashMap<String, String> {
+    commit_identity_envs("Zed", "hi@zed.dev")
+}
+
+fn commit_identity_envs(name: &str, email: &str) -> HashMap<String, String> {
     HashMap::from_iter([
-        ("GIT_AUTHOR_NAME".to_string(), "Zed".to_string()),
-        ("GIT_AUTHOR_EMAIL".to_string(), "hi@zed.dev".to_string()),
-        ("GIT_COMMITTER_NAME".to_string(), "Zed".to_string()),
-        ("GIT_COMMITTER_EMAIL".to_string(), "hi@zed.dev".to_string()),
+        ("GIT_AUTHOR_NAME".to_string(), name.to_string()),
+        ("GIT_AUTHOR_EMAIL".to_string(), email.to_string()),
+        ("GIT_COMMITTER_NAME".to_string(), name.to_string()),
+        ("GIT_COMMITTER_EMAIL".to_string(), email.to_string()),
     ])
 }
 
@@ -5128,6 +5287,192 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_onto_ref(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let vault_dir = temp_dir.path().join("vault");
+        fs::create_dir_all(vault_dir.join("daily")).unwrap();
+        fs::write(vault_dir.join("daily/note.md"), "hello").unwrap();
+        let git_dir = vault_dir.join(".breadpaper").join("history");
+
+        RealGitRepository::init_separate_git_dir(
+            &git_dir,
+            &vault_dir,
+            Path::new("git"),
+            "checkpoints",
+            cx.executor(),
+        )
+        .await
+        .unwrap();
+        // The whole point of a separate git-dir: nothing named `.git` appears
+        // in the work tree.
+        assert!(!vault_dir.join(".git").exists());
+        fs::create_dir_all(git_dir.join("info")).unwrap();
+        fs::write(git_dir.join("info/exclude"), "/.breadpaper/history/\n").unwrap();
+
+        let repo = RealGitRepository::new_with_separate_git_dir(
+            git_dir.clone(),
+            vault_dir.clone(),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let checkpoint = |message: &str| {
+            repo.checkpoint_onto_ref(
+                "refs/heads/checkpoints".to_string(),
+                message.to_string(),
+                "BreadPaper".to_string(),
+                "history@breadpaper.local".to_string(),
+                1024 * 1024,
+            )
+        };
+
+        let first = checkpoint("checkpoint: initial")
+            .await
+            .unwrap()
+            .expect("initial checkpoint should commit");
+
+        // No-op discipline: an unchanged tree produces no commit and no ref move.
+        assert!(checkpoint("checkpoint: idle").await.unwrap().is_none());
+
+        fs::write(vault_dir.join("daily/note.md"), "hello, again").unwrap();
+        let second = checkpoint("checkpoint: idle")
+            .await
+            .unwrap()
+            .expect("changed tree should commit");
+
+        let git_dir_arg = format!("--git-dir={}", git_dir.display());
+        assert_eq!(
+            git_command_output(&vault_dir, [git_dir_arg.as_str(), "rev-parse", "checkpoints"]),
+            second.commit_sha.to_string()
+        );
+        assert_eq!(
+            git_command_output(&vault_dir, [git_dir_arg.as_str(), "rev-parse", "checkpoints^"]),
+            first.commit_sha.to_string()
+        );
+        assert_eq!(
+            git_command_output(
+                &vault_dir,
+                [git_dir_arg.as_str(), "log", "-1", "--format=%s %an"]
+            ),
+            "checkpoint: idle BreadPaper"
+        );
+
+        // A file at or above `max_file_bytes` stays out of the snapshot; the
+        // checkpoint of everything else still succeeds.
+        fs::write(vault_dir.join("big.dat"), vec![0u8; 2 * 1024 * 1024]).unwrap();
+        assert!(checkpoint("checkpoint: idle").await.unwrap().is_none());
+        fs::write(vault_dir.join("daily/note.md"), "with big file around").unwrap();
+        let third = checkpoint("checkpoint: idle")
+            .await
+            .unwrap()
+            .expect("changed tree should commit");
+        assert_eq!(
+            git_command_output(
+                &vault_dir,
+                [
+                    git_dir_arg.as_str(),
+                    "ls-tree",
+                    "-r",
+                    "--name-only",
+                    "checkpoints"
+                ]
+            ),
+            "daily/note.md"
+        );
+
+        // Restore at the plumbing level.
+        fs::write(vault_dir.join("daily/note.md"), "ruined").unwrap();
+        repo.restore_checkpoint(third.clone()).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(vault_dir.join("daily/note.md")).unwrap(),
+            "with big file around"
+        );
+        assert!(vault_dir.join("big.dat").exists());
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_onto_ref_coexists_with_user_repo(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let vault_dir = temp_dir.path().join("vault");
+        fs::create_dir_all(&vault_dir).unwrap();
+        fs::write(vault_dir.join("note.md"), "hello").unwrap();
+        git_init_repo(&vault_dir);
+        git_command(&vault_dir, ["add", "."]);
+        git_command(&vault_dir, ["commit", "-m", "user commit"]);
+
+        let git_dir = vault_dir.join(".breadpaper").join("history");
+        RealGitRepository::init_separate_git_dir(
+            &git_dir,
+            &vault_dir,
+            Path::new("git"),
+            "checkpoints",
+            cx.executor(),
+        )
+        .await
+        .unwrap();
+        fs::create_dir_all(git_dir.join("info")).unwrap();
+        fs::write(git_dir.join("info/exclude"), "/.breadpaper/history/\n").unwrap();
+        let repo = RealGitRepository::new_with_separate_git_dir(
+            git_dir.clone(),
+            vault_dir.clone(),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        fs::write(vault_dir.join("note.md"), "edited").unwrap();
+        let user_status_before = git_command_output(&vault_dir, ["status", "--porcelain"]);
+
+        repo.checkpoint_onto_ref(
+            "refs/heads/checkpoints".to_string(),
+            "checkpoint: idle".to_string(),
+            "BreadPaper".to_string(),
+            "history@breadpaper.local".to_string(),
+            1024 * 1024,
+        )
+        .await
+        .unwrap()
+        .expect("checkpoint should commit");
+
+        // The user's repository is untouched: same status, same history, no
+        // new branches.
+        assert_eq!(
+            git_command_output(&vault_dir, ["status", "--porcelain"]),
+            user_status_before
+        );
+        assert_eq!(
+            git_command_output(&vault_dir, ["log", "--format=%s"]),
+            "user commit"
+        );
+        assert_eq!(
+            git_command_output(&vault_dir, ["branch", "--format=%(refname:short)"]),
+            "main"
+        );
+
+        // And the user's `.git` never enters the snapshot.
+        let git_dir_arg = format!("--git-dir={}", git_dir.display());
+        let snapshot_files = git_command_output(
+            &vault_dir,
+            [
+                git_dir_arg.as_str(),
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "checkpoints",
+            ],
+        );
+        assert_eq!(snapshot_files, "note.md");
     }
 
     #[gpui::test]

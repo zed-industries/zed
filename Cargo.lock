@@ -2458,6 +2458,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "fs",
+ "git",
  "gpui",
  "log",
  "menu",
@@ -2467,6 +2469,7 @@ dependencies = [
  "toml 0.8.23",
  "ui",
  "util",
+ "which 6.0.3",
  "workspace",
 ]
 

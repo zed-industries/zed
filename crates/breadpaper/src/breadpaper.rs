@@ -1,3 +1,4 @@
+pub mod history;
 pub mod notes;
 pub mod timeline_panel;
 pub mod vault;

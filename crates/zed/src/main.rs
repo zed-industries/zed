@@ -742,6 +742,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         breadpaper::init(cx);
+        breadpaper::history::init(cx);
         project_panel::init(cx);
         outline_panel::init(cx);
         tasks_ui::init(cx);
