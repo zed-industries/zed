@@ -72,6 +72,56 @@ pub(crate) struct ProcessInfo {
     pub(crate) argv: Vec<String>,
 }
 
+/// Process (group) ids of a terminal's shell and foreground job, snapshotted
+/// while the PTY master is still open: reading the foreground process group
+/// requires `tcgetpgrp` on the PTY fd, which the event loop closes when the
+/// terminal shuts down, so these ids must be captured before shutdown and
+/// signalled afterwards.
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalProcessIds {
+    #[cfg_attr(not(unix), allow(dead_code))]
+    foreground: Option<Pid>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    child: Pid,
+}
+
+#[cfg(unix)]
+impl TerminalProcessIds {
+    /// The spawned child (the shell) leads its own process group, but under
+    /// job control a foreground job runs in a separate process group that
+    /// `killpg` on the shell's group never reaches, so both are signalled
+    /// (see #47412).
+    fn process_group_ids(&self) -> impl Iterator<Item = i32> {
+        std::iter::once(self.child)
+            .chain(
+                self.foreground
+                    .filter(|foreground| *foreground != self.child),
+            )
+            .map(|pid| pid.as_u32() as i32)
+    }
+
+    pub(crate) fn terminate(&self) {
+        for process_group_id in self.process_group_ids() {
+            unsafe { libc::killpg(process_group_id, libc::SIGTERM) };
+        }
+    }
+
+    pub(crate) fn kill(&self) {
+        for process_group_id in self.process_group_ids() {
+            unsafe { libc::killpg(process_group_id, libc::SIGKILL) };
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl TerminalProcessIds {
+    pub(crate) fn terminate(&self) {}
+
+    // Windows has no process groups to escalate on; killing the child relies
+    // on [`PtyProcessInfo::kill_child_process`] instead.
+    pub(crate) fn kill(&self) {}
+}
+
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
@@ -118,6 +168,13 @@ impl PtyProcessInfo {
         &self.pid_getter
     }
 
+    pub(crate) fn capture_process_ids(&self) -> TerminalProcessIds {
+        TerminalProcessIds {
+            foreground: self.pid_getter.pid(),
+            child: self.pid_getter.fallback_pid(),
+        }
+    }
+
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
         let pid = self.pid_getter.pid()?;
         let fallback_pid = self.pid_getter.fallback_pid();
@@ -161,17 +218,6 @@ impl PtyProcessInfo {
 
     pub(crate) fn kill_child_process(&self) -> bool {
         self.get_child().is_some_and(|process| process.kill())
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        let pid = self.pid_getter.fallback_pid();
-        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
-    }
-
-    #[cfg(not(unix))]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        false
     }
 
     fn load(&self) -> Option<ProcessInfo> {

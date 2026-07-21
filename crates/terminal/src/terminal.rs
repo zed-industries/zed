@@ -58,6 +58,12 @@ use gpui::{
     Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
+/// How long the shell and its foreground job get to exit gracefully after a
+/// closed terminal sends SIGHUP/SIGTERM, before being SIGKILLed. Must stay
+/// comfortably below [`gpui::SHUTDOWN_TIMEOUT`] so the escalation also
+/// completes when the whole app is quitting.
+const PROCESS_KILL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+
 #[cfg(not(windows))]
 use crate::alacritty::current_child_signal_mask;
 use crate::alacritty::{
@@ -1311,6 +1317,34 @@ impl TerminalBuilder {
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
+        // `Terminal::drop` escalates to SIGKILL on a detached background task,
+        // which never gets to run when the whole app quits: the process exits
+        // as soon as the `on_app_quit` futures resolve. Perform the same
+        // escalation in a quit observer, whose future keeps the app alive for
+        // the grace period, so that processes ignoring SIGHUP/SIGTERM don't
+        // outlive Zed (#47412). The subscription can't be stored on `Terminal`
+        // (`Subscription` is not `Send`, and `TerminalBuilder` is built on a
+        // background thread), so its lifetime is tied to the entity's release
+        // instead.
+        let app_quit_subscription = cx.on_app_quit(|terminal, cx| {
+            let process_ids = match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => Some((info.capture_process_ids(), info.clone())),
+                TerminalType::DisplayOnly => None,
+            };
+            let executor = cx.background_executor().clone();
+            async move {
+                let Some((process_ids, info)) = process_ids else {
+                    return;
+                };
+                process_ids.terminate();
+                executor.timer(PROCESS_KILL_GRACE_PERIOD).await;
+                process_ids.kill();
+                info.kill_child_process();
+            }
+        });
+        cx.on_release(move |_, _| drop(app_quit_subscription))
+            .detach();
+
         //Event loop
         self.terminal.event_loop_task = cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
@@ -3113,13 +3147,20 @@ impl Drop for Terminal {
         if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
+            // Reading the foreground process group requires the PTY master fd,
+            // which the event loop closes on shutdown, so capture the ids first.
+            let process_ids = info.capture_process_ids();
             pty_tx.shutdown();
-            info.terminate_child_process();
+            process_ids.terminate();
 
-            let timer = self.background_executor.timer(Duration::from_millis(100));
+            let timer = self.background_executor.timer(PROCESS_KILL_GRACE_PERIOD);
             self.background_executor
                 .spawn(async move {
                     timer.await;
+                    // SIGKILL the process groups too: closing the PTY only
+                    // delivers SIGHUP, and a foreground job that ignores
+                    // SIGHUP/SIGTERM would otherwise be orphaned (#47412).
+                    process_ids.kill();
                     info.kill_child_process();
                 })
                 .detach();
@@ -4757,6 +4798,59 @@ mod tests {
             content.contains("test_output_before_kill"),
             "Output from before kill should be captured, got: {content}"
         );
+    }
+
+    /// Regression test for <https://github.com/zed-industries/zed/issues/47412>:
+    /// closing a terminal must not orphan processes that ignore SIGHUP and
+    /// SIGTERM. The shell ignores both signals and `sleep` inherits the ignored
+    /// dispositions, so only the SIGKILL escalation of the whole process group
+    /// can terminate it; killing just the direct child (the shell) would leave
+    /// `sleep` running.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_dropping_terminal_kills_processes_ignoring_sighup_and_sigterm(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+
+        let (terminal, _completion_rx) = build_test_terminal_with_arguments(
+            cx,
+            "/bin/sh".to_string(),
+            vec![
+                "-c".to_string(),
+                "trap '' HUP TERM; sleep 300 & echo pid_marker_${!}_end; wait".to_string(),
+            ],
+        )
+        .await;
+
+        assert_content_eventually(&terminal, "_end", cx).await;
+        let content = terminal.update(cx, |term, _| term.get_content());
+        let sleep_pid: i32 = content
+            .split("pid_marker_")
+            .nth(1)
+            .and_then(|rest| rest.split("_end").next())
+            .and_then(|pid| pid.trim().parse().ok())
+            .unwrap_or_else(|| panic!("failed to parse sleep pid from content: {content}"));
+
+        assert_eq!(
+            unsafe { libc::kill(sleep_pid, 0) },
+            0,
+            "sleep process should be running before the terminal is dropped"
+        );
+
+        drop(terminal);
+        // Flush effects so the released terminal entity is actually dropped.
+        cx.update(|_| {});
+
+        for _ in 0..300 {
+            if unsafe { libc::kill(sleep_pid, 0) } != 0 {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!("sleep process (pid {sleep_pid}) survived dropping the terminal");
     }
 
     /// Test that kill_active_task on a task that's not running is a no-op
