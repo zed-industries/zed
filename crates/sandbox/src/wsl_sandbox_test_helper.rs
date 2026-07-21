@@ -48,8 +48,8 @@ mod imp {
 
     use anyhow::{Context as _, Result, bail, ensure};
     use sandbox::{
-        CommandAndArgs, GitSandboxPolicy, HostFilesystemLocation, Sandbox, SandboxError,
-        SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+        CommandAndArgs, HostFilesystemLocation, Sandbox, SandboxError, SandboxFsPolicy,
+        SandboxNetPolicy, SandboxPolicy,
     };
 
     /// Network access for a helper run, translated into a `SandboxNetPolicy` in
@@ -510,7 +510,9 @@ mod imp {
     ) -> Result<Outcome> {
         let policy = SandboxPolicy {
             fs: if permissions.allow_fs_write {
-                SandboxFsPolicy::Unrestricted
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: Vec::new(),
+                }
             } else {
                 SandboxFsPolicy::Restricted {
                     // On Windows the location only records the requested path;
@@ -519,13 +521,13 @@ mod imp {
                         .iter()
                         .filter_map(|path| HostFilesystemLocation::new(path).ok())
                         .collect(),
+                    protected_paths: Vec::new(),
                 }
             },
             network: match permissions.network {
                 NetworkAccess::None => SandboxNetPolicy::Blocked,
                 NetworkAccess::All => SandboxNetPolicy::Unrestricted,
             },
-            git: GitSandboxPolicy::default(),
         };
         let command = CommandAndArgs {
             program: program.to_string(),

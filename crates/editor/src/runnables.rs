@@ -537,6 +537,7 @@ impl Editor {
             let quick_launch = match e {
                 ClickEvent::Keyboard(_) => true,
                 ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+                ClickEvent::Touch(_) => true,
             };
 
             window.focus(&editor.focus_handle(cx), cx);

@@ -33,11 +33,6 @@
       "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
-      "shift-f5": "debugger::Stop",
-      "ctrl-shift-f5": "debugger::RerunSession",
-      "f6": "debugger::Pause",
-      "f10": "debugger::StepOver",
-      "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
       "shift-alt-l": "lsp_tool::ToggleMenu",
@@ -147,6 +142,7 @@
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
+      "ctrl-alt-f": "text_finder::Toggle",
     },
   },
   {
@@ -320,6 +316,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
       "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-alt-home": "agent::ScrollOutputToTop",
@@ -420,6 +417,7 @@
       "ctrl-f": "search::FocusSearch",
       "ctrl-h": "search::ToggleReplace",
       "ctrl-l": "search::ToggleSelection",
+      "ctrl-alt-f": "text_finder::Toggle",
     },
   },
   {
@@ -626,6 +624,13 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      // Move focus between the major regions of the window (editor, open
+      // panels, status bar). Accessibility navigation; mirrors VS Code's
+      // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
+      // stays available even while a debug session rebinds plain `f6` to Pause.
+      "f6": "workspace::FocusNextPart",
+      "shift-f6": "workspace::FocusPreviousPart",
+      "ctrl-f6": "workspace::FocusNextPart",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
       "ctrl-r": "projects::OpenRecent",
@@ -1094,6 +1099,21 @@
     },
   },
   {
+    // While a debug session is live, debugger controls take over their F-keys.
+    // `f6` becomes Pause (region navigation stays on `ctrl-f6` / `shift-f6`),
+    // and step/stop/rerun are scoped here so they're inert when not debugging.
+    // `debugger::Start` stays global so a session can be started from anywhere.
+    "context": "Workspace && debugger_session",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f6": "debugger::Pause",
+      "shift-f5": "debugger::Stop",
+      "ctrl-shift-f5": "debugger::RerunSession",
+      "f10": "debugger::StepOver",
+      "shift-f11": "debugger::StepOut",
+    },
+  },
+  {
     "context": "DebugPanel",
     "use_key_equivalents": true,
     "bindings": {
@@ -1278,6 +1298,7 @@
     "context": "AgentPanel > Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
       "ctrl-n": "agent::NewThread",
     },
   },
@@ -1301,13 +1322,6 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm",
-    },
-  },
-  {
-    "context": "ContextServerToolsModal",
-    "use_key_equivalents": true,
-    "bindings": {
-      "escape": "menu::Cancel",
     },
   },
   {
@@ -1352,6 +1366,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "ctrl-home": "markdown::ScrollToTop",
       "ctrl-end": "markdown::ScrollToBottom",
+      "ctrl-shift-v": "markdown::CloseAndReturnToEditor",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
     },
@@ -1499,7 +1514,8 @@
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
       "ctrl-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
-      "ctrl-shift-i": "branch_picker::FilterRemotes",
+      "ctrl-shift-i": "branch_picker::CycleBranchFilter",
+      "ctrl-k": "branch_picker::ToggleFilterMenu",
     },
   },
   {
@@ -1536,6 +1552,7 @@
     "bindings": {
       "ctrl-shift-backspace": "worktree_picker::DeleteWorktree",
       "ctrl-alt-shift-backspace": "worktree_picker::ForceDeleteWorktree",
+      "ctrl-shift-,": "zed::OpenWorktreeSetupTasks",
     },
   },
   {

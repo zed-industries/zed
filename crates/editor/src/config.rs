@@ -198,6 +198,16 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_allow_git_diff_scrollbar_markers(&mut self, allow: bool, cx: &mut Context<Self>) {
+        if self.allow_git_diff_scrollbar_markers != allow {
+            self.allow_git_diff_scrollbar_markers = allow;
+            self.scrollbar_marker_state.dirty = true;
+            self.scrollbar_marker_state.markers = Default::default();
+            self.scrollbar_marker_state.pending_refresh = None;
+            cx.notify();
+        }
+    }
+
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();
@@ -358,10 +368,6 @@ impl Editor {
 
     pub(super) fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
-    }
-
-    pub(super) fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
-        self.delegate_stage_and_restore = delegate;
     }
 
     pub(super) fn set_on_local_selections_changed(

@@ -37,8 +37,8 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-async-trait.workspace = true
 async-channel.workspace = true
+async-trait.workspace = true
 base64.workspace = true
 buffer_diff.workspace = true
 circular-buffer.workspace = true
@@ -60,15 +60,17 @@ globset.workspace = true
 gpui.workspace = true
 http_client = { workspace = true, features = ["github-download"] }
 image.workspace = true
-itertools.workspace = true
 indexmap.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
+path.workspace = true
 paths.workspace = true
+percent-encoding.workspace = true
 postage.workspace = true
 prettier.workspace = true
 rand.workspace = true
@@ -93,8 +95,8 @@ tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
 toml.workspace = true
+tracing.workspace = true
 url.workspace = true
-percent-encoding.workspace = true
 util.workspace = true
 watch.workspace = true
 wax.workspace = true
@@ -104,7 +106,6 @@ zed_credentials_provider.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

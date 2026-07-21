@@ -11,8 +11,8 @@ use project::context_server_store::{
 use project::project_settings::ContextServerSettings;
 use settings::{ContextServerCommand, ContextServerSettingsContent, OAuthClientSettings};
 use ui::{
-    AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, Divider, DividerColor,
-    PopoverMenu, Switch, ToggleState, Tooltip, prelude::*,
+    AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, Divider, PopoverMenu,
+    Switch, ToggleState, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 
@@ -41,34 +41,29 @@ pub(crate) fn render_mcp_servers_page(
     };
 
     let timeout_setting = render_context_server_timeout(settings_window, window, cx);
-    let add_server_popover = render_add_server_popover(settings_window, window, cx);
 
     v_flex()
         .id("mcp-servers-page")
+        .track_scroll(scroll_handle)
         .size_full()
         .pt_2p5()
         .pb_16()
-        .track_scroll(scroll_handle)
         .overflow_y_scroll()
         .child(
-            h_flex()
+            v_flex()
                 .w_full()
                 .px_8()
-                .justify_between()
-                .items_center()
-                .mb_4()
+                .gap_2()
                 .child(
-                    v_flex()
-                        .child(Label::new("MCP Servers").size(LabelSize::Large))
-                        .child(
-                            Label::new("Manage Model Context Protocol servers connected directly or via extensions.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                    v_flex().child(Label::new("Configured Servers")).child(
+                        Label::new("Manage servers connected directly or via extensions.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
                 )
-                .child(add_server_popover),
+                .child(server_list)
+                .child(Divider::horizontal()),
         )
-        .child(div().px_8().child(server_list))
         .child(timeout_setting)
         .into_any_element()
 }
@@ -151,11 +146,7 @@ fn render_server_list(
             server_ids
                 .iter()
                 .map(|server_id| render_context_server(server_id, store, cx).into_any_element()),
-            || {
-                Divider::horizontal()
-                    .color(DividerColor::BorderFaded)
-                    .into_any_element()
-            },
+            || Divider::horizontal_dashed().into_any_element(),
         ))
         .into_any_element()
 }
@@ -172,6 +163,11 @@ fn render_context_server(
     let server_configuration = store.read(cx).configuration_for_server(context_server_id);
 
     let is_running = matches!(server_status, ContextServerStatus::Running);
+    let is_enabled = store.read(cx).is_server_enabled(context_server_id, cx);
+    let is_transitioning = matches!(
+        server_status,
+        ContextServerStatus::Starting | ContextServerStatus::Authenticating
+    );
     let item_id = SharedString::from(context_server_id.0.to_string());
 
     // Determine the source from the configured settings rather than the runtime
@@ -179,7 +175,6 @@ fn render_context_server(
     // started has no runtime configuration, and must not be mistaken for an
     // extension-provided server.
     let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
-
     let display_name = if provided_by_extension {
         resolve_extension_display_name(context_server_id, cx).unwrap_or_else(|| item_id.clone())
     } else {
@@ -213,25 +208,22 @@ fn render_context_server(
         None
     };
 
-    // Build gear menu. Pre-fill "Configure Server" from the raw configured
-    // settings (not the resolved runtime configuration) so the form is editable
-    // even when the settings contain invalid data (e.g. an unparsable URL) or
-    // the server is disabled / not yet started.
     let server_settings = store
         .read(cx)
         .settings_for_server(context_server_id)
         .cloned();
-    let gear_menu = render_gear_menu(
-        context_server_id,
-        store,
-        cx.entity().downgrade(),
-        server_settings.clone(),
-        provided_by_extension,
-        should_show_logout,
-    );
+    let configure_button = (!provided_by_extension).then(|| {
+        render_configure_button(
+            context_server_id,
+            cx.entity().downgrade(),
+            server_settings.clone(),
+        )
+    });
+    let uninstall_button = render_uninstall_button(context_server_id, provided_by_extension);
 
     // Build toggle switch
-    let toggle_switch = render_toggle_switch(context_server_id, store, is_running);
+    let toggle_switch =
+        render_toggle_switch(context_server_id, store, is_enabled, is_transitioning);
 
     // Surface invalid settings (which prevent the server from starting at all)
     // ahead of runtime status feedback, so the misconfiguration is visible.
@@ -241,7 +233,8 @@ fn render_context_server(
     };
 
     AiSettingItem::new(item_id, display_name, status, source)
-        .action(gear_menu)
+        .when_some(configure_button, |this, button| this.action(button))
+        .action(uninstall_button)
         .action(toggle_switch)
         .when_some(tool_label, |this, label| this.detail_label(label))
         .when_some(details, |this, details| this.details(details))
@@ -278,104 +271,72 @@ fn resolve_extension_display_name(id: &ContextServerId, cx: &App) -> Option<Shar
         })
 }
 
-fn render_gear_menu(
+fn render_configure_button(
     context_server_id: &ContextServerId,
-    store: &Entity<ContextServerStore>,
     settings_window: WeakEntity<SettingsWindow>,
     server_settings: Option<ContextServerSettings>,
-    provided_by_extension: bool,
-    should_show_logout: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
-    let store = store.clone();
 
-    PopoverMenu::new(SharedString::from(format!(
-        "mcp-gear-{}",
-        context_server_id.0
-    )))
-    .trigger_with_tooltip(
-        IconButton::new(
-            SharedString::from(format!("mcp-gear-btn-{}", context_server_id.0)),
-            IconName::Settings,
-        )
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
-        .tab_index(0isize),
-        Tooltip::text("Configure MCP Server"),
+    IconButton::new(
+        format!("mcp-configure-btn-{}", context_server_id.0),
+        IconName::Settings,
     )
-    .anchor(gpui::Anchor::TopRight)
-    .menu({
-        move |window, cx| {
-            let context_server_id = context_server_id.clone();
-            let store = store.clone();
-            let settings_window = settings_window.clone();
-            let server_settings = server_settings.clone();
+    .icon_size(IconSize::Small)
+    .tab_index(0isize)
+    .tooltip(Tooltip::text("Configure MCP Server"))
+    .on_click(move |_event, window, cx| {
+        let transport = match &server_settings {
+            Some(ContextServerSettings::Http { .. }) => McpTransport::Http,
+            _ => McpTransport::Stdio,
+        };
+        let existing = server_settings
+            .clone()
+            .map(|settings| (context_server_id.clone(), settings));
+        settings_window
+            .update(cx, |this, cx| {
+                open_mcp_server_form(this, transport, existing, window, cx);
+            })
+            .log_err();
+    })
+}
 
-            Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                menu.when(!provided_by_extension, |this| {
-                    this.entry("Configure Server", None, {
-                        let settings_window = settings_window.clone();
-                        let context_server_id = context_server_id.clone();
-                        let server_settings = server_settings.clone();
-                        move |window, cx| {
-                            let transport = match &server_settings {
-                                Some(ContextServerSettings::Http { .. }) => McpTransport::Http,
-                                _ => McpTransport::Stdio,
-                            };
-                            let existing = server_settings
-                                .clone()
-                                .map(|settings| (context_server_id.clone(), settings));
-                            settings_window
-                                .update(cx, |this, cx| {
-                                    open_mcp_server_form(this, transport, existing, window, cx);
-                                })
-                                .log_err();
-                        }
-                    })
-                })
-                .when(should_show_logout, |this| {
-                    this.entry("Log Out", None, {
-                        let store = store.clone();
-                        let context_server_id = context_server_id.clone();
-                        move |_window, cx| {
-                            store.update(cx, |s, cx| {
-                                s.logout_server(&context_server_id, cx).log_err();
-                            });
-                        }
-                    })
-                })
-                // Only show a divider when there is an entry above "Uninstall".
-                // Extension servers have neither "Configure Server" nor "Log Out".
-                .when(!provided_by_extension || should_show_logout, |this| {
-                    this.separator()
-                })
-                .entry("Uninstall", None, {
-                    let context_server_id = context_server_id.clone();
-                    move |_, cx| {
-                        uninstall_server(&context_server_id, provided_by_extension, cx);
-                    }
-                })
-            }))
-        }
+fn render_uninstall_button(
+    context_server_id: &ContextServerId,
+    provided_by_extension: bool,
+) -> impl IntoElement {
+    let context_server_id = context_server_id.clone();
+
+    IconButton::new(
+        format!("mcp-uninstall-btn-{}", context_server_id.0),
+        IconName::Trash,
+    )
+    .icon_size(IconSize::Small)
+    .tab_index(0isize)
+    .tooltip(Tooltip::text("Uninstall MCP Server"))
+    .on_click(move |_event, _window, cx| {
+        uninstall_server(&context_server_id, provided_by_extension, cx);
     })
 }
 
 fn render_toggle_switch(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
-    is_running: bool,
+    is_enabled: bool,
+    is_transitioning: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
 
     Switch::new(
         SharedString::from(format!("mcp-toggle-{}", context_server_id.0)),
-        if is_running {
+        if is_enabled {
             ToggleState::Selected
         } else {
             ToggleState::Unselected
         },
     )
+    .disabled(is_transitioning)
     .tab_index(0isize)
     .on_click({
         move |state, _window, cx| {
@@ -432,7 +393,6 @@ fn render_status_details(
                 feedback_base()
                     .child(
                         h_flex()
-                            .pr_4()
                             .min_w_0()
                             .w_full()
                             .gap_2()
@@ -475,7 +435,6 @@ fn render_status_details(
                 feedback_base()
                     .child(
                         h_flex()
-                            .pr_4()
                             .min_w_0()
                             .w_full()
                             .gap_2()
@@ -509,7 +468,6 @@ fn render_status_details(
             feedback_base()
                 .child(
                     h_flex()
-                        .pr_4()
                         .min_w_0()
                         .w_full()
                         .gap_2()
@@ -529,7 +487,6 @@ fn render_status_details(
         ContextServerStatus::Authenticating => Some(
             h_flex()
                 .mt_1()
-                .pr_4()
                 .min_w_0()
                 .w_full()
                 .gap_2()
@@ -541,11 +498,32 @@ fn render_status_details(
                 )
                 .into_any_element(),
         ),
+        ContextServerStatus::Running if should_show_logout => {
+            let store = store.clone();
+            let context_server_id = context_server_id.clone();
+            Some(
+                h_flex()
+                    .py_1()
+                    .w_full()
+                    .justify_end()
+                    .child(
+                        Button::new("running-logout", "Log Out")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click(move |_event, _window, cx| {
+                                store.update(cx, |s, cx| {
+                                    s.logout_server(&context_server_id, cx).log_err();
+                                });
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        }
         _ => None,
     }
 }
 
-fn render_add_server_popover(
+pub(crate) fn render_add_server_popover(
     settings_window: &SettingsWindow,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,

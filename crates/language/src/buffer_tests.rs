@@ -571,7 +571,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
-    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(None, cx));
     yield_now().await;
 
     // Edit the buffer while the normalization task is running.
@@ -2181,6 +2181,38 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_hard_tabs(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n\tb();\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Insert a block whose indentation mixes tab-indented lines with
+        // lines that have no leading whitespace, like a snippet body.
+        let inserted_text = "if c {\n\td();\n}\n";
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            cx,
+        );
+
+        // All of the block's lines are indented, including the ones that
+        // originally had no indentation.
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n\tb();\n\tif c {\n\t\td();\n\t}\n}"
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -2946,6 +2978,104 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         }
 
         buffer
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
+    let markdown_language = markdown_lang();
+    let markdown_inline_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "markdown-inline".into(),
+                grammar: Some("markdown-inline".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!(
+            "../../grammars/src/markdown-inline/highlights.scm"
+        ))
+        .unwrap()
+        .with_injection_query(include_str!(
+            "../../grammars/src/markdown-inline/injections.scm"
+        ))
+        .unwrap(),
+    );
+    let html_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_highlights_query("(comment) @comment (tag_name) @tag")
+        .unwrap(),
+    );
+    let syntax_theme = SyntaxTheme::new([
+        ("comment".to_string(), gpui::rgba(0xffffffff).into()),
+        ("tag".to_string(), gpui::rgba(0xff0000ff).into()),
+    ]);
+    markdown_language.set_theme(&syntax_theme);
+    markdown_inline_language.set_theme(&syntax_theme);
+    html_language.set_theme(&syntax_theme);
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    language_registry.add(markdown_language.clone());
+    language_registry.add(markdown_inline_language);
+    language_registry.add(html_language);
+
+    let text = "<!--Annotation from the start is OK-->\n\n\
+        Annotation in the middle <!--is rendered badly.-->\n\n\
+        An inline comment can span <!--multiple\nlines--> within a paragraph.\n\n\
+        Ordinary inline HTML: <em>emphasized</em>.";
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+        buffer
+    });
+
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _cx| {
+        let snapshot = buffer.snapshot();
+        let highlighted_text = |capture_name: &str| {
+            let highlight_id = syntax_theme
+                .highlight_id(capture_name)
+                .map(HighlightId::new);
+            assert!(highlight_id.is_some(), "{capture_name} not in test theme");
+            let mut runs: Vec<String> = Vec::new();
+            let mut previous_chunk_matched = false;
+            let chunks = snapshot.chunks(
+                0..snapshot.len(),
+                LanguageAwareStyling {
+                    tree_sitter: true,
+                    diagnostics: false,
+                },
+            );
+            for chunk in chunks {
+                let chunk_matches = chunk.syntax_highlight_id == highlight_id;
+                if chunk_matches {
+                    match runs.last_mut() {
+                        Some(last_run) if previous_chunk_matched => last_run.push_str(chunk.text),
+                        _ => runs.push(chunk.text.to_string()),
+                    }
+                }
+                previous_chunk_matched = chunk_matches;
+            }
+            runs
+        };
+
+        assert_eq!(
+            highlighted_text("comment"),
+            vec![
+                "<!--Annotation from the start is OK-->",
+                "<!--is rendered badly.-->",
+                "<!--multiple\nlines-->",
+            ]
+        );
+        assert_eq!(highlighted_text("tag"), vec!["em", "em"]);
     });
 }
 
@@ -3792,7 +3922,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     }
 
     let rope = Rope::from(text.as_str());
-    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let actual_ranges = trailing_whitespace_ranges(&rope, None);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)
         .map(|m| m.range())
@@ -3803,6 +3933,228 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
     );
+}
+
+#[gpui::test(iterations = 500)]
+fn test_trailing_whitespace_ranges_in_rows(mut rng: StdRng) {
+    let mut text = String::new();
+    for _ in 0..rng.random_range(0..16) {
+        for _ in 0..rng.random_range(0..36) {
+            text.push(match rng.random_range(0..10) {
+                0..=1 => ' ',
+                3 => '\t',
+                _ => rng.random_range('a'..='z'),
+            });
+        }
+        text.push('\n');
+    }
+    match rng.random_range(0..10) {
+        0..=1 => drop(text.pop()),
+        2..=3 => text.push_str(&"\n".repeat(rng.random_range(1..5))),
+        _ => {}
+    }
+
+    let rope = Rope::from(text.as_str());
+    let all_ranges = trailing_whitespace_ranges(&rope, None);
+    let lines = text.split('\n').collect::<Vec<_>>();
+
+    // A range covering every row must reproduce the unfiltered full scan exactly.
+    assert_eq!(
+        trailing_whitespace_ranges(&rope, Some(&[0..u32::MAX])),
+        all_ranges,
+        "full-coverage mismatch for lines:\n{lines:?}",
+    );
+
+    // For a random (possibly gappy) subset of rows, the filtered variant must equal
+    // the full scan restricted to ranges whose line is in the subset.
+    let max_row = rope.max_point().row;
+    let mut row_ranges = Vec::new();
+    let mut row = 0;
+    while row <= max_row {
+        let span = rng.random_range(0..=3);
+        if span > 0 {
+            let end = (row + span).min(max_row + 1);
+            row_ranges.push(row..end);
+            row = end;
+        }
+        row += 1;
+    }
+
+    let expected = all_ranges
+        .iter()
+        .filter(|range| {
+            let row = rope.offset_to_point(range.start).row;
+            row_ranges.iter().any(|r| r.contains(&row))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        trailing_whitespace_ranges(&rope, Some(&row_ranges)),
+        expected,
+        "subset mismatch for ranges {row_ranges:?} and lines:\n{lines:?}",
+    );
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_in_ranges(cx: &mut gpui::TestAppContext) {
+    // line 0: "zero"      (no trailing whitespace)
+    // line 1: "one  "     (2 trailing spaces)
+    // line 2: "two"       (no trailing whitespace)
+    // line 3: "three   "  (3 trailing spaces)
+    // line 4: "four"      (no trailing whitespace)
+    // line 5: "five    "  (4 trailing spaces)
+    let text = ["zero", "one  ", "two", "three   ", "four", "five    "].join("\n");
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    // Only rows 1 and 5 are modified, so only those lines get cleaned; line 3 stays untouched.
+    let modified_rows = [1u32..2, 5..6];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(
+            buffer.text(),
+            ["zero", "one", "two", "three   ", "four", "five"].join("\n")
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_empty_ranges(cx: &mut gpui::TestAppContext) {
+    let text = ["zero", "one  ", "two  "].join("\n");
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&[]), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), text);
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
+    // No final newline; the modified range (rows 0..3) includes the last line (row 2).
+    let text = "line0\nline1\nline2";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2\n");
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) {
+    // No final newline; the modified range (rows 0..2) excludes the last line (row 2), so nothing changes.
+    let text = "line0\nline1\nline2";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2");
+    });
+}
+
+// An empty last line (file already ends with a newline) is left untouched, even with extra
+// trailing blank lines. With `None` these would collapse; scoped to rows they must not, to
+// avoid deleting unselected rows.
+#[gpui::test]
+async fn test_final_newline_does_not_collapse_trailing_blank_lines(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1\n\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..4]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\n\n");
+    });
+}
+
+// When scoped to rows, only a newline is inserted; unlike the `None` (whole-buffer) case, it
+// does not trim trailing whitespace on the last line.
+#[gpui::test]
+async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1  ";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1  \n");
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_whole_buffer(cx: &mut gpui::TestAppContext) {
+    // (input, expected) pairs for the whole-buffer (`None`) case.
+    let cases = [
+        // Content without a trailing newline gets exactly one appended.
+        ("line0\nline1", "line0\nline1\n"),
+        // A buffer already ending in a single newline is left untouched.
+        ("line0\nline1\n", "line0\nline1\n"),
+        // Trailing blank lines and whitespace at the end of the file collapse to one newline.
+        ("line0\nline1\n\n\n", "line0\nline1\n"),
+        ("line0\nline1  \n  ", "line0\nline1\n"),
+        // An empty buffer stays empty.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let buffer = cx.new(|cx| Buffer::local(input, cx));
+        buffer.update(cx, |buffer, cx| {
+            let diff = buffer.ensure_final_newline(None);
+            buffer.apply_diff(diff, cx);
+            assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "zero\r\none  \r\ntwo\r\nthree   \r\nfour\r\nfive    ";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    let modified_rows = [1u32..2, 5..6];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "zero\none\ntwo\nthree   \nfour\nfive");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "line0\r\nline1\r\nline2";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
 }
 
 #[gpui::test]
@@ -4111,6 +4463,90 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node().to_sexp()
     })
+}
+
+fn typescript_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/typescript/indents.scm"))
+        .unwrap(),
+    )
+}
+
+fn tsx_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/tsx/indents.scm"))
+        .unwrap(),
+    )
+}
+
+#[gpui::test]
+fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
+    init_settings(cx, |_| {});
+    cx.new(|cx| {
+        for lang in [typescript_lang_with_indents(), tsx_lang_with_indents()] {
+            let mut indent = |header: &str, header_len: usize, body: &str| {
+                let mut buffer = Buffer::local(header, cx).with_language(lang.clone(), cx);
+                buffer.edit(
+                    [(header_len..header_len, body)],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+                buffer.text()
+            };
+
+            // A braceless body is indented under its `if`/`for`/`while`.
+            assert_eq!(indent("if (true)", 9, "\nx()"), "if (true)\n    x()");
+            assert_eq!(indent("for (;;)", 8, "\nx()"), "for (;;)\n    x()");
+            assert_eq!(indent("while (true)", 12, "\nx()"), "while (true)\n    x()");
+            assert_eq!(
+                indent("for (const a of b)", 18, "\nx()"),
+                "for (const a of b)\n    x()"
+            );
+
+            // The statement after a braceless body returns to the outer indent.
+            assert_eq!(
+                indent("if (true)\n    x()", 17, "\ny()"),
+                "if (true)\n    x()\ny()"
+            );
+
+            // A `{}` block keeps its brace unindented (Allman style), leaving the
+            // block rule to indent the contents. Regression guard for #24976.
+            assert_eq!(indent("if (true)", 9, "\n{}"), "if (true)\n{}");
+            assert_eq!(indent("for (;;)", 8, "\n{}"), "for (;;)\n{}");
+            assert_eq!(indent("while (true)", 12, "\n{}"), "while (true)\n{}");
+
+            // K&R braced bodies indent their contents once.
+            assert_eq!(
+                indent("if (true) {\n}", 11, "\nx()"),
+                "if (true) {\n    x()\n}"
+            );
+
+            // A braceless `else` body is indented under the `else`.
+            assert_eq!(
+                indent("if (true)\n    x()\nelse", 22, "\ny()"),
+                "if (true)\n    x()\nelse\n    y()"
+            );
+        }
+        Buffer::local("", cx)
+    });
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
