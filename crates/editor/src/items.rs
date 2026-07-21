@@ -1328,7 +1328,6 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
-                        buffer.set_content_language_detection_enabled(true);
                         buffer.set_language_registry(language_registry);
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {
@@ -1424,9 +1423,6 @@ impl SerializableItem for Editor {
                     .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
-                buffer.update(cx, |buffer, _| {
-                    buffer.set_content_language_detection_enabled(true);
-                });
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {
