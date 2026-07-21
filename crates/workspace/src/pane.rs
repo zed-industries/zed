@@ -484,7 +484,7 @@ struct NavHistoryState {
     preview_item_id: Option<EntityId>,
 }
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub enum NavigationMode {
     #[default]
     Normal,
@@ -1209,7 +1209,9 @@ impl Pane {
         self.preview_item_id = None;
 
         let prev_active_item_index = self.active_item_index;
+        self.nav_history.disable();
         self.remove_item(id, false, false, window, cx);
+        self.nav_history.enable();
         self.active_item_index = prev_active_item_index;
         if item_idx < prev_active_item_index {
             self.active_item_index -= 1;
@@ -2198,7 +2200,9 @@ impl Pane {
         }
 
         let mode = self.nav_history.mode();
-        self.nav_history.set_mode(NavigationMode::ClosingItem);
+        if mode != NavigationMode::Disabled {
+            self.nav_history.set_mode(NavigationMode::ClosingItem);
+        }
         item.deactivated(window, cx);
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
@@ -4794,7 +4798,6 @@ impl NavHistory {
                     row,
                 });
             }
-            NavigationMode::ClosingItem if is_preview => return,
             NavigationMode::ClosingItem => {
                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.closed_stack.pop_front();
@@ -8837,6 +8840,86 @@ mod tests {
         assert!(
             has_closed_items,
             "closed item should be in closed_stack and reopenable"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_closing_preview_tab_directly(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add a preview tab item "A"
+        let item = pane.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| TestItem::new(cx).with_label("A")));
+            pane.add_item(item.clone(), true, true, None, window, cx);
+            pane.set_preview_item_id(Some(item.item_id()), cx);
+            item
+        });
+
+        // Explicitly close item "A"
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::Skip, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        let has_closed_items = pane.read_with(cx, |pane, _| {
+            !pane.nav_history.0.lock().closed_stack.is_empty()
+        });
+        assert!(
+            has_closed_items,
+            "explicitly closed preview tab should be reopenable"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replacing_preview_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add preview tab item "A"
+        pane.update_in(cx, |pane, window, cx| {
+            let item_a = Box::new(cx.new(|cx| TestItem::new(cx).with_label("A")));
+            pane.add_item(item_a.clone(), true, true, None, window, cx);
+            pane.set_preview_item_id(Some(item_a.item_id()), cx);
+        });
+
+        // Replace preview with item "B" (simulates clicking another file)
+        pane.update_in(cx, |pane, window, cx| {
+            let item_b = Box::new(cx.new(|cx| TestItem::new(cx).with_label("B")));
+            pane.replace_preview_item_id(item_b.item_id(), window, cx);
+            pane.add_item(item_b, true, true, None, window, cx);
+        });
+
+        let has_closed_items = pane.read_with(cx, |pane, _| {
+            !pane.nav_history.0.lock().closed_stack.is_empty()
+        });
+        // "A" shouldn't have been added to the closed stack because it wasn't explicitly closed
+        assert!(
+            !has_closed_items,
+            "replacing preview tab shouldn't add replaced item to closed stack"
         );
     }
 
