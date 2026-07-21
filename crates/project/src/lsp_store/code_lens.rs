@@ -2,7 +2,6 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::{
     FutureExt as _,
@@ -20,7 +19,9 @@ use util::ResultExt as _;
 use crate::{
     CodeAction, LspAction, LspStore, LspStoreEvent, Project,
     lsp_command::{GetCodeLens, LspCommand as _},
-    lsp_store::missing_servers_to_query,
+    lsp_store::{
+        RunningFetch, missing_servers_to_query, next_lsp_fetch_id, upstream_lsp_query_server_filter,
+    },
     project_settings::ProjectSettings,
 };
 
@@ -49,16 +50,18 @@ pub type CodeLensResolveTask = Shared<Task<Option<(CodeLensActionId, CodeAction)
 #[derive(Debug, Default)]
 pub(super) struct CodeLensData {
     pub(super) lens: HashMap<LanguageServerId, CodeLensActions>,
+    fetched_servers: HashSet<LanguageServerId>,
     pub(super) next_id: u64,
-    pub(super) update: Option<(Global, CodeLensTask)>,
+    pub(super) update: Option<RunningFetch<CodeLensTask>>,
     pub(super) resolving: HashMap<(LanguageServerId, CodeLensActionId), CodeLensResolveTask>,
-    generation: u64,
 }
 
 impl CodeLensData {
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
         self.lens.remove(&server_id);
+        self.fetched_servers.remove(&server_id);
         self.resolving.retain(|(s, _), _| *s != server_id);
+        RunningFetch::discard_if_queried(&mut self.update, server_id);
     }
 
     fn evict(&mut self, for_server: Option<LanguageServerId>) {
@@ -66,11 +69,11 @@ impl CodeLensData {
             Some(server_id) => self.remove_server_data(server_id),
             None => {
                 self.lens.clear();
+                self.fetched_servers.clear();
                 self.resolving.clear();
             }
         }
         self.update = None;
-        self.generation += 1;
     }
 }
 
@@ -145,26 +148,31 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let current_servers = self
-            .relevant_server_ids_for_capability_check(buffer, cx)
-            .into_iter()
-            .collect::<HashSet<_>>();
+        let current_servers = self.relevant_server_ids_for_capability_check(buffer, cx);
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_lens) = &mut lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    match missing_servers_to_query(&mut cached_lens.lens, &current_servers) {
+                    match missing_servers_to_query(
+                        &mut cached_lens.lens,
+                        &mut cached_lens.fetched_servers,
+                        &current_servers,
+                    ) {
                         Some(missing_servers) => servers_to_query = Some(missing_servers),
                         None => {
                             return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens))))
                                 .shared();
                         }
                     }
-                } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
-                    if !version_queried_for.changed_since(updating_for) {
-                        return running_update.clone();
-                    }
+                }
+                if let Some(running) = cached_lens.update.as_ref()
+                    && !version_queried_for.changed_since(&running.version)
+                    && servers_to_query
+                        .as_ref()
+                        .is_none_or(|missing| missing.is_subset(&running.servers))
+                {
+                    return running.task.clone();
                 }
             }
         }
@@ -173,78 +181,92 @@ impl LspStore {
             .latest_lsp_data(buffer, cx)
             .code_lens
             .get_or_insert_default();
-        let query_generation = lens_lsp_data.generation;
+        let fetch_id = next_lsp_fetch_id();
+        let queried_servers = servers_to_query
+            .clone()
+            .unwrap_or_else(|| current_servers.clone());
         let buffer = buffer.clone();
         let query_version_queried_for = version_queried_for.clone();
         let new_task = cx
-            .spawn(async move |lsp_store, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(30))
-                    .await;
-                let fetched_lens = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_code_lens_for_buffer(&buffer, servers_to_query, cx)
-                    })
-                    .map_err(Arc::new)?
-                    .await
-                    .context("fetching code lens")
-                    .map_err(Arc::new);
-                let fetched_lens = match fetched_lens {
-                    Ok(fetched_lens) => fetched_lens,
-                    Err(e) => {
-                        lsp_store
-                            .update(cx, |lsp_store, _| {
-                                if let Some(lens_lsp_data) = lsp_store
-                                    .lsp_data
-                                    .get_mut(&buffer_id)
-                                    .and_then(|lsp_data| lsp_data.code_lens.as_mut())
-                                    && lens_lsp_data.generation == query_generation
-                                {
-                                    lens_lsp_data.update = None;
-                                }
-                            })
-                            .ok();
-                        return Err(e);
-                    }
-                };
+            .spawn({
+                let queried_servers = queried_servers.clone();
+                async move |lsp_store, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(30))
+                        .await;
+                    let fetched_lens = lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            lsp_store.fetch_code_lens_for_buffer(&buffer, servers_to_query, cx)
+                        })
+                        .map_err(Arc::new)?
+                        .await
+                        .context("fetching code lens")
+                        .map_err(Arc::new);
+                    let fetched_lens = match fetched_lens {
+                        Ok(fetched_lens) => fetched_lens,
+                        Err(e) => {
+                            lsp_store
+                                .update(cx, |lsp_store, _| {
+                                    if let Some(lens_lsp_data) = lsp_store
+                                        .lsp_data
+                                        .get_mut(&buffer_id)
+                                        .and_then(|lsp_data| lsp_data.code_lens.as_mut())
+                                    {
+                                        RunningFetch::take_finished(
+                                            &mut lens_lsp_data.update,
+                                            fetch_id,
+                                        );
+                                    }
+                                })
+                                .ok();
+                            return Err(e);
+                        }
+                    };
 
-                lsp_store
-                    .update(cx, |lsp_store, _| {
-                        let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
-                        let code_lens = lsp_data.code_lens.as_mut()?;
-                        if code_lens.generation != query_generation {
-                            return Some(flatten_cache(&code_lens.lens));
-                        }
-                        if let Some(fetched_lens) = fetched_lens {
-                            let mut tagged: HashMap<LanguageServerId, CodeLensActions> =
-                                HashMap::default();
-                            for (server_id, actions) in fetched_lens {
-                                let mut cache = CodeLensActions::default();
-                                cache.reserve(actions.len());
-                                for action in actions {
-                                    let id = CodeLensActionId(code_lens.next_id);
-                                    code_lens.next_id += 1;
-                                    cache.insert(id, action);
+                    lsp_store
+                        .update(cx, |lsp_store, _| {
+                            let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
+                            let code_lens = lsp_data.code_lens.as_mut()?;
+                            if !RunningFetch::take_finished(&mut code_lens.update, fetch_id) {
+                                return Some(flatten_cache(&code_lens.lens));
+                            }
+                            if let Some(fetched_lens) = fetched_lens {
+                                let mut tagged: HashMap<LanguageServerId, CodeLensActions> =
+                                    HashMap::default();
+                                for (server_id, actions) in fetched_lens {
+                                    let mut cache = CodeLensActions::default();
+                                    cache.reserve(actions.len());
+                                    for action in actions {
+                                        let id = CodeLensActionId(code_lens.next_id);
+                                        code_lens.next_id += 1;
+                                        cache.insert(id, action);
+                                    }
+                                    tagged.insert(server_id, cache);
                                 }
-                                tagged.insert(server_id, cache);
+                                if lsp_data.buffer_version == query_version_queried_for {
+                                    code_lens.lens.extend(tagged);
+                                    code_lens.fetched_servers.extend(queried_servers);
+                                } else if !lsp_data
+                                    .buffer_version
+                                    .changed_since(&query_version_queried_for)
+                                {
+                                    lsp_data.buffer_version = query_version_queried_for;
+                                    code_lens.lens = tagged;
+                                    code_lens.fetched_servers = queried_servers;
+                                }
                             }
-                            if lsp_data.buffer_version == query_version_queried_for {
-                                code_lens.lens.extend(tagged);
-                            } else if !lsp_data
-                                .buffer_version
-                                .changed_since(&query_version_queried_for)
-                            {
-                                lsp_data.buffer_version = query_version_queried_for;
-                                code_lens.lens = tagged;
-                            }
-                        }
-                        code_lens.update = None;
-                        Some(flatten_cache(&code_lens.lens))
-                    })
-                    .map_err(Arc::new)
+                            Some(flatten_cache(&code_lens.lens))
+                        })
+                        .map_err(Arc::new)
+                }
             })
             .shared();
-        lens_lsp_data.update = Some((version_queried_for, new_task.clone()));
+        lens_lsp_data.update = Some(RunningFetch {
+            id: fetch_id,
+            version: version_queried_for,
+            servers: queried_servers,
+            task: new_task.clone(),
+        });
         new_task
     }
 
@@ -264,7 +286,7 @@ impl LspStore {
                 .get_request_timeout();
             let request_task = upstream_client.request_lsp(
                 project_id,
-                None,
+                upstream_lsp_query_server_filter(for_servers.as_ref()),
                 request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -478,7 +500,7 @@ impl LspStore {
                 .take()?
                 .update
                 .take()?
-                .1,
+                .task,
         )
     }
 

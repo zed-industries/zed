@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::FutureExt as _;
 use futures::future::{Shared, join_all};
@@ -18,7 +17,10 @@ use util::ResultExt;
 
 use crate::DocumentSymbol;
 use crate::lsp_command::{GetDocumentSymbols, LspCommand as _};
-use crate::lsp_store::{LspStore, LspStoreEvent, missing_servers_to_query};
+use crate::lsp_store::{
+    LspStore, LspStoreEvent, RunningFetch, missing_servers_to_query, next_lsp_fetch_id,
+    upstream_lsp_query_server_filter,
+};
 use crate::project_settings::ProjectSettings;
 
 pub(super) type DocumentSymbolsTask =
@@ -27,22 +29,26 @@ pub(super) type DocumentSymbolsTask =
 #[derive(Debug, Default)]
 pub(super) struct DocumentSymbolsData {
     symbols: HashMap<LanguageServerId, Vec<OutlineItem<Anchor>>>,
-    symbols_update: Option<(Global, DocumentSymbolsTask)>,
-    generation: u64,
+    fetched_servers: HashSet<LanguageServerId>,
+    symbols_update: Option<RunningFetch<DocumentSymbolsTask>>,
 }
 
 impl DocumentSymbolsData {
     pub(super) fn remove_server_data(&mut self, for_server: LanguageServerId) {
         self.symbols.remove(&for_server);
+        self.fetched_servers.remove(&for_server);
+        RunningFetch::discard_if_queried(&mut self.symbols_update, for_server);
     }
 
     fn evict(&mut self, for_server: Option<LanguageServerId>) {
         match for_server {
             Some(server_id) => self.remove_server_data(server_id),
-            None => self.symbols.clear(),
+            None => {
+                self.symbols.clear();
+                self.fetched_servers.clear();
+            }
         }
         self.symbols_update = None;
-        self.generation += 1;
     }
 }
 
@@ -101,31 +107,44 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_servers = self
-            .relevant_server_ids_for_capability_check(buffer, cx)
-            .into_iter()
-            .collect::<HashSet<_>>();
+        let current_servers = self.relevant_server_ids_for_capability_check(buffer, cx);
 
         let mut servers_to_query = None;
-        if let Some(lsp_data) = self.current_lsp_data(buffer_id)
-            && !version_queried_for.changed_since(&lsp_data.buffer_version)
-            && let Some(cached) = &mut lsp_data.document_symbols
-        {
-            match missing_servers_to_query(&mut cached.symbols, &current_servers) {
-                Some(missing_servers) => servers_to_query = Some(missing_servers),
-                None => {
-                    let snapshot = buffer.read(cx).snapshot();
-                    return Task::ready(
-                        cached
-                            .symbols
-                            .values()
-                            .flatten()
-                            .unique()
-                            .cloned()
-                            .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
-                            .collect(),
-                    );
+        if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
+            if !version_queried_for.changed_since(&lsp_data.buffer_version)
+                && let Some(cached) = &mut lsp_data.document_symbols
+            {
+                match missing_servers_to_query(
+                    &mut cached.symbols,
+                    &mut cached.fetched_servers,
+                    &current_servers,
+                ) {
+                    Some(missing_servers) => servers_to_query = Some(missing_servers),
+                    None => {
+                        let snapshot = buffer.read(cx).snapshot();
+                        return Task::ready(
+                            cached
+                                .symbols
+                                .values()
+                                .flatten()
+                                .unique()
+                                .cloned()
+                                .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
+                                .collect(),
+                        );
+                    }
                 }
+            }
+            if let Some(document_symbols) = &lsp_data.document_symbols
+                && let Some(running) = &document_symbols.symbols_update
+                && !version_queried_for.changed_since(&running.version)
+                && servers_to_query
+                    .as_ref()
+                    .is_none_or(|missing| missing.is_subset(&running.servers))
+            {
+                let running = running.task.clone();
+                return cx
+                    .background_spawn(async move { running.await.log_err().unwrap_or_default() });
             }
         }
 
@@ -133,57 +152,64 @@ impl LspStore {
             .latest_lsp_data(buffer, cx)
             .document_symbols
             .get_or_insert_default();
-        if let Some((updating_for, running_update)) = &doc_symbols_data.symbols_update {
-            if !version_queried_for.changed_since(updating_for) {
-                let running = running_update.clone();
-                return cx
-                    .background_spawn(async move { running.await.log_err().unwrap_or_default() });
-            }
-        }
-
-        let query_generation = doc_symbols_data.generation;
+        let fetch_id = next_lsp_fetch_id();
+        let queried_servers = servers_to_query
+            .clone()
+            .unwrap_or_else(|| current_servers.clone());
         let buffer = buffer.clone();
         let query_version = version_queried_for.clone();
         let new_task = cx
-            .spawn(async move |lsp_store, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(30))
-                    .await;
+            .spawn({
+                let queried_servers = queried_servers.clone();
+                async move |lsp_store, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(30))
+                        .await;
 
-                let fetched = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_symbols_for_buffer(&buffer, servers_to_query, cx)
-                    })
-                    .map_err(Arc::new)?
-                    .await
-                    .context("fetching document symbols")
-                    .map_err(Arc::new);
+                    let fetched = lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            lsp_store.fetch_document_symbols_for_buffer(
+                                &buffer,
+                                servers_to_query,
+                                cx,
+                            )
+                        })
+                        .map_err(Arc::new)?
+                        .await
+                        .context("fetching document symbols")
+                        .map_err(Arc::new);
 
-                let fetched = match fetched {
-                    Ok(fetched) => fetched,
-                    Err(e) => {
-                        lsp_store
-                            .update(cx, |lsp_store, _| {
-                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id)
-                                    && let Some(document_symbols) = &mut lsp_data.document_symbols
-                                    && document_symbols.generation == query_generation
-                                {
-                                    document_symbols.symbols_update = None;
-                                }
-                            })
-                            .ok();
-                        return Err(e);
-                    }
-                };
+                    let fetched = match fetched {
+                        Ok(fetched) => fetched,
+                        Err(e) => {
+                            lsp_store
+                                .update(cx, |lsp_store, _| {
+                                    if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id)
+                                        && let Some(document_symbols) =
+                                            &mut lsp_data.document_symbols
+                                    {
+                                        RunningFetch::take_finished(
+                                            &mut document_symbols.symbols_update,
+                                            fetch_id,
+                                        );
+                                    }
+                                })
+                                .ok();
+                            return Err(e);
+                        }
+                    };
 
-                lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                        let doc_symbols = lsp_data.document_symbols.get_or_insert_default();
+                    lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
+                            let doc_symbols = lsp_data.document_symbols.get_or_insert_default();
 
-                        if doc_symbols.generation == query_generation {
-                            if let Some(fetched_symbols) = fetched {
+                            if RunningFetch::take_finished(
+                                &mut doc_symbols.symbols_update,
+                                fetch_id,
+                            ) && let Some(fetched_symbols) = fetched
+                            {
                                 let converted = fetched_symbols
                                     .iter()
                                     .map(|(&server_id, symbols)| {
@@ -194,27 +220,33 @@ impl LspStore {
                                     .collect();
                                 if lsp_data.buffer_version == query_version {
                                     doc_symbols.symbols.extend(converted);
+                                    doc_symbols.fetched_servers.extend(queried_servers);
                                 } else if !lsp_data.buffer_version.changed_since(&query_version) {
                                     lsp_data.buffer_version = query_version;
                                     doc_symbols.symbols = converted;
+                                    doc_symbols.fetched_servers = queried_servers;
                                 }
                             }
-                            doc_symbols.symbols_update = None;
-                        }
-                        doc_symbols
-                            .symbols
-                            .values()
-                            .flatten()
-                            .unique()
-                            .cloned()
-                            .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
-                            .collect()
-                    })
-                    .map_err(Arc::new)
+                            doc_symbols
+                                .symbols
+                                .values()
+                                .flatten()
+                                .unique()
+                                .cloned()
+                                .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
+                                .collect()
+                        })
+                        .map_err(Arc::new)
+                }
             })
             .shared();
 
-        doc_symbols_data.symbols_update = Some((version_queried_for, new_task.clone()));
+        doc_symbols_data.symbols_update = Some(RunningFetch {
+            id: fetch_id,
+            version: version_queried_for,
+            servers: queried_servers,
+            task: new_task.clone(),
+        });
 
         cx.background_spawn(async move { new_task.await.log_err().unwrap_or_default() })
     }
@@ -236,7 +268,7 @@ impl LspStore {
                 .get_request_timeout();
             let request_task = client.request_lsp(
                 project_id,
-                None,
+                upstream_lsp_query_server_filter(for_servers.as_ref()),
                 request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),

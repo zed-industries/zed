@@ -27,7 +27,7 @@ async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext
             name: "the-language-server",
             // Crucially, no `semantic_tokens_provider` is advertised statically; the
             // server only offers it through dynamic registration (as Roslyn does).
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -76,7 +76,7 @@ async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext
                                     token_modifiers: vec![],
                                 },
                                 full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                             static_registration_options: lsp::StaticRegistrationOptions {
                                 id: None,
@@ -443,6 +443,74 @@ async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestApp
         server_capabilities(&project, server_id, cx).inlay_hint_provider,
         None,
         "expected inlay hint provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_registration_with_unchanged_options_does_not_refresh(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/codeLens";
+
+    let options = lsp::CodeLensOptions {
+        resolve_provider: Some(true),
+    };
+
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    register_capability(
+        &fake_server,
+        method,
+        "lens-a",
+        serde_json::to_value(options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+        "expected the first registration to refresh",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "lens-b",
+        serde_json::to_value(options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected a registration with options identical to the active ones to not refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected an unregistration that restores identical options to not refresh",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        Some(options),
+        "expected the remaining registration's options to stay active",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+        "expected the last unregistration to clear the capability and refresh",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        None,
+        "expected the code lens provider to be cleared after unregistering the last registration",
     );
 }
 
@@ -915,14 +983,14 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
                 }),
                 ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
     let mut dynamic_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "dynamic-server",
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
     cx.executor().run_until_parked();
@@ -945,7 +1013,7 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
     };
 
-    fetch_lsp_data(&project, &buffer, None, cx).await;
+    fetch_lsp_data(&project, &buffer, cx).await;
     assert_eq!(
         static_counters.snapshot(),
         LspRequestCounts {
@@ -1058,16 +1126,7 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         "expected trigger characters from both servers to be combined",
     );
 
-    fetch_lsp_data(
-        &project,
-        &buffer,
-        Some(RefreshForServer {
-            server_id: dynamic_server_id,
-            request_id: Some(1),
-        }),
-        cx,
-    )
-    .await;
+    fetch_lsp_data(&project, &buffer, cx).await;
     assert_eq!(
         dynamic_counters.snapshot(),
         LspRequestCounts {
@@ -1122,16 +1181,7 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         "expected only the static server's trigger characters to remain",
     );
 
-    fetch_lsp_data(
-        &project,
-        &buffer,
-        Some(RefreshForServer {
-            server_id: dynamic_server_id,
-            request_id: Some(2),
-        }),
-        cx,
-    )
-    .await;
+    fetch_lsp_data(&project, &buffer, cx).await;
     assert_eq!(
         dynamic_counters.snapshot(),
         LspRequestCounts {
@@ -1155,6 +1205,279 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
             semantic_tokens: 1,
         },
         "expected the static server to never be re-queried by another server's capability changes",
+    );
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_refresh_invalidates_only_the_refreshed_server(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let semantic_tokens_capabilities = lsp::ServerCapabilities {
+        semantic_tokens_provider: Some(
+            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp::SemanticTokensOptions {
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+            ),
+        ),
+        ..lsp::ServerCapabilities::default()
+    };
+    let mut servers_a = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "server-a",
+            capabilities: semantic_tokens_capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut servers_b = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "server-b",
+            capabilities: semantic_tokens_capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let server_a = servers_a.next().await.unwrap();
+    let server_b = servers_b.next().await.unwrap();
+    for server in [&server_a, &server_b] {
+        server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+            move |_, _| async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens::default(),
+                )))
+            },
+        );
+    }
+    let server_a_id = server_a.server.server_id();
+    let server_b_id = server_b.server.server_id();
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let cached_token_servers = |cx: &mut gpui::TestAppContext| {
+        lsp_store.read_with(cx, |lsp_store, _| {
+            lsp_store.semantic_token_servers(buffer_id)
+        })
+    };
+
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        cached_token_servers(cx),
+        vec![server_a_id, server_b_id],
+        "expected tokens from both servers after the initial fetch",
+    );
+
+    for repetition in 0..2 {
+        server_a
+            .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
+        let refresh_task = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        });
+        assert_eq!(
+            cached_token_servers(cx),
+            vec![server_b_id],
+            "expected refresh {repetition} to invalidate only the refreshed server's tokens",
+        );
+        let concurrent_task = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        });
+        assert_eq!(
+            cached_token_servers(cx),
+            vec![server_b_id],
+            "expected a concurrent query {repetition} to not invalidate the data again",
+        );
+        refresh_task.await.unwrap();
+        concurrent_task.await.unwrap();
+        assert_eq!(
+            cached_token_servers(cx),
+            vec![server_a_id, server_b_id],
+            "expected the refreshed server's tokens to be re-fetched after refresh {repetition}",
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_refresh_during_fetch_does_not_resurrect_stale_data(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..lsp::SemanticTokensOptions::default()
+                    },
+                ),
+            ),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let server_id = fake_server.server.server_id();
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    cx.executor().run_until_parked();
+
+    let stale_data = vec![0, 0, 2, 0, 0];
+    let fresh_data = vec![0, 0, 2, 0, 0, 0, 3, 4, 0, 0];
+    let token_requests = Arc::new(atomic::AtomicUsize::new(0));
+    let (gate_tx, gate_rx) = futures::channel::oneshot::channel::<()>();
+    let gate_rx = Arc::new(Mutex::new(Some(gate_rx)));
+    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let token_requests = token_requests.clone();
+        let gate_rx = gate_rx.clone();
+        let stale_data = stale_data.clone();
+        let fresh_data = fresh_data.clone();
+        move |_, _| {
+            let request = token_requests.fetch_add(1, atomic::Ordering::Release);
+            let gate = gate_rx.lock().take();
+            let data = if request == 0 {
+                stale_data.clone()
+            } else {
+                fresh_data.clone()
+            };
+            async move {
+                if let Some(gate) = gate {
+                    gate.await.ok();
+                }
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        result_id: None,
+                        data,
+                    },
+                )))
+            }
+        }
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let stale_fetch = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.semantic_tokens(buffer.clone(), cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        token_requests.load(atomic::Ordering::Acquire),
+        1,
+        "expected the first fetch to be in flight before the refresh",
+    );
+
+    fake_server
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fresh_fetch = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.semantic_tokens(buffer.clone(), cx)
+    });
+    fresh_fetch.await.unwrap();
+
+    gate_tx.send(()).unwrap();
+    stale_fetch.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        lsp_store.read_with(cx, |lsp_store, _| lsp_store.semantic_token_data(buffer_id)),
+        vec![(server_id, fresh_data)],
+        "expected the stale fetch, completed after the refresh, to not overwrite the refreshed tokens",
+    );
+    assert_eq!(
+        token_requests.load(atomic::Ordering::Acquire),
+        2,
+        "expected exactly the stale and the fresh fetches to have queried the server",
+    );
+}
+
+#[gpui::test]
+async fn test_code_lens_concurrent_fetches_are_deduplicated(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            code_lens_provider: Some(lsp::CodeLensOptions {
+                resolve_provider: None,
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let lens_requests = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+        let lens_requests = lens_requests.clone();
+        move |_, _| {
+            lens_requests.fetch_add(1, atomic::Ordering::Release);
+            async move { Ok(Some(Vec::new())) }
+        }
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let first_fetch =
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx));
+    let second_fetch =
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx));
+    cx.executor().advance_clock(Duration::from_millis(50));
+    first_fetch.await.unwrap();
+    second_fetch.await.unwrap();
+    assert_eq!(
+        lens_requests.load(atomic::Ordering::Acquire),
+        1,
+        "expected concurrent code lens fetches to share one LSP request",
+    );
+
+    lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        lens_requests.load(atomic::Ordering::Acquire),
+        1,
+        "expected a repeated fetch for the unchanged buffer to be served from the cache",
     );
 }
 
@@ -1184,7 +1507,7 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
         "Rust",
         FakeLspAdapter {
             name: "the-language-server",
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1243,12 +1566,18 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     cx.executor().run_until_parked();
 
     // Both registrations should match their respective patterns.
-    fs.create_file(path!("/root/src/c.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/guide.md").as_ref(), Default::default())
-        .await
-        .unwrap();
+    fs.create_file(
+        path!("/root/src/c.rs").as_ref(),
+        fs::CreateOptions::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        path!("/root/docs/guide.md").as_ref(),
+        fs::CreateOptions::default(),
+    )
+    .await
+    .unwrap();
     cx.executor().run_until_parked();
 
     assert_eq!(
@@ -1271,12 +1600,18 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     cx.executor().run_until_parked();
 
     // Only the second registration should still match.
-    fs.create_file(path!("/root/src/d.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/notes.md").as_ref(), Default::default())
-        .await
-        .unwrap();
+    fs.create_file(
+        path!("/root/src/d.rs").as_ref(),
+        fs::CreateOptions::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        path!("/root/docs/notes.md").as_ref(),
+        fs::CreateOptions::default(),
+    )
+    .await
+    .unwrap();
     cx.executor().run_until_parked();
 
     assert_eq!(
@@ -1304,7 +1639,7 @@ async fn setup_dynamic_registration_test(
         FakeLspAdapter {
             name: "the-language-server",
             capabilities,
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1509,7 +1844,6 @@ fn observe_refresh_events(
 async fn fetch_lsp_data(
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
-    refresh_semantic_tokens_for: Option<RefreshForServer>,
     cx: &mut gpui::TestAppContext,
 ) {
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
@@ -1527,7 +1861,7 @@ async fn fetch_lsp_data(
     });
     let code_lens = lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
     let semantic_tokens = lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.semantic_tokens(buffer.clone(), refresh_semantic_tokens_for, cx)
+        lsp_store.semantic_tokens(buffer.clone(), cx)
     });
     if let Some(colors) = colors {
         colors.await.unwrap();

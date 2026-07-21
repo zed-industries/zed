@@ -35405,7 +35405,6 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
-    use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::inlays::inlay_hints::tests::{cached_hint_labels, init_test, visible_hint_labels};
     use settings::InlayHintSettingsContent;
     use std::sync::atomic::AtomicU32;
@@ -35509,16 +35508,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         })
         .unwrap();
 
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(1),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
@@ -35544,16 +35537,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             });
         });
     });
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(2),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));

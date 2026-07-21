@@ -162,7 +162,7 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use semantic_tokens::{
-    BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
+    BufferSemanticToken, BufferSemanticTokens, SemanticTokenStylizer, TokenType,
 };
 
 pub use worktree::{
@@ -175,6 +175,14 @@ pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
 const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_PROMPT_REQUEST_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Refresh messages carry a monotonic id for backwards compatibility only: older peers
+/// use it to order refreshes, while current ones re-mark pending refreshes on arrival.
+/// The envelope's own message id cannot be used, as old peers compare the payload field.
+fn next_wire_refresh_request_id() -> u64 {
+    static NEXT_WIRE_REFRESH_REQUEST_ID: AtomicUsize = AtomicUsize::new(1);
+    NEXT_WIRE_REFRESH_REQUEST_ID.fetch_add(1, atomic::Ordering::Relaxed) as u64
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ProgressToken {
@@ -1092,16 +1100,12 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
                 let lsp_store = lsp_store.clone();
-                let request_id = Arc::new(AtomicUsize::new(0));
                 move |(), cx| {
                     let lsp_store = lsp_store.clone();
-                    let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
                         lsp_store.update(&mut cx, |lsp_store, cx| {
-                            let request_id =
-                                Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
-                            lsp_store.refresh_inlay_hints(server_id, request_id, cx);
+                            lsp_store.refresh_inlay_hints(server_id, cx);
                         })?;
                         Ok(())
                     }
@@ -1124,16 +1128,12 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::SemanticTokensRefresh, _, _>({
                 let lsp_store = lsp_store.clone();
-                let request_id = Arc::new(AtomicUsize::new(0));
                 move |(), cx| {
                     let lsp_store = lsp_store.clone();
-                    let request_id = request_id.clone();
                     let mut cx = cx.clone();
                     async move {
                         lsp_store.update(&mut cx, |lsp_store, cx| {
-                            let request_id =
-                                Some(request_id.fetch_add(1, atomic::Ordering::AcqRel));
-                            lsp_store.refresh_semantic_tokens(server_id, request_id, cx);
+                            lsp_store.refresh_semantic_tokens(server_id, cx);
                         })?;
                         Ok(())
                     }
@@ -4041,22 +4041,93 @@ impl LocalLspStore {
 }
 
 /// Prunes per-server cached LSP data of servers no longer relevant for the buffer, and
-/// returns the relevant servers that have no cached data yet.
+/// returns the relevant servers that were not fetched for yet.
 /// `None` means the cache covers all relevant servers and can be returned as is.
+///
+/// `fetched_servers` tracks the servers a completed fetch has queried, not the ones that
+/// answered: a server that returned no data (not capable, errored, or not known to the
+/// queried remote host) would otherwise be considered perpetually missing and every call
+/// would re-fetch.
+///
+/// An empty `current_servers` set does not prune: on remote clients it may mean the
+/// language server statuses have not synced yet, while data of genuinely removed servers
+/// is cleaned up via the `remove_server_data` methods.
 fn missing_servers_to_query<T>(
     cached: &mut HashMap<LanguageServerId, T>,
+    fetched_servers: &mut HashSet<LanguageServerId>,
     current_servers: &HashSet<LanguageServerId>,
 ) -> Option<HashSet<LanguageServerId>> {
+    if current_servers.is_empty() {
+        return None;
+    }
     cached.retain(|server_id, _| current_servers.contains(server_id));
+    fetched_servers.retain(|server_id| current_servers.contains(server_id));
     let missing_servers = current_servers
-        .iter()
+        .difference(fetched_servers)
         .copied()
-        .filter(|server_id| !cached.contains_key(server_id))
         .collect::<HashSet<_>>();
     if missing_servers.is_empty() {
         None
     } else {
         Some(missing_servers)
+    }
+}
+
+/// The [`proto::LspQuery`] envelope can filter the query by at most one server.
+/// Evictions are per-server, so a missing set larger than one is rare: fall back to an
+/// unfiltered query then, which is correct as the extra results merely refresh the
+/// non-missing servers' cache entries.
+fn upstream_lsp_query_server_filter(
+    for_servers: Option<&HashSet<LanguageServerId>>,
+) -> Option<u64> {
+    let servers = for_servers?;
+    if servers.len() == 1 {
+        servers.iter().next().map(|server_id| server_id.to_proto())
+    } else {
+        None
+    }
+}
+
+fn next_lsp_fetch_id() -> u64 {
+    static NEXT_LSP_FETCH_ID: AtomicUsize = AtomicUsize::new(1);
+    NEXT_LSP_FETCH_ID.fetch_add(1, atomic::Ordering::Relaxed) as u64
+}
+
+#[derive(Debug)]
+struct RunningFetch<T> {
+    id: u64,
+    version: Global,
+    servers: HashSet<LanguageServerId>,
+    task: T,
+}
+
+impl<T> RunningFetch<T> {
+    /// Unregisters the completed fetch and reports whether its results are still
+    /// relevant: an eviction, a buffer version reset, or a superseding fetch (whose
+    /// server set covers this one's) all clear or replace the registration, in which
+    /// case the results must be discarded.
+    fn take_finished(update: &mut Option<Self>, fetch_id: u64) -> bool {
+        if update
+            .as_ref()
+            .is_some_and(|running| running.id == fetch_id)
+        {
+            *update = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Unregisters a fetch that has queried the given server, so that, when the server
+    /// is removed, a still-running fetch cannot re-insert the removed server's data
+    /// after its cache entries were cleaned up.
+    fn discard_if_queried(update: &mut Option<Self>, server_id: LanguageServerId) {
+        if update
+            .as_ref()
+            .is_some_and(|running| running.servers.contains(&server_id))
+        {
+            *update = None;
+        }
     }
 }
 
@@ -4198,6 +4269,14 @@ impl BufferLspData {
         }
     }
 
+    fn reset_for_newer_buffer_version(&mut self, buffer: &Entity<Buffer>, cx: &mut App) {
+        // To send delta requests for semantic tokens, the previous tokens
+        // need to be kept between buffer changes.
+        let semantic_tokens = self.semantic_tokens.take();
+        *self = Self::new(buffer, cx);
+        self.semantic_tokens = semantic_tokens;
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn inlay_hints(&self) -> &BufferInlayHints {
         &self.inlay_hints
@@ -4222,11 +4301,9 @@ pub enum LspStoreEvent {
     Notification(String),
     RefreshInlayHints {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
     RefreshSemanticTokens {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
     RefreshCodeLens {
         server_id: Option<LanguageServerId>,
@@ -7591,15 +7668,10 @@ impl LspStore {
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let query_version = lsp_data.buffer_version.clone();
         let mut lsp_refresh_requested = false;
-        let for_server = if let InvalidationStrategy::RefreshRequested {
-            server_id,
-            request_id,
-        } = invalidate
-        {
-            let invalidated = lsp_data
+        let for_server = if let InvalidationStrategy::RefreshRequested { server_id } = invalidate {
+            lsp_refresh_requested = lsp_data
                 .inlay_hints
-                .invalidate_for_server_refresh(server_id, request_id);
-            lsp_refresh_requested = invalidated;
+                .invalidate_for_server_refresh(server_id);
             Some(server_id)
         } else {
             None
@@ -10866,13 +10938,12 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            if let Some(work) = status.pending_work.remove(&token)
-                && !work.is_disk_based_diagnostics_progress
-            {
-                cx.emit(LspStoreEvent::RefreshInlayHints {
-                    server_id: language_server_id,
-                    request_id: None,
-                });
+            let refresh_inlay_hints = status
+                .pending_work
+                .remove(&token)
+                .is_some_and(|work| !work.is_disk_based_diagnostics_progress);
+            if refresh_inlay_hints {
+                self.refresh_inlay_hints_on_work_end(language_server_id, cx);
             }
             cx.notify();
         }
@@ -13496,11 +13567,7 @@ impl LspStore {
             .entry(buffer_id)
             .or_insert_with(|| BufferLspData::new(buffer, cx));
         if buffer_version.changed_since(&lsp_data.buffer_version) {
-            // To send delta requests for semantic tokens, the previous tokens
-            // need to be kept between buffer changes.
-            let semantic_tokens = lsp_data.semantic_tokens.take();
-            *lsp_data = BufferLspData::new(buffer, cx);
-            lsp_data.semantic_tokens = semantic_tokens;
+            lsp_data.reset_for_newer_buffer_version(buffer, cx);
         }
         lsp_data
     }

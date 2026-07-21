@@ -220,7 +220,7 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
-        LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
+        LspFormatTarget, OpenLspBufferHandle,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -2017,30 +2017,16 @@ impl Editor {
                     project::Event::RefreshDocumentSymbols { .. } => {
                         editor.refresh_document_symbols(None, cx);
                     }
-                    project::Event::RefreshInlayHints {
-                        server_id,
-                        request_id,
-                    } => {
+                    project::Event::RefreshInlayHints { server_id } => {
                         editor.refresh_inlay_hints(
                             InlayHintRefreshReason::RefreshRequested {
                                 server_id: *server_id,
-                                request_id: *request_id,
                             },
                             cx,
                         );
                     }
-                    project::Event::RefreshSemanticTokens {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_semantic_tokens(
-                            None,
-                            Some(RefreshForServer {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            }),
-                            cx,
-                        );
+                    project::Event::RefreshSemanticTokens { .. } => {
+                        editor.refresh_semantic_tokens(None, true, cx);
                     }
                     project::Event::LanguageServerRemoved(_) => {
                         editor.registered_buffers.clear();
@@ -9898,7 +9884,7 @@ impl Editor {
                 .update_rules(new_semantic_token_rules);
             if language_settings_changed || semantic_token_rules_changed {
                 self.invalidate_semantic_tokens(None);
-                self.refresh_semantic_tokens(None, None, cx);
+                self.refresh_semantic_tokens(None, false, cx);
             }
         }
 
@@ -9917,7 +9903,7 @@ impl Editor {
         }
 
         self.invalidate_semantic_tokens(None);
-        self.refresh_semantic_tokens(None, None, cx);
+        self.refresh_semantic_tokens(None, false, cx);
         self.refresh_outline_symbols_at_cursor(cx);
     }
 
@@ -10808,7 +10794,7 @@ impl Editor {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
         }
-        self.refresh_semantic_tokens(for_buffer, None, cx);
+        self.refresh_semantic_tokens(for_buffer, false, cx);
         self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_document_links(for_buffer, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
@@ -11224,7 +11210,6 @@ pub trait SemanticsProvider {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>>;
 
@@ -11384,13 +11369,11 @@ impl SemanticsProvider for WeakEntity<Project> {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>> {
         self.update(cx, |this, cx| {
-            this.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.semantic_tokens(buffer, refresh, cx)
-            })
+            this.lsp_store()
+                .update(cx, |lsp_store, cx| lsp_store.semantic_tokens(buffer, cx))
         })
         .ok()
     }

@@ -61,7 +61,6 @@ use pretty_assertions::{assert_eq, assert_matches};
 use project::{
     Event, TaskContexts,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
-    lsp_store::RefreshForServer,
     search::{SearchQuery, SearchResult},
     task_store::{TaskSettingsLocation, TaskStore},
     *,
