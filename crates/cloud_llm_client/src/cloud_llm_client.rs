@@ -1,5 +1,7 @@
 #[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
+#[cfg(feature = "predict-edits")]
+pub mod predict_edits_v4;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -122,7 +124,18 @@ pub struct PredictEditsBody {
 pub enum PredictEditsRequestTrigger {
     Testing,
     Diagnostics,
+    DiagnosticNavigation,
     Cli,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
     #[default]
     Other,
 }
@@ -188,6 +201,10 @@ pub enum EditPredictionRejectReason {
     Empty,
     /// Edits returned, but none remained after interpolation
     InterpolatedEmpty,
+    /// Edits returned, but could not be interpolated after buffer changes
+    InterpolateFailed,
+    /// A patch was returned, but could not be applied to the buffer
+    PatchApplyFailed,
     /// The new prediction was preferred over the current one
     Replaced,
     /// The current prediction was preferred over the new one
@@ -292,14 +309,26 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    /// Whether thinking can be turned off entirely for this model, allowing
+    /// clients to offer an "off" choice alongside `supported_effort_levels`.
+    /// Some models (e.g. Claude Fable 5) always think and cannot honor an
+    /// "off" request. Only meaningful when `supports_thinking` is `true`.
+    #[serde(default)]
+    pub supports_disabling_thinking: bool,
     #[serde(default)]
     pub supports_fast_mode: bool,
+    #[serde(default)]
+    pub supports_server_side_compaction: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+    #[serde(default)]
+    pub is_disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

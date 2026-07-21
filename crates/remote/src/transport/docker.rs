@@ -25,7 +25,8 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
-    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
+    RemotePlatform,
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
 };
@@ -57,6 +58,7 @@ pub(crate) struct DockerExecConnection {
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
     remote_platform: Option<RemotePlatform>,
+    os_version: Option<String>,
     path_style: Option<PathStyle>,
     shell: String,
 }
@@ -73,6 +75,7 @@ impl DockerExecConnection {
             remote_binary_relpath: None,
             connection_options,
             remote_platform: None,
+            os_version: None,
             path_style: None,
             shell: "sh".to_owned(),
         };
@@ -87,11 +90,14 @@ impl DockerExecConnection {
 
         this.path_style = match remote_platform.os {
             RemoteOs::Windows => Some(PathStyle::Windows),
-            _ => Some(PathStyle::Posix),
+            _ => Some(PathStyle::Unix),
         };
 
         this.remote_platform = Some(remote_platform);
         log::info!("Remote platform discovered: {:?}", this.remote_platform);
+
+        this.os_version = this.discover_os_version(remote_platform.os).await;
+        log::info!("Remote OS version discovered: {:?}", this.os_version);
 
         this.shell = this.discover_shell().await;
         log::info!("Remote shell discovered: {}", this.shell);
@@ -171,6 +177,21 @@ impl DockerExecConnection {
         parse_platform(&uname)
     }
 
+    /// Best-effort detection of the container's OS version for telemetry.
+    async fn discover_os_version(&self, os: RemoteOs) -> Option<String> {
+        let (program, args) = super::os_version_command(os);
+        match self
+            .run_docker_exec(program, None, &Default::default(), args)
+            .await
+        {
+            Ok(output) => super::parse_os_version(os, &output),
+            Err(error) => {
+                log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
+    }
+
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
@@ -198,7 +219,7 @@ impl DockerExecConnection {
             version_str
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
             .run_docker_exec(
@@ -219,7 +240,7 @@ impl DockerExecConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::unix(&format!(
+                RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -236,11 +257,11 @@ impl DockerExecConnection {
             .await?;
             self.extract_server_binary(&dst_path, &tmp_path, &remote_dir_for_server, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -255,7 +276,7 @@ impl DockerExecConnection {
         })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
-            RelPath::unix(&format!(
+            RelPath::from_unix_str(&format!(
                 "{}-download-{}.gz",
                 binary_name,
                 std::process::id()
@@ -281,7 +302,7 @@ impl DockerExecConnection {
                     )
                     .await
                     .context("extracting server binary")?;
-                    return Ok(dst_path);
+                    return Ok(dst_path.into());
                 }
                 Err(e) => {
                     log::error!(
@@ -313,7 +334,7 @@ impl DockerExecConnection {
         )
         .await
         .context("extracting server binary")?;
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn docker_user_home_dir(&self) -> Result<String> {
@@ -829,7 +850,20 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        self.path_style.unwrap_or(PathStyle::Posix)
+        self.path_style.unwrap_or(PathStyle::Unix)
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        // Docker containers are always Linux; the platform is populated during
+        // setup, so this fallback is only for the brief pre-detection window.
+        self.remote_platform.unwrap_or(RemotePlatform {
+            os: RemoteOs::Linux,
+            arch: RemoteArch::X86_64,
+        })
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
     }
 
     fn shell(&self) -> String {

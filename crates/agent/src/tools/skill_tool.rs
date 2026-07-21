@@ -1,4 +1,4 @@
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_skills::Skill;
 use anyhow::Result;
 use gpui::{App, AsyncApp, SharedString, Task};
@@ -704,8 +704,8 @@ mod tests {
         // Approve once and confirm the tool then completes successfully.
         auth.response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                agent_client_protocol::schema::PermissionOptionId::new("allow"),
-                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+                agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
+                agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
             ))
             .unwrap();
 

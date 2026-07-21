@@ -122,7 +122,12 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
         "theme": "base",
         "darkMode": theme.dark_mode,
         "fontFamily": theme.font_family,
+        // resvg can't rasterize HTML `<foreignObject>` labels, and the
+        // fallback that replaces them loses soft wrapping, so emit native SVG
+        // text labels. Nodes read the top-level key; edges read `flowchart`.
+        "htmlLabels": false,
         "flowchart": {
+            "htmlLabels": false,
             "padding": 16,
         },
         "themeVariables": theme_vars,
@@ -145,10 +150,6 @@ mod tests {
             "got: {html_label_svg}"
         );
         assert!(
-            html_label_svg.contains(r#"data-merman-foreignobject="fallback""#),
-            "got: {html_label_svg}"
-        );
-        assert!(
             !html_label_svg.contains("&amp;lt;"),
             "got: {html_label_svg}"
         );
@@ -162,5 +163,29 @@ mod tests {
         assert!(!css_svg.contains("animation:"), "got: {css_svg}");
         assert!(!css_svg.contains("animation-name:"), "got: {css_svg}");
         assert!(!css_svg.contains("!important"), "got: {css_svg}");
+    }
+
+    /// Soft-wrapped labels must render as native SVG `<tspan>` lines rather
+    /// than the resvg-safe pipeline's single-line `<foreignObject>` fallback,
+    /// which overflows the node box (see the `htmlLabels` comment in
+    /// [`to_merman_config`]). If the fallback marker reappears after a merman
+    /// upgrade, the config has stopped disabling HTML labels.
+    #[test]
+    fn long_labels_render_as_wrapped_svg_text() {
+        let source = "flowchart TD\n    \
+            A[\"Pass 2: search transcript with annotation blocks excised, \
+            map offsets back to buffer space\"] --> \
+            |ambiguous or zero| B[\"Error describing where matches were found\"]";
+        let svg = render_mermaid(source, &MermaidTheme::default()).expect("render failed");
+
+        assert!(
+            !svg.contains(r#"data-merman-foreignobject="fallback""#),
+            "labels went through the foreignObject fallback, which loses soft wrapping: {svg}"
+        );
+        let wrapped_line_count = svg.matches("text-outer-tspan").count();
+        assert!(
+            wrapped_line_count > 3,
+            "expected long labels to wrap onto multiple tspan lines, got {wrapped_line_count}: {svg}"
+        );
     }
 }

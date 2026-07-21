@@ -42,6 +42,10 @@ on:
           - immediate
         default: batch
 
+# Both jobs below declare their own `permissions:` blocks, so no job uses this
+# top-level default. Least privilege therefore grants nothing here.
+permissions: {}
+
 env:
   DROID_MODEL: claude-sonnet-4-5-20250929
   SUGGESTIONS_BRANCH: docs/suggestions-pending

@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Result;
 use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-    interpolate_edits,
+    EditPredictionRequestTrigger, interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
@@ -78,6 +78,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
@@ -282,7 +283,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -490,7 +496,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         // Setup the editor with a completion request.
@@ -622,7 +633,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -717,7 +733,12 @@ mod tests {
         });
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor.update_in(cx, |editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         handle_copilot_completion_request(
@@ -847,7 +868,12 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(
+                Some(copilot_provider),
+                EditPredictionRequestTrigger::EditorCreated,
+                window,
+                cx,
+            )
         });
 
         cx.set_state(indoc! {"
@@ -1013,7 +1039,12 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(
+                    Some(copilot_provider),
+                    EditPredictionRequestTrigger::EditorCreated,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
 
@@ -1041,7 +1072,13 @@ mod tests {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.refresh_edit_prediction(true, false, window, cx);
+            editor.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1051,7 +1088,13 @@ mod tests {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
             });
-            editor.refresh_edit_prediction(true, false, window, cx);
+            editor.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);

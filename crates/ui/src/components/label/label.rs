@@ -73,6 +73,19 @@ impl Label {
         self.base = self.base.truncate_start();
         self
     }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        self.base = self.base.line_clamp(lines);
+        self
+    }
 }
 
 // Style methods.

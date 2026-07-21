@@ -605,7 +605,7 @@ mod tests {
                 worktree_id: 0,
                 positions: positions.clone(),
                 path: candidate.path.into(),
-                path_prefix: RelPath::empty().into(),
+                path_prefix: RelPath::empty_arc(),
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },

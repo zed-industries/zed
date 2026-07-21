@@ -5,7 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
+    MultiBufferSnapshot, RowExt, SelectionEffects, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::EditorDb,
@@ -86,8 +86,13 @@ impl SharedScrollAnchor {
         let snapshot = if let Some(display_map_id) = self.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the snapshot's split companion"
+            );
             companion_snapshot
         } else {
             snapshot
@@ -100,8 +105,13 @@ impl SharedScrollAnchor {
         let snapshot = if let Some(display_map_id) = self.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the snapshot's split companion"
+            );
             companion_snapshot
         } else {
             snapshot
@@ -294,8 +304,14 @@ impl ScrollManager {
         let mut result = if let Some(display_map_id) = shared.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but the snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the companion used for native anchor conversion"
+            );
+
             let mut display_point = shared
                 .scroll_anchor
                 .anchor
@@ -335,6 +351,14 @@ impl ScrollManager {
 
     pub fn set_shared_scroll_anchor(&mut self, entity: Entity<SharedScrollAnchor>) {
         self.anchor = entity;
+    }
+
+    pub fn unshare_scroll_anchor(&mut self, snapshot: &DisplaySnapshot, cx: &mut Context<Editor>) {
+        let scroll_anchor = self.native_anchor(snapshot, cx);
+        self.anchor = cx.new(|_| SharedScrollAnchor {
+            scroll_anchor,
+            display_map_id: Some(snapshot.display_map_id),
+        });
     }
 
     pub fn ongoing_scroll(&self) -> OngoingScroll {
@@ -919,6 +943,63 @@ impl Editor {
                 amount.lines(visible_line_count),
             );
         self.set_scroll_position(new_position, window, cx);
+    }
+
+    pub fn scroll_screen_with_cursor_margin(
+        &mut self,
+        amount: &ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.scroll_screen(amount, window, cx);
+
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let top = self
+            .scroll_manager
+            .scroll_top_display_point(&display_snapshot, cx);
+        let vertical_scroll_margin =
+            (self.vertical_scroll_margin() as u32).min(visible_line_count as u32 / 2);
+
+        let max_point = display_snapshot.max_point();
+        let min_row = if top.row().0 == 0 {
+            DisplayRow(0)
+        } else {
+            DisplayRow(top.row().0 + vertical_scroll_margin)
+        };
+        let max_row = if top.row().0 + visible_line_count as u32 >= max_point.row().0 {
+            max_point.row()
+        } else {
+            DisplayRow(
+                (top.row().0 + visible_line_count as u32)
+                    .saturating_sub(1 + vertical_scroll_margin),
+            )
+        };
+
+        self.change_selections(
+            SelectionEffects::no_scroll().nav_history(false),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    let head = selection.head();
+                    let new_row = if head.row() < min_row {
+                        min_row
+                    } else if head.row() > max_row {
+                        max_row
+                    } else {
+                        head.row()
+                    };
+                    if new_row != head.row() {
+                        let new_head =
+                            map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left);
+                        selection.collapse_to(new_head, selection.goal);
+                    }
+                })
+            },
+        );
     }
 
     /// Returns an ordering. The newest selection is:
