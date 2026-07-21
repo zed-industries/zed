@@ -279,7 +279,7 @@ pub struct CollabPanel {
     collapsed_channels: Vec<ChannelId>,
     filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
-    hovered_channel: Option<ChannelId>,
+    hovered_channel: Option<(ChannelId, bool)>,
     notification_store: Entity<NotificationStore>,
     current_notification_toast: Option<(u64, Task<()>)>,
     mark_as_read_tasks: HashMap<u64, Task<anyhow::Result<()>>>,
@@ -2763,13 +2763,14 @@ impl CollabPanel {
                 channel,
                 depth,
                 has_children,
+                is_favorite,
                 string_match,
-                ..
             } => self
                 .render_channel(
                     &channel,
                     depth,
                     has_children,
+                    is_favorite,
                     is_selected,
                     ix,
                     string_match.as_ref(),
@@ -2890,12 +2891,14 @@ impl CollabPanel {
                                             channel,
                                             depth,
                                             has_children,
+                                            is_favorite,
                                             ..
                                         } => {
                                             *depth == level + 1
                                                 && *has_children
                                                 && (this.is_channel_collapsed(channel.id)
-                                                    || this.hovered_channel == Some(channel.id))
+                                                    || this.hovered_channel
+                                                        == Some((channel.id, *is_favorite)))
                                         }
                                         _ => false,
                                     })
@@ -3362,6 +3365,7 @@ impl CollabPanel {
         channel: &Channel,
         depth: usize,
         has_children: bool,
+        is_favorite_entry: bool,
         is_selected: bool,
         ix: usize,
         string_match: Option<&StringMatch>,
@@ -3442,9 +3446,10 @@ impl CollabPanel {
             IconName::Lock
         };
 
+        let is_hovered = self.hovered_channel == Some((channel_id, is_favorite_entry));
         let overlay_bg = if is_selected || is_active {
             cx.theme().colors().ghost_element_selected
-        } else if self.hovered_channel == Some(channel_id) {
+        } else if is_hovered {
             cx.theme().colors().ghost_element_hover
         } else {
             cx.theme().colors().panel_background
@@ -3479,9 +3484,9 @@ impl CollabPanel {
             .w_full()
             .overflow_hidden()
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                let hovered_channel = hovered.then_some(channel_id);
+                let hovered_channel = hovered.then_some((channel_id, is_favorite_entry));
                 if this.hovered_channel != hovered_channel
-                    && (*hovered || this.hovered_channel == Some(channel_id))
+                    && (*hovered || this.hovered_channel == Some((channel_id, is_favorite_entry)))
                 {
                     this.hovered_channel = hovered_channel;
                     cx.notify();
@@ -3539,7 +3544,7 @@ impl CollabPanel {
                         },
                     ))
                     .when_some(disclosed, |this, is_open| {
-                        if is_open && self.hovered_channel != Some(channel_id) {
+                        if is_open && !is_hovered {
                             this.disclosure_slot(Empty)
                         } else {
                             this.disclosure_slot(deferred(
