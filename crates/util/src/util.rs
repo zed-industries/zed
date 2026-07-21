@@ -450,6 +450,9 @@ pub fn merge_json_lenient_value_into(
     }
 }
 
+/// Merges `source` into `target`: objects are merged recursively, key by key;
+/// any other colliding value in `target` — including arrays — is replaced by
+/// `source`'s value wholesale.
 pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
 
@@ -463,34 +466,6 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 }
             }
         }
-
-        (Value::Array(source), Value::Array(target)) => {
-            for value in source {
-                target.push(value);
-            }
-        }
-
-        (source, target) => *target = source,
-    }
-}
-
-pub fn merge_json_value_into_replacing_arrays(
-    source: serde_json::Value,
-    target: &mut serde_json::Value,
-) {
-    use serde_json::Value;
-
-    match (source, target) {
-        (Value::Object(source), Value::Object(target)) => {
-            for (key, value) in source {
-                if let Some(target) = target.get_mut(&key) {
-                    merge_json_value_into_replacing_arrays(value, target);
-                } else {
-                    target.insert(key, value);
-                }
-            }
-        }
-
         (source, target) => *target = source,
     }
 }
@@ -1136,14 +1111,58 @@ Line 3"#
     }
 
     #[test]
-    fn test_merge_json_value_into_replacing_arrays() {
-        let mut target =
-            serde_json::json!({ "a": 1, "nested": { "x": 1, "y": 2 }, "array": [1, 2] });
-        let source = serde_json::json!({ "b": 2, "nested": { "y": 20, "z": 30 }, "array": [3, 4] });
-        merge_json_value_into_replacing_arrays(source, &mut target);
+    fn test_merge_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "replaced_array": ["default-1", "default-2"],
+            "nulled": true,
+            "array_becomes_object": [1, 2],
+            "object_becomes_scalar": { "x": 1 },
+            "nested": {
+                "kept": true,
+                "overridden": 2,
+                "args": ["--default"],
+                "deeper": { "list": [1, 2], "other": "kept" },
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "replaced_array": ["default-2", "user"],
+            "nulled": null,
+            "array_becomes_object": { "y": 2 },
+            "object_becomes_scalar": 3,
+            "inserted": ["brand-new"],
+            "nested": {
+                "overridden": 20,
+                "args": ["--user"],
+                "deeper": { "list": [3] },
+                "inserted": { "z": true },
+            },
+        });
+
+        merge_json_value_into(source, &mut target);
+
         assert_eq!(
             target,
-            serde_json::json!({ "a": 1, "b": 2, "nested": { "x": 1, "y": 20, "z": 30 }, "array": [3, 4] })
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "replaced_array": ["default-2", "user"],
+                "nulled": null,
+                "array_becomes_object": { "y": 2 },
+                "object_becomes_scalar": 3,
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "overridden": 20,
+                    "args": ["--user"],
+                    "deeper": { "list": [3], "other": "kept" },
+                    "inserted": { "z": true },
+                },
+            })
         );
     }
 }
