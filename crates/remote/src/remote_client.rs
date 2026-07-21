@@ -357,8 +357,10 @@ impl ConnectionIdentifier {
     }
 
     // This string gets used in a socket name, and so must be relatively short.
-    // The total length of:
+    // The total length of the socket path varies by platform :
     //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    //   MacOS: $TMPDIR/zed_server/stdout.sock
+    //     (e.g., /var/folders/7c/4njxmbrs28n2z_w5y3swr50r0000gn/T/stdout.sock)
     // Must be less than about 100 characters
     //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
     // So our strings should be at most 20 characters or so.
