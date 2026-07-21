@@ -211,7 +211,8 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(format!(
-                    "To use Zed's agent with an {provider_name}-compatible provider, you need to add an API key."
+                    "Add an API key if your {provider_name}-compatible provider requires one. \
+                     Local endpoints usually don't need an API key."
                 )))
                 .child(
                     div()

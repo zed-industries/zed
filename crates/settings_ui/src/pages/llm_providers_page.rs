@@ -677,7 +677,8 @@ fn render_llm_provider_form_page(
                 ))
                 .child(render_form_field(
                     "API Key",
-                    "Stored in the system keychain, not in settings.json.",
+                    "Stored in the system keychain, not in settings.json. \
+                     Leave empty if the endpoint doesn't require authentication.",
                     &form.api_key,
                     cx,
                 ))
@@ -1152,13 +1153,15 @@ fn save_llm_provider_form(
                 .await
                 .map_err(|_| anyhow::anyhow!("Settings update was canceled"))??;
 
-            let set_api_key = cx.update(|_window, cx| {
-                let provider = LanguageModelRegistry::read_global(cx)
-                    .provider(&provider_id)
-                    .ok_or_else(|| anyhow::anyhow!("Provider was not registered"))?;
-                anyhow::Ok(provider.set_api_key(Some(api_key), cx))
-            })??;
-            set_api_key.await?;
+            if !api_key.is_empty() {
+                let set_api_key = cx.update(|_window, cx| {
+                    let provider = LanguageModelRegistry::read_global(cx)
+                        .provider(&provider_id)
+                        .ok_or_else(|| anyhow::anyhow!("Provider was not registered"))?;
+                    anyhow::Ok(provider.set_api_key(Some(api_key), cx))
+                })??;
+                set_api_key.await?;
+            }
 
             cx.update(|window, cx| {
                 this.update(cx, |this, cx| {
@@ -1211,10 +1214,9 @@ fn validate_llm_provider_form(
         return Err("API URL cannot be empty".into());
     }
 
+    // An empty API key is allowed: local and self-hosted endpoints often
+    // don't authenticate requests.
     let api_key = values.api_key.clone();
-    if api_key.is_empty() {
-        return Err("API Key cannot be empty".into());
-    }
 
     let models = match values.kind {
         CompatibleProviderKind::OpenAi => ParsedModels::OpenAi(

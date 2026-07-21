@@ -494,6 +494,39 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_compatible_providers_do_not_require_an_api_key(cx: &mut App) {
+        let (client, credentials_provider) = init_test(cx);
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        // Custom providers frequently point at local endpoints that don't
+        // authenticate requests, so having no API key must not make them
+        // unusable (issue #61371: a provider named after a hosted service
+        // appeared to require that service's API key).
+        let providers = update_compatible_provider_settings(&["mtplx"], &["acme"], cx);
+        registry.update(cx, |registry, cx| {
+            register_compatible_providers(
+                registry,
+                &CompatibleProviders::default(),
+                &providers,
+                &client,
+                &credentials_provider,
+                cx,
+            );
+        });
+
+        for id in ["mtplx", "acme"] {
+            let provider = registry
+                .read(cx)
+                .provider(&LanguageModelProviderId::from(Arc::<str>::from(id)))
+                .expect("provider should be registered");
+            assert!(
+                provider.is_authenticated(cx),
+                "provider `{id}` should be usable without an API key"
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_compatible_provider_changes_kind_and_unregisters(cx: &mut App) {
         let (client, credentials_provider) = init_test(cx);
         let registry = cx.new(|_| LanguageModelRegistry::default());

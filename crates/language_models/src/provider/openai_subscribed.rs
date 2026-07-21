@@ -581,7 +581,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
-                        &access_token,
+                        Some(&access_token),
                         responses_request,
                         &extra_headers,
                     )

@@ -299,7 +299,7 @@ impl VercelAiGatewayLanguageModel {
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
-                &api_key,
+                Some(&api_key),
                 request,
                 &extra_headers,
             );

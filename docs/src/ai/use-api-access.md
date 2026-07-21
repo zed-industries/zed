@@ -462,11 +462,11 @@ The optional `custom_headers` map adds extra headers to every request, which som
 
 Models also support the optional `default_temperature`, `extra_beta_headers` (sent as `anthropic-beta` headers), `mode`, and `tool_override` fields, which behave the same as in [Custom Anthropic Models](#anthropic-custom-models).
 
-Enter the API key in the provider settings UI or set the generated environment variable (`<PROVIDER_NAME>_API_KEY`; in the example above, `SOME_PROVIDER_API_KEY`). Do not put API keys in `settings.json`.
+Enter the API key in the provider settings UI or set the generated environment variable (`<PROVIDER_NAME>_API_KEY`; in the example above, `SOME_PROVIDER_API_KEY`). Do not put API keys in `settings.json`. If the endpoint doesn't require authentication, leave the API key empty.
 
 ### OpenAI-Compatible Endpoints {#openai-compatible}
 
-Use an OpenAI-compatible endpoint when you have a custom base URL, model ID, and API key.
+Use an OpenAI-compatible endpoint when you have a custom base URL and model ID. An API key is only needed if the endpoint requires one.
 
 You can add a custom OpenAI-compatible provider from Agent Settings with {#action agent::OpenSettings}. Look for `Add Provider` in the LLM Providers section and fill in the provider name, API URL, model ID, and context window.
 
@@ -568,4 +568,4 @@ For example, a chat-completions endpoint with the maximum OpenAI-style reasoning
 }
 ```
 
-Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`.
+Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`. If the endpoint doesn't require authentication — common for local and self-hosted servers — leave the API key empty and requests are sent without an `Authorization` header.

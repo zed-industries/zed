@@ -444,6 +444,77 @@ mod tests {
     use super::{Model, ReasoningEffort};
 
     #[test]
+    fn stream_completion_sends_authorization_header_only_with_api_key() {
+        use super::*;
+        use std::sync::{Arc, Mutex};
+
+        let auth_headers: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+        let client = http_client::FakeHttpClient::create({
+            let auth_headers = auth_headers.clone();
+            move |request| {
+                auth_headers.lock().unwrap().push(
+                    request
+                        .headers()
+                        .get("Authorization")
+                        .map(|value| value.to_str().unwrap().to_string()),
+                );
+                async move {
+                    Ok(http_client::http::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from("data: [DONE]\n".to_string()))
+                        .unwrap())
+                }
+            }
+        });
+
+        let request = || Request {
+            model: "test-model".into(),
+            messages: Vec::new(),
+            stream: true,
+            stream_options: None,
+            max_completion_tokens: None,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning_effort: None,
+            service_tier: None,
+        };
+
+        futures::executor::block_on(async {
+            stream_completion(
+                client.as_ref(),
+                "test",
+                "http://localhost:1234/v1",
+                None,
+                request(),
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+            stream_completion(
+                client.as_ref(),
+                "test",
+                "http://localhost:1234/v1",
+                Some("sk-test"),
+                request(),
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+        });
+
+        assert_eq!(
+            auth_headers.lock().unwrap().as_slice(),
+            [None, Some("Bearer sk-test".to_string())],
+            "requests without an API key must not send an Authorization header"
+        );
+    }
+
+    #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {
         let expected_efforts = [
             ReasoningEffort::None,
@@ -830,16 +901,20 @@ pub async fn stream_completion(
     client: &dyn HttpClient,
     provider_name: &str,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json");
+    if let Some(api_key) = api_key {
+        request_builder =
+            request_builder.header("Authorization", format!("Bearer {}", api_key.trim()));
+    }
+    let request = request_builder
         .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
