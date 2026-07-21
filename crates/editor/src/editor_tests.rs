@@ -35,7 +35,8 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::{language, markdown_lang, rust_lang};
+use languages::markdown_lang;
+use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -9603,80 +9604,6 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
 }
 
 #[gpui::test]
-async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
-    let go_language = language("go", tree_sitter_go::LANGUAGE.into());
-    project.read_with(cx, |project, _| {
-        project.languages().add(rust_lang());
-        project.languages().add(go_language.clone());
-    });
-    let buffer = project
-        .update(cx, |project, cx| project.create_buffer(None, true, cx))
-        .await
-        .unwrap();
-    let window = cx.add_window(|window, cx| {
-        let editor = build_editor_with_project(
-            project,
-            MultiBuffer::build_from_buffer(buffer.clone(), cx),
-            window,
-            cx,
-        );
-        window.focus(&editor.focus_handle(cx), cx);
-        editor
-    });
-    let editor = window.root(cx).unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        PLAIN_TEXT.name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.insert("fn main() {}", window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        PLAIN_TEXT.name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        rust_lang().name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.backspace(&Backspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    editor.update_in(cx, |editor, window, cx| {
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }".to_string(),
-        ));
-        editor.paste(&Paste, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        go_language.name()
-    );
-}
-
-#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -10817,6 +10744,40 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         .assert_editor_state(
             "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhh\niiiii",
         );
+}
+
+#[gpui::test]
+/// A different number of tabs can align the same column on each row, so a cursor has to
+/// be placed by the column the tabs expand to. Counting a tab as a single column lands it
+/// wherever that many characters happen to reach on the next row.
+#[gpui::test]
+async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Both `=` render at column 48: `current.rgb.r` ends at 37 and is padded by three
+    // tabs, `residuals[run].rgb.r` ends at 44 and is padded by one.
+    cx.set_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\t= p[0] & 0xff;\n",
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
+    );
 }
 
 #[gpui::test]

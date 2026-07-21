@@ -24,6 +24,7 @@ use crate::{
 #[derive(Debug)]
 pub(super) struct RunnableData {
     runnables: HashMap<BufferId, (Global, BTreeMap<BufferRow, RunnableTasks>)>,
+    task_statuses: HashMap<(BufferId, BufferRow), RunnableTaskStatus>,
     invalidate_buffer_data: HashSet<BufferId>,
     runnables_update_task: Task<()>,
 }
@@ -32,6 +33,7 @@ impl RunnableData {
     pub fn new() -> Self {
         Self {
             runnables: HashMap::default(),
+            task_statuses: HashMap::default(),
             invalidate_buffer_data: HashSet::default(),
             runnables_update_task: Task::ready(()),
         }
@@ -48,6 +50,38 @@ impl RunnableData {
         self.runnables
             .values()
             .flat_map(|(_, tasks)| tasks.values())
+    }
+
+    pub fn task_status(
+        &self,
+        (buffer_id, buffer_row): (BufferId, BufferRow),
+    ) -> Option<RunnableTaskStatus> {
+        self.task_statuses.get(&(buffer_id, buffer_row)).copied()
+    }
+
+    pub fn set_task_status(
+        &mut self,
+        (buffer_id, buffer_row): (BufferId, BufferRow),
+        status: RunnableTaskStatus,
+    ) {
+        self.task_statuses.insert((buffer_id, buffer_row), status);
+    }
+
+    pub fn task_key_for_offset(
+        &self,
+        buffer_id: BufferId,
+        offset: BufferOffset,
+    ) -> Option<(BufferId, BufferRow)> {
+        let (_, tasks_by_row) = self.runnables.get(&buffer_id)?;
+        tasks_by_row
+            .iter()
+            .find(|(_, tasks)| tasks.context_range.contains(&offset))
+            .or_else(|| {
+                tasks_by_row
+                    .iter()
+                    .find(|(_, tasks)| tasks.context_range.start >= offset)
+            })
+            .map(|(row, _)| (buffer_id, *row))
     }
 
     pub fn has_cached(&self, buffer_id: BufferId, version: &Global) -> bool {
@@ -69,6 +103,24 @@ impl RunnableData {
             .or_insert_with(|| (version, BTreeMap::default()))
             .1
             .insert(buffer_row, tasks);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunnableTaskStatus {
+    Running,
+    Passed,
+    Failed,
+}
+
+impl From<workspace::tasks::ScheduledTaskResult> for RunnableTaskStatus {
+    fn from(result: workspace::tasks::ScheduledTaskResult) -> Self {
+        match result {
+            workspace::tasks::ScheduledTaskResult::Success => Self::Passed,
+            workspace::tasks::ScheduledTaskResult::Failure
+            | workspace::tasks::ScheduledTaskResult::SpawnFailed
+            | workspace::tasks::ScheduledTaskResult::Cancelled => Self::Failed,
+        }
     }
 }
 
@@ -307,6 +359,8 @@ impl Editor {
             return;
         };
 
+        let buffer_id = buffer.read(cx).remote_id();
+        let editor = cx.weak_entity();
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
         cx.spawn_in(window, async move |_, cx| {
@@ -316,12 +370,34 @@ impl Editor {
             let resolved = &mut resolved_task.resolved;
             resolved.reveal = reveal_strategy;
 
+            editor
+                .update(cx, |editor, cx| {
+                    editor.set_runnable_task_status(
+                        buffer_id,
+                        buffer_row,
+                        RunnableTaskStatus::Running,
+                        cx,
+                    );
+                })
+                .ok();
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.schedule_resolved_task(
+                    workspace.schedule_resolved_task_with_completion(
                         task_source_kind,
                         resolved_task,
                         false,
+                        move |result, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    editor.set_runnable_task_status(
+                                        buffer_id,
+                                        buffer_row,
+                                        RunnableTaskStatus::from(result),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        },
                         window,
                         cx,
                     );
@@ -334,11 +410,43 @@ impl Editor {
     pub fn clear_runnables(&mut self, for_buffer: Option<BufferId>) {
         if let Some(buffer_id) = for_buffer {
             self.runnables.runnables.remove(&buffer_id);
+            self.runnables
+                .task_statuses
+                .retain(|(status_buffer_id, _), _| *status_buffer_id != buffer_id);
         } else {
             self.runnables.runnables.clear();
+            self.runnables.task_statuses.clear();
         }
         self.runnables.invalidate_buffer_data.clear();
         self.runnables.runnables_update_task = Task::ready(());
+    }
+
+    pub(crate) fn runnable_task_status(
+        &self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+    ) -> Option<RunnableTaskStatus> {
+        self.runnables.task_status((buffer_id, buffer_row))
+    }
+
+    pub(crate) fn set_runnable_task_status(
+        &mut self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+        status: RunnableTaskStatus,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables
+            .set_task_status((buffer_id, buffer_row), status);
+        cx.notify();
+    }
+
+    pub(crate) fn runnable_task_key_for_offset(
+        &self,
+        buffer_id: BufferId,
+        offset: BufferOffset,
+    ) -> Option<(BufferId, BufferRow)> {
+        self.runnables.task_key_for_offset(buffer_id, offset)
     }
 
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -515,44 +623,53 @@ impl Editor {
         None
     }
 
-    pub fn render_run_indicator(
+    pub(crate) fn render_run_indicator(
         &self,
         _style: &EditorStyle,
         is_active: bool,
         active_breakpoint: Option<Anchor>,
+        task_status: Option<RunnableTaskStatus>,
         row: DisplayRow,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = Color::Muted;
+        let (icon, color) = match task_status {
+            Some(RunnableTaskStatus::Running) => (ui::IconName::PlayOutlined, Color::Accent),
+            Some(RunnableTaskStatus::Passed) => (ui::IconName::Check, Color::Success),
+            Some(RunnableTaskStatus::Failed) => (ui::IconName::XCircle, Color::Error),
+            None => (ui::IconName::PlayOutlined, Color::Muted),
+        };
 
-        IconButton::new(
-            ("run_indicator", row.0 as usize),
-            ui::IconName::PlayOutlined,
-        )
-        .shape(ui::IconButtonShape::Square)
-        .icon_size(IconSize::XSmall)
-        .icon_color(color)
-        .toggle_state(is_active)
-        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = match e {
-                ClickEvent::Keyboard(_) => true,
-                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
-                ClickEvent::Touch(_) => true,
-            };
+        IconButton::new(("run_indicator", row.0 as usize), icon)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::XSmall)
+            .icon_color(color)
+            .toggle_state(is_active)
+            .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+                let quick_launch = match e {
+                    ClickEvent::Keyboard(_) => true,
+                    ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+                    ClickEvent::Touch(_) => true,
+                };
 
-            window.focus(&editor.focus_handle(cx), cx);
-            editor.toggle_code_actions(
-                &ToggleCodeActions {
-                    deployed_from: Some(CodeActionSource::RunMenu(row)),
-                    quick_launch,
-                },
-                window,
-                cx,
-            );
-        }))
-        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_gutter_context_menu(row, active_breakpoint, event.position(), window, cx);
-        }))
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.toggle_code_actions(
+                    &ToggleCodeActions {
+                        deployed_from: Some(CodeActionSource::RunMenu(row)),
+                        quick_launch,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+                editor.set_gutter_context_menu(
+                    row,
+                    active_breakpoint,
+                    event.position(),
+                    window,
+                    cx,
+                );
+            }))
     }
 
     fn insert_runnables(
