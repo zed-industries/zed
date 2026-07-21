@@ -184,7 +184,7 @@ use language::{
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
-        WordsCompletionMode, all_language_settings,
+        SoftWrapIndent, WordsCompletionMode, all_language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -2624,6 +2624,10 @@ impl Editor {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
+        }
+
+        if !is_minimap {
+            editor.apply_soft_wrap_indent(cx);
         }
 
         editor
@@ -9910,6 +9914,7 @@ impl Editor {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
+                self.apply_soft_wrap_indent(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
