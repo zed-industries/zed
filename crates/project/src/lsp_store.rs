@@ -4094,6 +4094,26 @@ impl LocalLspStore {
     }
 }
 
+/// Prunes per-server cached LSP data of servers no longer relevant for the buffer, and
+/// returns the relevant servers that have no cached data yet.
+/// `None` means the cache covers all relevant servers and can be returned as is.
+fn missing_servers_to_query<T>(
+    cached: &mut HashMap<LanguageServerId, T>,
+    current_servers: &HashSet<LanguageServerId>,
+) -> Option<HashSet<LanguageServerId>> {
+    cached.retain(|server_id, _| current_servers.contains(server_id));
+    let missing_servers = current_servers
+        .iter()
+        .copied()
+        .filter(|server_id| !cached.contains_key(server_id))
+        .collect::<HashSet<_>>();
+    if missing_servers.is_empty() {
+        None
+    } else {
+        Some(missing_servers)
+    }
+}
+
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
     if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
         cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -5277,7 +5297,7 @@ impl LspStore {
         &self,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<LanguageServerId> {
+    ) -> HashSet<LanguageServerId> {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(local) = self.as_local() {
             return local
@@ -5290,7 +5310,7 @@ impl LspStore {
         }
 
         let Some(language) = buffer.read(cx).language().cloned() else {
-            return Vec::default();
+            return HashSet::default();
         };
         let registered_language_servers = self
             .languages

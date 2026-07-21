@@ -18,7 +18,7 @@ use util::ResultExt;
 
 use crate::DocumentSymbol;
 use crate::lsp_command::{GetDocumentSymbols, LspCommand as _};
-use crate::lsp_store::{LspStore, LspStoreEvent};
+use crate::lsp_store::{LspStore, LspStoreEvent, missing_servers_to_query};
 use crate::project_settings::ProjectSettings;
 
 pub(super) type DocumentSymbolsTask =
@@ -111,28 +111,22 @@ impl LspStore {
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
             && let Some(cached) = &mut lsp_data.document_symbols
         {
-            cached
-                .symbols
-                .retain(|server_id, _| current_servers.contains(server_id));
-            let missing_servers = current_servers
-                .iter()
-                .copied()
-                .filter(|server_id| !cached.symbols.contains_key(server_id))
-                .collect::<HashSet<_>>();
-            if missing_servers.is_empty() {
-                let snapshot = buffer.read(cx).snapshot();
-                return Task::ready(
-                    cached
-                        .symbols
-                        .values()
-                        .flatten()
-                        .unique()
-                        .cloned()
-                        .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
-                        .collect(),
-                );
+            match missing_servers_to_query(&mut cached.symbols, &current_servers) {
+                Some(missing_servers) => servers_to_query = Some(missing_servers),
+                None => {
+                    let snapshot = buffer.read(cx).snapshot();
+                    return Task::ready(
+                        cached
+                            .symbols
+                            .values()
+                            .flatten()
+                            .unique()
+                            .cloned()
+                            .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
+                            .collect(),
+                    );
+                }
             }
-            servers_to_query = Some(missing_servers);
         }
 
         let doc_symbols_data = self

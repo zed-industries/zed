@@ -18,7 +18,7 @@ use text::{Anchor, BufferId, ToPointUtf16 as _};
 use util::ResultExt as _;
 
 use crate::lsp_command::{GetDocumentLinks, LspCommand as _};
-use crate::lsp_store::{LspStore, LspStoreEvent};
+use crate::lsp_store::{LspStore, LspStoreEvent, missing_servers_to_query};
 use crate::project_settings::ProjectSettings;
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -137,18 +137,10 @@ impl LspStore {
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
             && let Some(cached) = &mut lsp_data.document_links
         {
-            cached
-                .links
-                .retain(|server_id, _| current_servers.contains(server_id));
-            let missing_servers = current_servers
-                .iter()
-                .copied()
-                .filter(|server_id| !cached.links.contains_key(server_id))
-                .collect::<HashSet<_>>();
-            if missing_servers.is_empty() {
-                return Task::ready(Some(cached.links.clone()));
+            match missing_servers_to_query(&mut cached.links, &current_servers) {
+                Some(missing_servers) => servers_to_query = Some(missing_servers),
+                None => return Task::ready(Some(cached.links.clone())),
             }
-            servers_to_query = Some(missing_servers);
         }
 
         let links_lsp_data = self

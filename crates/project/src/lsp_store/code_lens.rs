@@ -20,6 +20,7 @@ use util::ResultExt as _;
 use crate::{
     CodeAction, LspAction, LspStore, LspStoreEvent, Project,
     lsp_command::{GetCodeLens, LspCommand as _},
+    lsp_store::missing_servers_to_query,
     project_settings::ProjectSettings,
 };
 
@@ -153,18 +154,13 @@ impl LspStore {
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_lens) = &mut lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    cached_lens
-                        .lens
-                        .retain(|server_id, _| current_servers.contains(server_id));
-                    let missing_servers = current_servers
-                        .iter()
-                        .copied()
-                        .filter(|server_id| !cached_lens.lens.contains_key(server_id))
-                        .collect::<HashSet<_>>();
-                    if missing_servers.is_empty() {
-                        return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
+                    match missing_servers_to_query(&mut cached_lens.lens, &current_servers) {
+                        Some(missing_servers) => servers_to_query = Some(missing_servers),
+                        None => {
+                            return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens))))
+                                .shared();
+                        }
                     }
-                    servers_to_query = Some(missing_servers);
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
                     if !version_queried_for.changed_since(updating_for) {
                         return running_update.clone();

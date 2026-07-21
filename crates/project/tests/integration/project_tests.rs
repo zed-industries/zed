@@ -2951,6 +2951,7 @@ async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestApp
     };
     let options_a_replacement = lsp::InlayHintOptions::default();
 
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
     register_capability(
         &fake_server,
         method,
@@ -2965,6 +2966,16 @@ async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestApp
         serde_json::to_value(&options_b).ok(),
     )
     .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            format!("inlay_hints({server_id})"),
+            format!("inlay_hints({server_id})"),
+        ],
+        "expected both registrations to trigger a refresh",
+    );
+
     register_capability(
         &fake_server,
         method,
@@ -2979,6 +2990,11 @@ async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestApp
             lsp::InlayHintServerCapabilities::Options(options_b)
         )),
         "expected the latest distinct registration to stay active after a duplicate ID replaced an older one",
+    );
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected no refresh after a duplicate ID replaced an inactive registration",
     );
 
     unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
@@ -3054,12 +3070,30 @@ async fn test_multi_registration_completion_triggers(cx: &mut gpui::TestAppConte
         "expected the second registration's triggers to replace the first ones",
     );
 
+    let options_a_replacement = lsp::CompletionOptions {
+        trigger_characters: Some(vec!["!".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+    register_capability(
+        &fake_server,
+        method,
+        "completion-a",
+        serde_json::to_value(&options_a_replacement).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([":".to_string()]),
+        "expected the active registration's triggers to stay applied after a duplicate ID replaced an inactive one",
+    );
+
     unregister_capabilities(&fake_server, method, &["completion-b"]).await;
     cx.executor().run_until_parked();
     assert_eq!(
         buffer_triggers(cx),
-        BTreeSet::from([".".to_string()]),
-        "expected the remaining registration's triggers to be restored",
+        BTreeSet::from(["!".to_string()]),
+        "expected the replaced registration's triggers to be restored",
     );
 
     unregister_capabilities(&fake_server, method, &["completion-a"]).await;
@@ -3104,6 +3138,7 @@ async fn test_multi_registration_middle_removal(cx: &mut gpui::TestAppContext) {
     .await;
     cx.executor().run_until_parked();
 
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
     unregister_capabilities(&fake_server, method, &["inlay-hint-a"]).await;
     cx.executor().run_until_parked();
     assert_eq!(
@@ -3113,6 +3148,11 @@ async fn test_multi_registration_middle_removal(cx: &mut gpui::TestAppContext) {
         )),
         "expected the latest registration to stay active after removing an older one from the middle",
     );
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected no refresh after removing an inactive registration",
+    );
 
     unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
     cx.executor().run_until_parked();
@@ -3120,6 +3160,94 @@ async fn test_multi_registration_middle_removal(cx: &mut gpui::TestAppContext) {
         server_capabilities(&project, server_id, cx).inlay_hint_provider,
         None,
         "expected inlay hint provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_refresh_during_code_lens_fetch_does_not_resurrect_stale_data(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let method = "textDocument/codeLens";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lens_requests = Arc::new(atomic::AtomicUsize::new(0));
+    let (gate_tx, gate_rx) = futures::channel::oneshot::channel::<()>();
+    let gate_rx = Arc::new(Mutex::new(Some(gate_rx)));
+    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+        let lens_requests = lens_requests.clone();
+        let gate_rx = gate_rx.clone();
+        move |_, _| {
+            lens_requests.fetch_add(1, atomic::Ordering::Release);
+            let gate = gate_rx.lock().take();
+            async move {
+                if let Some(gate) = gate {
+                    gate.await.ok();
+                }
+                Ok(Some(vec![lsp::CodeLens {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                    command: Some(lsp::Command {
+                        title: "stale lens".to_string(),
+                        command: "lens_cmd".to_string(),
+                        arguments: None,
+                    }),
+                    data: None,
+                }]))
+            }
+        }
+    });
+
+    register_capability(
+        &fake_server,
+        method,
+        "lens",
+        serde_json::to_value(lsp::CodeLensOptions {
+            resolve_provider: None,
+        })
+        .ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let first_fetch =
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx));
+    cx.executor().advance_clock(Duration::from_millis(50));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        lens_requests.load(atomic::Ordering::Acquire),
+        1,
+        "expected the code lens request to be in flight before the unregistration",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens"]).await;
+    cx.executor().run_until_parked();
+
+    gate_tx.send(()).unwrap();
+    first_fetch.await.unwrap();
+    cx.executor().run_until_parked();
+
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        actions.map(|actions| actions.len()),
+        Some(0),
+        "expected no code lens data after the unregistration, even though a stale fetch completed after it",
+    );
+    assert_eq!(
+        lens_requests.load(atomic::Ordering::Acquire),
+        1,
+        "expected the unregistered server to not be queried again",
     );
 }
 

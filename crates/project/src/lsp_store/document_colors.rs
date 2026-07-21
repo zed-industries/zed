@@ -22,7 +22,7 @@ use worktree::File;
 use crate::{
     ColorPresentation, DocumentColor, LspStore,
     lsp_command::{GetDocumentColor, LspCommand as _, make_text_document_identifier},
-    lsp_store::LspStoreEvent,
+    lsp_store::{LspStoreEvent, missing_servers_to_query},
     project_settings::ProjectSettings,
 };
 
@@ -112,23 +112,17 @@ impl LspStore {
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
             && let Some(cached_colors) = &mut lsp_data.document_colors
         {
-            cached_colors
-                .colors
-                .retain(|server_id, _| current_servers.contains(server_id));
-            let missing_servers = current_servers
-                .iter()
-                .copied()
-                .filter(|server_id| !cached_colors.colors.contains_key(server_id))
-                .collect::<HashSet<_>>();
-            if missing_servers.is_empty() {
-                return Some(
-                    Task::ready(Ok(DocumentColors {
-                        colors: cached_colors.colors.values().flatten().cloned().collect(),
-                    }))
-                    .shared(),
-                );
+            match missing_servers_to_query(&mut cached_colors.colors, &current_servers) {
+                Some(missing_servers) => servers_to_query = Some(missing_servers),
+                None => {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_colors.colors.values().flatten().cloned().collect(),
+                        }))
+                        .shared(),
+                    );
+                }
             }
-            servers_to_query = Some(missing_servers);
         }
 
         let color_lsp_data = self
