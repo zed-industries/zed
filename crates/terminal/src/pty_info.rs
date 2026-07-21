@@ -98,11 +98,13 @@ impl PtyProcessInfo {
         // terminal (#58651). Refresh only the spawned child so that
         // `kill_child_process` works before the first foreground refresh.
         let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid_getter.fallback_pid()]),
-            true,
-            process_refresh_kind,
-        );
+        util::fd::with_new_fds_close_on_exec(|| {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid_getter.fallback_pid()]),
+                true,
+                process_refresh_kind,
+            );
+        });
 
         PtyProcessInfo {
             system: RwLock::new(system),
@@ -136,7 +138,13 @@ impl PtyProcessInfo {
         } else {
             &pids[..]
         };
-        system.refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, self.refresh_kind);
+        util::fd::with_new_fds_close_on_exec(|| {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(pids),
+                true,
+                self.refresh_kind,
+            );
+        });
         drop(system);
         RwLockReadGuard::try_map(self.system.read(), |system| system.process(pid)).ok()
     }

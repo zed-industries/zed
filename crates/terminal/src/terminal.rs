@@ -1198,6 +1198,14 @@ impl TerminalBuilder {
                     shell_kind.tty_escape_args(),
                 );
 
+                // Ensure no leaked fds from GPU/compositor/Wayland are inherited by the child shell.
+                #[cfg(target_os = "linux")]
+                if let Err(error) = util::fd::mark_open_fds_close_on_exec() {
+                    log::debug!(
+                        "failed to set non-standard fds close-on-exec before pty spawn: {error}"
+                    );
+                }
+
                 //Setup the pty...
                 let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
                     Ok(pty) => pty,
