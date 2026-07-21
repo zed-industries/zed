@@ -358,7 +358,12 @@ impl TestServer {
             client::init(&client, cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            call::init(client.clone(), user_store.clone(), cx);
+            call::init(
+                client.clone(),
+                user_store.clone(),
+                app_state.node_runtime.clone(),
+                cx,
+            );
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
             collab_ui::init(&app_state, cx);
@@ -891,6 +896,7 @@ impl TestClient {
                 host_project_id,
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                self.app_state.node_runtime.clone(),
                 cx,
             )
         })

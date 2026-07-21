@@ -12,6 +12,7 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 pub mod manifest_tree;
+pub mod mcp_registry_store;
 pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
@@ -53,6 +54,7 @@ pub use git_store::{
     repo_identity_path_if_local, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
+pub use mcp_registry_store::McpRegistryStore;
 pub use project_search::{Search, SearchResults};
 pub use worktree_store::WorktreePaths;
 
@@ -1246,17 +1248,18 @@ impl Project {
                 .detach();
 
             let weak_self = cx.weak_entity();
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
+            });
             let context_server_store = cx.new(|cx| {
                 ContextServerStore::local(
                     worktree_store.clone(),
+                    environment.clone(),
                     Some(weak_self.clone()),
+                    Some(node.clone()),
                     false,
                     cx,
                 )
-            });
-
-            let environment = cx.new(|cx| {
-                ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
             });
             let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
@@ -1497,22 +1500,23 @@ impl Project {
                 )
             });
 
-            let context_server_store = cx.new(|cx| {
-                ContextServerStore::remote(
-                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
-                    remote.clone(),
-                    worktree_store.clone(),
-                    Some(weak_self.clone()),
-                    cx,
-                )
-            });
-
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(
                     None,
                     worktree_store.downgrade(),
                     Some(remote.downgrade()),
                     false,
+                    cx,
+                )
+            });
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    Some(weak_self.clone()),
+                    Some(node.clone()),
                     cx,
                 )
             });
@@ -1709,6 +1713,7 @@ impl Project {
     pub async fn in_room(
         remote_id: u64,
         client: Arc<Client>,
+        node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -1748,6 +1753,7 @@ impl Project {
             response,
             subscriptions,
             client,
+            node,
             false,
             user_store,
             languages,
@@ -1761,6 +1767,7 @@ impl Project {
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscriptions: [EntitySubscription; 8],
         client: Arc<Client>,
+        node: NodeRuntime,
         run_tasks: bool,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -1875,7 +1882,14 @@ impl Project {
             let weak_self = cx.weak_entity();
             git_store.update(cx, |git_store, _| git_store.set_project(weak_self.clone()));
             let context_server_store = cx.new(|cx| {
-                ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
+                ContextServerStore::local(
+                    worktree_store.clone(),
+                    environment.clone(),
+                    Some(weak_self),
+                    Some(node.clone()),
+                    false,
+                    cx,
+                )
             });
 
             let mut worktrees = Vec::new();

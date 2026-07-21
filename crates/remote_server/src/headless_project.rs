@@ -234,6 +234,7 @@ impl HeadlessProject {
         });
 
         AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
+        project::McpRegistryStore::init_global(cx, fs.clone(), http_client.clone());
 
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store = AgentServerStore::local(
@@ -248,8 +249,14 @@ impl HeadlessProject {
         });
 
         let context_server_store = cx.new(|cx| {
-            let mut context_server_store =
-                ContextServerStore::local(worktree_store.clone(), None, true, cx);
+            let mut context_server_store = ContextServerStore::local(
+                worktree_store.clone(),
+                environment.clone(),
+                None,
+                Some(node_runtime.clone()),
+                true,
+                cx,
+            );
             context_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
             context_server_store
         });

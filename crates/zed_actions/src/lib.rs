@@ -118,6 +118,12 @@ pub struct Extensions {
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
 
+/// Opens the MCP registry.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct McpRegistry;
+
 /// Show call diagnostics and connection quality statistics.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = collab)]

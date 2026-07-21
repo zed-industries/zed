@@ -536,6 +536,21 @@ pub enum ContextServerSettingsContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         oauth: Option<OAuthClientSettings>,
     },
+    Registry {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// Whether to run the context server on the remote server when using remote development.
+        ///
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
+        /// User-provided configuration for this MCP Registry server.
+        registry: McpRegistryServerSettings,
+    },
+    // All extension fields have defaults, so this fallback must follow the other untagged variants.
     Extension {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
@@ -556,6 +571,20 @@ pub enum ContextServerSettingsContent {
     },
 }
 
+#[derive(Default, Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct McpRegistryServerSettings {
+    /// Opaque identifier for secret input values stored in the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
+    /// Non-secret values supplied for configurable registry inputs.
+    ///
+    /// Keys are stable identifiers derived from the registry input descriptors.
+    /// Values are arrays because registry arguments may be repeated. Inputs marked
+    /// as secret by the registry are stored in the system keychain instead.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inputs: HashMap<String, Vec<String>>,
+}
+
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
@@ -573,6 +602,10 @@ impl ContextServerSettingsContent {
                 enabled: remote_enabled,
                 ..
             } => *remote_enabled = enabled,
+            ContextServerSettingsContent::Registry {
+                enabled: registry_enabled,
+                ..
+            } => *registry_enabled = enabled,
         }
     }
 }
@@ -606,23 +639,14 @@ pub struct ContextServerCommand {
 impl std::fmt::Debug for ContextServerCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let filtered_env = self.env.as_ref().map(|env| {
-            env.iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        if util::redact::should_redact(k) {
-                            "[REDACTED]"
-                        } else {
-                            v
-                        },
-                    )
-                })
+            env.keys()
+                .map(|key| (key, "[REDACTED]"))
                 .collect::<Vec<_>>()
         });
 
         f.debug_struct("ContextServerCommand")
             .field("path", &self.path)
-            .field("args", &self.args)
+            .field("argument_count", &self.args.len())
             .field("env", &filtered_env)
             .finish()
     }
@@ -1365,5 +1389,94 @@ mod tests {
             panic!("expected Stdio variant, got {settings:?}");
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn minimal_registry_settings_are_distinct_from_extension_settings() -> anyhow::Result<()> {
+        let registry = serde_json::from_str::<ContextServerSettingsContent>(r#"{"registry": {}}"#)?;
+        assert!(matches!(
+            registry,
+            ContextServerSettingsContent::Registry { .. }
+        ));
+
+        let extension = serde_json::from_str::<ContextServerSettingsContent>("{}")?;
+        assert!(matches!(
+            extension,
+            ContextServerSettingsContent::Extension { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_registry_context_server_source_is_ignored_by_serde() {
+        let json = r#"{
+            "enabled": false,
+            "remote": true,
+            "registry": {
+                "source": {
+                    "type": "package",
+                    "registry_type": "npm",
+                    "identifier": "@example/server"
+                },
+                "credential_id": "test-credential-id",
+                "inputs": {
+                    "environment:LOG_LEVEL": ["debug"]
+                }
+            }
+        }"#;
+        let Ok(settings) = serde_json::from_str::<ContextServerSettingsContent>(json) else {
+            panic!("registry context server settings should parse");
+        };
+
+        let ContextServerSettingsContent::Registry {
+            enabled,
+            remote,
+            registry,
+        } = &settings
+        else {
+            panic!("expected registry context server settings, got {settings:?}");
+        };
+        assert!(!enabled);
+        assert!(*remote);
+        assert_eq!(
+            registry.credential_id.as_deref(),
+            Some("test-credential-id")
+        );
+        assert_eq!(
+            registry.inputs.get("environment:LOG_LEVEL"),
+            Some(&vec!["debug".to_string()])
+        );
+
+        let Ok(serialized) = serde_json::to_value(settings) else {
+            panic!("registry context server settings should serialize");
+        };
+        assert!(serialized["registry"].get("source").is_none());
+        assert_eq!(
+            serialized["registry"]["credential_id"],
+            "test-credential-id"
+        );
+        assert_eq!(
+            serialized["registry"]["inputs"]["environment:LOG_LEVEL"],
+            serde_json::json!(["debug"])
+        );
+    }
+
+    #[test]
+    fn context_server_command_debug_redacts_arguments_and_environment_values() {
+        let command = ContextServerCommand {
+            path: PathBuf::from("npm"),
+            args: vec!["secret-argument".to_owned()],
+            env: Some(HashMap::from_iter([(
+                "TOKEN".to_owned(),
+                "secret-environment-value".to_owned(),
+            )])),
+            timeout: None,
+        };
+
+        let debug_output = format!("{command:?}");
+        assert!(debug_output.contains("argument_count"));
+        assert!(debug_output.contains("TOKEN"));
+        assert!(!debug_output.contains("secret-argument"));
+        assert!(!debug_output.contains("secret-environment-value"));
     }
 }

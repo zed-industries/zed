@@ -8,7 +8,9 @@ use project::context_server_store::*;
 use project::project_settings::ContextServerSettings;
 use project::worktree_store::WorktreeStore;
 use project::{
-    DisableAiSettings, FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
+    DisableAiSettings, FakeFs, Project,
+    context_server_store::registry::ContextServerDescriptor,
+    mcp_registry_store::{McpRegistryStore, ServerResponse},
     project_settings::ProjectSettings,
 };
 use serde_json::json;
@@ -88,6 +90,89 @@ async fn test_context_server_status(cx: &mut TestAppContext) {
         assert_eq!(
             store.read(cx).status_for_server(&server_2_id),
             Some(ContextServerStatus::Stopped)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_context_server_disconnect_updates_status(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "mcp-disconnect";
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+    let store = cx.new(|cx| {
+        ContextServerStore::test(
+            registry,
+            project.read(cx).worktree_store(),
+            Some(project.downgrade()),
+            cx,
+        )
+    });
+    let server_id = ContextServerId(SERVER_ID.into());
+    let transport = Arc::new(create_fake_transport(SERVER_ID, cx.executor()));
+    let server = Arc::new(ContextServer::new(server_id.clone(), transport.clone()));
+
+    store.update(cx, |store, cx| store.test_start_server(server, cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running)
+        );
+    });
+
+    transport.disconnect();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Error(
+                "Context server disconnected".into()
+            ))
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_context_server_send_failure_updates_status(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "mcp-send-failure";
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+    let store = cx.new(|cx| {
+        ContextServerStore::test(
+            registry,
+            project.read(cx).worktree_store(),
+            Some(project.downgrade()),
+            cx,
+        )
+    });
+    let server_id = ContextServerId(SERVER_ID.into());
+    let transport = Arc::new(create_fake_transport(SERVER_ID, cx.executor()));
+    let server = Arc::new(ContextServer::new(server_id.clone(), transport.clone()));
+
+    store.update(cx, |store, cx| store.test_start_server(server, cx));
+    cx.run_until_parked();
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+
+    transport.fail_sends();
+    client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect_err("request should fail with the transport send");
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Error(
+                "Context server disconnected".into()
+            ))
         );
     });
 }
@@ -445,6 +530,189 @@ async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
             assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
         });
     }
+}
+
+#[gpui::test]
+async fn test_configuration_error_stays_visible_until_configuration_is_fixed(
+    cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "invalid-server";
+
+    let server_id = ContextServerId(SERVER_ID.into());
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let executor = cx.executor();
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "not a URL".to_owned(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    assert_visible_configuration_error(&store, &server_id, "invalid URL", cx);
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "still not a URL".to_owned(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    assert_visible_configuration_error(&store, &server_id, "invalid URL", cx);
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: Vec::new(),
+                    env: None,
+                    timeout: None,
+                },
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_local_registry_package_with_remote_flag_resolves_secrets_locally(
+    cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "io.example/secret-package";
+
+    let server_id = ContextServerId(SERVER_ID.into());
+    let registry_server: ServerResponse = serde_json::from_value(json!({
+        "server": {
+            "name": SERVER_ID,
+            "version": "1.0.0",
+            "packages": [{
+                "registryType": "npm",
+                "identifier": "@example/secret-package",
+                "version": "1.0.0",
+                "transport": {"type": "stdio"},
+                "environmentVariables": [{
+                    "name": "TOKEN",
+                    "isRequired": true,
+                    "isSecret": true
+                }]
+            }]
+        }
+    }))
+    .expect("registry server should parse");
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    cx.update(|cx| {
+        let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
+        registry_store.update(cx, |registry_store, cx| {
+            registry_store.set_cached_servers(vec![registry_server], cx);
+        });
+    });
+
+    let registry_settings = settings::ContextServerSettingsContent::Registry {
+        enabled: true,
+        remote: true,
+        registry: settings::McpRegistryServerSettings {
+            credential_id: Some("0f8fad5b-d9cb-469f-a165-70867728950e".to_owned()),
+            inputs: Default::default(),
+        },
+    };
+    set_context_server_configuration(vec![(server_id.0.clone(), registry_settings)], cx);
+    cx.run_until_parked();
+
+    assert_visible_configuration_error(
+        &store,
+        &server_id,
+        "MCP Registry input `environment:TOKEN` is required",
+        cx,
+    );
+    cx.update(|cx| {
+        assert!(store.read(cx).get_server(&server_id).is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_user_registry_server_is_not_reported_as_project_local(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "io.example/user-registry-server";
+
+    let server_id = ContextServerId(SERVER_ID.into());
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Registry {
+                enabled: false,
+                remote: false,
+                registry: settings::McpRegistryServerSettings {
+                    credential_id: None,
+                    inputs: Default::default(),
+                },
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert!(!store.read(cx).is_server_configured_locally(&server_id));
+    });
+}
+
+fn assert_visible_configuration_error(
+    store: &Entity<ContextServerStore>,
+    server_id: &ContextServerId,
+    expected_message: &str,
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let Some(ContextServerStatus::Error(error)) = store.read(cx).status_for_server(server_id)
+        else {
+            panic!("expected a visible configuration error for {server_id}");
+        };
+        assert!(
+            error.contains(expected_message),
+            "expected `{expected_message}` in configuration error, got: {error}"
+        );
+    });
 }
 
 #[gpui::test]
@@ -1296,6 +1564,180 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
             "a stale challenge from a previous client generation must not trigger auth"
         );
     });
+}
+
+struct PendingHttpResponseBody;
+
+impl futures::AsyncRead for PendingHttpResponseBody {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buffer: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Pending
+    }
+}
+
+#[gpui::test]
+async fn test_http_server_reinitializes_expired_session(cx: &mut TestAppContext) {
+    use futures::FutureExt as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const SERVER_ID: &str = "session-server";
+    const FIRST_SESSION_ID: &str = "session-1";
+    const SECOND_SESSION_ID: &str = "session-2";
+
+    let server_id = ContextServerId(SERVER_ID.into());
+    let initialize_count = Arc::new(AtomicUsize::new(0));
+    let list_tools_count = Arc::new(AtomicUsize::new(0));
+    let http_client = FakeHttpClient::create({
+        let initialize_count = initialize_count.clone();
+        let list_tools_count = list_tools_count.clone();
+        move |request| {
+            let initialize_count = initialize_count.clone();
+            let list_tools_count = list_tools_count.clone();
+            async move {
+                if request.method() == http_client::http::Method::DELETE {
+                    return Ok(notification_accepted_response());
+                }
+
+                let request_session_id = request
+                    .headers()
+                    .get("Mcp-Session-Id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
+                let mut request_body = request.into_body();
+                let mut message = String::new();
+                futures::AsyncReadExt::read_to_string(&mut request_body, &mut message).await?;
+                let message: serde_json::Value = serde_json::from_str(&message)?;
+                let method = message["method"]
+                    .as_str()
+                    .expect("MCP request should have a method");
+
+                match method {
+                    "initialize" => {
+                        assert_eq!(
+                            request_session_id, None,
+                            "initialize must not reuse an expired session"
+                        );
+                        let initialize_index = initialize_count.fetch_add(1, Ordering::SeqCst);
+                        let response_session_id = match initialize_index {
+                            0 => FIRST_SESSION_ID,
+                            1 => SECOND_SESSION_ID,
+                            _ => panic!("server should only be initialized twice"),
+                        };
+                        Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/json")
+                            .header("Mcp-Session-Id", response_session_id)
+                            .body(http_client::AsyncBody::from(
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": message["id"].clone(),
+                                    "result": {
+                                        "protocolVersion": "2024-11-05",
+                                        "capabilities": {},
+                                        "serverInfo": {
+                                            "name": "test-server",
+                                            "version": "1.0.0"
+                                        }
+                                    }
+                                })
+                                .to_string(),
+                            ))
+                            .expect("initialize response should build"))
+                    }
+                    "notifications/initialized" => {
+                        let expected_session_id = match initialize_count.load(Ordering::SeqCst) {
+                            1 => FIRST_SESSION_ID,
+                            2 => SECOND_SESSION_ID,
+                            _ => panic!("initialized notification should follow initialize"),
+                        };
+                        assert_eq!(request_session_id.as_deref(), Some(expected_session_id));
+                        Ok(notification_accepted_response())
+                    }
+                    "tools/list" => {
+                        let request_index = list_tools_count.fetch_add(1, Ordering::SeqCst);
+                        match request_index {
+                            0 => {
+                                assert_eq!(request_session_id.as_deref(), Some(FIRST_SESSION_ID));
+                                Ok(Response::builder()
+                                    .status(404)
+                                    .body(http_client::AsyncBody::from_reader(
+                                        PendingHttpResponseBody,
+                                    ))
+                                    .expect("expired session response should build"))
+                            }
+                            1 => {
+                                assert_eq!(request_session_id.as_deref(), Some(SECOND_SESSION_ID));
+                                Ok(json_response(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": message["id"].clone(),
+                                    "result": { "tools": [] }
+                                })))
+                            }
+                            _ => panic!("server should receive two tools/list requests"),
+                        }
+                    }
+                    _ => panic!("unexpected MCP method: {method}"),
+                }
+            }
+        }
+    });
+    cx.update(|cx| cx.set_http_client(http_client));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+    cx.run_until_parked();
+
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+    let expired_request = cx.executor().spawn(async move {
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+    });
+
+    cx.run_until_parked();
+    let error = expired_request
+        .now_or_never()
+        .expect("a 404 for an active session should not wait for the response body")
+        .expect_err("the request using the expired session should fail");
+    assert!(
+        error
+            .to_string()
+            .starts_with("MCP session expired: HTTP 404"),
+        "unexpected expired-session error: {error}"
+    );
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+        );
+    });
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should have restarted")
+            .client()
+            .expect("restarted server should have a client")
+    });
+    let response = client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect("tools/list should succeed with the replacement session");
+
+    assert!(response.tools.is_empty());
+    assert_eq!(initialize_count.load(Ordering::SeqCst), 2);
+    assert_eq!(list_tools_count.load(Ordering::SeqCst), 2);
 }
 
 fn set_http_context_server_configuration(server_id: &ContextServerId, cx: &mut TestAppContext) {

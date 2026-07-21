@@ -8,16 +8,20 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
-use context_server::transport::HttpTransport;
+use context_server::transport::{HttpTransport, TransportShutdownReason};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
+use fs::Fs;
 use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, future::join_all};
+#[cfg(feature = "test-support")]
+use gpui::AppContext as _;
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use http_client::HttpClient;
 use itertools::Itertools;
+use node_runtime::NodeRuntime;
 use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
 use remote::{Interactive, RemoteClient};
@@ -26,7 +30,11 @@ use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    DisableAiSettings, Project,
+    DisableAiSettings, McpRegistryStore, Project, ProjectEnvironment,
+    mcp_registry_store::{
+        McpRegistryInstallationSource, ResolvedMcpRegistryServer, read_server_secrets,
+        resolve_server_configuration,
+    },
     project_settings::{ContextServerSettings, OAuthClientSettings, ProjectSettings},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -66,6 +74,13 @@ pub enum ContextServerStatus {
     Authenticating,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextServerSource {
+    Custom,
+    Extension,
+    Registry,
+}
+
 impl ContextServerStatus {
     fn from_state(state: &ContextServerState) -> Self {
         match state {
@@ -93,8 +108,8 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-        /// Initiates the OAuth flow if the transport shuts down on an
-        /// authentication challenge; cancelled by any state transition.
+        /// Handles transport lifecycle transitions; cancelled by any state
+        /// transition.
         _transport_watch: Task<()>,
     },
     Stopped {
@@ -156,7 +171,7 @@ impl ContextServerState {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum ContextServerConfiguration {
     Custom {
         command: ContextServerCommand,
@@ -173,6 +188,64 @@ pub enum ContextServerConfiguration {
         timeout: Option<u64>,
         oauth: Option<OAuthClientSettings>,
     },
+    RemoteRegistryNpm {
+        package_spec: String,
+        runtime_arguments: Vec<String>,
+        package_arguments: Vec<String>,
+        environment: HashMap<String, String>,
+    },
+}
+
+impl std::fmt::Debug for ContextServerConfiguration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Custom { command, remote } => formatter
+                .debug_struct("Custom")
+                .field("command", command)
+                .field("remote", remote)
+                .finish(),
+            Self::Extension {
+                command, remote, ..
+            } => formatter
+                .debug_struct("Extension")
+                .field("command", command)
+                .field("settings", &"[REDACTED]")
+                .field("remote", remote)
+                .finish(),
+            Self::Http {
+                url,
+                headers,
+                timeout,
+                oauth,
+            } => {
+                let mut header_names = headers.keys().collect::<Vec<_>>();
+                header_names.sort_unstable();
+                formatter
+                    .debug_struct("Http")
+                    .field("origin", &url.origin().ascii_serialization())
+                    .field("header_names", &header_names)
+                    .field("timeout", timeout)
+                    .field("has_oauth", &oauth.is_some())
+                    .finish()
+            }
+            Self::RemoteRegistryNpm {
+                package_spec,
+                runtime_arguments,
+                package_arguments,
+                environment,
+            } => {
+                let mut environment_names = environment.keys().collect::<Vec<_>>();
+                environment_names.sort_unstable();
+                formatter
+                    .debug_struct("RemoteRegistryNpm")
+                    .field("package_spec", package_spec)
+                    .field("runtime_argument_count", &runtime_arguments.len())
+                    .field("package_argument_count", &package_arguments.len())
+                    .field("environment_names", &environment_names)
+                    .finish()
+            }
+        }
+    }
 }
 
 impl ContextServerConfiguration {
@@ -180,7 +253,8 @@ impl ContextServerConfiguration {
         match self {
             ContextServerConfiguration::Custom { command, .. } => Some(command),
             ContextServerConfiguration::Extension { command, .. } => Some(command),
-            ContextServerConfiguration::Http { .. } => None,
+            ContextServerConfiguration::Http { .. }
+            | ContextServerConfiguration::RemoteRegistryNpm { .. } => None,
         }
     }
 
@@ -198,6 +272,7 @@ impl ContextServerConfiguration {
             ContextServerConfiguration::Custom { remote, .. } => *remote,
             ContextServerConfiguration::Extension { remote, .. } => *remote,
             ContextServerConfiguration::Http { .. } => false,
+            ContextServerConfiguration::RemoteRegistryNpm { .. } => true,
         }
     }
 
@@ -206,8 +281,11 @@ impl ContextServerConfiguration {
         id: ContextServerId,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
+        node_runtime: Option<NodeRuntime>,
+        defer_remote_registry_npm: bool,
         cx: &AsyncApp,
-    ) -> Option<Self> {
+    ) -> Result<Self> {
         const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
         match settings {
@@ -215,36 +293,31 @@ impl ContextServerConfiguration {
                 enabled: _,
                 command,
                 remote,
-            } => Some(ContextServerConfiguration::Custom { command, remote }),
+            } => Ok(ContextServerConfiguration::Custom { command, remote }),
             ContextServerSettings::Extension {
                 enabled: _,
                 settings,
                 remote,
             } => {
-                let descriptor =
-                    cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
+                let descriptor = cx
+                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))
+                    .with_context(|| format!("extension context server `{id}` was not found"))?;
 
                 let command_future = descriptor.command(worktree_store, cx);
                 let timeout_future = cx.background_executor().timer(EXTENSION_COMMAND_TIMEOUT);
 
                 match futures::future::select(command_future, timeout_future).await {
-                    Either::Left((Ok(command), _)) => Some(ContextServerConfiguration::Extension {
+                    Either::Left((Ok(command), _)) => Ok(ContextServerConfiguration::Extension {
                         command,
                         settings,
                         remote,
                     }),
-                    Either::Left((Err(e), _)) => {
-                        log::error!(
-                            "Failed to create context server configuration from settings: {e:#}"
-                        );
-                        None
-                    }
-                    Either::Right(_) => {
-                        log::error!(
-                            "Timed out resolving command for extension context server {id}"
-                        );
-                        None
-                    }
+                    Either::Left((Err(error), _)) => Err(error).with_context(|| {
+                        format!("resolving command for extension context server `{id}`")
+                    }),
+                    Either::Right(_) => anyhow::bail!(
+                        "timed out resolving command for extension context server `{id}`"
+                    ),
                 }
             }
             ContextServerSettings::Http {
@@ -254,15 +327,205 @@ impl ContextServerConfiguration {
                 timeout,
                 oauth,
             } => {
-                let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Http {
+                let url = url::Url::parse(&url)
+                    .with_context(|| format!("invalid URL for context server `{id}`"))?;
+                Ok(ContextServerConfiguration::Http {
                     url,
                     headers: auth,
                     timeout,
                     oauth,
                 })
             }
+            ContextServerSettings::Registry {
+                enabled: _,
+                remote,
+                registry,
+            } => {
+                Self::from_registry_settings(
+                    registry,
+                    id,
+                    remote,
+                    node_runtime,
+                    project_environment,
+                    defer_remote_registry_npm,
+                    cx,
+                )
+                .await
+            }
         }
+    }
+
+    async fn from_registry_settings(
+        registry_settings: settings::McpRegistryServerSettings,
+        id: ContextServerId,
+        remote: bool,
+        node_runtime: Option<NodeRuntime>,
+        project_environment: Entity<ProjectEnvironment>,
+        defer_remote_registry_npm: bool,
+        cx: &AsyncApp,
+    ) -> Result<Self> {
+        let registry_store = cx
+            .update(|cx| McpRegistryStore::try_global(cx))
+            .context("MCP Registry store is not initialized")?;
+        let installation_task = cx.update(|cx| {
+            registry_store.update(cx, |store, cx| store.server_installation(&id.0, cx))
+        });
+        let (server, source) = installation_task
+            .await
+            .with_context(|| format!("loading MCP Registry installation for `{id}`"))?;
+        if server.name() != id.0.as_ref() {
+            anyhow::bail!("MCP Registry returned details for an unexpected server");
+        }
+
+        if should_reject_remote_registry_package_credentials(
+            &source,
+            registry_settings.credential_id.is_some(),
+            remote,
+            defer_remote_registry_npm,
+        ) {
+            anyhow::bail!("MCP Registry packages with secret inputs cannot run on a remote host");
+        }
+
+        let secret_inputs = if let Some(credential_id) = registry_settings.credential_id.as_deref()
+        {
+            read_server_secrets(credential_id, cx)
+                .await
+                .with_context(|| format!("loading secret inputs for `{id}`"))?
+        } else {
+            HashMap::default()
+        };
+        let resolved = resolve_server_configuration(
+            &server,
+            &source,
+            &registry_settings.inputs,
+            &secret_inputs,
+        )?;
+
+        match resolved {
+            ResolvedMcpRegistryServer::Http { url, headers } => {
+                Ok(ContextServerConfiguration::Http {
+                    url,
+                    headers,
+                    timeout: None,
+                    oauth: None,
+                })
+            }
+            ResolvedMcpRegistryServer::Npm {
+                package_spec,
+                runtime_arguments,
+                package_arguments,
+                environment,
+            } => {
+                if defer_remote_registry_npm && remote {
+                    return Ok(ContextServerConfiguration::RemoteRegistryNpm {
+                        package_spec,
+                        runtime_arguments,
+                        package_arguments,
+                        environment,
+                    });
+                }
+
+                let command = Self::registry_npm_command(
+                    &id,
+                    package_spec,
+                    runtime_arguments,
+                    package_arguments,
+                    environment,
+                    node_runtime,
+                    project_environment,
+                    defer_remote_registry_npm,
+                    cx,
+                )
+                .await?;
+                Ok(ContextServerConfiguration::Custom { command, remote })
+            }
+        }
+    }
+
+    async fn registry_npm_command(
+        id: &ContextServerId,
+        package_spec: String,
+        runtime_arguments: Vec<String>,
+        package_arguments: Vec<String>,
+        environment: HashMap<String, String>,
+        node_runtime: Option<NodeRuntime>,
+        project_environment: Entity<ProjectEnvironment>,
+        use_local_execution_environment: bool,
+        cx: &AsyncApp,
+    ) -> Result<ContextServerCommand> {
+        let node_runtime =
+            node_runtime.context("Node.js is unavailable for this MCP Registry package")?;
+        let fs = cx.update(|cx| <dyn Fs>::global(cx));
+        let prefix_directory = paths::data_dir()
+            .join("mcp_registry")
+            .join("npm")
+            .join(sanitize_registry_path_component(&id.0));
+        fs.create_dir(&prefix_directory)
+            .await
+            .context("creating MCP Registry npm cache directory")?;
+
+        let mut npm_arguments = vec!["--yes".to_owned()];
+        npm_arguments.extend(runtime_arguments);
+        npm_arguments.push("--".to_owned());
+        npm_arguments.push(package_spec);
+        npm_arguments.extend(package_arguments);
+        let npm_argument_references = npm_arguments.iter().map(String::as_str).collect::<Vec<_>>();
+        let npm_command = node_runtime
+            .npm_command_with_user_configuration(
+                Some(&prefix_directory),
+                "exec",
+                &npm_argument_references,
+            )
+            .await
+            .context("building npm command for MCP Registry package")?;
+
+        let mut async_cx = cx.clone();
+        let mut command_environment = project_environment
+            .update(&mut async_cx, |project_environment, cx| {
+                if use_local_execution_environment {
+                    project_environment.local_execution_environment(cx)
+                } else {
+                    project_environment.default_environment(cx)
+                }
+            })
+            .await
+            .unwrap_or_default();
+        command_environment.extend(npm_command.env);
+        command_environment.extend(environment);
+
+        Ok(ContextServerCommand {
+            path: npm_command.path,
+            args: npm_command.args,
+            env: Some(command_environment),
+            timeout: None,
+        })
+    }
+}
+
+fn should_reject_remote_registry_package_credentials(
+    source: &McpRegistryInstallationSource,
+    has_credentials: bool,
+    remote: bool,
+    defer_remote_registry_npm: bool,
+) -> bool {
+    defer_remote_registry_npm
+        && remote
+        && has_credentials
+        && matches!(source, McpRegistryInstallationSource::Package { .. })
+}
+
+fn sanitize_registry_path_component(input: &str) -> String {
+    let sanitized = input
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' => character,
+            _ => '-',
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "server".to_owned()
+    } else {
+        sanitized
     }
 }
 
@@ -283,6 +546,7 @@ enum ContextServerStoreState {
 #[derive(Clone, PartialEq)]
 struct ContextServerSettingsEntry {
     worktree_id: Option<WorktreeId>,
+    configured_in_project: bool,
     settings: ContextServerSettings,
 }
 
@@ -290,9 +554,14 @@ pub struct ContextServerStore {
     state: ContextServerStoreState,
     context_server_settings: HashMap<Arc<str>, ContextServerSettingsEntry>,
     servers: HashMap<ContextServerId, ContextServerState>,
+    desired_configurations: HashMap<ContextServerId, Arc<ContextServerConfiguration>>,
+    agent_configurations: HashMap<ContextServerId, Arc<ContextServerConfiguration>>,
+    configuration_errors: HashMap<ContextServerId, Arc<str>>,
     server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
+    project_environment: Entity<ProjectEnvironment>,
     project: Option<WeakEntity<Project>>,
+    node_runtime: Option<NodeRuntime>,
     registry: Entity<ContextServerDescriptorRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
@@ -318,7 +587,9 @@ impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
 impl ContextServerStore {
     pub fn local(
         worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
         weak_project: Option<WeakEntity<Project>>,
+        node_runtime: Option<NodeRuntime>,
         headless: bool,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -327,7 +598,9 @@ impl ContextServerStore {
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
+            project_environment,
             weak_project,
+            node_runtime,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: headless,
@@ -340,7 +613,9 @@ impl ContextServerStore {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
         worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
         weak_project: Option<WeakEntity<Project>>,
+        node_runtime: Option<NodeRuntime>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -348,7 +623,9 @@ impl ContextServerStore {
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
+            project_environment,
             weak_project,
+            node_runtime,
             ContextServerStoreState::Remote {
                 project_id,
                 upstream_client,
@@ -390,12 +667,16 @@ impl ContextServerStore {
         weak_project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let project_environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx));
         Self::new_internal(
             false,
             None,
             registry,
             worktree_store,
+            project_environment,
             weak_project,
+            None,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: false,
@@ -412,12 +693,16 @@ impl ContextServerStore {
         weak_project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let project_environment =
+            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx));
         Self::new_internal(
             true,
             context_server_factory,
             registry,
             worktree_store,
+            project_environment,
             weak_project,
+            None,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: false,
@@ -429,6 +714,22 @@ impl ContextServerStore {
     #[cfg(feature = "test-support")]
     pub fn set_context_server_factory(&mut self, factory: ContextServerFactory) {
         self.context_server_factory = Some(factory);
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn test_set_context_server_settings(
+        &mut self,
+        id: Arc<str>,
+        settings: ContextServerSettings,
+    ) {
+        self.context_server_settings.insert(
+            id,
+            ContextServerSettingsEntry {
+                worktree_id: None,
+                configured_in_project: false,
+                settings,
+            },
+        );
     }
 
     #[cfg(feature = "test-support")]
@@ -447,7 +748,21 @@ impl ContextServerStore {
             },
             remote: false,
         });
+        self.desired_configurations
+            .insert(server.id(), configuration.clone());
         self.run_server(server, configuration, cx);
+    }
+
+    #[cfg(feature = "test-support")]
+    pub async fn test_create_context_server(
+        this: WeakEntity<Self>,
+        id: Arc<str>,
+        configuration: Arc<ContextServerConfiguration>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<Arc<ContextServerConfiguration>>> {
+        let (_, _, agent_configuration) =
+            Self::create_context_server(this, ContextServerId(id), configuration, cx).await?;
+        Ok(agent_configuration)
     }
 
     fn new_internal(
@@ -455,7 +770,9 @@ impl ContextServerStore {
         context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
+        project_environment: Entity<ProjectEnvironment>,
         weak_project: Option<WeakEntity<Project>>,
+        node_runtime: Option<NodeRuntime>,
         state: ContextServerStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -492,6 +809,13 @@ impl ContextServerStore {
                     this.available_context_servers_changed(cx);
                 }
             }));
+            if let Some(mcp_registry_store) = McpRegistryStore::try_global(cx) {
+                subscriptions.push(cx.observe(&mcp_registry_store, |this, _registry, cx| {
+                    if !DisableAiSettings::get_global(cx).disable_ai {
+                        this.available_context_servers_changed(cx);
+                    }
+                }));
+            }
             subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
                 if matches!(
                     event,
@@ -512,11 +836,16 @@ impl ContextServerStore {
             _subscriptions: subscriptions,
             context_server_settings: Self::resolve_all_context_server_settings(&worktree_store, cx),
             worktree_store,
+            project_environment,
             project: weak_project,
+            node_runtime,
             registry,
             needs_server_update: false,
             ai_disabled,
             servers: HashMap::default(),
+            desired_configurations: HashMap::default(),
+            agent_configurations: HashMap::default(),
+            configuration_errors: HashMap::default(),
             server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
@@ -541,7 +870,11 @@ impl ContextServerStore {
     }
 
     pub fn status_for_server(&self, id: &ContextServerId) -> Option<ContextServerStatus> {
-        self.servers.get(id).map(ContextServerStatus::from_state)
+        self.configuration_errors
+            .get(id)
+            .cloned()
+            .map(ContextServerStatus::Error)
+            .or_else(|| self.servers.get(id).map(ContextServerStatus::from_state))
     }
 
     pub fn configuration_for_server(
@@ -549,6 +882,18 @@ impl ContextServerStore {
         id: &ContextServerId,
     ) -> Option<Arc<ContextServerConfiguration>> {
         self.servers.get(id).map(|state| state.configuration())
+    }
+
+    pub fn configuration_for_agent(
+        &self,
+        id: &ContextServerId,
+    ) -> Option<Arc<ContextServerConfiguration>> {
+        select_agent_configuration(
+            self.is_remote_project(),
+            self.configuration_errors.contains_key(id),
+            self.agent_configurations.get(id).cloned(),
+            self.configuration_for_server(id),
+        )
     }
 
     /// Returns the configured settings for a server, if it is present in the user
@@ -560,6 +905,12 @@ impl ContextServerStore {
             .map(|entry| &entry.settings)
     }
 
+    pub fn is_server_configured_locally(&self, id: &ContextServerId) -> bool {
+        self.context_server_settings
+            .get(&id.0)
+            .is_some_and(|entry| entry.configured_in_project)
+    }
+
     /// Returns whether a server is provided by an extension (as opposed to a
     /// custom Stdio/HTTP server configured directly in settings).
     ///
@@ -567,16 +918,27 @@ impl ContextServerStore {
     /// configuration, so it stays correct even when a custom server is disabled
     /// or has not been started yet (in which case it has no runtime state).
     pub fn is_extension_provided(&self, id: &ContextServerId, cx: &App) -> bool {
+        self.source_for_server(id, cx) == ContextServerSource::Extension
+    }
+
+    pub fn source_for_server(&self, id: &ContextServerId, cx: &App) -> ContextServerSource {
         match self.settings_for_server(id) {
-            Some(ContextServerSettings::Stdio { .. } | ContextServerSettings::Http { .. }) => false,
-            Some(ContextServerSettings::Extension { .. }) => true,
+            Some(ContextServerSettings::Stdio { .. } | ContextServerSettings::Http { .. }) => {
+                ContextServerSource::Custom
+            }
+            Some(ContextServerSettings::Extension { .. }) => ContextServerSource::Extension,
+            Some(ContextServerSettings::Registry { .. }) => ContextServerSource::Registry,
             // No custom settings entry: the server can only originate from an
             // extension descriptor in the registry.
-            None => self
+            None if self
                 .registry
                 .read(cx)
                 .context_server_descriptor(&id.0)
-                .is_some(),
+                .is_some() =>
+            {
+                ContextServerSource::Extension
+            }
+            None => ContextServerSource::Custom,
         }
     }
 
@@ -664,21 +1026,54 @@ impl ContextServerStore {
                 return anyhow::Ok(());
             }
 
-            let (registry, worktree_store) = this.update(cx, |this, _| {
-                (this.registry.clone(), this.worktree_store.clone())
+            let (
+                registry,
+                worktree_store,
+                project_environment,
+                node_runtime,
+                defer_remote_registry_npm,
+            ) = this.update(cx, |this, _| {
+                (
+                    this.registry.clone(),
+                    this.worktree_store.clone(),
+                    this.project_environment.clone(),
+                    this.node_runtime.clone(),
+                    this.is_remote_project(),
+                )
             });
-            let configuration = ContextServerConfiguration::from_settings(
+            let configuration = match ContextServerConfiguration::from_settings(
                 settings_entry.settings,
                 id.clone(),
                 registry,
                 worktree_store,
+                project_environment,
+                node_runtime,
+                defer_remote_registry_npm,
                 cx,
             )
             .await
-            .context("Failed to create context server configuration")?;
+            {
+                Ok(configuration) => configuration,
+                Err(error) => {
+                    let error: Arc<str> =
+                        format!("Failed to create context server configuration: {error:#}").into();
+                    this.update(cx, |this, cx| {
+                        this.set_configuration_error(id, error, cx);
+                    });
+                    return Ok(());
+                }
+            };
 
             this.update(cx, |this, cx| {
-                this.run_server(server, Arc::new(configuration), cx)
+                let desired_configuration = Arc::new(configuration);
+                this.desired_configurations
+                    .insert(id.clone(), desired_configuration.clone());
+                let effective_configuration = this
+                    .servers
+                    .get(&id)
+                    .map(ContextServerState::configuration)
+                    .unwrap_or(desired_configuration);
+                this.run_server(server, effective_configuration, cx)
             });
             Ok(())
         })
@@ -769,8 +1164,8 @@ impl ContextServerStore {
         );
     }
 
-    /// Watches a running server's transport and initiates the OAuth flow if it
-    /// shuts down on an authentication challenge.
+    /// Watches a running server's transport for shutdowns that require a
+    /// lifecycle transition.
     ///
     /// MCP servers may accept `initialize` unauthenticated and only send a 401
     /// with a `WWW-Authenticate` challenge on a later request or notification.
@@ -790,17 +1185,72 @@ impl ContextServerStore {
         else {
             return Task::ready(());
         };
-        cx.spawn(async move |cx| {
-            let Some(www_authenticate) = shutdown.await else {
-                // Non-auth transport deaths leave the server state untouched,
-                // as they did before this watch existed.
-                return;
-            };
-            this.update(cx, |this, cx| {
-                this.handle_auth_challenge(server, www_authenticate, cx);
-            })
-            .log_err();
+        cx.spawn(async move |cx| match shutdown.await {
+            TransportShutdownReason::AuthRequired(www_authenticate) => {
+                this.update(cx, |this, cx| {
+                    this.handle_auth_challenge(server, www_authenticate, cx);
+                })
+                .log_err();
+            }
+            TransportShutdownReason::SessionExpired => {
+                this.update(cx, |this, cx| {
+                    this.handle_expired_session(server, cx);
+                })
+                .log_err();
+            }
+            TransportShutdownReason::Disconnected | TransportShutdownReason::Other => {
+                this.update(cx, |this, cx| {
+                    this.handle_transport_disconnect(server, cx);
+                })
+                .log_err();
+            }
         })
+    }
+
+    fn handle_transport_disconnect(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
+        let id = server.id();
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&id)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+        let configuration = configuration.clone();
+
+        server.stop().log_err();
+        self.update_server_state(
+            id,
+            ContextServerState::Error {
+                server,
+                configuration,
+                error: "Context server disconnected".into(),
+            },
+            cx,
+        );
+    }
+
+    fn handle_expired_session(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
+        let id = server.id();
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&id)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+        let configuration = configuration.clone();
+
+        log::info!("{id} MCP session expired; reinitializing the context server");
+        self.run_server(server, configuration, cx);
     }
 
     fn handle_auth_challenge(
@@ -861,6 +1311,9 @@ impl ContextServerStore {
     }
 
     fn remove_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        self.configuration_errors.remove(id);
+        self.desired_configurations.remove(id);
+        self.agent_configurations.remove(id);
         let state = self
             .servers
             .remove(id)
@@ -919,14 +1372,18 @@ impl ContextServerStore {
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut AsyncApp,
-    ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
+    ) -> Result<(
+        Arc<ContextServer>,
+        Arc<ContextServerConfiguration>,
+        Option<Arc<ContextServerConfiguration>>,
+    )> {
         let remote = configuration.remote();
         let needs_remote_command = match configuration.as_ref() {
             ContextServerConfiguration::Custom { .. }
-            | ContextServerConfiguration::Extension { .. } => remote,
+            | ContextServerConfiguration::Extension { .. }
+            | ContextServerConfiguration::RemoteRegistryNpm { .. } => remote,
             ContextServerConfiguration::Http { .. } => false,
         };
-
         let (remote_state, is_remote_project) = this.update(cx, |this, _| {
             let remote_state = match &this.state {
                 ContextServerStoreState::Remote {
@@ -941,55 +1398,91 @@ impl ContextServerStore {
         let root_path: Option<Arc<Path>> =
             this.update(cx, |this, cx| this.resolve_root_path(cx))?;
 
-        let configuration = if let Some((project_id, upstream_client)) = remote_state {
-            let root_dir = root_path.as_ref().map(|p| p.display().to_string());
+        let (effective_configuration, agent_configuration) =
+            if let Some((project_id, upstream_client)) = remote_state {
+                let root_dir = root_path.as_ref().map(|p| p.display().to_string());
+                let resolved_registry_npm = match configuration.as_ref() {
+                    ContextServerConfiguration::RemoteRegistryNpm {
+                        package_spec,
+                        runtime_arguments,
+                        package_arguments,
+                        environment,
+                    } => Some(proto::ResolvedRegistryNpmContextServer {
+                        package_spec: package_spec.clone(),
+                        runtime_arguments: runtime_arguments.clone(),
+                        package_arguments: package_arguments.clone(),
+                        environment: environment.clone().into_iter().collect(),
+                    }),
+                    _ => None,
+                };
 
-            let response = upstream_client
-                .update(cx, |client, _| {
-                    client
-                        .proto_client()
-                        .request(proto::GetContextServerCommand {
-                            project_id,
-                            server_id: id.0.to_string(),
-                            root_dir: root_dir.clone(),
-                        })
-                })
-                .await?;
+                let response = upstream_client
+                    .update(cx, |client, _| {
+                        client
+                            .proto_client()
+                            .request(proto::GetContextServerCommand {
+                                project_id,
+                                server_id: id.0.to_string(),
+                                root_dir: root_dir.clone(),
+                                resolved_registry_npm,
+                            })
+                    })
+                    .await?;
 
-            let remote_command = upstream_client.update(cx, |client, _| {
-                client.build_command(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    root_dir,
-                    None,
-                    Interactive::Yes,
+                let agent_command = ContextServerCommand {
+                    path: response.path.clone().into(),
+                    args: response.args.clone(),
+                    env: Some(
+                        response
+                            .env
+                            .iter()
+                            .map(|(name, value)| (name.clone(), value.clone()))
+                            .collect(),
+                    ),
+                    timeout: None,
+                };
+                let agent_configuration = Arc::new(ContextServerConfiguration::Custom {
+                    command: agent_command,
+                    remote,
+                });
+
+                let remote_command = upstream_client.update(cx, |client, _| {
+                    client.build_command(
+                        Some(response.path),
+                        &response.args,
+                        &response.env.into_iter().collect(),
+                        root_dir,
+                        None,
+                        Interactive::Yes,
+                    )
+                })?;
+
+                let command = ContextServerCommand {
+                    path: remote_command.program.into(),
+                    args: remote_command.args,
+                    env: Some(remote_command.env.into_iter().collect()),
+                    timeout: None,
+                };
+
+                (
+                    Arc::new(ContextServerConfiguration::Custom { command, remote }),
+                    Some(agent_configuration),
                 )
-            })?;
-
-            let command = ContextServerCommand {
-                path: remote_command.program.into(),
-                args: remote_command.args,
-                env: Some(remote_command.env.into_iter().collect()),
-                timeout: None,
+            } else {
+                (configuration, None)
             };
-
-            Arc::new(ContextServerConfiguration::Custom { command, remote })
-        } else {
-            configuration
-        };
 
         if let Some(server) = this.update(cx, |this, _| {
             this.context_server_factory
                 .as_ref()
-                .map(|factory| factory(id.clone(), configuration.clone()))
+                .map(|factory| factory(id.clone(), effective_configuration.clone()))
         })? {
-            return Ok((server, configuration));
+            return Ok((server, effective_configuration, agent_configuration));
         }
 
         let cached_token_provider: Option<Arc<dyn oauth::OAuthTokenProvider>> =
-            if let ContextServerConfiguration::Http { url, .. } = configuration.as_ref() {
-                if configuration.has_static_auth_header() {
+            if let ContextServerConfiguration::Http { url, .. } = effective_configuration.as_ref() {
+                if effective_configuration.has_static_auth_header() {
                     None
                 } else {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
@@ -1021,7 +1514,7 @@ impl ContextServerStore {
         let server: Arc<ContextServer> = this.update(cx, |this, cx| {
             let global_timeout = this.timeout_for_server(&id, cx);
 
-            match configuration.as_ref() {
+            match effective_configuration.as_ref() {
                 ContextServerConfiguration::Http {
                     url,
                     headers,
@@ -1043,8 +1536,9 @@ impl ContextServerStore {
                         )),
                     )))
                 }
-                _ => {
-                    let mut command = configuration
+                ContextServerConfiguration::Custom { .. }
+                | ContextServerConfiguration::Extension { .. } => {
+                    let mut command = effective_configuration
                         .command()
                         .context("Missing command configuration for stdio context server")?
                         .clone();
@@ -1063,10 +1557,13 @@ impl ContextServerStore {
                         working_directory,
                     )))
                 }
+                ContextServerConfiguration::RemoteRegistryNpm { .. } => {
+                    anyhow::bail!("remote MCP Registry npm configuration was not delegated")
+                }
             }
         })??;
 
-        Ok((server, configuration))
+        Ok((server, effective_configuration, agent_configuration))
     }
 
     async fn handle_get_context_server_command(
@@ -1074,10 +1571,11 @@ impl ContextServerStore {
         envelope: TypedEnvelope<proto::GetContextServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::ContextServerCommand> {
-        let server_id = ContextServerId(envelope.payload.server_id.into());
+        let payload = envelope.payload;
+        let server_id = ContextServerId(payload.server_id.into());
 
-        let (settings_entry, registry, worktree_store) =
-            this.update(&mut cx, |this, inner_cx| {
+        let (settings_entry, registry, worktree_store, project_environment, node_runtime) = this
+            .update(&mut cx, |this, inner_cx| {
                 let ContextServerStoreState::Local {
                     is_headless: true, ..
                 } = &this.state
@@ -1097,34 +1595,73 @@ impl ContextServerStore {
                             .context_server_descriptor(&server_id.0)
                             .map(|_| ContextServerSettingsEntry {
                                 worktree_id: None,
+                                configured_in_project: false,
                                 settings: ContextServerSettings::default_extension(),
                             })
                     })
                     .with_context(|| format!("context server `{}` not found", server_id))?;
 
-                anyhow::Ok((settings, this.registry.clone(), this.worktree_store.clone()))
+                anyhow::Ok((
+                    settings,
+                    this.registry.clone(),
+                    this.worktree_store.clone(),
+                    this.project_environment.clone(),
+                    this.node_runtime.clone(),
+                ))
             })?;
 
-        let configuration = ContextServerConfiguration::from_settings(
-            settings_entry.settings,
-            server_id.clone(),
-            registry,
-            worktree_store,
-            &cx,
-        )
-        .await
-        .with_context(|| format!("failed to build configuration for `{}`", server_id))?;
+        let command = if let Some(resolved_registry_npm) = payload.resolved_registry_npm {
+            if !matches!(
+                settings_entry.settings,
+                ContextServerSettings::Registry {
+                    enabled: true,
+                    remote: true,
+                    ..
+                }
+            ) {
+                anyhow::bail!(
+                    "resolved Registry npm configuration was provided for an ineligible context server"
+                );
+            }
 
-        let command = configuration
-            .command()
-            .context("context server has no command (HTTP servers don't need RPC)")?;
+            ContextServerConfiguration::registry_npm_command(
+                &server_id,
+                resolved_registry_npm.package_spec,
+                resolved_registry_npm.runtime_arguments,
+                resolved_registry_npm.package_arguments,
+                resolved_registry_npm.environment.into_iter().collect(),
+                node_runtime,
+                project_environment,
+                false,
+                &cx,
+            )
+            .await
+            .with_context(|| format!("failed to build configuration for `{}`", server_id))?
+        } else {
+            let configuration = ContextServerConfiguration::from_settings(
+                settings_entry.settings,
+                server_id.clone(),
+                registry,
+                worktree_store,
+                project_environment,
+                node_runtime,
+                false,
+                &cx,
+            )
+            .await
+            .with_context(|| format!("failed to build configuration for `{}`", server_id))?;
+
+            configuration
+                .command()
+                .context("context server has no command (HTTP servers don't need RPC)")?
+                .clone()
+        };
 
         Ok(proto::ContextServerCommand {
             path: command.path.display().to_string(),
-            args: command.args.clone(),
+            args: command.args,
             env: command
                 .env
-                .clone()
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
         })
@@ -1139,6 +1676,13 @@ impl ContextServerStore {
         let mut merged = HashMap::default();
         for worktree in worktree_store.read(cx).visible_worktrees(cx) {
             let worktree_id = worktree.read(cx).id();
+            let project_server_ids = cx
+                .global::<SettingsStore>()
+                .local_settings(worktree_id)
+                .filter(|(path, _)| path.as_ref() == RelPath::empty())
+                .flat_map(|(_, settings)| settings.context_servers.keys().cloned())
+                .collect::<HashSet<_>>();
+
             let location = settings::SettingsLocation {
                 worktree_id,
                 path: RelPath::empty(),
@@ -1148,6 +1692,7 @@ impl ContextServerStore {
                     .entry(id.clone())
                     .or_insert_with(|| ContextServerSettingsEntry {
                         worktree_id: Some(worktree_id),
+                        configured_in_project: project_server_ids.contains(id),
                         settings: settings.clone(),
                     });
             }
@@ -1694,11 +2239,26 @@ impl ContextServerStore {
         state: ContextServerState,
         cx: &mut Context<Self>,
     ) {
+        self.configuration_errors.remove(&id);
         let status = ContextServerStatus::from_state(&state);
         self.servers.insert(id.clone(), state);
         cx.emit(ServerStatusChangedEvent {
             server_id: id,
             status,
+        });
+        cx.notify();
+    }
+
+    fn set_configuration_error(
+        &mut self,
+        id: ContextServerId,
+        error: Arc<str>,
+        cx: &mut Context<Self>,
+    ) {
+        self.configuration_errors.insert(id.clone(), error.clone());
+        cx.emit(ServerStatusChangedEvent {
+            server_id: id,
+            status: ContextServerStatus::Error(error),
         });
         cx.notify();
     }
@@ -1735,17 +2295,28 @@ impl ContextServerStore {
             this.update(cx, |this, cx| {
                 let server_ids: Vec<_> = this.servers.keys().cloned().collect();
                 for id in server_ids {
-                    let _ = this.stop_server(&id, cx);
+                    this.stop_server(&id, cx).log_err();
                 }
+                this.configuration_errors.clear();
             })?;
             return Ok(());
         }
 
-        let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, _| {
+        let (
+            mut configured_servers,
+            registry,
+            worktree_store,
+            project_environment,
+            node_runtime,
+            defer_remote_registry_npm,
+        ) = this.update(cx, |this, _| {
             (
                 this.context_server_settings.clone(),
                 this.registry.clone(),
                 this.worktree_store.clone(),
+                this.project_environment.clone(),
+                this.node_runtime.clone(),
+                this.is_remote_project(),
             )
         })?;
 
@@ -1754,6 +2325,7 @@ impl ContextServerStore {
                 .entry(id)
                 .or_insert(ContextServerSettingsEntry {
                     worktree_id: None,
+                    configured_in_project: false,
                     settings: ContextServerSettings::default_extension(),
                 });
         }
@@ -1763,22 +2335,35 @@ impl ContextServerStore {
                 .into_iter()
                 .partition(|(_, entry)| entry.settings.enabled());
 
-        let configured_servers =
-            join_all(enabled_servers.into_iter().map(|(id, settings_entry)| {
-                let id = ContextServerId(id);
-                ContextServerConfiguration::from_settings(
-                    settings_entry.settings,
-                    id.clone(),
-                    registry.clone(),
-                    worktree_store.clone(),
-                    cx,
-                )
-                .map(move |config| (id, config))
-            }))
-            .await
-            .into_iter()
-            .filter_map(|(id, config)| config.map(|config| (id, config)))
-            .collect::<HashMap<_, _>>();
+        let resolved_servers = join_all(enabled_servers.into_iter().map(|(id, settings_entry)| {
+            let id = ContextServerId(id);
+            ContextServerConfiguration::from_settings(
+                settings_entry.settings,
+                id.clone(),
+                registry.clone(),
+                worktree_store.clone(),
+                project_environment.clone(),
+                node_runtime.clone(),
+                defer_remote_registry_npm,
+                cx,
+            )
+            .map(move |config| (id, config))
+        }))
+        .await;
+
+        let mut configured_servers = HashMap::default();
+        let mut configuration_errors = HashMap::default();
+        for (id, result) in resolved_servers {
+            match result {
+                Ok(configuration) => {
+                    configured_servers.insert(id, configuration);
+                }
+                Err(error) => {
+                    log::error!("{id} context server configuration failed: {error:#}");
+                    configuration_errors.insert(id, Arc::from(format!("{error:#}")));
+                }
+            }
+        }
 
         let mut servers_to_start = Vec::new();
         let mut servers_to_remove = HashSet::default();
@@ -1803,7 +2388,7 @@ impl ContextServerStore {
             for (id, config) in configured_servers {
                 let state = this.servers.get(&id);
                 let is_stopped = matches!(state, Some(ContextServerState::Stopped { .. }));
-                let existing_config = state.as_ref().map(|state| state.configuration());
+                let existing_config = this.desired_configurations.get(&id);
                 let working_directory =
                     working_directory_for(&config, root_path.clone(), is_remote_project);
                 // A running server that was started before the project root became
@@ -1813,7 +2398,7 @@ impl ContextServerStore {
                 let working_directory_changed = state.is_some()
                     && !is_stopped
                     && this.server_working_directories.get(&id) != Some(&working_directory);
-                if existing_config.as_deref() != Some(&config)
+                if existing_config.map(AsRef::as_ref) != Some(&config)
                     || is_stopped
                     || working_directory_changed
                 {
@@ -1835,26 +2420,39 @@ impl ContextServerStore {
             for id in servers_to_remove {
                 this.remove_server(&id, inner_cx)?;
             }
+            for (id, _, _) in &servers_to_start {
+                this.agent_configurations.remove(id);
+            }
             anyhow::Ok(())
         })??;
 
+        this.update(cx, |this, cx| {
+            this.configuration_errors.clear();
+            for (id, error) in configuration_errors {
+                this.set_configuration_error(id, error, cx);
+            }
+        })?;
+
         for (id, config, working_directory) in servers_to_start {
-            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
-                Ok((server, config)) => {
+            match Self::create_context_server(this.clone(), id.clone(), config.clone(), cx).await {
+                Ok((server, effective_configuration, agent_configuration)) => {
                     this.update(cx, |this, cx| {
                         this.server_working_directories
                             .insert(id.clone(), working_directory);
-                        this.run_server(server, config, cx);
+                        this.desired_configurations.insert(id.clone(), config);
+                        if let Some(agent_configuration) = agent_configuration {
+                            this.agent_configurations
+                                .insert(id.clone(), agent_configuration);
+                        } else {
+                            this.agent_configurations.remove(&id);
+                        }
+                        this.run_server(server, effective_configuration, cx);
                     })?;
                 }
                 Err(err) => {
                     log::error!("{id} context server failed to create: {err:#}");
-                    this.update(cx, |_this, cx| {
-                        cx.emit(ServerStatusChangedEvent {
-                            server_id: id,
-                            status: ContextServerStatus::Error(err.to_string().into()),
-                        });
-                        cx.notify();
+                    this.update(cx, |this, cx| {
+                        this.set_configuration_error(id, err.to_string().into(), cx);
                     })?;
                 }
             }
@@ -1877,6 +2475,27 @@ fn working_directory_for(
         _ if is_remote_project => None,
         _ => root_path,
     }
+}
+
+fn select_agent_configuration(
+    is_remote_project: bool,
+    has_configuration_error: bool,
+    agent_configuration: Option<Arc<ContextServerConfiguration>>,
+    effective_configuration: Option<Arc<ContextServerConfiguration>>,
+) -> Option<Arc<ContextServerConfiguration>> {
+    if has_configuration_error {
+        return None;
+    }
+
+    if is_remote_project
+        && effective_configuration
+            .as_deref()
+            .is_some_and(ContextServerConfiguration::remote)
+    {
+        return agent_configuration;
+    }
+
+    agent_configuration.or(effective_configuration)
 }
 
 /// Determines the appropriate server state after a start attempt fails.
@@ -2036,5 +2655,75 @@ async fn resolve_auth_required(
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stdio_configuration(path: &str, remote: bool) -> Arc<ContextServerConfiguration> {
+        Arc::new(ContextServerConfiguration::Custom {
+            command: ContextServerCommand {
+                path: path.into(),
+                args: Vec::new(),
+                env: None,
+                timeout: None,
+            },
+            remote,
+        })
+    }
+
+    #[test]
+    fn selects_native_agent_configuration_for_remote_servers() {
+        let native_configuration = stdio_configuration("/remote/bin/server", true);
+        let effective_configuration = stdio_configuration("ssh", true);
+
+        assert_eq!(
+            select_agent_configuration(
+                true,
+                false,
+                Some(native_configuration.clone()),
+                Some(effective_configuration.clone()),
+            ),
+            Some(native_configuration)
+        );
+        assert_eq!(
+            select_agent_configuration(true, false, None, Some(effective_configuration.clone())),
+            None
+        );
+        assert_eq!(
+            select_agent_configuration(
+                true,
+                true,
+                Some(stdio_configuration("/remote/bin/server", true)),
+                Some(effective_configuration),
+            ),
+            None
+        );
+
+        let local_configuration = stdio_configuration("/usr/bin/server", false);
+        assert_eq!(
+            select_agent_configuration(false, false, None, Some(local_configuration.clone()),),
+            Some(local_configuration)
+        );
+    }
+
+    #[test]
+    fn rejects_registry_package_credentials_only_for_remote_headless_execution() {
+        let source = McpRegistryInstallationSource::Package {
+            registry_type: "npm".to_owned(),
+            identifier: "@example/secret-package".to_owned(),
+        };
+
+        assert!(!should_reject_remote_registry_package_credentials(
+            &source, true, true, false,
+        ));
+        assert!(should_reject_remote_registry_package_credentials(
+            &source, true, true, true,
+        ));
+        assert!(!should_reject_remote_registry_package_credentials(
+            &source, true, false, true,
+        ));
     }
 }

@@ -38,18 +38,14 @@ impl Child {
         stderr: Stdio,
     ) -> Result<Self> {
         crate::set_pre_exec_to_start_new_session(&mut command);
+        let program = command.get_program().to_string_lossy().into_owned();
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
             .stdout(stdout)
             .stderr(stderr)
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command {}",
-                    crate::redact::redact_command(&format!("{command:?}"))
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {program}"))?;
         Ok(Self { process })
     }
 
@@ -60,18 +56,14 @@ impl Child {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
+        let program = command.get_program().to_string_lossy().into_owned();
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
             .stdout(stdout)
             .stderr(stderr)
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command {}",
-                    crate::redact::redact_command(&format!("{command:?}"))
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {program}"))?;
 
         // Assign the child to a job object configured to kill the entire
         // process tree when the last job handle is closed, so descendants

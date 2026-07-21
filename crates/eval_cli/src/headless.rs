@@ -69,6 +69,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     let git_binary_path = None;
     let fs = RealFs::new(git_binary_path, cx.background_executor().clone());
     <dyn fs::Fs>::set_global(fs.clone(), cx);
+    project::McpRegistryStore::init_global(cx, fs.clone(), client.http_client());
 
     let mut languages = LanguageRegistry::new(cx.background_executor().clone());
     languages.set_language_server_download_dir(paths::languages_dir().clone());

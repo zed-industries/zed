@@ -13,6 +13,14 @@ message GetContextServerCommand {
   uint64 project_id = 1;
   string server_id = 2;
   optional string root_dir = 3;
+  optional ResolvedRegistryNpmContextServer resolved_registry_npm = 4;
+}
+
+message ResolvedRegistryNpmContextServer {
+  string package_spec = 1;
+  repeated string runtime_arguments = 2;
+  repeated string package_arguments = 3;
+  map<string, string> environment = 4;
 }
 
 message ContextServerCommand {

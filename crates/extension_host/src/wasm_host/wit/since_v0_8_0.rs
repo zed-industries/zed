@@ -1036,9 +1036,10 @@ impl ExtensionImports for WasmState {
                                 command: None,
                                 settings: Some(settings),
                             })?),
-                            project::project_settings::ContextServerSettings::Http { .. } => {
-                                bail!("remote context server settings not supported in 0.6.0")
-                            }
+                            project::project_settings::ContextServerSettings::Http { .. }
+                            | project::project_settings::ContextServerSettings::Registry {
+                                ..
+                            } => bail!("context server settings not supported in 0.6.0"),
                         }
                     }
                     _ => {

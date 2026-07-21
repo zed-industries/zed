@@ -2,7 +2,13 @@ use anyhow::Context as _;
 use collections::HashMap;
 use futures::{FutureExt, Stream, StreamExt as _, future::BoxFuture, lock::Mutex};
 use gpui::BackgroundExecutor;
-use std::{pin::Pin, sync::Arc};
+use std::{
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use crate::{
     transport::Transport,
@@ -44,6 +50,7 @@ pub struct FakeTransport {
     tx: futures::channel::mpsc::UnboundedSender<String>,
     rx: Arc<Mutex<futures::channel::mpsc::UnboundedReceiver<String>>>,
     executor: BackgroundExecutor,
+    fail_sends: AtomicBool,
 }
 
 impl FakeTransport {
@@ -54,6 +61,7 @@ impl FakeTransport {
             tx,
             rx: Arc::new(Mutex::new(rx)),
             executor,
+            fail_sends: AtomicBool::new(false),
         }
     }
 
@@ -80,11 +88,22 @@ impl FakeTransport {
         );
         self
     }
+
+    pub fn disconnect(&self) {
+        self.tx.close_channel();
+    }
+
+    pub fn fail_sends(&self) {
+        self.fail_sends.store(true, Ordering::SeqCst);
+    }
 }
 
 #[async_trait::async_trait]
 impl Transport for FakeTransport {
     async fn send(&self, message: String) -> anyhow::Result<()> {
+        if self.fail_sends.load(Ordering::SeqCst) {
+            anyhow::bail!("test transport send failed");
+        }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&message) {
             let id = msg.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
 

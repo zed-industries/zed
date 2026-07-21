@@ -18,6 +18,7 @@ mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
+mod mcp_registry_ui;
 mod mention_set;
 mod message_editor;
 mod mode_selector;
@@ -75,6 +76,7 @@ pub use crate::agent_panel::{
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+use crate::mcp_registry_ui::McpRegistryPage;
 pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
@@ -639,6 +641,32 @@ pub fn init(
                     workspace.activate_item(&existing, true, true, window, cx);
                 } else {
                     let registry_page = AgentRegistryPage::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(
+                        Box::new(registry_page),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+            },
+        );
+        workspace.register_action(
+            move |workspace: &mut Workspace,
+                  _: &zed_actions::McpRegistry,
+                  window: &mut Window,
+                  cx: &mut Context<Workspace>| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<McpRegistryPage>());
+
+                if let Some(existing) = existing {
+                    existing.update(cx, |page, cx| page.refresh(cx));
+                    workspace.activate_item(&existing, true, true, window, cx);
+                } else {
+                    let registry_page = McpRegistryPage::new(workspace, window, cx);
                     workspace.add_item_to_active_pane(
                         Box::new(registry_page),
                         None,

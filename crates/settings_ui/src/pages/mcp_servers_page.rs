@@ -1,20 +1,27 @@
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{Action as _, Entity, Focusable as _, ScrollHandle, WeakEntity, prelude::*};
+use project::McpRegistryStore;
 use project::context_server_store::{
-    ContextServerConfiguration, ContextServerStatus, ContextServerStore,
+    ContextServerConfiguration, ContextServerSource, ContextServerStatus, ContextServerStore,
 };
+use project::mcp_registry_store::{delete_server_secrets, registry_credential_is_referenced};
 use project::project_settings::ContextServerSettings;
-use settings::{ContextServerCommand, ContextServerSettingsContent, OAuthClientSettings};
+use settings::{
+    ContextServerCommand, ContextServerSettingsContent, OAuthClientSettings, ProfileBase,
+    SettingsFile, SettingsStore, UserSettingsContentExt as _,
+};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, Divider, PopoverMenu,
     Switch, ToggleState, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use workspace::notifications::NotifyResultExt as _;
 
 use zed_actions::ExtensionCategoryFilter;
 
@@ -171,17 +178,20 @@ fn render_context_server(
     // configuration: a custom (Stdio/HTTP) server that is disabled or not yet
     // started has no runtime configuration, and must not be mistaken for an
     // extension-provided server.
-    let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
-    let display_name = if provided_by_extension {
-        resolve_extension_display_name(context_server_id, cx).unwrap_or_else(|| item_id.clone())
-    } else {
-        item_id.clone()
-    };
+    let server_source = store.read(cx).source_for_server(context_server_id, cx);
+    let display_name =
+        match server_source {
+            ContextServerSource::Extension => resolve_extension_display_name(context_server_id, cx)
+                .unwrap_or_else(|| item_id.clone()),
+            ContextServerSource::Registry => resolve_registry_display_name(context_server_id, cx)
+                .unwrap_or_else(|| item_id.clone()),
+            ContextServerSource::Custom => item_id.clone(),
+        };
 
-    let source = if provided_by_extension {
-        AiSettingItemSource::Extension
-    } else {
-        AiSettingItemSource::Custom
+    let source = match server_source {
+        ContextServerSource::Custom => AiSettingItemSource::Custom,
+        ContextServerSource::Extension => AiSettingItemSource::Extension,
+        ContextServerSource::Registry => AiSettingItemSource::Registry,
     };
 
     let status = map_server_status(&server_status);
@@ -209,18 +219,37 @@ fn render_context_server(
         .read(cx)
         .settings_for_server(context_server_id)
         .cloned();
-    let configure_button = (!provided_by_extension).then(|| {
+    let configure_button = (server_source == ContextServerSource::Custom).then(|| {
         render_configure_button(
             context_server_id,
             cx.entity().downgrade(),
             server_settings.clone(),
         )
     });
-    let uninstall_button = render_uninstall_button(context_server_id, provided_by_extension);
+    let registry_settings_ownership = (server_source == ContextServerSource::Registry).then(|| {
+        registry_settings_ownership(
+            context_server_id,
+            store
+                .read(cx)
+                .is_server_configured_locally(context_server_id),
+            cx,
+        )
+    });
+    let uninstall_button = render_uninstall_button(
+        context_server_id,
+        server_source,
+        registry_settings_ownership,
+    );
 
     // Build toggle switch
-    let toggle_switch =
-        render_toggle_switch(context_server_id, store, is_enabled, is_transitioning);
+    let toggle_switch = render_toggle_switch(
+        context_server_id,
+        store,
+        server_source,
+        registry_settings_ownership,
+        is_enabled,
+        is_transitioning,
+    );
 
     // Surface invalid settings (which prevent the server from starting at all)
     // ahead of runtime status feedback, so the misconfiguration is visible.
@@ -235,6 +264,78 @@ fn render_context_server(
         .action(toggle_switch)
         .when_some(tool_label, |this, label| this.detail_label(label))
         .when_some(details, |this, details| this.details(details))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegistrySettingsOwnership {
+    User,
+    Project,
+    Managed,
+}
+
+fn registry_settings_ownership(
+    context_server_id: &ContextServerId,
+    is_configured_locally: bool,
+    cx: &App,
+) -> RegistrySettingsOwnership {
+    if is_configured_locally {
+        return RegistrySettingsOwnership::Project;
+    }
+
+    let settings_store = cx.global::<SettingsStore>();
+    if settings_store
+        .get_content_for_file(SettingsFile::Server)
+        .and_then(|settings| {
+            settings
+                .project
+                .context_servers
+                .get(context_server_id.0.as_ref())
+        })
+        .is_some()
+    {
+        return RegistrySettingsOwnership::Managed;
+    }
+
+    let Some(user_settings) = settings_store.raw_user_settings() else {
+        return RegistrySettingsOwnership::Managed;
+    };
+    let Some(user_server_settings) = user_settings
+        .content
+        .project
+        .context_servers
+        .get(context_server_id.0.as_ref())
+    else {
+        return RegistrySettingsOwnership::Managed;
+    };
+    if !matches!(
+        user_server_settings,
+        ContextServerSettingsContent::Registry { .. }
+    ) {
+        return RegistrySettingsOwnership::Managed;
+    }
+
+    if user_settings.for_profile(cx).is_some_and(|profile| {
+        profile.base == ProfileBase::Default
+            || profile
+                .settings
+                .project
+                .context_servers
+                .contains_key(context_server_id.0.as_ref())
+    }) || user_settings.for_os().is_some_and(|settings| {
+        settings
+            .project
+            .context_servers
+            .contains_key(context_server_id.0.as_ref())
+    }) || user_settings.for_release_channel().is_some_and(|settings| {
+        settings
+            .project
+            .context_servers
+            .contains_key(context_server_id.0.as_ref())
+    }) {
+        RegistrySettingsOwnership::Managed
+    } else {
+        RegistrySettingsOwnership::User
+    }
 }
 
 fn map_server_status(status: &ContextServerStatus) -> AiSettingItemStatus {
@@ -266,6 +367,19 @@ fn resolve_extension_display_name(id: &ContextServerId, cx: &App) -> Option<Shar
                 .unwrap_or(name);
             SharedString::from(stripped.to_string())
         })
+}
+
+fn resolve_registry_display_name(id: &ContextServerId, cx: &App) -> Option<SharedString> {
+    let registry_store = McpRegistryStore::try_global(cx)?;
+    let server = registry_store.read(cx).cached_server(&id.0)?;
+    Some(
+        server
+            .title()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| server.name())
+            .to_owned()
+            .into(),
+    )
 }
 
 fn render_configure_button(
@@ -300,9 +414,19 @@ fn render_configure_button(
 
 fn render_uninstall_button(
     context_server_id: &ContextServerId,
-    provided_by_extension: bool,
+    server_source: ContextServerSource,
+    registry_settings_ownership: Option<RegistrySettingsOwnership>,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
+    let is_read_only_registry_server = registry_settings_ownership
+        .is_some_and(|ownership| ownership != RegistrySettingsOwnership::User);
+    let tooltip = match registry_settings_ownership {
+        Some(RegistrySettingsOwnership::Project) => "Remove this MCP server from project settings",
+        Some(RegistrySettingsOwnership::Managed) => {
+            "Remove this MCP server from the settings source where it is configured"
+        }
+        _ => "Uninstall MCP Server",
+    };
 
     IconButton::new(
         format!("mcp-uninstall-btn-{}", context_server_id.0),
@@ -310,20 +434,25 @@ fn render_uninstall_button(
     )
     .icon_size(IconSize::Small)
     .tab_index(0isize)
-    .tooltip(Tooltip::text("Uninstall MCP Server"))
+    .disabled(is_read_only_registry_server)
+    .tooltip(Tooltip::text(tooltip))
     .on_click(move |_event, _window, cx| {
-        uninstall_server(&context_server_id, provided_by_extension, cx);
+        uninstall_server(&context_server_id, server_source, cx);
     })
 }
 
 fn render_toggle_switch(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
+    server_source: ContextServerSource,
+    registry_settings_ownership: Option<RegistrySettingsOwnership>,
     is_enabled: bool,
     is_transitioning: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
+    let is_read_only_registry_server = registry_settings_ownership
+        .is_some_and(|ownership| ownership != RegistrySettingsOwnership::User);
 
     Switch::new(
         SharedString::from(format!("mcp-toggle-{}", context_server_id.0)),
@@ -333,7 +462,7 @@ fn render_toggle_switch(
             ToggleState::Unselected
         },
     )
-    .disabled(is_transitioning)
+    .disabled(is_transitioning || is_read_only_registry_server)
     .tab_index(0isize)
     .on_click({
         move |state, _window, cx| {
@@ -358,20 +487,45 @@ fn render_toggle_switch(
             settings::update_settings_file(fs, cx, {
                 let context_server_id = context_server_id.clone();
                 move |settings, _| {
-                    settings
-                        .project
-                        .context_servers
-                        .entry(context_server_id.0.clone())
-                        .or_insert_with(|| ContextServerSettingsContent::Extension {
-                            enabled: is_enabled,
-                            remote: false,
-                            settings: serde_json::json!({}),
-                        })
-                        .set_enabled(is_enabled);
+                    set_server_enabled_in_user_settings(
+                        settings,
+                        &context_server_id,
+                        server_source,
+                        is_enabled,
+                    );
                 }
             });
         }
     })
+}
+
+fn set_server_enabled_in_user_settings(
+    settings: &mut settings::SettingsContent,
+    context_server_id: &ContextServerId,
+    server_source: ContextServerSource,
+    is_enabled: bool,
+) {
+    if server_source == ContextServerSource::Registry {
+        if let Some(ContextServerSettingsContent::Registry { enabled, .. }) = settings
+            .project
+            .context_servers
+            .get_mut(context_server_id.0.as_ref())
+        {
+            *enabled = is_enabled;
+        }
+        return;
+    }
+
+    settings
+        .project
+        .context_servers
+        .entry(context_server_id.0.clone())
+        .or_insert_with(|| ContextServerSettingsContent::Extension {
+            enabled: is_enabled,
+            remote: false,
+            settings: serde_json::json!({}),
+        })
+        .set_enabled(is_enabled);
 }
 
 fn render_status_details(
@@ -559,7 +713,24 @@ pub(crate) fn render_add_server_popover(
             move |window, cx| {
                 let settings_window = settings_window.clone();
                 Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                    menu.entry("Add Local Server", None, {
+                    menu.entry("Install from Registry", None, {
+                        move |_window, cx| {
+                            if let Some(original_window) = original_window.as_ref() {
+                                cx.activate(true);
+                                original_window
+                                    .update(cx, |_, window, cx| {
+                                        window.activate_window();
+                                        window.dispatch_action(
+                                            zed_actions::McpRegistry.boxed_clone(),
+                                            cx,
+                                        );
+                                    })
+                                    .log_err();
+                            }
+                        }
+                    })
+                    .separator()
+                    .entry("Add Local Server", None, {
                         let settings_window = settings_window.clone();
                         move |window, cx| {
                             settings_window
@@ -627,10 +798,115 @@ pub(crate) fn render_add_server_popover(
 
 fn uninstall_server(
     context_server_id: &ContextServerId,
-    provided_by_extension: bool,
+    server_source: ContextServerSource,
     cx: &mut App,
 ) {
-    if provided_by_extension {
+    if server_source == ContextServerSource::Registry {
+        let user_registry_settings = cx
+            .global::<SettingsStore>()
+            .raw_user_settings()
+            .and_then(|settings| {
+                settings
+                    .content
+                    .project
+                    .context_servers
+                    .get(context_server_id.0.as_ref())
+            })
+            .filter(|settings| matches!(settings, ContextServerSettingsContent::Registry { .. }))
+            .cloned();
+        let Some(user_registry_settings) = user_registry_settings else {
+            Err::<(), _>(anyhow::anyhow!(
+                "MCP Registry server {} is not configured in user settings and must be removed from the settings source where it is configured",
+                context_server_id.0
+            ))
+            .notify_app_err(cx);
+            return;
+        };
+        let credential_id = match &user_registry_settings {
+            ContextServerSettingsContent::Registry { registry, .. } => {
+                registry.credential_id.clone()
+            }
+            _ => None,
+        };
+
+        let fs = <dyn fs::Fs>::global(cx);
+        let context_server_id = context_server_id.clone();
+        let settings_completion = settings::update_settings_file_with_completion(fs, cx, {
+            let context_server_id = context_server_id.clone();
+            let user_registry_settings = user_registry_settings.clone();
+            move |settings, _| {
+                if settings
+                    .project
+                    .context_servers
+                    .get(context_server_id.0.as_ref())
+                    == Some(&user_registry_settings)
+                {
+                    settings
+                        .project
+                        .context_servers
+                        .remove(context_server_id.0.as_ref());
+                }
+            }
+        });
+
+        cx.spawn(async move |cx| {
+            let result = async {
+                settings_completion
+                    .await
+                    .context("waiting for MCP Registry server settings removal")?
+                    .with_context(|| {
+                        format!(
+                            "removing MCP Registry server {} from settings",
+                            context_server_id.0
+                        )
+                    })?;
+
+                let (target_still_matches, credential_is_referenced) = cx.update(|cx| {
+                    let context_servers = cx
+                        .global::<SettingsStore>()
+                        .raw_user_settings()
+                        .map(|settings| &settings.content.project.context_servers);
+                    let target_still_matches = context_servers
+                        .and_then(|servers| servers.get(context_server_id.0.as_ref()))
+                        == Some(&user_registry_settings);
+                    let credential_is_referenced =
+                        credential_id.as_deref().is_some_and(|credential_id| {
+                            registry_credential_is_referenced(credential_id, cx)
+                        });
+                    (target_still_matches, credential_is_referenced)
+                });
+
+                if target_still_matches {
+                    anyhow::bail!(
+                        "MCP Registry server {} changed while it was being removed",
+                        context_server_id.0
+                    );
+                }
+                if !credential_is_referenced && let Some(credential_id) = credential_id.as_deref() {
+                    delete_server_secrets(credential_id, cx)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "deleting stored credentials for MCP Registry server {}",
+                                context_server_id.0
+                            )
+                        })?;
+                }
+
+                anyhow::Ok(())
+            }
+            .await;
+
+            cx.update(|cx| {
+                result.notify_app_err(cx);
+            });
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
+    if server_source == ContextServerSource::Extension {
         if let Some((ext_id, manifest)) =
             resolve_extension_for_context_server(context_server_id, cx)
         {
@@ -787,6 +1063,7 @@ impl McpServerForm {
                     oauth_initial = oauth.as_ref().map(|oauth| oauth.client_id.clone());
                 }
                 ContextServerSettings::Extension { .. } => {}
+                ContextServerSettings::Registry { .. } => {}
             }
         }
 
@@ -1383,6 +1660,20 @@ mod tests {
         ContextServerId(name.into())
     }
 
+    fn registry_settings(enabled: bool) -> ContextServerSettingsContent {
+        ContextServerSettingsContent::Registry {
+            enabled,
+            remote: false,
+            registry: settings::McpRegistryServerSettings::default(),
+        }
+    }
+
+    fn registry_settings_json() -> serde_json::Value {
+        serde_json::json!({
+            "registry": {},
+        })
+    }
+
     #[test]
     fn parse_timeout_handles_empty_and_invalid() {
         assert_eq!(parse_timeout(""), Ok(None));
@@ -1392,6 +1683,154 @@ mod tests {
         assert!(parse_timeout("abc").is_err());
         assert!(parse_timeout("-5").is_err());
         assert!(parse_timeout("1.5").is_err());
+    }
+
+    #[test]
+    fn registry_toggle_only_updates_raw_registry_settings() {
+        let context_server_id = id("registry-server");
+        let mut settings = settings::SettingsContent::default();
+
+        set_server_enabled_in_user_settings(
+            &mut settings,
+            &context_server_id,
+            ContextServerSource::Registry,
+            false,
+        );
+        assert!(
+            !settings
+                .project
+                .context_servers
+                .contains_key(context_server_id.0.as_ref())
+        );
+
+        settings
+            .project
+            .context_servers
+            .insert(context_server_id.0.clone(), registry_settings(true));
+        set_server_enabled_in_user_settings(
+            &mut settings,
+            &context_server_id,
+            ContextServerSource::Registry,
+            false,
+        );
+        assert_eq!(
+            settings
+                .project
+                .context_servers
+                .get(context_server_id.0.as_ref()),
+            Some(&registry_settings(false))
+        );
+    }
+
+    #[test]
+    fn managed_registry_toggle_does_not_replace_an_existing_user_entry() {
+        let context_server_id = id("registry-server");
+        let extension_settings = ContextServerSettingsContent::Extension {
+            enabled: true,
+            remote: false,
+            settings: serde_json::json!({}),
+        };
+        let mut settings = settings::SettingsContent::default();
+        settings
+            .project
+            .context_servers
+            .insert(context_server_id.0.clone(), extension_settings.clone());
+
+        set_server_enabled_in_user_settings(
+            &mut settings,
+            &context_server_id,
+            ContextServerSource::Registry,
+            false,
+        );
+
+        assert_eq!(
+            settings
+                .project
+                .context_servers
+                .get(context_server_id.0.as_ref()),
+            Some(&extension_settings)
+        );
+    }
+
+    #[gpui::test]
+    fn registry_controls_follow_editable_settings_ownership(cx: &mut App) {
+        let context_server_id = id("registry-server");
+        let user_settings = serde_json::json!({
+            "context_servers": {
+                "registry-server": registry_settings_json(),
+            },
+        });
+        let mut settings_store = SettingsStore::test(cx);
+        settings_store
+            .set_user_settings(&user_settings.to_string(), cx)
+            .unwrap();
+        cx.set_global(settings_store);
+
+        assert_eq!(
+            registry_settings_ownership(&context_server_id, false, cx),
+            RegistrySettingsOwnership::User
+        );
+        assert_eq!(
+            registry_settings_ownership(&context_server_id, true, cx),
+            RegistrySettingsOwnership::Project
+        );
+
+        let server_settings = serde_json::json!({
+            "context_servers": {
+                "registry-server": registry_settings_json(),
+            },
+        });
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store
+                .set_server_settings(&server_settings.to_string(), cx)
+                .unwrap();
+        });
+        assert_eq!(
+            registry_settings_ownership(&context_server_id, false, cx),
+            RegistrySettingsOwnership::Managed
+        );
+
+        let profile_settings = serde_json::json!({
+            "context_servers": {
+                "registry-server": registry_settings_json(),
+            },
+            "profiles": {
+                "Managed": {
+                    "settings": {
+                        "context_servers": {
+                            "registry-server": registry_settings_json(),
+                        },
+                    },
+                },
+            },
+        });
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.set_server_settings("", cx).unwrap();
+            settings_store
+                .set_user_settings(&profile_settings.to_string(), cx)
+                .unwrap();
+        });
+        cx.set_global(settings::ActiveSettingsProfileName("Managed".into()));
+        assert_eq!(
+            registry_settings_ownership(&context_server_id, false, cx),
+            RegistrySettingsOwnership::Managed
+        );
+
+        let global_settings = serde_json::json!({
+            "context_servers": {
+                "registry-server": registry_settings_json(),
+            },
+        });
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.set_user_settings("{}", cx).unwrap();
+            settings_store
+                .set_global_settings(&global_settings.to_string(), cx)
+                .unwrap();
+        });
+        assert_eq!(
+            registry_settings_ownership(&context_server_id, false, cx),
+            RegistrySettingsOwnership::Managed
+        );
     }
 
     #[test]

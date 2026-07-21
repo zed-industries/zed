@@ -20,6 +20,7 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
+use node_runtime::NodeRuntime;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::{CURRENT_PROJECT_FEATURES, Project};
 use settings::Settings as _;
@@ -1211,14 +1212,23 @@ impl Room {
         id: u64,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(async move |this, cx| {
-            let project =
-                Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
+            let project = Project::in_room(
+                id,
+                client,
+                node_runtime,
+                user_store,
+                language_registry,
+                fs,
+                cx.clone(),
+            )
+            .await?;
 
             this.update(cx, |this, cx| {
                 this.joined_projects.retain(|project| {

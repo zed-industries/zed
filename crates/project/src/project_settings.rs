@@ -224,6 +224,16 @@ pub enum ContextServerSettings {
         /// are supported.
         settings: serde_json::Value,
     },
+    Registry {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// If true, run this server on the remote server when using remote development.
+        #[serde(default)]
+        remote: bool,
+        /// User-provided configuration for this MCP Registry server.
+        registry: settings::McpRegistryServerSettings,
+    },
 }
 
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
@@ -262,6 +272,15 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
                     client_id: o.client_id,
                     client_secret: o.client_secret,
                 }),
+            },
+            settings::ContextServerSettingsContent::Registry {
+                enabled,
+                remote,
+                registry,
+            } => ContextServerSettings::Registry {
+                enabled,
+                remote,
+                registry,
             },
         }
     }
@@ -303,6 +322,15 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
                     client_secret: o.client_secret,
                 }),
             },
+            ContextServerSettings::Registry {
+                enabled,
+                remote,
+                registry,
+            } => settings::ContextServerSettingsContent::Registry {
+                enabled,
+                remote,
+                registry,
+            },
         }
     }
 }
@@ -335,6 +363,7 @@ impl ContextServerSettings {
             ContextServerSettings::Stdio { enabled, .. } => *enabled,
             ContextServerSettings::Http { enabled, .. } => *enabled,
             ContextServerSettings::Extension { enabled, .. } => *enabled,
+            ContextServerSettings::Registry { enabled, .. } => *enabled,
         }
     }
 
@@ -343,6 +372,7 @@ impl ContextServerSettings {
             ContextServerSettings::Stdio { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Http { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Registry { enabled: e, .. } => *e = enabled,
         }
     }
 }

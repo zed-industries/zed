@@ -61,7 +61,7 @@ impl AiSettingItemSource {
     fn tooltip_text(&self, label: &str) -> String {
         match self {
             Self::Extension => format!("{label} was installed from an extension."),
-            Self::Registry => format!("{label} was installed from the ACP registry."),
+            Self::Registry => format!("{label} was installed from a registry."),
             Self::Custom => format!("{label} was configured manually."),
         }
     }

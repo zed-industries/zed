@@ -14,12 +14,11 @@ use gpui::{
     TaskExt,
 };
 use http_client::{HttpClient, github::AssetKind};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, npm_package_spec_with_version_ceiling};
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{AgentConfigOptionValue, RegisterSetting, SettingsStore, update_settings_file};
 use sha2::{Digest, Sha256};
@@ -1392,7 +1391,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
             node_runtime
-                .run_npm_subcommand(
+                .run_npm_subcommand_with_user_configuration(
                     Some(&install_dir),
                     "install",
                     &[package_spec.as_str(), "--save-exact"],
@@ -1433,38 +1432,15 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 }
 
-/// People are using min-release-age more frequently. Which means a fresh registry will likely have
-/// new package versions than the user can install.
-/// We set the version to now be a ceiling and not an exact pin instead. This allows npm to resolve
-/// the latest version it can find that satisfies the constraint. npm seems to check regularly enough
-/// that new versions are available. This does have a few downsides:
-/// - The user might have an older cached version of the package that satisfies the constraint, until
-///   npm checks for updates again.
-/// - The registry args/env may not be valid for the resolved version.
-///
-/// This is a best-effort attempt to install a version that works without overriding the user's
-/// security settings, as the args don't change often. The registry will need to support this better
-/// at some point, but until then, this is a best-effort workaround that hopefully solves the issue
-/// for most users.
-///
-/// We use npm's hyphen-range syntax (`0.0.0 - <version>`, equivalent to `<=<version>`) instead of
-/// the more compact `<=<version>` form because on Windows, `npm` is `npm.cmd` (a batch file run by
-/// cmd.exe), and the quotes our shell builder emits are PowerShell string-literal syntax that PS
-/// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
-/// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
-/// interpreted as input redirection. See zed-industries/zed#55921.
 fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
-    let Some((package_name, version)) = package_spec.rsplit_once('@') else {
-        return (package_spec, package_spec.to_string());
-    };
-    if package_name.is_empty() {
-        return (package_spec, package_spec.to_string());
-    }
-    if Version::parse(version).is_err() {
-        return (package_name, package_spec.to_string());
-    }
-
-    (package_name, format!("{package_name}@0.0.0 - {version}"))
+    let package_name = package_spec
+        .rsplit_once('@')
+        .filter(|(package_name, _)| !package_name.is_empty())
+        .map_or(package_spec, |(package_name, _)| package_name);
+    (
+        package_name,
+        npm_package_spec_with_version_ceiling(package_spec),
+    )
 }
 
 struct LocalCustomAgent {

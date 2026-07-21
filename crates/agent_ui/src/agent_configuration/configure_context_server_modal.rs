@@ -521,6 +521,7 @@ impl ConfigureContextServerModal {
                         None => None,
                     }
                 }
+                ContextServerSettings::Registry { .. } => None,
             };
 
             match target {

@@ -14,15 +14,14 @@ use std::{
     pin::pin,
     sync::{
         Arc,
-        atomic::{AtomicI32, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicI32, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
-    oauth::WwwAuthenticate,
-    transport::{StdioTransport, Transport},
+    transport::{StdioTransport, Transport, TransportShutdownReason},
     types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
 };
 
@@ -36,9 +35,29 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-type ResponseHandler = Box<dyn Send + FnOnce(String)>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Arc<str>>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
+
+struct OutboundMessage {
+    message: String,
+    started_tx: Option<oneshot::Sender<()>>,
+    issued_tx: Option<oneshot::Sender<()>>,
+    started: Option<Arc<AtomicBool>>,
+    cancel_rx: Option<oneshot::Receiver<()>>,
+}
+
+impl OutboundMessage {
+    fn notification(message: String) -> Self {
+        Self {
+            message,
+            started_tx: None,
+            issued_tx: None,
+            started: None,
+            cancel_rx: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -50,14 +69,15 @@ pub enum RequestId {
 pub(crate) struct Client {
     server_id: ContextServerId,
     next_id: AtomicI32,
-    outbound_tx: async_channel::Sender<String>,
+    outbound_tx: async_channel::Sender<OutboundMessage>,
+    priority_outbound_tx: async_channel::Sender<OutboundMessage>,
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
-    output_done_rx: Mutex<Option<barrier::Receiver>>,
+    shutdown_rx: Mutex<Option<(barrier::Receiver, barrier::Receiver)>>,
     executor: BackgroundExecutor,
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
@@ -175,9 +195,9 @@ impl Client {
         cx: AsyncApp,
     ) -> Result<Self> {
         log::debug!(
-            "starting context server (executable={:?}, args={:?})",
+            "starting context server (executable={:?}, argument_count={})",
             binary.executable,
-            binary.args
+            binary.args.len()
         );
 
         let server_name = binary
@@ -199,8 +219,11 @@ impl Client {
         request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<OutboundMessage>();
+        let (priority_outbound_tx, priority_outbound_rx) =
+            async_channel::unbounded::<OutboundMessage>();
         let (output_done_tx, output_done_rx) = barrier::channel();
+        let (input_done_tx, input_done_rx) = barrier::channel();
 
         let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
         let response_handlers =
@@ -218,6 +241,7 @@ impl Client {
                     subscription_set,
                     request_handlers,
                     response_handlers,
+                    input_done_tx,
                     cx,
                 )
                 .log_err()
@@ -234,15 +258,23 @@ impl Client {
         });
 
         let last_transport_error: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
+        let effective_request_timeout = request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT);
+        // Notifications share the serialized transport with requests, so leave
+        // queued requests part of their own deadline after a notification stalls.
+        let notification_timeout = effective_request_timeout / 2;
         let output_task = cx.background_spawn({
             let transport = transport.clone();
             let last_transport_error = last_transport_error.clone();
+            let executor = cx.background_executor().clone();
             Self::handle_output(
                 transport,
                 outbound_rx,
+                priority_outbound_rx,
                 output_done_tx,
                 response_handlers.clone(),
                 last_transport_error,
+                executor,
+                notification_timeout,
             )
             .log_err()
         });
@@ -254,9 +286,10 @@ impl Client {
             name: server_name,
             next_id: Default::default(),
             outbound_tx,
+            priority_outbound_tx,
             executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
-            output_done_rx: Mutex::new(Some(output_done_rx)),
+            shutdown_rx: Mutex::new(Some((input_done_rx, output_done_rx))),
             transport,
             request_timeout,
             last_transport_error,
@@ -274,8 +307,20 @@ impl Client {
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        _input_done_tx: barrier::Sender,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
+        let _fail_pending_requests = util::defer({
+            let response_handlers = response_handlers.clone();
+            move || {
+                if let Some(handlers) = response_handlers.lock().take() {
+                    let error: Arc<str> = "Context server disconnected".into();
+                    for handler in handlers.into_values() {
+                        handler(Err(error.clone()));
+                    }
+                }
+            }
+        });
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
@@ -293,7 +338,7 @@ impl Client {
                 if let Some(handlers) = response_handlers.lock().as_mut()
                     && let Some(handler) = handlers.remove(&response.id)
                 {
-                    handler(message.to_string());
+                    handler(Ok(message.to_string()));
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 subscription_set.lock().notify(
@@ -326,10 +371,13 @@ impl Client {
     /// writes them to the server's stdin, and manages the lifecycle of response handlers.
     async fn handle_output(
         transport: Arc<dyn Transport>,
-        outbound_rx: async_channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<OutboundMessage>,
+        priority_outbound_rx: async_channel::Receiver<OutboundMessage>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
+        executor: BackgroundExecutor,
+        notification_timeout: Duration,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -337,11 +385,61 @@ impl Client {
                 response_handlers.lock().take();
             }
         });
-        while let Ok(message) = outbound_rx.recv().await {
-            log::trace!("outgoing message: {}", message);
-            if let Err(err) = transport.send(message).await {
+        loop {
+            let mut priority_recv = pin!(priority_outbound_rx.recv().fuse());
+            let mut outbound_recv = pin!(outbound_rx.recv().fuse());
+            let next_outbound = futures::select_biased! {
+                outbound = priority_recv => outbound,
+                outbound = outbound_recv => outbound,
+            };
+            let Ok(mut outbound) = next_outbound else {
+                break;
+            };
+            let is_request = outbound.started_tx.is_some();
+            if let Some(started_tx) = outbound.started_tx.take()
+                && started_tx.send(()).is_err()
+            {
+                continue;
+            }
+            if let Some(started) = outbound.started.take() {
+                started.store(true, SeqCst);
+            }
+            let request_id = serde_json::from_str::<Value>(&outbound.message)
+                .ok()
+                .and_then(|message| message.get("id").cloned())
+                .and_then(|id| serde_json::from_value(id).ok());
+            log::trace!("outgoing message: {}", outbound.message);
+            let send_result = if is_request {
+                transport
+                    .send_cancellable(outbound.message, outbound.cancel_rx, outbound.issued_tx)
+                    .await
+            } else {
+                let mut send = pin!(
+                    transport
+                        .send_cancellable(outbound.message, outbound.cancel_rx, outbound.issued_tx)
+                        .fuse()
+                );
+                let mut timer = pin!(executor.timer(notification_timeout).fuse());
+                select! {
+                    result = send => result,
+                    _ = timer => {
+                        log::error!("context server notification transport exceeded {notification_timeout:?}");
+                        continue;
+                    }
+                }
+            };
+            if let Err(err) = send_result {
                 log::debug!("transport send failed: {:#}", err);
+                let error_message: Arc<str> = format!("{err:#}").into();
                 *last_transport_error.lock() = Some(err);
+                if let Some(mut handlers) = response_handlers.lock().take() {
+                    let initiating_handler =
+                        request_id.and_then(|request_id| handlers.remove(&request_id));
+                    for handler in handlers.into_values() {
+                        handler(Err(error_message.clone()));
+                    }
+                    drop(initiating_handler);
+                }
                 return Ok(());
             }
         }
@@ -351,21 +449,24 @@ impl Client {
 
     /// A future that resolves once the transport's output loop has terminated
     /// — after a send failure, or when this client is dropped — yielding the
-    /// authentication challenge recorded by the transport if it shut down on a
-    /// `401 Unauthorized` response.
+    /// reason recorded by the transport.
     ///
     /// Unlike `last_transport_error`, this does not require a request to be in
     /// flight when the transport fails. Returns `None` if the shutdown signal
     /// was already claimed: there is a single signal per client.
     pub(crate) fn wait_for_shutdown(
         &self,
-    ) -> Option<future::BoxFuture<'static, Option<WwwAuthenticate>>> {
-        let mut output_done = self.output_done_rx.lock().take()?;
+    ) -> Option<future::BoxFuture<'static, TransportShutdownReason>> {
+        let (mut input_done, mut output_done) = self.shutdown_rx.lock().take()?;
         let transport = self.transport.clone();
         Some(
             async move {
-                output_done.recv().await;
-                transport.auth_challenge()
+                let mut input_done = pin!(input_done.recv().fuse());
+                let mut output_done = pin!(output_done.recv().fuse());
+                select! {
+                    _ = input_done => TransportShutdownReason::Disconnected,
+                    _ = output_done => transport.shutdown_reason(),
+                }
             }
             .boxed(),
         )
@@ -401,37 +502,76 @@ impl Client {
             method,
             params,
         })
-        .unwrap();
+        .context("serializing context server request")?;
 
         let (tx, rx) = oneshot::channel();
-        let handle_response = self
-            .response_handlers
+        let request_id = RequestId::Int(id);
+        self.response_handlers
             .lock()
             .as_mut()
-            .context("server shut down")
-            .map(|handlers| {
-                handlers.insert(
-                    RequestId::Int(id),
-                    Box::new(move |result| {
-                        let _ = tx.send(result);
-                    }),
-                );
-            });
+            .context("server shut down")?
+            .insert(
+                request_id.clone(),
+                Box::new(move |result| {
+                    if tx.send(result).is_err() {
+                        log::trace!("context server response receiver was dropped");
+                    }
+                }),
+            );
 
-        let send = self
-            .outbound_tx
-            .try_send(request)
-            .context("failed to write to context server's stdin");
+        let _remove_response_handler = util::defer({
+            let request_id = request_id.clone();
+            let response_handlers = self.response_handlers.clone();
+            move || {
+                if let Some(handlers) = response_handlers.lock().as_mut() {
+                    handlers.remove(&request_id);
+                }
+            }
+        });
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let (issued_tx, issued_rx) = oneshot::channel();
+        let request_started = Arc::new(AtomicBool::new(false));
+        let (transport_cancel_tx, transport_cancel_rx) = oneshot::channel();
+        self.outbound_tx
+            .try_send(OutboundMessage {
+                message: request,
+                started_tx: Some(started_tx),
+                issued_tx: Some(issued_tx),
+                started: Some(request_started.clone()),
+                cancel_rx: Some(transport_cancel_rx),
+            })
+            .context("failed to write to context server's stdin")?;
+
+        let cancel_transport_on_drop = util::defer({
+            move || {
+                if transport_cancel_tx.send(()).is_err() {
+                    log::trace!("context server transport cancellation receiver was dropped");
+                }
+            }
+        });
 
         let executor = self.executor.clone();
         let started = Instant::now();
-        handle_response?;
-        send?;
-
         let mut timeout_fut = pin!(
-            match timeout {
-                Some(timeout) => future::Either::Left(executor.timer(timeout)),
-                None => future::Either::Right(future::pending()),
+            async move {
+                match timeout {
+                    Some(timeout) => {
+                        let mut queue_timer = pin!(executor.timer(timeout).fuse());
+                        let mut started_rx = pin!(started_rx.fuse());
+                        select! {
+                            started = started_rx => {
+                                if started.is_err() {
+                                    future::pending::<bool>().await;
+                                }
+                                executor.timer(timeout).await;
+                                false
+                            }
+                            _ = queue_timer => true,
+                        }
+                    }
+                    None => future::pending().await,
+                }
             }
             .fuse()
         );
@@ -444,13 +584,15 @@ impl Client {
             }
             .fuse()
         );
+        let mut issued_rx = Some(issued_rx);
 
         select! {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
+                cancel_transport_on_drop.abort();
                 match response {
-                    Ok(response) => {
+                    Ok(Ok(response)) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
                             Err(anyhow!(error.message))
@@ -460,6 +602,7 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
+                    Ok(Err(error)) => Err(anyhow!(error)),
                     Err(_canceled) => {
                         if let Some(err) = self.last_transport_error.lock().take() {
                             return Err(err);
@@ -469,19 +612,70 @@ impl Client {
                 }
             }
             _ = cancel_fut => {
-                self.notify(
-                    Cancelled::METHOD,
-                    ClientNotification::Cancelled(CancelledParams {
-                        request_id: RequestId::Int(id),
-                        reason: None
-                    })
-                ).log_err();
+                if let Some(issued_rx) = issued_rx.take() {
+                    self.queue_cancellation_if_issued(
+                        method,
+                        &request_id,
+                        &request_started,
+                        issued_rx,
+                    );
+                }
                 anyhow::bail!(RequestCanceled)
             }
-            _ = timeout_fut => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
+            timed_out_in_queue = timeout_fut => {
+                if let Some(timeout) = timeout {
+                    let phase = if timed_out_in_queue { "queue" } else { "response" };
+                    log::error!("cancelled csp request task for {method:?} id {id} after the {phase} exceeded {timeout:?}");
+                }
+                if let Some(issued_rx) = issued_rx.take() {
+                    self.queue_cancellation_if_issued(
+                        method,
+                        &request_id,
+                        &request_started,
+                        issued_rx,
+                    );
+                }
+                if timed_out_in_queue {
+                    anyhow::bail!("Context server request queue timeout");
+                }
                 anyhow::bail!("Context server request timeout");
             }
+        }
+    }
+
+    fn queue_cancellation_if_issued(
+        &self,
+        method: &str,
+        request_id: &RequestId,
+        request_started: &AtomicBool,
+        mut issued_rx: oneshot::Receiver<()>,
+    ) {
+        if method == "initialize"
+            || !request_started.load(SeqCst)
+            || !matches!(issued_rx.try_recv(), Ok(Some(())))
+        {
+            return;
+        }
+        let notification = serde_json::to_string(&Notification {
+            jsonrpc: JSON_RPC_VERSION,
+            method: Cancelled::METHOD,
+            params: ClientNotification::Cancelled(CancelledParams {
+                request_id: request_id.clone(),
+                reason: None,
+            }),
+        });
+        let notification = match notification {
+            Ok(notification) => notification,
+            Err(error) => {
+                log::error!("failed to serialize context server cancellation: {error}");
+                return;
+            }
+        };
+        if let Err(error) = self
+            .priority_outbound_tx
+            .try_send(OutboundMessage::notification(notification))
+        {
+            log::error!("failed to queue context server cancellation: {error}");
         }
     }
 
@@ -493,8 +687,9 @@ impl Client {
             method,
             params,
         })
-        .unwrap();
-        self.outbound_tx.try_send(notification)?;
+        .context("serializing context server notification")?;
+        self.outbound_tx
+            .try_send(OutboundMessage::notification(notification))?;
         Ok(())
     }
 
@@ -618,5 +813,427 @@ impl Drop for NotificationSubscription {
             handler_ids.retain(|id| *id != self.id);
             !handler_ids.is_empty()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use gpui::TestAppContext;
+    use std::{
+        pin::Pin,
+        sync::atomic::{AtomicBool, Ordering},
+        time::Duration,
+    };
+
+    struct RecordingTransport {
+        incoming_tx: async_channel::Sender<String>,
+        incoming_rx: async_channel::Receiver<String>,
+        sent_messages: Mutex<Vec<Value>>,
+        block_next_request: AtomicBool,
+        block_next_notification: AtomicBool,
+    }
+
+    impl RecordingTransport {
+        fn new() -> Self {
+            let (incoming_tx, incoming_rx) = async_channel::unbounded();
+            Self {
+                incoming_tx,
+                incoming_rx,
+                sent_messages: Mutex::new(Vec::new()),
+                block_next_request: AtomicBool::new(false),
+                block_next_notification: AtomicBool::new(false),
+            }
+        }
+
+        fn blocking_once() -> Self {
+            let transport = Self::new();
+            transport.block_next_request.store(true, Ordering::SeqCst);
+            transport
+        }
+
+        fn blocking_notification_once() -> Self {
+            let transport = Self::new();
+            transport
+                .block_next_notification
+                .store(true, Ordering::SeqCst);
+            transport
+        }
+
+        fn disconnect(&self) {
+            self.incoming_tx.close();
+        }
+
+        fn send_incoming(&self, message: Value) {
+            self.incoming_tx
+                .try_send(message.to_string())
+                .expect("incoming message should be sent");
+        }
+
+        fn sent_messages(&self) -> Vec<Value> {
+            self.sent_messages.lock().clone()
+        }
+    }
+
+    #[async_trait]
+    impl Transport for RecordingTransport {
+        async fn send(&self, message: String) -> Result<()> {
+            self.sent_messages
+                .lock()
+                .push(serde_json::from_str(&message)?);
+            Ok(())
+        }
+
+        async fn send_cancellable(
+            &self,
+            message: String,
+            cancel_rx: Option<oneshot::Receiver<()>>,
+            issued_tx: Option<oneshot::Sender<()>>,
+        ) -> Result<()> {
+            self.send(message).await?;
+            if let Some(issued_tx) = issued_tx
+                && issued_tx.send(()).is_err()
+            {
+                log::trace!("test request-issued receiver was dropped");
+            }
+            if self.block_next_notification.swap(false, Ordering::SeqCst) && cancel_rx.is_none() {
+                future::pending::<()>().await;
+            }
+            if self.block_next_request.swap(false, Ordering::SeqCst)
+                && let Some(cancel_rx) = cancel_rx
+            {
+                if cancel_rx.await.is_err() {
+                    log::trace!("test transport cancellation sender was dropped");
+                }
+            }
+            Ok(())
+        }
+
+        fn receive(&self) -> Pin<Box<dyn futures::Stream<Item = String> + Send>> {
+            Box::pin(self.incoming_rx.clone())
+        }
+
+        fn receive_err(&self) -> Pin<Box<dyn futures::Stream<Item = String> + Send>> {
+            Box::pin(futures::stream::pending())
+        }
+    }
+
+    #[gpui::test]
+    async fn request_timeout_removes_handler_and_aborts_transport(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(1)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(transport.sent_messages().len(), 1);
+
+        cx.executor().advance_clock(Duration::from_secs(2));
+        let error = request.await.expect_err("request should time out");
+        cx.executor().run_until_parked();
+
+        assert_eq!(error.to_string(), "Context server request timeout");
+        assert_eq!(
+            client.response_handlers.lock().as_ref().map(HashMap::len),
+            Some(0)
+        );
+        let messages = transport.sent_messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["method"], "tools/list");
+        assert_eq!(messages[1]["method"], Cancelled::METHOD);
+        assert_eq!(messages[1]["params"]["requestId"], 0);
+
+        transport.send_incoming(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": { "late": true }
+        }));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            client.response_handlers.lock().as_ref().map(HashMap::len),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn initialize_timeout_does_not_notify_server(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(1)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("initialize", ()).await }
+        });
+
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(2));
+        let error = request.await.expect_err("initialize should time out");
+        cx.executor().run_until_parked();
+
+        assert_eq!(error.to_string(), "Context server request timeout");
+        assert_eq!(transport.sent_messages().len(), 1);
+        assert_eq!(transport.sent_messages()[0]["method"], "initialize");
+    }
+
+    #[gpui::test]
+    async fn dropping_request_aborts_transport_and_removes_handler(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(transport.sent_messages().len(), 1);
+        drop(request);
+        cx.executor().run_until_parked();
+
+        assert_eq!(transport.sent_messages().len(), 1);
+        assert_eq!(
+            client.response_handlers.lock().as_ref().map(HashMap::len),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn request_queue_wait_has_its_own_timeout(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let blocking_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move {
+                client
+                    .request_with::<Value>("tools/list", (), None, Some(Duration::from_secs(60)))
+                    .await
+            }
+        });
+        cx.executor().run_until_parked();
+        let queued_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move {
+                client
+                    .request_with::<Value>("prompts/list", (), None, Some(Duration::from_secs(1)))
+                    .await
+            }
+        });
+
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(2));
+        let error = queued_request
+            .await
+            .expect_err("queued request should have its own timeout");
+
+        assert_eq!(error.to_string(), "Context server request queue timeout");
+        assert_eq!(transport.sent_messages().len(), 1);
+        assert_eq!(transport.sent_messages()[0]["method"], "tools/list");
+        drop(blocking_request);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            client.response_handlers.lock().as_ref().map(HashMap::len),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn cancellation_is_not_sent_for_a_request_still_in_the_queue(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_notification_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        client
+            .notify("notifications/test", ())
+            .expect("notification should be queued");
+        cx.executor().run_until_parked();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move {
+                client
+                    .request_with::<Value>("tools/list", (), Some(cancel_rx), None)
+                    .await
+            }
+        });
+        cx.executor().run_until_parked();
+
+        cancel_tx
+            .send(())
+            .expect("request cancellation should be sent");
+        cx.executor().run_until_parked();
+        let error = request.await.expect_err("request should be canceled");
+
+        assert_eq!(error.to_string(), RequestCanceled.to_string());
+        assert_eq!(transport.sent_messages().len(), 1);
+        assert_eq!(transport.sent_messages()[0]["method"], "notifications/test");
+    }
+
+    #[gpui::test]
+    async fn cancellation_is_prioritized_after_the_issued_request(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let first_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move {
+                client
+                    .request_with::<Value>("tools/list", (), Some(cancel_rx), None)
+                    .await
+            }
+        });
+        cx.executor().run_until_parked();
+        let second_request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("prompts/list", ()).await }
+        });
+        cx.executor().run_until_parked();
+
+        cancel_tx
+            .send(())
+            .expect("request cancellation should be sent");
+        cx.executor().run_until_parked();
+        let error = first_request
+            .await
+            .expect_err("first request should be canceled");
+
+        assert_eq!(error.to_string(), RequestCanceled.to_string());
+        let messages = transport.sent_messages();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["method"], "tools/list");
+        assert_eq!(messages[1]["method"], Cancelled::METHOD);
+        assert_eq!(messages[1]["params"]["requestId"], 0);
+        assert_eq!(messages[2]["method"], "prompts/list");
+        drop(second_request);
+        cx.executor().run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn notification_timeout_unblocks_later_requests(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::blocking_notification_once());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(2)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        client
+            .notify("notifications/test", ())
+            .expect("notification should be queued");
+        cx.executor().run_until_parked();
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("tools/list", ()).await }
+        });
+
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        transport.send_incoming(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": { "recovered": true }
+        }));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            request
+                .await
+                .expect("request should run after the notification timeout"),
+            serde_json::json!({"recovered": true})
+        );
+        assert_eq!(transport.sent_messages().len(), 2);
+        assert_eq!(transport.sent_messages()[0]["method"], "notifications/test");
+        assert_eq!(transport.sent_messages()[1]["method"], "tools/list");
+        assert_eq!(
+            client.response_handlers.lock().as_ref().map(HashMap::len),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn input_disconnect_fails_pending_request(cx: &mut TestAppContext) {
+        let transport = Arc::new(RecordingTransport::new());
+        let client = Arc::new(
+            Client::new(
+                ContextServerId("test-server".into()),
+                "test-server".into(),
+                transport.clone(),
+                Some(Duration::from_secs(60)),
+                cx.to_async(),
+            )
+            .expect("client should be created"),
+        );
+        let request = cx.spawn({
+            let client = client.clone();
+            move |_| async move { client.request::<Value>("initialize", ()).await }
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(transport.sent_messages().len(), 1);
+        transport.disconnect();
+        cx.executor().run_until_parked();
+
+        let error = request
+            .await
+            .expect_err("disconnect should fail the pending request");
+        assert_eq!(error.to_string(), "Context server disconnected");
+        assert!(client.response_handlers.lock().is_none());
     }
 }

@@ -2667,6 +2667,7 @@ dependencies = [
  "language",
  "livekit_client",
  "log",
+ "node_runtime",
  "postage",
  "project",
  "serde",

@@ -188,6 +188,15 @@ impl ProjectEnvironment {
         self.local_directory_environment(&Shell::System, abs_path, cx)
     }
 
+    /// Returns the environment for a process that runs locally even when the
+    /// project's visible worktrees live on a remote host.
+    pub fn local_execution_environment(
+        &mut self,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.local_directory_environment(&Shell::System, paths::home_dir().as_path().into(), cx)
+    }
+
     /// Returns the project environment, if possible.
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
     /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in

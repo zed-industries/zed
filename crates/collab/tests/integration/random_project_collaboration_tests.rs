@@ -640,6 +640,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 project_id,
                                 client.language_registry().clone(),
                                 FakeFs::new(cx.background_executor().clone()),
+                                client.app_state.node_runtime.clone(),
                                 cx,
                             )
                         }))

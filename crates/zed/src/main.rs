@@ -712,6 +712,11 @@ fn main() {
             app_state.fs.clone(),
             app_state.client.http_client(),
         );
+        project::McpRegistryStore::init_global(
+            cx,
+            app_state.fs.clone(),
+            app_state.client.http_client(),
+        );
         agent_ui::init(
             app_state.fs.clone(),
             prompt_builder,
@@ -772,7 +777,12 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        call::init(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.node_runtime.clone(),
+            cx,
+        );
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);

@@ -36,6 +36,7 @@ gpui_tokio.workspace = true
 language.workspace = true
 livekit_client.workspace = true
 log.workspace = true
+node_runtime.workspace = true
 postage.workspace = true
 project.workspace = true
 serde.workspace = true

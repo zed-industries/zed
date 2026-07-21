@@ -48,6 +48,16 @@ use project::{
     },
     search::{SearchQuery, SearchResult},
 };
+#[cfg(unix)]
+use project::{
+    McpRegistryStore,
+    context_server_store::{ContextServerConfiguration, ContextServerStore},
+    mcp_registry_store::{
+        McpRegistryInstallationSource, ResolvedMcpRegistryServer, ServerResponse,
+        resolve_server_configuration,
+    },
+    project_settings::ContextServerSettings,
+};
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use rpc::proto;
 use serde_json::json;
@@ -229,6 +239,157 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_remote_registry_npm_uses_the_client_resolved_installation(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "io.example/remote-registry-npm";
+    const PACKAGE_IDENTIFIER: &str = "@example/remote-registry-npm";
+    const REMOTE_URL: &str = "https://example.com/mcp";
+
+    let npm_path = PathBuf::from("/test/npm");
+    let node_runtime = NodeRuntime::test_with_paths(PathBuf::from("/test/node"), npm_path.clone());
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({ "project": { "README.md": "test" } }),
+    )
+    .await;
+    server_cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let (project, headless) = init_test_with_node_runtime(&fs, node_runtime, cx, server_cx).await;
+
+    let registry_server: ServerResponse = serde_json::from_value(json!({
+        "server": {
+            "name": SERVER_ID,
+            "version": "2.3.4",
+            "packages": [{
+                "registryType": "npm",
+                "identifier": PACKAGE_IDENTIFIER,
+                "version": "2.3.4",
+                "transport": {"type": "stdio"},
+                "runtimeArguments": [{"type": "named", "name": "--loglevel", "value": "warn"}],
+                "packageArguments": [{"type": "positional", "value": "workspace"}],
+                "environmentVariables": [{"name": "SERVER_MODE", "default": "remote"}]
+            }],
+            "remotes": [{"type": "streamable-http", "url": REMOTE_URL}]
+        }
+    }))
+    .expect("registry server should parse");
+    let package_source = McpRegistryInstallationSource::Package {
+        registry_type: "npm".to_owned(),
+        identifier: PACKAGE_IDENTIFIER.to_owned(),
+    };
+    let remote_source = McpRegistryInstallationSource::Remote {
+        url: REMOTE_URL.to_owned(),
+    };
+
+    let client_registry_store = cx.update(|cx| {
+        let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
+        registry_store.update(cx, |registry_store, cx| {
+            registry_store.remember_server_installation(
+                registry_server.clone(),
+                package_source,
+                cx,
+            );
+        });
+        registry_store
+    });
+    server_cx.update(|cx| {
+        let registry_store = McpRegistryStore::init_test_global(cx, Vec::new());
+        registry_store.update(cx, |registry_store, cx| {
+            registry_store.remember_server_installation(registry_server, remote_source, cx);
+        });
+        let context_server_store = headless.read(cx).context_server_store.clone();
+        context_server_store.update(cx, |store, _cx| {
+            store.test_set_context_server_settings(
+                SERVER_ID.into(),
+                ContextServerSettings::Registry {
+                    enabled: true,
+                    remote: true,
+                    registry: settings::McpRegistryServerSettings::default(),
+                },
+            );
+        });
+    });
+
+    server_cx.run_until_parked();
+    let installation_task = client_registry_store.update(cx, |registry_store, cx| {
+        registry_store.server_installation(SERVER_ID, cx)
+    });
+    let (client_server, client_source) = installation_task
+        .await
+        .expect("resolve the client Registry installation");
+    assert_eq!(
+        client_source,
+        McpRegistryInstallationSource::Package {
+            registry_type: "npm".to_owned(),
+            identifier: PACKAGE_IDENTIFIER.to_owned(),
+        }
+    );
+    let ResolvedMcpRegistryServer::Npm {
+        package_spec,
+        runtime_arguments,
+        package_arguments,
+        environment,
+    } = resolve_server_configuration(
+        &client_server,
+        &client_source,
+        &HashMap::default(),
+        &HashMap::default(),
+    )
+    .expect("resolve the client Registry npm configuration")
+    else {
+        panic!("expected the client Registry hint to select npm");
+    };
+    let configuration = Arc::new(ContextServerConfiguration::RemoteRegistryNpm {
+        package_spec,
+        runtime_arguments,
+        package_arguments,
+        environment,
+    });
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let configuration = ContextServerStore::test_create_context_server(
+        context_server_store.downgrade(),
+        SERVER_ID.into(),
+        configuration,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("create remote Registry context server")
+    .expect("remote Registry context server should have an agent configuration");
+    let ContextServerConfiguration::Custom { command, remote } = configuration.as_ref() else {
+        panic!("expected the client-resolved npm command from the remote host");
+    };
+    assert!(*remote);
+    assert_eq!(command.path, npm_path);
+    assert!(command.args.ends_with(&[
+        "--yes".to_owned(),
+        "--loglevel".to_owned(),
+        "warn".to_owned(),
+        "--".to_owned(),
+        format!("{PACKAGE_IDENTIFIER}@0.0.0 - 2.3.4"),
+        "workspace".to_owned(),
+    ]));
+    assert!(
+        !command.args.iter().any(|argument| matches!(
+            argument.as_str(),
+            "--userconfig" | "--globalconfig" | "--before" | "--min-release-age"
+        )),
+        "the remote npm invocation must inherit the remote user's npm policy"
+    );
+    assert_eq!(
+        command
+            .env
+            .as_ref()
+            .and_then(|environment| environment.get("SERVER_MODE"))
+            .map(String::as_str),
+        Some("remote")
+    );
 }
 
 #[gpui::test]
@@ -5643,6 +5804,15 @@ pub async fn init_test(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (Entity<Project>, Entity<HeadlessProject>) {
+    init_test_with_node_runtime(server_fs, NodeRuntime::unavailable(), cx, server_cx).await
+}
+
+async fn init_test_with_node_runtime(
+    server_fs: &Arc<FakeFs>,
+    node_runtime: NodeRuntime,
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
@@ -5654,7 +5824,6 @@ pub async fn init_test(
 
     let (opts, ssh_server_client, _) = RemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
-    let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);

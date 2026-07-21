@@ -25,6 +25,22 @@ use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
+/// Builds an npm package spec whose registry version is a ceiling rather than an exact pin.
+///
+/// This lets npm apply its effective policy, including `min-release-age`. The hyphen range also
+/// avoids `<` being parsed as input redirection when npm.cmd is launched through PowerShell on
+/// Windows.
+pub fn npm_package_spec_with_version_ceiling(package_spec: &str) -> String {
+    let Some((package_name, version)) = package_spec.rsplit_once('@') else {
+        return package_spec.to_owned();
+    };
+    if package_name.is_empty() || Version::parse(version).is_err() {
+        return package_spec.to_owned();
+    }
+
+    format!("{package_name}@0.0.0 - {version}")
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
@@ -39,6 +55,12 @@ pub struct NpmCommand {
     pub path: PathBuf,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NpmConfiguration {
+    Isolated,
+    User,
 }
 
 pub enum VersionStrategy<'a> {
@@ -80,6 +102,26 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
+            shell_env_loaded: oneshot::channel().1.shared(),
+        })))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_with_paths(node: PathBuf, npm: PathBuf) -> Self {
+        let options = NodeBinaryOptions {
+            allow_path_lookup: false,
+            allow_binary_download: false,
+            use_paths: Some((node.clone(), npm.clone())),
+        };
+        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
+            http: Arc::new(http_client::BlockedHttpClient),
+            instance: Some(Box::new(SystemNodeRuntime {
+                node,
+                npm,
+                scratch_dir: paths::data_dir().join("node"),
+            })),
+            last_options: Some(options.clone()),
+            options: watch::channel(Some(options)).1,
             shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
@@ -221,10 +263,41 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
+        self.run_npm_subcommand_with_configuration(
+            directory,
+            subcommand,
+            args,
+            NpmConfiguration::Isolated,
+        )
+        .await
+    }
+
+    pub async fn run_npm_subcommand_with_user_configuration(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output> {
+        self.run_npm_subcommand_with_configuration(
+            directory,
+            subcommand,
+            args,
+            NpmConfiguration::User,
+        )
+        .await
+    }
+
+    async fn run_npm_subcommand_with_configuration(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+        configuration: NpmConfiguration,
+    ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
+            .run_npm_subcommand(directory, http.proxy(), subcommand, args, configuration)
             .await
     }
 
@@ -245,10 +318,38 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
+        self.npm_command_with_configuration(
+            prefix_dir,
+            subcommand,
+            args,
+            NpmConfiguration::Isolated,
+        )
+        .await
+    }
+
+    /// Builds a command that honors user and global npm configuration even when Zed provides the
+    /// Node.js runtime. Use this for packages the user explicitly chooses from a registry.
+    pub async fn npm_command_with_user_configuration(
+        &self,
+        prefix_dir: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<NpmCommand> {
+        self.npm_command_with_configuration(prefix_dir, subcommand, args, NpmConfiguration::User)
+            .await
+    }
+
+    async fn npm_command_with_configuration(
+        &self,
+        prefix_dir: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+        configuration: NpmConfiguration,
+    ) -> Result<NpmCommand> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .npm_command(prefix_dir, http.proxy(), subcommand, args)
+            .npm_command(prefix_dir, http.proxy(), subcommand, args, configuration)
             .await
     }
 
@@ -279,6 +380,7 @@ impl NodeRuntime {
                     "--fetch-timeout",
                     "5000",
                 ],
+                NpmConfiguration::Isolated,
             )
             .await?;
 
@@ -480,7 +582,13 @@ async fn npm_config_before(
     // `npm config get before` renders Date values for display. The JSON config output keeps the
     // computed cutoff in the same ISO format used by `npm info --json` release times.
     let output = node_runtime
-        .run_npm_subcommand(None, proxy, "config", &["list", "--json"])
+        .run_npm_subcommand(
+            None,
+            proxy,
+            "config",
+            &["list", "--json"],
+            NpmConfiguration::Isolated,
+        )
         .await?;
     let config: NpmConfig = serde_json::from_slice(&output.stdout)?;
     Ok(config
@@ -581,6 +689,7 @@ trait NodeRuntimeTrait: Send + Sync {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        configuration: NpmConfiguration,
     ) -> Result<Output>;
 
     async fn npm_command(
@@ -589,6 +698,7 @@ trait NodeRuntimeTrait: Send + Sync {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        configuration: NpmConfiguration,
     ) -> Result<NpmCommand>;
 
     async fn npm_package_installed_version(
@@ -768,9 +878,12 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        configuration: NpmConfiguration,
     ) -> Result<Output> {
         let attempt = || async {
-            let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
+            let npm_command = self
+                .npm_command(directory, proxy, subcommand, args, configuration)
+                .await?;
             let mut command = util::command::new_command(npm_command.path);
             command.args(npm_command.args);
             command.envs(npm_command.env);
@@ -808,6 +921,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        configuration: NpmConfiguration,
     ) -> Result<NpmCommand> {
         let node_binary = self.installation_path.join(Self::NODE_PATH);
         let npm_file = self.installation_path.join(Self::NPM_PATH);
@@ -821,12 +935,14 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             "missing npm file"
         );
 
+        let (user_configuration, global_configuration) =
+            managed_npm_configuration_paths(&self.installation_path, configuration);
         let command_args = build_npm_command_args(
             Some(&npm_file),
             prefix_dir,
             &self.installation_path.join("cache"),
-            Some(&self.installation_path.join("blank_user_npmrc")),
-            Some(&self.installation_path.join("blank_global_npmrc")),
+            user_configuration.as_deref(),
+            global_configuration.as_deref(),
             proxy,
             subcommand,
             args,
@@ -935,8 +1051,11 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        configuration: NpmConfiguration,
     ) -> anyhow::Result<Output> {
-        let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
+        let npm_command = self
+            .npm_command(directory, proxy, subcommand, args, configuration)
+            .await?;
         let mut command = util::command::new_command(npm_command.path);
         command.args(npm_command.args);
         command.envs(npm_command.env);
@@ -959,6 +1078,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
+        _configuration: NpmConfiguration,
     ) -> Result<NpmCommand> {
         let command_args = build_npm_command_args(
             None,
@@ -1084,6 +1204,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _: Option<&Url>,
         _: &str,
         _: &[&str],
+        _: NpmConfiguration,
     ) -> anyhow::Result<Output> {
         bail!("{}", self.error_message)
     }
@@ -1094,6 +1215,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _proxy: Option<&Url>,
         _subcommand: &str,
         _args: &[&str],
+        _configuration: NpmConfiguration,
     ) -> Result<NpmCommand> {
         bail!("{}", self.error_message)
     }
@@ -1104,6 +1226,19 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _: &str,
     ) -> Result<Option<Version>> {
         bail!("{}", self.error_message)
+    }
+}
+
+fn managed_npm_configuration_paths(
+    installation_path: &Path,
+    configuration: NpmConfiguration,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    match configuration {
+        NpmConfiguration::Isolated => (
+            Some(installation_path.join("blank_user_npmrc")),
+            Some(installation_path.join("blank_global_npmrc")),
+        ),
+        NpmConfiguration::User => (None, None),
     }
 }
 
@@ -1197,9 +1332,48 @@ mod tests {
     use semver::{Version, VersionReq};
 
     use super::{
-        NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
-        proxy_argument, select_npm_package_version, should_install_npm_package_version,
+        NpmConfiguration, NpmInfo, VersionStrategy, build_npm_command_args,
+        deserialize_npm_info_from_response, managed_npm_configuration_paths,
+        npm_package_spec_with_version_ceiling, proxy_argument, select_npm_package_version,
+        should_install_npm_package_version,
     };
+
+    #[test]
+    fn builds_npm_package_specs_with_version_ceilings() {
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("agent-package@1.2.3"),
+            "agent-package@0.0.0 - 1.2.3"
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("@scope/agent-package@1.2.3-beta.1"),
+            "@scope/agent-package@0.0.0 - 1.2.3-beta.1"
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("@scope/agent-package"),
+            "@scope/agent-package"
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("agent-package@latest"),
+            "agent-package@latest"
+        );
+    }
+
+    #[test]
+    fn managed_npm_user_configuration_does_not_use_blank_npmrc_files() {
+        let installation_path = Path::new("/zed/node");
+
+        assert_eq!(
+            managed_npm_configuration_paths(installation_path, NpmConfiguration::Isolated),
+            (
+                Some(installation_path.join("blank_user_npmrc")),
+                Some(installation_path.join("blank_global_npmrc")),
+            )
+        );
+        assert_eq!(
+            managed_npm_configuration_paths(installation_path, NpmConfiguration::User),
+            (None, None)
+        );
+    }
 
     // Map localhost to 127.0.0.1
     // NodeRuntime without environment information can not parse `localhost` correctly.

@@ -4902,7 +4902,7 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
         .configured_server_ids()
         .iter()
         .filter_map(|id| {
-            let configuration = context_server_store.configuration_for_server(id)?;
+            let configuration = context_server_store.configuration_for_agent(id)?;
             match &*configuration {
                 project::context_server_store::ContextServerConfiguration::Custom {
                     command,

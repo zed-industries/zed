@@ -72,7 +72,10 @@ impl ContextServer {
     ) -> Result<Self> {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
-                log::info!("Using HTTP transport for {}", endpoint);
+                log::info!(
+                    "Using HTTP transport for {}",
+                    endpoint.origin().ascii_serialization()
+                );
                 let transport =
                     HttpTransport::new(http_client, endpoint.to_string(), headers, executor);
                 Arc::new(transport) as _

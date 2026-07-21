@@ -13,7 +13,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 
 use crate::client::{Client, NotificationSubscription};
-use crate::oauth::WwwAuthenticate;
+use crate::transport::TransportShutdownReason;
 use crate::types::{self, Notification, Request};
 
 pub struct ModelContextProtocol {
@@ -125,15 +125,14 @@ impl InitializedContextServerProtocol {
 
     /// A future that resolves once the underlying transport's output loop has
     /// terminated — after a send failure, or when the client is dropped —
-    /// yielding the authentication challenge recorded by the transport if it
-    /// shut down on a `401 Unauthorized` response.
+    /// yielding the reason recorded by the transport.
     ///
     /// Servers may accept `initialize` unauthenticated and only challenge a
     /// later request or notification. Awaiting this is what lets the owner of
     /// the connection notice such a challenge even when no request was in
     /// flight to carry a typed error back. Returns `None` if the shutdown
     /// signal was already claimed: there is a single signal per client.
-    pub fn wait_for_shutdown(&self) -> Option<BoxFuture<'static, Option<WwwAuthenticate>>> {
+    pub fn wait_for_shutdown(&self) -> Option<BoxFuture<'static, TransportShutdownReason>> {
         self.inner.wait_for_shutdown()
     }
 

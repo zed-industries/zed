@@ -11,6 +11,7 @@ use gpui::{
     AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
     TaskExt, WeakEntity, Window,
 };
+use node_runtime::NodeRuntime;
 use postage::watch;
 use project::Project;
 use room::Event;
@@ -26,8 +27,13 @@ pub use room::Room;
 
 use crate::call_settings::CallSettings;
 
-pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
+pub fn init(
+    client: Arc<Client>,
+    user_store: Entity<UserStore>,
+    node_runtime: NodeRuntime,
+    cx: &mut App,
+) {
+    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, node_runtime, cx));
     let active_call_handle = active_call.downgrade();
 
     cx.observe_new(move |_multi_workspace: &mut MultiWorkspace, window, cx| {
@@ -204,8 +210,9 @@ impl AnyActiveCall for ActiveCallEntity {
         let Some(room) = self.0.read(cx).room().cloned() else {
             return Task::ready(Err(anyhow::anyhow!("not in a call")));
         };
+        let node_runtime = self.0.read(cx).node_runtime.clone();
         room.update(cx, |room, cx| {
-            room.join_project(project_id, language_registry, fs, cx)
+            room.join_project(project_id, language_registry, fs, node_runtime, cx)
         })
     }
 
@@ -402,13 +409,19 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: Entity<UserStore>,
+    node_runtime: NodeRuntime,
     _subscriptions: Vec<client::Subscription>,
 }
 
 impl EventEmitter<Event> for ActiveCall {}
 
 impl ActiveCall {
-    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        client: Arc<Client>,
+        user_store: Entity<UserStore>,
+        node_runtime: NodeRuntime,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             room: None,
             last_call_diagnostics: None,
@@ -423,6 +436,7 @@ impl ActiveCall {
             ],
             client,
             user_store,
+            node_runtime,
         }
     }
 
