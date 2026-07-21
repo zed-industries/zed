@@ -26,7 +26,7 @@ use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
-use util::markdown::{source_line_from_fragment, split_local_url_fragment};
+use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
 use workspace::notifications::NotifyResultExt;
 use workspace::searchable::{
@@ -1052,7 +1052,11 @@ fn open_preview_url(
 ) {
     let decoded_path = urlencoding::decode(&url).unwrap_or_else(|_| Cow::Borrowed(&url));
 
-    if let Some(row) = fragment.as_deref().and_then(source_line_from_fragment)
+    if let Some(row) = fragment
+        .as_deref()
+        .and_then(|fragment| fragment.strip_prefix('L'))
+        .and_then(source_position_from_fragment)
+        .map(|(row, _)| row)
         && open_preview_path_at_line(
             decoded_path.to_string(),
             base_directory.clone(),

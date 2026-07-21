@@ -45,7 +45,7 @@ use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
 };
-use util::markdown::{source_line_from_fragment, split_local_url_fragment};
+use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
@@ -12212,7 +12212,10 @@ pub(crate) fn open_link(
             resolve_path(&decoded_path).or_else(|| resolve_path(relative_path))
         });
         if let Some(abs_path) = abs_path {
-            let point = source_line_from_fragment(fragment).map(|row| Point::new(row, 0));
+            let point = fragment
+                .strip_prefix('L')
+                .and_then(source_position_from_fragment)
+                .map(|(row, _)| Point::new(row, 0));
             workspace.update(cx, |workspace, cx| {
                 open_abs_path_at_point(workspace, abs_path, point, window, cx);
             });
