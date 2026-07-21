@@ -14,6 +14,13 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("Unlimited use of external agents"))
     }
 
+    pub fn sign_in_upsell(&self) -> impl IntoElement {
+        List::new()
+            .child(ListBulletItem::new("Unlimited edit predictions"))
+            .child(ListBulletItem::new("$20 of tokens in Zed agent"))
+            .child(ListBulletItem::new("No credit card required"))
+    }
+
     pub fn pro_trial(&self, period: bool) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("$20 of tokens in Zed agent"))
@@ -36,6 +43,12 @@ impl PlanDefinitions {
         List::new()
             .child(ListBulletItem::new("Unlimited edit predictions"))
             .child(ListBulletItem::new("Usage-based billing"))
+    }
+
+    pub fn vip_plan(&self) -> impl IntoElement {
+        List::new()
+            .child(ListBulletItem::new("Unlimited edit predictions"))
+            .child(ListBulletItem::new("Tokens in the Zed agent"))
     }
 
     pub fn student_plan(&self) -> impl IntoElement {

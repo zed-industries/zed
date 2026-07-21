@@ -558,9 +558,9 @@ pub fn most_restrictive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AgentTool;
     use crate::pattern_extraction::extract_terminal_pattern;
-    use crate::tools::{DeletePathTool, EditFileTool, FetchTool, TerminalTool};
+    use crate::tools::{DeletePathTool, FetchTool, TerminalTool};
+    use crate::{AgentTool, EditFileTool};
     use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
     use gpui::px;
     use settings::{DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone};
@@ -576,9 +576,12 @@ mod tests {
             default_height: px(600.),
             max_content_width: Some(px(850.)),
             default_model: None,
+            subagent_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_include_project_rules: true,
+            commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
@@ -588,16 +591,21 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
+            },
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            terminal_init_command: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
             tool_permissions,
+            sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         }

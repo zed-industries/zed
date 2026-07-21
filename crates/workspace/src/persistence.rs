@@ -21,6 +21,7 @@ use db::{
 };
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
+    ProjectGroupKey,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
@@ -355,6 +356,13 @@ pub fn read_serialized_multi_workspaces(
             let active_workspace = state
                 .active_workspace_id
                 .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                // If the persisted active workspace can't be matched (e.g. its
+                // pointer was lost or its row was pruned), fall back to the
+                // first workspace that actually has paths rather than blindly
+                // taking index 0, so a stray scratch/empty workspace isn't
+                // restored as the focused window. Only if none have paths do we
+                // fall back to the first entry.
+                .or_else(|| group.iter().position(|ws| !ws.paths.is_empty()))
                 .or(Some(0))
                 .and_then(|index| group.into_iter().nth(index))?;
             Some(model::SerializedMultiWorkspace {
@@ -386,12 +394,13 @@ pub async fn write_default_dock_state(
 #[derive(Debug)]
 pub struct Bookmark {
     pub row: u32,
+    pub label: String,
 }
 
 impl sqlez::bindable::StaticColumnCount for Bookmark {
     fn column_count() -> usize {
-        // row
-        1
+        // row, label
+        2
     }
 }
 
@@ -401,7 +410,8 @@ impl sqlez::bindable::Bind for Bookmark {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        statement.bind(&self.row, start_index)
+        let next_index = statement.bind(&self.row, start_index)?;
+        statement.bind(&self.label, next_index)
     }
 }
 
@@ -412,7 +422,9 @@ impl Column for Bookmark {
             .with_context(|| format!("Failed to read bookmark at index {start_index}"))?
             as u32;
 
-        Ok((Bookmark { row }, start_index + 1))
+        let (label, next_index) = String::column(statement, start_index + 1)?;
+
+        Ok((Bookmark { row, label }, next_index))
     }
 }
 
@@ -1032,6 +1044,13 @@ impl Domain for WorkspaceDb {
                 ON UPDATE CASCADE
             );
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
+            ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
+        ),
+        sql!(
+            ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1084,6 +1103,8 @@ impl WorkspaceDb {
             workspace_id,
             paths,
             paths_order,
+            identity_paths,
+            identity_paths_order,
             window_bounds,
             display,
             centered_layout,
@@ -1093,6 +1114,8 @@ impl WorkspaceDb {
             WorkspaceId,
             String,
             String,
+            Option<String>,
+            Option<String>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1104,6 +1127,8 @@ impl WorkspaceDb {
                     workspace_id,
                     paths,
                     paths_order,
+                    identity_paths,
+                    identity_paths_order,
                     window_state,
                     window_x,
                     window_y,
@@ -1141,6 +1166,12 @@ impl WorkspaceDb {
             paths,
             order: paths_order,
         });
+        let identity_paths = identity_paths.map(|paths| {
+            PathList::deserialize(&SerializedPathList {
+                paths,
+                order: identity_paths_order.unwrap_or_default(),
+            })
+        });
 
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
             self.remote_connection(remote_connection_id)
@@ -1157,6 +1188,7 @@ impl WorkspaceDb {
                 None => SerializedWorkspaceLocation::Local,
             },
             paths,
+            identity_paths,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -1181,6 +1213,8 @@ impl WorkspaceDb {
         let (
             paths,
             paths_order,
+            identity_paths,
+            identity_paths_order,
             window_bounds,
             display,
             centered_layout,
@@ -1190,6 +1224,8 @@ impl WorkspaceDb {
         ): (
             String,
             String,
+            Option<String>,
+            Option<String>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1201,6 +1237,8 @@ impl WorkspaceDb {
                 SELECT
                     paths,
                     paths_order,
+                    identity_paths,
+                    identity_paths_order,
                     window_state,
                     window_x,
                     window_y,
@@ -1231,6 +1269,12 @@ impl WorkspaceDb {
             paths,
             order: paths_order,
         });
+        let identity_paths = identity_paths.map(|paths| {
+            PathList::deserialize(&SerializedPathList {
+                paths,
+                order: identity_paths_order.unwrap_or_default(),
+            })
+        });
 
         let remote_connection_id = remote_connection_id.map(|id| RemoteConnectionId(id as u64));
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
@@ -1248,6 +1292,7 @@ impl WorkspaceDb {
                 None => SerializedWorkspaceLocation::Local,
             },
             paths,
+            identity_paths,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -1267,7 +1312,7 @@ impl WorkspaceDb {
     fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
             .select_bound(sql! {
-                SELECT path, row
+                SELECT path, row, label
                 FROM bookmarks
                 WHERE workspace_id = ?
                 ORDER BY path, row
@@ -1286,7 +1331,10 @@ impl WorkspaceDb {
                     let path: Arc<Path> = path.into();
                     map.entry(path.clone())
                         .or_default()
-                        .push(SerializedBookmark(bookmark.row))
+                        .push(SerializedBookmark {
+                            row: bookmark.row,
+                            label: bookmark.label,
+                        })
                 }
 
                 map
@@ -1387,7 +1435,8 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
-                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                let Some(relative_path) = RelPath::from_unix_str(&relative_worktree_path).log_err()
+                else {
                     continue;
                 };
                 if worktree_root_path != String::default()
@@ -1416,10 +1465,9 @@ impl WorkspaceDb {
         ret
     }
 
-    /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
-    /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         let paths = workspace.paths.serialize();
+        let identity_paths = workspace.identity_paths.map(|paths| paths.serialize());
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
@@ -1448,9 +1496,9 @@ impl WorkspaceDb {
                 for (path, bookmarks) in workspace.bookmarks {
                     for bookmark in bookmarks {
                         conn.exec_bound(sql!(
-                            INSERT INTO bookmarks (workspace_id, path, row)
-                            VALUES (?1, ?2, ?3);
-                        ))?((workspace.id, path.as_ref(), bookmark.0)).context("Inserting bookmark")?;
+                            INSERT INTO bookmarks (workspace_id, path, row, label)
+                            VALUES (?1, ?2, ?3, ?4);
+                        ))?((workspace.id, path.as_ref(), bookmark.row, bookmark.label)).context("Inserting bookmark")?;
                     }
                 }
 
@@ -1535,6 +1583,8 @@ impl WorkspaceDb {
                         workspace_id,
                         paths,
                         paths_order,
+                        identity_paths,
+                        identity_paths_order,
                         remote_connection_id,
                         left_dock_visible,
                         left_dock_active_panel,
@@ -1549,23 +1599,25 @@ impl WorkspaceDb {
                         window_id,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
                         paths_order = ?3,
-                        remote_connection_id = ?4,
-                        left_dock_visible = ?5,
-                        left_dock_active_panel = ?6,
-                        left_dock_zoom = ?7,
-                        right_dock_visible = ?8,
-                        right_dock_active_panel = ?9,
-                        right_dock_zoom = ?10,
-                        bottom_dock_visible = ?11,
-                        bottom_dock_active_panel = ?12,
-                        bottom_dock_zoom = ?13,
-                        session_id = ?14,
-                        window_id = ?15,
+                        identity_paths = ?4,
+                        identity_paths_order = ?5,
+                        remote_connection_id = ?6,
+                        left_dock_visible = ?7,
+                        left_dock_active_panel = ?8,
+                        left_dock_zoom = ?9,
+                        right_dock_visible = ?10,
+                        right_dock_active_panel = ?11,
+                        right_dock_zoom = ?12,
+                        bottom_dock_visible = ?13,
+                        bottom_dock_active_panel = ?14,
+                        bottom_dock_zoom = ?15,
+                        session_id = ?16,
+                        window_id = ?17,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
@@ -1573,6 +1625,8 @@ impl WorkspaceDb {
                     workspace.id,
                     paths.paths.clone(),
                     paths.order.clone(),
+                    identity_paths.as_ref().map(|paths| paths.paths.clone()),
+                    identity_paths.as_ref().map(|paths| paths.order.clone()),
                     remote_connection_id,
                     workspace.docks,
                     workspace.session_id,
@@ -1747,6 +1801,7 @@ impl WorkspaceDb {
         Vec<(
             WorkspaceId,
             PathList,
+            Option<PathList>,
             Option<RemoteConnectionId>,
             Option<String>,
             DateTime<Utc>,
@@ -1756,10 +1811,25 @@ impl WorkspaceDb {
             .recent_workspaces_query()?
             .into_iter()
             .map(
-                |(id, paths, order, remote_connection_id, session_id, timestamp)| {
+                |(
+                    id,
+                    paths,
+                    order,
+                    identity_paths,
+                    identity_paths_order,
+                    remote_connection_id,
+                    session_id,
+                    timestamp,
+                )| {
                     (
                         id,
                         PathList::deserialize(&SerializedPathList { paths, order }),
+                        identity_paths.map(|paths| {
+                            PathList::deserialize(&SerializedPathList {
+                                paths,
+                                order: identity_paths_order.unwrap_or_default(),
+                            })
+                        }),
                         remote_connection_id.map(RemoteConnectionId),
                         session_id,
                         parse_timestamp(&timestamp),
@@ -1770,8 +1840,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, Option<String>, String)>> {
-            SELECT workspace_id, paths, paths_order, remote_connection_id, session_id, timestamp
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<String>, Option<String>, Option<u64>, Option<String>, String)>> {
+            SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, timestamp
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
@@ -1944,31 +2014,26 @@ impl WorkspaceDb {
         any_dir
     }
 
-    // Returns the recent project workspaces suitable for showing in the recent-projects UI.
-    // Scratch workspaces (no paths) are filtered out - they aren't really "projects" and
-    // are restored separately by `last_session_workspace_locations`.
-    pub async fn recent_project_workspaces(
+    // Returns the raw recent workspace history. Scratch workspaces (no paths) are filtered
+    // out because they are restored separately by `last_session_workspace_locations`.
+    pub async fn recent_project_workspaces_ungrouped(
         &self,
         fs: &dyn Fs,
-    ) -> Result<
-        Vec<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    > {
+    ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
         let mut result = Vec::new();
-        for (id, paths, remote_connection_id, _session_id, timestamp) in self.recent_workspaces()? {
+        for (id, paths, identity_paths_hint, remote_connection_id, _session_id, timestamp) in
+            self.recent_workspaces()?
+        {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
-                    result.push((
-                        id,
-                        SerializedWorkspaceLocation::Remote(connection_options.clone()),
-                        paths,
+                    result.push(RecentWorkspace {
+                        workspace_id: id,
+                        location: SerializedWorkspaceLocation::Remote(connection_options.clone()),
+                        paths: paths.clone(),
+                        identity_paths: identity_paths_hint.unwrap_or(paths),
                         timestamp,
-                    ));
+                    });
                 }
                 continue;
             }
@@ -1978,10 +2043,74 @@ impl WorkspaceDb {
             }
 
             if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
+                let identity_paths = resolve_local_workspace_identity(fs, &paths)
+                    .await
+                    .or(identity_paths_hint)
+                    .unwrap_or_else(|| paths.clone());
+                result.push(RecentWorkspace {
+                    workspace_id: id,
+                    location: SerializedWorkspaceLocation::Local,
+                    paths,
+                    identity_paths,
+                    timestamp,
+                });
             }
         }
+
         Ok(result)
+    }
+
+    // Returns the recent project workspaces suitable for recent-project UIs.
+    // Entries are deduplicated by git worktree identity, but preserve the original
+    // serialized paths for reopening.
+    pub async fn recent_project_workspaces(&self, fs: &dyn Fs) -> Result<Vec<RecentWorkspace>> {
+        Ok(dedupe_recent_workspaces(
+            self.recent_project_workspaces_ungrouped(fs).await?,
+        ))
+    }
+
+    pub async fn delete_recent_workspace_group(
+        &self,
+        target: &RecentWorkspace,
+    ) -> Result<Vec<WorkspaceId>> {
+        let target_paths = &target.identity_paths;
+        let target_remote_connection = match &target.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(connection) => {
+                Some(remote_connection_identity(connection))
+            }
+        };
+
+        let remote_connections = self.remote_connections()?;
+
+        let mut workspace_ids = Vec::new();
+        for (workspace_id, paths, identity_paths, remote_connection_id, _, _) in
+            self.recent_workspaces()?
+        {
+            let remote_connection = if let Some(id) = remote_connection_id {
+                let Some(connection_options) = remote_connections.get(&id) else {
+                    continue;
+                };
+                Some(remote_connection_identity(connection_options))
+            } else {
+                None
+            };
+            if remote_connection == target_remote_connection
+                && &identity_paths.unwrap_or(paths) == target_paths
+            {
+                workspace_ids.push(workspace_id);
+            }
+        }
+
+        futures::future::join_all(
+            workspace_ids
+                .iter()
+                .copied()
+                .map(|workspace_id| self.delete_workspace_by_id(workspace_id)),
+        )
+        .await;
+
+        Ok(workspace_ids)
     }
 
     // Deletes workspace rows that can no longer be restored from. Remote workspaces whose
@@ -1998,7 +2127,9 @@ impl WorkspaceDb {
         let remote_connections = self.remote_connections()?;
         let now = Utc::now();
         let mut workspaces_to_delete = Vec::new();
-        for (id, paths, remote_connection_id, session_id, timestamp) in self.recent_workspaces()? {
+        for (id, paths, _identity_paths_hint, remote_connection_id, session_id, timestamp) in
+            self.recent_workspaces()?
+        {
             if let Some(session_id) = session_id.as_deref() {
                 if session_id == current_session_id || Some(session_id) == last_session_id {
                     continue;
@@ -2038,17 +2169,7 @@ impl WorkspaceDb {
         Ok(())
     }
 
-    pub async fn last_workspace(
-        &self,
-        fs: &dyn Fs,
-    ) -> Result<
-        Option<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    > {
+    pub async fn last_workspace(&self, fs: &dyn Fs) -> Result<Option<RecentWorkspace>> {
         Ok(self.recent_project_workspaces(fs).await?.into_iter().next())
     }
 
@@ -2376,7 +2497,7 @@ impl WorkspaceDb {
                                 as_json: serde_json::Value::from_str(&json).ok()?,
                             },
                            Arc::from(worktree_root_path.as_ref()),
-                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                            RelPath::from_unix_str(&relative_worktree_path).log_err()?.into(),
                         ))
                     },
                 )
@@ -2536,80 +2657,73 @@ VALUES {placeholders};"#
     }
 }
 
-type WorkspaceEntry = (
-    WorkspaceId,
-    SerializedWorkspaceLocation,
-    PathList,
-    DateTime<Utc>,
-);
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecentWorkspace {
+    pub workspace_id: WorkspaceId,
+    pub location: SerializedWorkspaceLocation,
+    pub paths: PathList,
+    pub identity_paths: PathList,
+    pub timestamp: DateTime<Utc>,
+}
 
-/// Resolves workspace entries whose paths are git linked worktree checkouts
-/// to their main repository paths.
-///
-/// For each workspace entry:
-/// - If any path is a linked worktree checkout, all worktree paths in that
-///   entry are resolved to their main repository paths, producing a new
-///   `PathList`.
-/// - The resolved entry is then deduplicated against existing entries: if a
-///   workspace with the same paths already exists, the entry with the most
-///   recent timestamp is kept.
-pub async fn resolve_worktree_workspaces(
-    workspaces: impl IntoIterator<Item = WorkspaceEntry>,
-    fs: &dyn Fs,
-) -> Vec<WorkspaceEntry> {
-    // First pass: resolve worktree paths to main repo paths concurrently.
-    let resolved = futures::future::join_all(workspaces.into_iter().map(|entry| async move {
-        let paths = entry.2.paths();
-        if paths.is_empty() {
-            return entry;
-        }
+impl RecentWorkspace {
+    pub fn project_group_key(&self) -> ProjectGroupKey {
+        let host = match &self.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(options) => Some(options.clone()),
+        };
+        ProjectGroupKey::new(host, self.identity_paths.clone())
+    }
+}
 
-        // Resolve each path concurrently
-        let resolved_paths = futures::future::join_all(
-            paths
-                .iter()
-                .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
-        )
-        .await;
-
-        // If no paths were resolved, this entry is not a worktree — keep as-is
-        if resolved_paths.iter().all(|r| r.is_none()) {
-            return entry;
-        }
-
-        // Build new path list, substituting resolved paths
-        let new_paths: Vec<PathBuf> = paths
+async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Option<PathList> {
+    let raw_paths = paths.paths();
+    let resolved_paths = futures::future::join_all(
+        raw_paths
             .iter()
-            .zip(resolved_paths.iter())
-            .map(|(original, resolved)| {
-                resolved
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| original.clone())
-            })
-            .collect();
-
-        let new_path_refs: Vec<&Path> = new_paths.iter().map(|p| p.as_path()).collect();
-        (entry.0, entry.1, PathList::new(&new_path_refs), entry.3)
-    }))
+            .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
+    )
     .await;
 
-    // Second pass: deduplicate by PathList.
-    // When two entries resolve to the same paths, keep the one with the
-    // more recent timestamp.
-    let mut seen: collections::HashMap<Vec<PathBuf>, usize> = collections::HashMap::default();
-    let mut result: Vec<WorkspaceEntry> = Vec::new();
+    if resolved_paths.iter().all(|resolved| resolved.is_none()) {
+        return None;
+    }
 
-    for entry in resolved {
-        let key: Vec<PathBuf> = entry.2.paths().to_vec();
-        if let Some(&existing_idx) = seen.get(&key) {
-            // Keep the entry with the more recent timestamp
-            if entry.3 > result[existing_idx].3 {
-                result[existing_idx] = entry;
+    let resolved_paths: Vec<PathBuf> = raw_paths
+        .iter()
+        .zip(resolved_paths.iter())
+        .map(|(original, resolved)| {
+            resolved
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| original.clone())
+        })
+        .collect();
+    let resolved_path_refs: Vec<&Path> = resolved_paths.iter().map(PathBuf::as_path).collect();
+    Some(PathList::new(&resolved_path_refs))
+}
+
+fn dedupe_recent_workspaces(
+    workspaces: impl IntoIterator<Item = RecentWorkspace>,
+) -> Vec<RecentWorkspace> {
+    let mut indices_by_key: HashMap<(Option<RemoteConnectionIdentity>, Vec<PathBuf>), usize> =
+        HashMap::default();
+    let mut result: Vec<RecentWorkspace> = Vec::new();
+    for workspace in workspaces {
+        let location_identity = match &workspace.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(connection) => {
+                Some(remote_connection_identity(connection))
+            }
+        };
+        let key = (location_identity, workspace.identity_paths.paths().to_vec());
+        if let Some(&existing_index) = indices_by_key.get(&key) {
+            if workspace.timestamp > result[existing_index].timestamp {
+                result[existing_index] = workspace;
             }
         } else {
-            seen.insert(key, result.len());
-            result.push(entry);
+            indices_by_key.insert(key, result.len());
+            result.push(workspace);
         }
     }
 
@@ -2663,6 +2777,7 @@ mod tests {
             read_multi_workspace_state,
         },
     };
+    use gpui::TaskExt;
 
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
@@ -2796,6 +2911,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2952,6 +3068,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3001,6 +3118,7 @@ mod tests {
         let workspace_without_breakpoint = SerializedWorkspace {
             id,
             paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3100,6 +3218,7 @@ mod tests {
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3116,6 +3235,7 @@ mod tests {
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3224,6 +3344,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group,
             window_bounds: Default::default(),
@@ -3259,6 +3380,7 @@ mod tests {
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp", "/tmp2"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3275,6 +3397,7 @@ mod tests {
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3318,6 +3441,7 @@ mod tests {
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
             paths: PathList::new(&["/tmp2", "/tmp"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3357,6 +3481,7 @@ mod tests {
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
             paths: PathList::new(&["/tmp1"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3373,6 +3498,7 @@ mod tests {
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
             paths: PathList::new(&["/tmp2"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3389,6 +3515,7 @@ mod tests {
         let workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
             paths: PathList::new(&["/tmp3"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3405,6 +3532,7 @@ mod tests {
         let workspace_4 = SerializedWorkspace {
             id: WorkspaceId(4),
             paths: PathList::new(&["/tmp4"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3430,6 +3558,7 @@ mod tests {
         let workspace_5 = SerializedWorkspace {
             id: WorkspaceId(5),
             paths: PathList::default(),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Remote(
                 db.remote_connection(connection_id).unwrap(),
             ),
@@ -3448,6 +3577,7 @@ mod tests {
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
             paths: PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3506,6 +3636,7 @@ mod tests {
         SerializedWorkspace {
             id: WorkspaceId(4),
             paths: PathList::new(paths),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: center_group.clone(),
             window_bounds: Default::default(),
@@ -3548,6 +3679,7 @@ mod tests {
         .map(|(id, paths, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
             paths: PathList::new(paths.as_slice()),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -3646,6 +3778,7 @@ mod tests {
         SerializedWorkspace {
             id: WorkspaceId(id as i64),
             paths: PathList::new(paths),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group,
             window_bounds: Default::default(),
@@ -3657,6 +3790,48 @@ mod tests {
             session_id: session_id.map(|s| s.to_owned()),
             window_id: Some(id),
             user_toolchains: Default::default(),
+        }
+    }
+
+    fn remote_workspace_with(id: u64, host: &str, paths: &[&Path]) -> SerializedWorkspace {
+        SerializedWorkspace {
+            id: WorkspaceId(id as i64),
+            paths: PathList::new(paths),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(
+                SshConnectionOptions {
+                    host: host.into(),
+                    ..Default::default()
+                },
+            )),
+            center_group: empty_pane_group(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: Some(id),
+            user_toolchains: Default::default(),
+        }
+    }
+
+    async fn local_recent_workspace(
+        workspace_id: WorkspaceId,
+        paths: PathList,
+        timestamp: DateTime<Utc>,
+        fs: &dyn Fs,
+    ) -> RecentWorkspace {
+        let identity_paths = resolve_local_workspace_identity(fs, &paths)
+            .await
+            .unwrap_or_else(|| paths.clone());
+        RecentWorkspace {
+            workspace_id,
+            location: SerializedWorkspaceLocation::Local,
+            paths,
+            identity_paths,
+            timestamp,
         }
     }
 
@@ -3680,7 +3855,9 @@ mod tests {
 
         let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
         assert!(
-            recents.iter().all(|(id, ..)| *id != WorkspaceId(1)),
+            recents
+                .iter()
+                .all(|workspace| workspace.workspace_id != WorkspaceId(1)),
             "scratch-only workspace must not appear in the recent-projects UI"
         );
     }
@@ -3883,6 +4060,7 @@ mod tests {
         .map(|(id, remote_connection, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
             paths: PathList::default(),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Remote(remote_connection),
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4245,6 +4423,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id,
             paths: PathList::new(empty_paths),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: None,
@@ -4322,6 +4501,7 @@ mod tests {
             db.save_workspace(SerializedWorkspace {
                 id: WorkspaceId(*id),
                 paths: PathList::new(&[*dir]),
+                identity_paths: None,
                 location: SerializedWorkspaceLocation::Local,
                 center_group: Default::default(),
                 window_bounds: Default::default(),
@@ -4608,6 +4788,7 @@ mod tests {
         db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&[&dir]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4704,6 +4885,7 @@ mod tests {
         db.save_workspace(SerializedWorkspace {
             id: ws1_id,
             paths: PathList::new(&[dir1.path()]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4721,6 +4903,7 @@ mod tests {
         db.save_workspace(SerializedWorkspace {
             id: ws2_id,
             paths: PathList::new(&[dir2.path()]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4800,6 +4983,7 @@ mod tests {
         db.save_workspace(SerializedWorkspace {
             id: workspace2_db_id,
             paths: PathList::new(&[&dir]),
+            identity_paths: None,
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -4957,7 +5141,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_resolve_worktree_workspaces(cx: &mut gpui::TestAppContext) {
+    async fn test_recent_workspace_identity_deduplication(cx: &mut gpui::TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
 
         // Main repo with a linked worktree entry
@@ -5012,64 +5196,59 @@ mod tests {
         let t3 = Utc::now() - chrono::Duration::hours(1);
 
         let workspaces = vec![
-            // 1: Main checkout of /repo (opened earlier)
-            (
-                WorkspaceId(1),
-                SerializedWorkspaceLocation::Local,
-                PathList::new(&["/repo"]),
-                t0,
-            ),
-            // 2: Linked worktree of /repo (opened more recently)
-            //    Should dedup with #1; more recent timestamp wins.
-            (
+            local_recent_workspace(WorkspaceId(1), PathList::new(&["/repo"]), t0, fs.as_ref())
+                .await,
+            local_recent_workspace(
                 WorkspaceId(2),
-                SerializedWorkspaceLocation::Local,
                 PathList::new(&["/worktree"]),
                 t1,
-            ),
-            // 3: Mixed-path workspace: one root is a linked worktree,
-            //    the other is a normal repo. The worktree path should be
-            //    resolved; the normal path kept as-is.
-            (
+                fs.as_ref(),
+            )
+            .await,
+            local_recent_workspace(
                 WorkspaceId(3),
-                SerializedWorkspaceLocation::Local,
                 PathList::new(&["/other-repo", "/worktree"]),
                 t2,
-            ),
-            // 4: Non-git project — passed through unchanged.
-            (
+                fs.as_ref(),
+            )
+            .await,
+            local_recent_workspace(
                 WorkspaceId(4),
-                SerializedWorkspaceLocation::Local,
                 PathList::new(&["/plain-project"]),
                 t3,
-            ),
+                fs.as_ref(),
+            )
+            .await,
         ];
 
-        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+        let result = dedupe_recent_workspaces(workspaces);
 
         // Should have 3 entries: #1 and #2 deduped into one, plus #3 and #4.
         assert_eq!(result.len(), 3);
 
         // First entry: /repo — deduplicated from #1 and #2.
         // Keeps the position of #1 (first seen), but with #2's later timestamp.
-        assert_eq!(result[0].2.paths(), &[PathBuf::from("/repo")]);
-        assert_eq!(result[0].3, t1);
+        assert_eq!(result[0].identity_paths.paths(), &[PathBuf::from("/repo")]);
+        assert_eq!(result[0].timestamp, t1);
 
         // Second entry: mixed-path workspace with worktree resolved.
         // /worktree → /repo, so paths become [/other-repo, /repo] (sorted).
         assert_eq!(
-            result[1].2.paths(),
+            result[1].identity_paths.paths(),
             &[PathBuf::from("/other-repo"), PathBuf::from("/repo")]
         );
-        assert_eq!(result[1].0, WorkspaceId(3));
+        assert_eq!(result[1].workspace_id, WorkspaceId(3));
 
         // Third entry: non-git project, unchanged.
-        assert_eq!(result[2].2.paths(), &[PathBuf::from("/plain-project")]);
-        assert_eq!(result[2].0, WorkspaceId(4));
+        assert_eq!(
+            result[2].identity_paths.paths(),
+            &[PathBuf::from("/plain-project")]
+        );
+        assert_eq!(result[2].workspace_id, WorkspaceId(4));
     }
 
     #[gpui::test]
-    async fn test_resolve_worktree_workspaces_bare_repo(cx: &mut gpui::TestAppContext) {
+    async fn test_recent_workspace_identity_for_bare_repo(cx: &mut gpui::TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
 
         // Bare repo at /foo/.bare (commondir doesn't end with .git)
@@ -5098,19 +5277,315 @@ mod tests {
 
         let t0 = Utc::now();
 
-        let workspaces = vec![(
+        let result = local_recent_workspace(
             WorkspaceId(1),
-            SerializedWorkspaceLocation::Local,
             PathList::new(&["/foo/my-feature"]),
             t0,
-        )];
+            fs.as_ref(),
+        )
+        .await;
 
-        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+        // Bare-backed worktrees should resolve to the repo identity path, which
+        // is the parent directory users think of as the project root.
+        assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/foo")]);
+    }
 
-        // The worktree path must be preserved unchanged — /foo/.bare is a bare repo
-        // and cannot serve as a working-tree root, so resolution must return None.
+    #[gpui::test]
+    async fn test_recent_workspace_identity_deduplicates_main_and_linked_worktree(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/the-project",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-project/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now() - chrono::Duration::hours(1);
+        let t1 = Utc::now();
+        let workspaces = vec![
+            local_recent_workspace(
+                WorkspaceId(1),
+                PathList::new(&["/the-project"]),
+                t0,
+                fs.as_ref(),
+            )
+            .await,
+            local_recent_workspace(
+                WorkspaceId(2),
+                PathList::new(&["/the-project/feature-a"]),
+                t1,
+                fs.as_ref(),
+            )
+            .await,
+        ];
+
+        let result = dedupe_recent_workspaces(workspaces);
+
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].2.paths(), &[PathBuf::from("/foo/my-feature")]);
+        assert_eq!(
+            result[0].identity_paths.paths(),
+            &[PathBuf::from("/the-project")]
+        );
+        assert_eq!(result[0].workspace_id, WorkspaceId(2));
+        assert_eq!(result[0].timestamp, t1);
+    }
+
+    #[gpui::test]
+    async fn test_recent_project_workspaces_preserve_reopen_paths(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_recent_project_workspaces_preserve_reopen_paths").await;
+
+        fs.insert_tree(
+            "/the-project",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-project/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        db.save_workspace(workspace_with(
+            1,
+            &[Path::new("/the-project")],
+            empty_pane_group(),
+            None,
+        ))
+        .await;
+        db.save_workspace(workspace_with(
+            2,
+            &[Path::new("/the-project/feature-a")],
+            empty_pane_group(),
+            None,
+        ))
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+
+        assert_eq!(recents.len(), 1);
+        assert_eq!(recents[0].workspace_id, WorkspaceId(2));
+        assert_eq!(
+            recents[0].paths.paths(),
+            &[PathBuf::from("/the-project/feature-a")]
+        );
+        assert_eq!(
+            recents[0].identity_paths.paths(),
+            &[PathBuf::from("/the-project")]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_project_workspaces_remote_identity_hint(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_recent_project_workspaces_remote_identity_hint").await;
+
+        let workspace = remote_workspace_with(1, "example.com", &[Path::new("/repo/feature-a")]);
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&["/repo"])),
+            ..workspace
+        })
+        .await;
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+
+        assert_eq!(recents.len(), 1);
+        assert_eq!(
+            recents[0].paths.paths(),
+            &[PathBuf::from("/repo/feature-a")]
+        );
+        assert_eq!(recents[0].identity_paths.paths(), &[PathBuf::from("/repo")]);
+    }
+
+    #[gpui::test]
+    async fn test_recent_project_workspaces_remote_paths_do_not_use_local_fs_identity(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_recent_project_workspaces_remote_paths_do_not_use_local_fs_identity",
+        )
+        .await;
+
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/repo/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        db.save_workspace(remote_workspace_with(
+            1,
+            "example.com",
+            &[Path::new("/repo/feature-a")],
+        ))
+        .await;
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+
+        assert_eq!(recents.len(), 1);
+        assert_eq!(
+            recents[0].identity_paths.paths(),
+            &[PathBuf::from("/repo/feature-a")]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_project_workspaces_do_not_dedupe_remote_hosts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_recent_project_workspaces_do_not_dedupe_remote_hosts")
+                .await;
+
+        db.save_workspace(remote_workspace_with(1, "host-a", &[Path::new("/repo")]))
+            .await;
+        db.save_workspace(remote_workspace_with(2, "host-b", &[Path::new("/repo")]))
+            .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+
+        assert_eq!(recents.len(), 2);
+        assert_eq!(recents[0].workspace_id, WorkspaceId(2));
+        assert_eq!(recents[1].workspace_id, WorkspaceId(1));
+    }
+
+    #[gpui::test]
+    async fn test_delete_recent_workspace_group_removes_all_matching_rows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_delete_recent_workspace_group_removes_all_matching_rows",
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-group",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-group/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&["/the-group"])),
+            ..workspace_with(1, &[Path::new("/the-group")], empty_pane_group(), None)
+        })
+        .await;
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&["/the-group"])),
+            ..workspace_with(
+                2,
+                &[Path::new("/the-group/feature-a")],
+                empty_pane_group(),
+                None,
+            )
+        })
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        assert_eq!(recents.len(), 1);
+
+        let deleted = db.delete_recent_workspace_group(&recents[0]).await.unwrap();
+        assert_eq!(deleted, vec![WorkspaceId(2), WorkspaceId(1)]);
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        assert!(recents.is_empty());
     }
 
     #[gpui::test]

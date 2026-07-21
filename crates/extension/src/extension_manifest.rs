@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,8 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use util::rel_path::{PathExt, RelPathBuf};
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -107,8 +109,6 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
-    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
-    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub snippets: Option<ExtensionSnippets>,
@@ -150,10 +150,6 @@ impl ExtensionManifest {
             provides.insert(ExtensionProvides::ContextServers);
         }
 
-        if !self.agent_servers.is_empty() {
-            provides.insert(ExtensionProvides::AgentServers);
-        }
-
         if self.snippets.is_some() {
             provides.insert(ExtensionProvides::Snippets);
         }
@@ -187,9 +183,27 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.language_servers.is_empty()
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages())
     }
 }
 
@@ -199,9 +213,12 @@ pub fn build_debug_adapter_schema_path(
 ) -> anyhow::Result<RelPathBuf> {
     match &meta.schema_path {
         Some(path) => Ok(path.clone()),
-        None => Path::new("debug_adapter_schemas")
-            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-            .to_rel_path_buf(),
+        None => RelPath::new(
+            &Path::new("debug_adapter_schemas")
+                .join(Path::new(adapter_name.as_ref()).with_extension("json")),
+            PathStyle::local(),
+        )
+        .map(Cow::into_owned),
     }
 }
 
@@ -351,7 +368,7 @@ pub struct SlashCommandManifestEntry {
     pub requires_argument: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<RelPathBuf>,
 }
@@ -415,14 +432,14 @@ fn manifest_from_old_manifest(
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
+            themes.sort_unstable();
             themes.dedup();
             themes
         },
         icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
+            languages.sort_unstable();
             languages.dedup();
             languages
         },
@@ -433,7 +450,6 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
-        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
@@ -445,7 +461,6 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
     use pretty_assertions::assert_eq;
     use util::rel_path::rel_path_buf;
 
@@ -469,7 +484,6 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
-            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
@@ -493,7 +507,7 @@ mod tests {
     #[test]
     fn test_build_adapter_schema_path_without_schema_path() {
         let adapter_name = Arc::from("my_adapter");
-        let entry = DebugAdapterManifestEntry { schema_path: None };
+        let entry = DebugAdapterManifestEntry::default();
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
@@ -578,6 +592,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
+        use indoc::indoc;
+
         let content = indoc! {r#"
             id = "test-manifest"
             name = "Test Manifest"
@@ -587,33 +603,5 @@ mod tests {
         "#};
         let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
         assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
-    }
-
-    #[test]
-    fn parse_manifest_with_agent_server_archive_launcher() {
-        let toml_src = indoc! {r#"
-            id = "example.agent-server-ext"
-            name = "Agent Server Example"
-            version = "1.0.0"
-            schema_version = 0
-
-            [agent_servers.foo]
-            name = "Foo Agent"
-
-            [agent_servers.foo.targets.linux-x86_64]
-            archive = "https://example.com/agent-linux-x64.tar.gz"
-            cmd = "./agent"
-            args = ["--serve"]
-        "#};
-
-        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
-        assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
-        assert!(manifest.agent_servers.contains_key("foo"));
-        let entry = manifest.agent_servers.get("foo").unwrap();
-        assert!(entry.targets.contains_key("linux-x86_64"));
-        let target = entry.targets.get("linux-x86_64").unwrap();
-        assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
-        assert_eq!(target.cmd, "./agent");
-        assert_eq!(target.args, vec!["--serve"]);
     }
 }

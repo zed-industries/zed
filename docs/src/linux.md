@@ -21,12 +21,12 @@ curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 
 The Zed installed by the script works best on systems that:
 
-- have a Vulkan compatible GPU available (for example Linux on an M-series macBook)
-- have a system-wide glibc (NixOS and Alpine do not by default)
+- have a Vulkan compatible GPU available (for example Linux on an M-series MacBook)
+- have a system-wide glibc
   - x86_64 (Intel/AMD): glibc version >= 2.31 (Ubuntu 20 and newer)
   - aarch64 (ARM): glibc version >= 2.35 (Ubuntu 22 and newer)
 
-Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
+NixOS does not have a system-wide glibc by default. If you'd like to use our builds on NixOS, they may work if you install a glibc compatibility layer such as [nix-ld](https://github.com/Mic92/nix-ld).
 
 You will need to build from source for:
 
@@ -40,11 +40,10 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 ### Installing via a package manager
 
-There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
+There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. Availability varies by distribution, but you may be able to install Zed using one of these packages:
 
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
-- Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
 - Manjaro: [`zed`](https://manjaristas.org/branch_compare?q=zed)
 - Conda: [`zed`](https://anaconda.org/conda-forge/zed)
@@ -53,9 +52,9 @@ There are several third-party Zed packages for various Linux distributions and p
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed) (WARNING: [Sandboxing causes problems](https://github.com/flathub/dev.zed.Zed/pull/275))
+- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed)
 
-See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
+See [Repology](https://repology.org/project/zed-editor/versions) for a current list of Zed packages in various repositories.
 
 ### Community
 
@@ -64,13 +63,6 @@ When installing a third-party package please be aware that it may not be complet
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
-
-#### Debian and Ubuntu
-
-Zed is available in [this community-maintained repository](https://debian.griffo.io/).
-
-Instructions for each version are available in the README of the repository where packages are built.
-Build, packaging and instructions for each version are available in the README of the [repository](https://github.com/dariogriffo/zed-debian)
 
 ### Downloading manually
 
@@ -135,7 +127,7 @@ If Zed was installed using a package manager, please consult the documentation f
 
 ## Troubleshooting
 
-Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
+Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use. That said, we do expect it to work on a wide variety of machines.
 
 ### Zed fails to start
 
@@ -147,7 +139,7 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
-If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
+If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
 
 ```
 vkcube
@@ -163,7 +155,7 @@ If you see errors like `ERROR_INITIALIZATION_FAILED` or `GPU Crashed` or `ERROR_
 
 On some systems the file `/etc/prime-discrete` can be used to enforce the use of a discrete GPU using [PRIME](https://wiki.archlinux.org/title/PRIME). Depending on the details of your setup, you may need to change the contents of this file to "on" (to force discrete graphics) or "off" (to force integrated graphics).
 
-On others, you may be able to the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
+On others, you may be able to set the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
 
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
@@ -205,7 +197,7 @@ Using [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser).
 
 If Vulkan is configured correctly, and Zed is still not working for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
-When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the `zed: copy system specs into clipboard` command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
+When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the {#action zed::CopySystemSpecsIntoClipboard} command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
 
 Passing the `--system-specs` flag to Zed like
 
@@ -262,7 +254,7 @@ Some window managers, such as `Hyprland`, don't provide a file picker by default
 
 ### Zed isn't remembering my login
 
-These feature also requires XDG desktop portals, specifically:
+This feature also requires XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.Secret` or
 - `org.freedesktop.Secrets`

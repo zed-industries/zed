@@ -120,7 +120,8 @@ impl Render for QuickActionBar {
         let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
         let code_lens_enabled = editor_value.code_lens_enabled();
         let is_full = editor_value.mode().is_full();
-        let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
+        let diagnostics_enabled = editor_value.diagnostics_enabled()
+            && editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
         let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
@@ -326,9 +327,8 @@ impl Render for QuickActionBar {
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
-                    IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                    IconButton::new("toggle_editor_settings_icon", IconName::Filter)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
                 )

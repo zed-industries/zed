@@ -6,8 +6,8 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
-    Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
-    SelectionEffects, SplittableEditor, ToPoint,
+    DiffHunkDelegate, Direction, Editor, EditorEvent, EditorSettings, MultiBuffer,
+    MultiBufferSnapshot, ResolvedDiffHunks, SelectionEffects, SplittableEditor, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -15,7 +15,7 @@ use editor::{
 
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
+    Global, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, OffsetRangeExt, Point};
@@ -28,12 +28,12 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
-use util::ResultExt;
+use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams, TabTooltipContent},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -101,7 +101,7 @@ impl AgentDiffPane {
                 cx,
             );
             diff_display_editor
-                .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
+                .set_diff_hunk_delegate(Some(agent_diff_delegate(&thread, workspace.clone())), cx);
             diff_display_editor.update_editors(cx, |editor, _cx| {
                 editor.register_addon(AgentDiffAddon);
             });
@@ -138,7 +138,7 @@ impl AgentDiffPane {
             .changed_buffers(cx);
 
         // Sort edited files alphabetically for consistency with Git diff view
-        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        let mut sorted_buffers: Vec<_> = changed_buffers.collect();
         sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
             let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
             let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
@@ -173,19 +173,17 @@ impl AgentDiffPane {
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-            let (was_empty, is_excerpt_newly_added) =
-                self.multibuffer.update(cx, |multibuffer, cx| {
-                    let was_empty = multibuffer.is_empty();
-                    let is_excerpt_newly_added = multibuffer.update_excerpts_for_path(
-                        path_key.clone(),
-                        buffer.clone(),
-                        diff_hunk_ranges,
-                        multibuffer_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(diff_handle.clone(), cx);
-                    (was_empty, is_excerpt_newly_added)
-                });
+            let was_empty = self.multibuffer.read(cx).is_empty();
+            let is_excerpt_newly_added = self.editor.update(cx, |editor, cx| {
+                editor.update_excerpts_for_path(
+                    path_key.clone(),
+                    buffer.clone(),
+                    diff_hunk_ranges,
+                    multibuffer_context_lines(cx),
+                    diff_handle.clone(),
+                    cx,
+                )
+            });
 
             let rhs_editor = self.editor.read(cx).rhs_editor().clone();
             rhs_editor.update(cx, |editor, cx| {
@@ -216,9 +214,9 @@ impl AgentDiffPane {
             });
         }
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        self.editor.update(cx, |editor, cx| {
             for buffer_id in buffers_to_delete {
-                multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+                editor.remove_excerpts_for_buffer(buffer_id, cx);
             }
         });
 
@@ -530,23 +528,33 @@ impl Item for AgentDiffPane {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Agent Diff".into())
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let label_content = self.tab_content_text(params.detail.unwrap_or_default(), cx);
+
+        Label::new(label_content)
+            .when(!params.selected, |this| this.color(Color::Muted))
+            .into_any_element()
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let title = self.thread.read(cx).title();
-        Label::new(if let Some(title) = title {
-            format!("Review: {}", title)
-        } else {
-            "Review".to_string()
-        })
-        .color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        })
-        .into_any_element()
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            let title = title.map(|title| title.to_string());
+
+            move |_, _| {
+                v_flex()
+                    .child(Label::new(
+                        title.clone().unwrap_or_else(|| "Review".to_string()),
+                    ))
+                    .child(
+                        Label::new("Agent Diff")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            }
+        }))))
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -566,6 +574,10 @@ impl Item for AgentDiffPane {
             .read(cx)
             .rhs_editor()
             .for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
@@ -664,8 +676,11 @@ impl Item for AgentDiffPane {
         });
     }
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Agent Diff".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        match self.thread.read(cx).title() {
+            Some(title) => format!("Review: {}", truncate_and_trailoff(&title, 20)).into(),
+            None => "Review".into(),
+        }
     }
 }
 
@@ -681,7 +696,10 @@ impl Render for AgentDiffPane {
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::keep_all))
-            .bg(cx.theme().colors().editor_background)
+            // Only paint the background for the empty state. When the diff editor
+            // is shown it already paints `editor_background`; painting it again
+            // here double-composites into a darker patch on transparent windows.
+            .when(is_empty, |el| el.bg(cx.theme().colors().editor_background))
             .flex()
             .items_center()
             .justify_center()
@@ -716,29 +734,68 @@ impl Render for AgentDiffPane {
     }
 }
 
-fn diff_hunk_controls(
+struct AgentDiffDelegate {
+    thread: Entity<AcpThread>,
+    workspace: WeakEntity<Workspace>,
+}
+
+fn agent_diff_delegate(
     thread: &Entity<AcpThread>,
     workspace: WeakEntity<Workspace>,
-) -> editor::RenderDiffHunkControlsFn {
-    let thread = thread.clone();
+) -> Arc<dyn DiffHunkDelegate> {
+    Arc::new(AgentDiffDelegate {
+        thread: thread.clone(),
+        workspace,
+    })
+}
 
-    Arc::new(
-        move |row, status, hunk_range, is_created_file, line_height, editor, _, cx| {
-            {
-                render_diff_hunk_controls(
-                    row,
-                    status,
-                    hunk_range,
-                    is_created_file,
-                    line_height,
-                    &thread,
-                    editor,
-                    workspace.clone(),
-                    cx,
-                )
-            }
-        },
-    )
+impl DiffHunkDelegate for AgentDiffDelegate {
+    fn toggle(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<editor::Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        render_diff_hunk_controls(
+            row,
+            status,
+            hunk_range,
+            is_created_file,
+            line_height,
+            &self.thread,
+            editor,
+            self.workspace.clone(),
+            cx,
+        )
+    }
+
+    fn render_hunk_as_staged(&self, _status: &DiffHunkStatus, _cx: &App) -> bool {
+        false
+    }
 }
 
 fn render_diff_hunk_controls(
@@ -753,6 +810,9 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+    // Drop shadows render as a dark halo on transparent windows.
+    let opaque_window =
+        cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
     h_flex()
         .h(line_height)
@@ -767,7 +827,7 @@ fn render_diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .when(opaque_window, |this| this.shadow_md())
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
@@ -1090,7 +1150,7 @@ impl Render for AgentDiffToolbar {
                                     }),
                             )
                             .into_any_element(),
-                        vertical_divider().into_any_element(),
+                        Divider::vertical().into_any_element(),
                         h_flex()
                             .gap_0p5()
                             .child(
@@ -1132,7 +1192,7 @@ impl Render for AgentDiffToolbar {
                     .mr_1()
                     .gap_1()
                     .children(content)
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
                             IconButton::new("review", IconName::ListTodo)
@@ -1149,7 +1209,7 @@ impl Render for AgentDiffToolbar {
                                 }),
                         )
                     })
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .on_action({
                         let editor = editor.clone();
                         move |_action: &OpenAgentDiff, window, cx| {
@@ -1422,11 +1482,14 @@ impl AgentDiff {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::StatusChanged
             | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)
             | AcpThreadEvent::ToolAuthorizationReceived(_)
+            | AcpThreadEvent::ElicitationRequested(_)
+            | AcpThreadEvent::ElicitationResponded(_)
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)
@@ -1516,7 +1579,7 @@ impl AgentDiff {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
                     .update(cx, |editor, cx| {
-                        editor.end_temporary_diff_override(cx);
+                        editor.set_diff_hunk_delegate(None, cx);
                         editor.unregister_addon::<EditorAgentDiffAddon>();
                     })
                     .ok();
@@ -1533,7 +1596,7 @@ impl AgentDiff {
         };
 
         let action_log = thread.read(cx).action_log();
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
 
         let mut unaffected = self.reviewing_editors.clone();
 
@@ -1565,9 +1628,8 @@ impl AgentDiff {
 
                 if previous_state.is_none() {
                     editor.update(cx, |editor, cx| {
-                        editor.start_temporary_diff_override();
-                        editor.set_render_diff_hunk_controls(
-                            diff_hunk_controls(&thread, workspace.clone()),
+                        editor.set_diff_hunk_delegate(
+                            Some(agent_diff_delegate(&thread, workspace.clone())),
                             cx,
                         );
                         editor.set_expand_all_diff_hunks(cx);
@@ -1616,7 +1678,7 @@ impl AgentDiff {
             if in_workspace {
                 editor
                     .update(cx, |editor, cx| {
-                        editor.end_temporary_diff_override(cx);
+                        editor.set_diff_hunk_delegate(None, cx);
                         editor.unregister_addon::<EditorAgentDiffAddon>();
                     })
                     .ok();
@@ -1767,12 +1829,13 @@ impl AgentDiff {
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys();
-            keys.find(|k| *k == &curr_buffer);
+            let mut keys = changed_buffers.map(|(buffer, _)| buffer);
+            keys.find(|k| *k == curr_buffer);
             let next_project_path = keys
                 .next()
-                .filter(|k| *k != &curr_buffer)
+                .filter(|k| *k != curr_buffer)
                 .and_then(|after| after.read(cx).project_path(cx));
+            drop(keys);
 
             if let Some(path) = next_project_path {
                 let task = workspace.open_path(path, None, true, window, cx);
@@ -2255,7 +2318,7 @@ mod tests {
         });
 
         let editor2_path = editor2
-            .read_with(cx, |editor, cx| editor.project_path(cx))
+            .read_with(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(editor2_path, buffer_path2);
 

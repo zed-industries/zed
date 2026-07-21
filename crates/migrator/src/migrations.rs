@@ -358,3 +358,9 @@ pub(crate) mod m_2026_04_17 {
 
     pub(crate) use settings::promote_show_branch_icon_true_to_show_branch_status_icon;
 }
+
+pub(crate) mod m_2026_05_04 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}

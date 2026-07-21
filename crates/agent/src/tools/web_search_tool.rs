@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
 use futures::FutureExt as _;
@@ -78,7 +78,7 @@ impl AgentTool for WebSearchTool {
                 .recv()
                 .await
                 .map_err(|e| WebSearchToolOutput::Error {
-                    error: format!("Failed to receive tool input: {e}"),
+                    error: e.to_string(),
                 })?;
 
             let authorize = cx.update(|cx| {

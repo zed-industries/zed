@@ -214,7 +214,7 @@ Here's how you would structure these settings in Zed's `settings.json`:
 
 #### Possible configuration options
 
-Depending on how a particular language server is implemented, they may depend on different configuration options, both specified in the LSP.
+Language servers may use different configuration options depending on the implementation.
 
 - [initializationOptions](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#version_3_17_0)
 
@@ -249,7 +249,7 @@ Most of the servers would rely on this way of configuring only.
 }
 ```
 
-Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
+Apart from the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
 
 Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 
@@ -353,7 +353,7 @@ To run linter fixes automatically on save:
 
 ### Formatting Selections
 
-Zed supports formatting only the selected text via `editor: format selections` ({#kb editor::FormatSelections}). How
+Zed supports formatting only the selected text via {#action editor::FormatSelections} ({#kb editor::FormatSelections}). How
 this works depends on the configured formatter:
 
 - The action is only shown when the active formatter can actually format ranges for at least one
@@ -395,7 +395,7 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
 
 If you encounter issues with formatting or linting:
 
-1. Check Zed's log file for error messages (Use the command palette: `zed: open log`)
+1. Check Zed's log file for error messages (Use the command palette: {#action zed::OpenLog})
 2. Ensure external tools (formatters, linters) are correctly installed and in your PATH
 3. Verify configurations in both Zed settings and language-specific config files (e.g., `.eslintrc`, `.prettierrc`)
 
@@ -482,22 +482,22 @@ For language-specific inlay hint settings, refer to the documentation for each l
 
 ### Code Actions
 
-Code actions provide quick fixes and refactoring options. Access code actions using the `editor: Toggle Code Actions` command or by clicking the lightbulb icon that appears next to your cursor when actions are available.
+Code actions provide quick fixes and refactoring options. Access code actions using the {#action editor::ToggleCodeActions} command or by clicking the lightbulb icon that appears next to your cursor when actions are available.
 
 ### Go To Definition and References
 
 Use these commands to navigate your codebase:
 
-- `editor: Go to Definition` (<kbd>f12|f12</kbd>)
-- `editor: Go to Type Definition` (<kbd>cmd-f12|ctrl-f12</kbd>)
-- `editor: Find All References` (<kbd>shift-f12|shift-f12</kbd>)
+- {#action editor::GoToDefinition} (<kbd>f12|f12</kbd>)
+- {#action editor::GoToTypeDefinition} (<kbd>cmd-f12|ctrl-f12</kbd>)
+- {#action editor::FindAllReferences} (<kbd>shift-f12|shift-f12</kbd>)
 
 ### Rename Symbol
 
 To rename a symbol across your project:
 
 1. Place your cursor on the symbol
-2. Use the `editor: Rename Symbol` command (<kbd>f2|f2</kbd>)
+2. Use the {#action editor::Rename} command (<kbd>f2|f2</kbd>)
 3. Enter the new name and press Enter
 
 These features depend on the capabilities of the language server for each language.
@@ -506,7 +506,7 @@ When renaming a symbol that spans multiple files, Zed will open a preview in a m
 
 ### Hover Information
 
-Use the `editor: Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
+Use the {#action editor::Hover} command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
 
 ### Workspace Symbol Search
 
@@ -514,7 +514,7 @@ The {#action project_symbols::Toggle} command allows you to search for symbols (
 
 ### Code Completion
 
-Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
+Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the {#action editor::ShowCompletions} command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
 
 ### Diagnostics
 

@@ -6,10 +6,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use imara_diff::{
-    Algorithm, Sink, diff,
-    intern::{InternedInput, Interner, Token},
-};
+use imara_diff::{Algorithm, Diff, InternedInput, Interner, Token};
 
 pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     if prefix.is_empty() {
@@ -88,53 +85,37 @@ pub fn strip_diff_metadata(diff: &str) -> String {
     result
 }
 
-/// Marker used to encode cursor position in patch comment lines.
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Extract cursor offset from a patch and return `(clean_patch, cursor_offset)`.
-///
-/// Cursor position is encoded as a comment line (starting with `#`) containing
-/// `[CURSOR_POSITION]`. A `^` in the line indicates the cursor column; a `<`
-/// indicates column 0. The offset is computed relative to addition (`+`) and
-/// context (` `) lines accumulated so far in the hunk, which represent the
-/// cursor position within the new text contributed by the hunk.
 pub fn extract_cursor_from_patch(patch: &str) -> (String, Option<usize>) {
     let mut clean_patch = String::new();
-    let mut cursor_offset: Option<usize> = None;
+    let mut cursor_offset = None;
     let mut line_start_offset = 0usize;
-    let mut prev_line_start_offset = 0usize;
 
     for line in patch.lines() {
-        let diff_line = DiffLine::parse(line);
+        if !clean_patch.is_empty() {
+            clean_patch.push('\n');
+        }
 
-        match &diff_line {
-            DiffLine::Garbage(content)
-                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER) =>
-            {
-                let caret_column = if let Some(caret_pos) = content.find('^') {
-                    caret_pos
-                } else if content.find('<').is_some() {
-                    0
-                } else {
-                    continue;
-                };
-                let cursor_column = caret_column.saturating_sub('#'.len_utf8());
-                cursor_offset = Some(prev_line_start_offset + cursor_column);
-            }
-            _ => {
-                if !clean_patch.is_empty() {
-                    clean_patch.push('\n');
+        match DiffLine::parse(line) {
+            DiffLine::Addition(content) => {
+                let clean_content = content.replace(INLINE_CURSOR_MARKER, "");
+                if cursor_offset.is_none()
+                    && let Some(marker_offset) = content.find(INLINE_CURSOR_MARKER)
+                {
+                    cursor_offset = Some(line_start_offset + marker_offset);
                 }
+                clean_patch.push('+');
+                clean_patch.push_str(&clean_content);
+                line_start_offset += clean_content.len() + 1;
+            }
+            DiffLine::Context(content) => {
                 clean_patch.push_str(line);
-
-                match diff_line {
-                    DiffLine::Addition(content) | DiffLine::Context(content) => {
-                        prev_line_start_offset = line_start_offset;
-                        line_start_offset += content.len() + 1;
-                    }
-                    _ => {}
-                }
+                line_start_offset += content.len() + 1;
             }
+            _ => clean_patch.push_str(line),
         }
     }
 
@@ -232,12 +213,17 @@ pub fn unified_diff_with_context(
     new_start_line: u32,
     context_lines: u32,
 ) -> String {
-    let input = InternedInput::new(old_text, new_text);
-    diff(
-        Algorithm::Histogram,
-        &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines),
-    )
+    // The builder appends its own line terminators, so tokenize without them.
+    let mut input = InternedInput::default();
+    input.update_before(old_text.lines());
+    input.update_after(new_text.lines());
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut builder =
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines);
+    for hunk in diff.hunks() {
+        builder.process_change(hunk.before, hunk.after);
+    }
+    builder.finish()
 }
 
 struct OffsetUnifiedDiffBuilder<'a> {
@@ -318,9 +304,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
     }
 }
 
-impl Sink for OffsetUnifiedDiffBuilder<'_> {
-    type Out = String;
-
+impl OffsetUnifiedDiffBuilder<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         if before.start - self.pos > self.context_lines * 2 {
             self.flush();
@@ -341,7 +325,7 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
         self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
     }
 
-    fn finish(mut self) -> Self::Out {
+    fn finish(mut self) -> String {
         self.flush();
         self.dst
     }
@@ -356,40 +340,33 @@ pub fn encode_cursor_in_patch(patch: &str, cursor_offset: Option<usize>) -> Stri
     let mut line_start_offset = 0usize;
 
     for line in patch.lines() {
-        if matches!(
-            DiffLine::parse(line),
-            DiffLine::Garbage(content)
-                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER)
-        ) {
-            continue;
-        }
-
         if !result.is_empty() {
             result.push('\n');
         }
-        result.push_str(line);
 
         match DiffLine::parse(line) {
             DiffLine::Addition(content) => {
+                let content = content.replace(INLINE_CURSOR_MARKER, "");
                 let line_end_offset = line_start_offset + content.len();
-
-                if cursor_offset >= line_start_offset && cursor_offset <= line_end_offset {
-                    let cursor_column = cursor_offset - line_start_offset;
-
-                    result.push('\n');
-                    result.push('#');
-                    for _ in 0..cursor_column {
-                        result.push(' ');
-                    }
-                    write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
+                result.push('+');
+                if cursor_offset >= line_start_offset
+                    && cursor_offset <= line_end_offset
+                    && let Some(before) = content.get(..cursor_offset - line_start_offset)
+                    && let Some(after) = content.get(cursor_offset - line_start_offset..)
+                {
+                    result.push_str(before);
+                    result.push_str(INLINE_CURSOR_MARKER);
+                    result.push_str(after);
+                } else {
+                    result.push_str(&content);
                 }
-
                 line_start_offset = line_end_offset + 1;
             }
             DiffLine::Context(content) => {
+                result.push_str(line);
                 line_start_offset += content.len() + 1;
             }
-            _ => {}
+            _ => result.push_str(line),
         }
     }
 
@@ -415,6 +392,7 @@ pub fn apply_diff_to_string_with_hunk_offset(
 
     let mut text = text.to_string();
     let mut first_hunk_offset = None;
+    let mut line_delta = 0i64;
 
     while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
@@ -424,9 +402,12 @@ pub fn apply_diff_to_string_with_hunk_offset(
                 status: _,
             } => {
                 let candidates = find_context_candidates(&text, &mut hunk);
+                let adjusted_start_line = hunk
+                    .start_line
+                    .and_then(|start_line| u32::try_from(start_line as i64 + line_delta).ok());
 
                 let hunk_offset =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
+                    disambiguate_by_line_number(&candidates, adjusted_start_line, &|offset| {
                         text[..offset].matches('\n').count() as u32
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
@@ -435,12 +416,19 @@ pub fn apply_diff_to_string_with_hunk_offset(
                     first_hunk_offset = Some(hunk_offset);
                 }
 
+                let mut hunk_line_delta = 0i64;
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+                    let deleted_lines = text[range.clone()].matches('\n').count() as i64;
+                    let inserted_lines = edit.text.matches('\n').count() as i64;
                     text.replace_range(range, &edit.text);
+                    hunk_line_delta += inserted_lines - deleted_lines;
                 }
+                line_delta += hunk_line_delta;
             }
-            DiffEvent::FileEnd { .. } => {}
+            DiffEvent::FileEnd { .. } => {
+                line_delta = 0;
+            }
         }
     }
 
@@ -1313,6 +1301,49 @@ mod tests {
 
         let result = apply_diff_to_string(diff, text).unwrap();
         assert_eq!(result, "hello\nworld");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_adjusts_line_numbers_after_prior_hunks() {
+        let text = "first\nremove first\nfirst\nsame\nremove\nsame\nsame\nremove\nsame\n";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,2 @@
+             first
+            -remove first
+             first
+            @@ -4,3 +3,2 @@
+             same
+            -remove
+             same
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "first\nfirst\nsame\nsame\nsame\nremove\nsame\n");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_adjusts_line_numbers_after_prior_insertion_hunks() {
+        let text = "first\nfirst\nsame\nremove\nsame\nsame\nremove\nsame\n";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             first
+            +inserted
+             first
+            @@ -6,3 +7,2 @@
+             same
+            -remove
+             same
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(
+            result,
+            "first\ninserted\nfirst\nsame\nremove\nsame\nsame\nsame\n"
+        );
     }
 
     #[test]

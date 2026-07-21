@@ -6,9 +6,10 @@ use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
 use settings::{Settings, SettingsLocation};
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -114,19 +115,23 @@ impl Project {
         let env_task =
             self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // Scope the toolchain lookup to the worktree the terminal is being
+        // spawned in. Previously this iterated the active editor's worktree
+        // and then every visible worktree, so a Python toolchain persisted
+        // for worktree A would leak into a terminal opened in worktree B and
+        // inject (e.g.) `conda activate base` into a shell that has no
+        // business with conda.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: Arc::from(RelPath::empty()),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
@@ -156,23 +161,18 @@ impl Project {
 
             let builder = project
                 .update(cx, move |_, cx| {
-                    let format_to_run = || {
-                        if let Some(command) = &spawn_task.command {
-                            let command = shell_kind.prepend_command_prefix(command);
-                            let command = shell_kind.try_quote_prefix_aware(&command);
-                            let args = spawn_task
-                                .args
-                                .iter()
-                                .filter_map(|arg| shell_kind.try_quote(&arg));
-
-                            command.into_iter().chain(args).join(" ")
-                        } else {
-                            // todo: this breaks for remotes to windows
-                            format!("exec {shell} -l")
-                        }
+                    let format_to_run = |spawn_task: &SpawnInTerminal| {
+                        format_task_for_activation(
+                            spawn_task,
+                            shell_kind,
+                            &shell,
+                            path_style.is_windows(),
+                        )
                     };
 
                     let (shell, env) = {
+                        let to_run =
+                            (!activation_script.is_empty()).then(|| format_to_run(&spawn_task));
                         env.extend(spawn_task.env);
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
@@ -180,7 +180,7 @@ impl Project {
                                     let separator = shell_kind.sequential_commands_separator();
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
-                                    let to_run = format_to_run();
+                                    let to_run = to_run.expect("activation command was formatted");
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
                                     let args = shell_kind.args_for_shell(true, arg);
@@ -213,7 +213,7 @@ impl Project {
                                     let separator = shell_kind.sequential_commands_separator();
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
-                                    let to_run = format_to_run();
+                                    let to_run = to_run.expect("activation command was formatted");
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
                                     let args = shell_kind.args_for_shell(true, arg);
@@ -337,19 +337,20 @@ impl Project {
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // See create_terminal_task: scope the toolchain lookup to the
+        // worktree the terminal is opened in, not the active editor's
+        // worktree or other visible worktrees.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: RelPath::empty().into(),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
@@ -557,6 +558,7 @@ impl Project {
                             &env,
                             None,
                             None,
+                            Interactive::Yes,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
@@ -630,6 +632,7 @@ fn create_remote_shell(
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
+        Interactive::Yes,
     )?;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);
@@ -643,4 +646,155 @@ fn create_remote_shell(
         },
         command.env,
     ))
+}
+
+fn format_task_for_activation(
+    spawn_task: &SpawnInTerminal,
+    shell_kind: ShellKind,
+    shell: &str,
+    is_windows: bool,
+) -> String {
+    if let Some(command) = &spawn_task.command {
+        let command = shell_kind.prepend_command_prefix(command);
+        let command = shell_kind.try_quote_prefix_aware(&command);
+        let args = spawn_task
+            .args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, arg)| {
+                quote_prepared_task_arg_for_activation(
+                    spawn_task, shell_kind, arg, index, is_windows,
+                )
+            });
+
+        command.into_iter().chain(args).join(" ")
+    } else {
+        // todo: this breaks for remotes to windows
+        format!("exec {shell} -l")
+    }
+}
+
+fn quote_prepared_task_arg_for_activation<'a>(
+    spawn_task: &SpawnInTerminal,
+    shell_kind: ShellKind,
+    arg: &'a str,
+    index: usize,
+    is_windows: bool,
+) -> Option<Cow<'a, str>> {
+    if spawn_task.shell.shell_kind(is_windows) == ShellKind::Cmd
+        && index >= 2
+        && spawn_task
+            .args
+            .get(index - 2)
+            .is_some_and(|arg| arg.eq_ignore_ascii_case("/S"))
+        && spawn_task
+            .args
+            .get(index - 1)
+            .is_some_and(|arg| arg.eq_ignore_ascii_case("/C"))
+    {
+        // The /C argument is already a cmd command string from prepare_task_for_spawn.
+        // Quoting it again for venv activation makes cmd see the quotes as literals.
+        return quote_cmd_command_arg_for_outer_shell(arg, shell_kind).map(Cow::Owned);
+    }
+
+    shell_kind.try_quote(arg)
+}
+
+fn quote_cmd_command_arg_for_outer_shell(arg: &str, shell_kind: ShellKind) -> Option<String> {
+    match shell_kind {
+        ShellKind::PowerShell | ShellKind::Pwsh => Some(format!("'{}'", arg.replace('\'', "''"))),
+        ShellKind::Cmd => Some(arg.to_string()),
+        ShellKind::Posix
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Fish
+        | ShellKind::Nushell
+        | ShellKind::Rc
+        | ShellKind::Xonsh
+        | ShellKind::Elvish => shell_kind.try_quote(arg).map(Cow::into_owned),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn prepared_cmd_task(command_arg: &str) -> SpawnInTerminal {
+        SpawnInTerminal {
+            command: Some("cmd.exe".to_string()),
+            args: vec!["/S".to_string(), "/C".to_string(), command_arg.to_string()],
+            shell: Shell::Program("cmd.exe".to_string()),
+            ..SpawnInTerminal::default()
+        }
+    }
+
+    #[test]
+    fn formats_prepared_cmd_task_for_powershell_activation() {
+        let task = prepared_cmd_task("\"echo Hi there\"");
+
+        assert_eq!(
+            format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
+            "&cmd.exe /S /C '\"echo Hi there\"'"
+        );
+    }
+
+    #[test]
+    fn formats_prepared_cmd_task_for_cmd_activation() {
+        let task = prepared_cmd_task("\"echo Hi there\"");
+
+        assert_eq!(
+            format_task_for_activation(&task, ShellKind::Cmd, "cmd.exe", true),
+            "cmd.exe /S /C \"echo Hi there\""
+        );
+    }
+
+    #[test]
+    fn formats_prepared_cmd_task_with_shell_args_for_activation() {
+        let task = SpawnInTerminal {
+            command: Some("cmd.exe".to_string()),
+            args: vec![
+                "/D".to_string(),
+                "/S".to_string(),
+                "/C".to_string(),
+                "\"echo Hi there\"".to_string(),
+            ],
+            shell: Shell::WithArguments {
+                program: "cmd.exe".to_string(),
+                args: vec!["/D".to_string()],
+                title_override: None,
+            },
+            ..SpawnInTerminal::default()
+        };
+
+        assert_eq!(
+            format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
+            "&cmd.exe /D /S /C '\"echo Hi there\"'"
+        );
+    }
+
+    #[test]
+    fn formats_prepared_cmd_task_with_single_quote_for_powershell_activation() {
+        let task = prepared_cmd_task("\"echo It's fine\"");
+
+        assert_eq!(
+            format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
+            "&cmd.exe /S /C '\"echo It''s fine\"'"
+        );
+    }
+
+    #[test]
+    fn formats_non_cmd_task_for_activation() {
+        let task = SpawnInTerminal {
+            command: Some("cargo".to_string()),
+            args: vec!["test".to_string(), "some test".to_string()],
+            shell: Shell::System,
+            ..SpawnInTerminal::default()
+        };
+
+        assert_eq!(
+            format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
+            "&cargo test 'some test'"
+        );
+    }
 }

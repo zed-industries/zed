@@ -253,6 +253,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(
             migrations::m_2026_04_17::promote_show_branch_icon_true_to_show_branch_status_icon,
         ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_05_04::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_05_04,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -394,6 +398,10 @@ define_query!(
 define_query!(
     KEYMAP_QUERY_2026_03_23,
     migrations::m_2026_03_23::KEYMAP_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2026_05_04,
+    migrations::m_2026_05_04::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -5342,6 +5350,42 @@ mod tests {
                 }
                 "#
                 .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_hide_mouse_on_typing_and_movement_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse": "on_typing_and_movement"
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_chain_hide_mouse_while_typing_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse_while_typing": true
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
             ),
         );
     }

@@ -143,14 +143,14 @@ impl Output {
     pub fn to_nbformat(&self, cx: &App) -> Option<nbformat::v4::Output> {
         match self {
             Output::Stream { content } => {
-                let text = content.read(cx).full_text();
+                let text = content.read(cx).full_text(cx);
                 Some(nbformat::v4::Output::Stream {
                     name: "stdout".to_string(),
                     text: nbformat::v4::MultilineString(text),
                 })
             }
             Output::Plain { content, .. } => {
-                let text = content.read(cx).full_text();
+                let text = content.read(cx).full_text(cx);
                 let mut data = jupyter_protocol::media::Media::default();
                 data.content.push(jupyter_protocol::MediaType::Plain(text));
                 Some(nbformat::v4::Output::DisplayData(
@@ -161,7 +161,7 @@ impl Output {
                 ))
             }
             Output::ErrorOutput(error_view) => {
-                let traceback_text = error_view.traceback.read(cx).full_text();
+                let traceback_text = error_view.traceback.read(cx).full_text(cx);
                 let traceback_lines: Vec<String> =
                     traceback_text.lines().map(|s| s.to_string()).collect();
                 Some(nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
@@ -319,7 +319,7 @@ impl Output {
                             let ename = err.ename.clone();
                             let evalue = err.evalue.clone();
                             let traceback = err.traceback.clone();
-                            let traceback_text = traceback.read(cx).full_text();
+                            let traceback_text = traceback.read(cx).full_text(cx);
                             let full_error = format!("{}: {}\n{}", ename, evalue, traceback_text);
 
                             CopyButton::new("copy-full-error", full_error)
@@ -338,7 +338,7 @@ impl Output {
                                 let traceback = err.traceback.clone();
                                 move |_, window, cx| {
                                     if let Some(workspace) = workspace.upgrade() {
-                                        let traceback_text = traceback.read(cx).full_text();
+                                        let traceback_text = traceback.read(cx).full_text(cx);
                                         let full_error =
                                             format!("{}: {}\n{}", ename, evalue, traceback_text);
                                         let buffer = cx.new(|cx| {
@@ -698,7 +698,7 @@ impl ExecutionView {
             _ => return None,
         };
 
-        let text = content.read(cx).full_text();
+        let text = content.read(cx).full_text(cx);
         let trimmed = text.trim();
 
         let max_length = ReplSettings::get_global(cx).inline_output_max_length;
@@ -742,7 +742,7 @@ impl ExecutionView {
     fn output_as_stream_text(&self, cx: &App) -> Option<String> {
         self.outputs.iter().find_map(|output| {
             if let Output::Stream { content } = output {
-                Some(content.read(cx).full_text())
+                Some(content.read(cx).full_text(cx))
             } else {
                 None
             }

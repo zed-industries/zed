@@ -19,6 +19,7 @@ use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
+use std::future::Future;
 use std::ops::Range;
 use std::{
     borrow::Cow,
@@ -26,7 +27,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::command::Stdio;
+use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
@@ -199,6 +200,58 @@ impl RustLspAdapter {
         format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
     }
 
+    async fn rustup_rust_analyzer_for_worktree(
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<PathBuf> {
+        if !Self::workspace_has_rust_toolchain_override(delegate).await {
+            return None;
+        }
+
+        let rustup = delegate.which("rustup".as_ref()).await?;
+        let env = delegate.shell_env().await;
+        let worktree_root = delegate.worktree_root_path();
+        let output = new_command(rustup)
+            .args(["which", "rust-analyzer"])
+            .envs(env.iter())
+            .current_dir(worktree_root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+        let output = match output {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                log::debug!(
+                    "failed to locate rust-analyzer through rustup in {worktree_root:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                return None;
+            }
+            Err(err) => {
+                log::debug!(
+                    "failed to run `rustup which rust-analyzer` in {worktree_root:?}: {err:#}"
+                );
+                return None;
+            }
+        };
+
+        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        Some(path).filter(|p| !p.as_os_str().is_empty())
+    }
+
+    async fn workspace_has_rust_toolchain_override(delegate: &dyn LspAdapterDelegate) -> bool {
+        for file_name in ["rust-toolchain.toml", "rust-toolchain"] {
+            if fs::metadata(delegate.resolve_relative_path(PathBuf::from(file_name)))
+                .await
+                .is_ok()
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
@@ -239,7 +292,7 @@ impl ManifestProvider for CargoManifestProvider {
     ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
+            let p = path.join(RelPath::from_unix_str("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -369,7 +422,7 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 static FULL_SIGNATURE_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"fn (.?+)\(").expect("Failed to create REGEX"));
+                    LazyLock::new(|| Regex::new(r"fn (.+?)\(").expect("Failed to create REGEX"));
                 if let Some((function_signature, match_)) = function_signature
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
@@ -378,7 +431,7 @@ impl LspAdapter for RustLspAdapter {
                     let runs = language.highlight_text(&source, 0..function_signature.len());
                     mk_label(
                         function_signature.to_owned(),
-                        &|| match_.range().start - 3..match_.range().end - 1,
+                        &|| match_.range().start + 3..match_.range().end - 1,
                         runs,
                     )
                 } else if let Some((prefix, suffix)) = fn_prefixed {
@@ -436,27 +489,56 @@ impl LspAdapter for RustLspAdapter {
                         .collect::<SmallVec<[_; 8]>>();
                     all_stop_ranges.sort_unstable_by_key(|a| (a.start, Reverse(a.end)));
 
+                    // Placeholders may nest, e.g. `$2` inside `${1:"$2"}`
+                    struct OpenPlaceholder {
+                        snippet_text_end: usize,
+                        label_run_start: usize,
+                    }
+                    let mut open_placeholders = SmallVec::<[OpenPlaceholder; 4]>::new();
+
                     for range in &all_stop_ranges {
                         let start_pos = range.start as usize;
                         let end_pos = range.end as usize;
 
+                        while let Some(placeholder) = open_placeholders.last() {
+                            if placeholder.snippet_text_end > start_pos {
+                                break;
+                            }
+                            label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                            text_pos = placeholder.snippet_text_end;
+                            runs.push((
+                                placeholder.label_run_start..label.len(),
+                                HighlightId::TABSTOP_REPLACE_ID,
+                            ));
+                            open_placeholders.pop();
+                        }
+
                         label.push_str(&snippet.text[text_pos..start_pos]);
+                        text_pos = start_pos;
 
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
                             runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
                         } else {
-                            let label_start = label.len();
-                            label.push_str(&snippet.text[start_pos..end_pos]);
-                            let label_end = label.len();
-                            runs.push((label_start..label_end, HighlightId::TABSTOP_REPLACE_ID));
+                            open_placeholders.push(OpenPlaceholder {
+                                snippet_text_end: end_pos,
+                                label_run_start: label.len(),
+                            });
                         }
+                    }
 
-                        text_pos = end_pos;
+                    while let Some(placeholder) = open_placeholders.pop() {
+                        label.push_str(&snippet.text[text_pos..placeholder.snippet_text_end]);
+                        text_pos = placeholder.snippet_text_end;
+                        runs.push((
+                            placeholder.label_run_start..label.len(),
+                            HighlightId::TABSTOP_REPLACE_ID,
+                        ));
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
+                    runs.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
 
                     if detail_left.is_some_and(|detail_left| detail_left == new_text) {
                         // We only include the left detail if it isn't the snippet again
@@ -569,15 +651,15 @@ impl LspAdapter for RustLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (prefix, suffix) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
-            lsp::SymbolKind::STRUCT => ("struct ", ";"),
-            lsp::SymbolKind::ENUM => ("enum ", "{}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
-            lsp::SymbolKind::MODULE => ("mod ", ";"),
-            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
-            lsp::SymbolKind::ENUM_MEMBER => {
+            language::SymbolKind::Method | language::SymbolKind::Function => ("fn ", "();"),
+            language::SymbolKind::Struct => ("struct ", ";"),
+            language::SymbolKind::Enum => ("enum ", "{}"),
+            language::SymbolKind::Interface => ("trait ", "{}"),
+            language::SymbolKind::Constant => ("const ", ":()=();"),
+            language::SymbolKind::Module => ("mod ", ";"),
+            language::SymbolKind::Package => ("extern crate ", ";"),
+            language::SymbolKind::TypeParameter => ("type ", "=();"),
+            language::SymbolKind::EnumMember => {
                 let prefix = "enum E {";
                 return Some(CodeLabel::new(
                     name.to_string(),
@@ -670,42 +752,64 @@ impl LspInstaller for RustLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
-        _: &AsyncApp,
+        cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let path = delegate.which("rust-analyzer".as_ref()).await?;
-        let env = delegate.shell_env().await;
+        let delegate = delegate.clone();
+        cx.background_spawn(async move {
+            let env = delegate.shell_env().await;
+            if let Some(path) = Self::rustup_rust_analyzer_for_worktree(delegate.as_ref()).await {
+                let result = delegate
+                    .try_exec(LanguageServerBinary {
+                        path: path.clone(),
+                        arguments: vec!["--help".into()],
+                        env: Some(env.clone()),
+                    })
+                    .await;
+                if result.is_ok() {
+                    log::debug!("found rust-analyzer in rustup toolchain override");
+                    return Some(LanguageServerBinary {
+                        path,
+                        env: Some(env),
+                        arguments: vec![],
+                    });
+                }
+            }
 
-        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
-        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-        let result = delegate
-            .try_exec(LanguageServerBinary {
-                path: path.clone(),
-                arguments: vec!["--help".into()],
-                env: Some(env.clone()),
-            })
-            .await;
-        if let Err(err) = result {
-            log::debug!(
-                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+            let path = delegate.which("rust-analyzer".as_ref()).await?;
+
+            // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+            // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+            log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+            let result = delegate
+                .try_exec(LanguageServerBinary {
+                    path: path.clone(),
+                    arguments: vec!["--help".into()],
+                    env: Some(env.clone()),
+                })
+                .await;
+            if let Err(err) = result {
+                log::debug!(
+                    "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                    path,
+                    err
+                );
+                return None;
+            }
+
+            Some(LanguageServerBinary {
                 path,
-                err
-            );
-            return None;
-        }
-
-        Some(LanguageServerBinary {
-            path,
-            env: Some(env),
-            arguments: vec![],
+                env: Some(env),
+                arguments: vec![],
+            })
         })
+        .await
     }
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -729,87 +833,93 @@ impl LspInstaller for RustLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = version;
-        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-        };
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = version;
+            let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+                AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+            };
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: Default::default(),
-        })
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: Default::default(),
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: Default::default(),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -898,7 +1008,7 @@ impl ContextProvider for RustContextProvider {
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await?
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -1164,24 +1274,31 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(Option<TargetInfo>, Arc<Path>)> {
+) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(abs_path.parent()?)
+        .current_dir(
+            abs_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
+        )
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
         .arg("1")
         .output()
-        .await
-        .log_err()?
-        .stdout;
+        .await?;
 
-    let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
-    target_info_from_metadata(metadata, abs_path)
+    if !output.status.success() {
+        let stderr_msg = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Cargo metadata failed\n {stderr_msg}");
+    }
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
+    Ok(target_info_from_metadata(metadata, abs_path))
 }
 
 fn target_info_from_metadata(
@@ -1365,6 +1482,7 @@ mod tests {
     use crate::language;
     use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use lsp::CompletionItemLabelDetails;
+    use pretty_assertions::assert_eq;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
     use util::path;
@@ -1627,6 +1745,36 @@ mod tests {
             adapter
                 .label_for_completion(
                     &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "sync_all(…)".to_string(),
+                        filter_text: Some("sync_allfsync".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(
+                                "pub fn sync_all(&self) -> io::Result<()>".to_string()
+                            ),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "pub fn sync_all(&self) -> io::Result<()>".to_string(),
+                7..15,
+                vec![
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..15, HighlightId::new(2)),
+                    (30..36, HighlightId::new(0))
+                ],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
                         kind: Some(lsp::CompletionItemKind::FIELD),
                         label: "inner_value".to_string(),
                         filter_text: Some("value".to_string()),
@@ -1758,6 +1906,34 @@ mod tests {
             ))
         );
 
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "unimplemented".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "unimplemented!(${1:\"$2\"})".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "unimplemented!(\"…\")".to_string(),
+                0..13,
+                vec![
+                    (15..20, HighlightId::TABSTOP_REPLACE_ID),
+                    (16..19, HighlightId::TABSTOP_INSERT_ID),
+                    (0..13, HighlightId::new(2)),
+                    (13..14, HighlightId::new(2)),
+                ],
+            ))
+        );
+
         // Postfix completion without actual tabstops (only implicit final $0)
         // The label should use completion.label so it can be filtered by "ref"
         let ref_completion = adapter
@@ -1854,7 +2030,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "hello".to_string(),
-                        kind: lsp::SymbolKind::FUNCTION,
+                        kind: language::SymbolKind::Function,
                         container_name: None,
                     },
                     &language
@@ -1872,7 +2048,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "World".to_string(),
-                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        kind: language::SymbolKind::TypeParameter,
                         container_name: None,
                     },
                     &language
@@ -1890,7 +2066,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "zed".to_string(),
-                        kind: lsp::SymbolKind::PACKAGE,
+                        kind: language::SymbolKind::Package,
                         container_name: None,
                     },
                     &language
@@ -1908,7 +2084,7 @@ mod tests {
                 .label_for_symbol(
                     &language::Symbol {
                         name: "Variant".to_string(),
-                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        kind: language::SymbolKind::EnumMember,
                         container_name: None,
                     },
                     &language
@@ -2090,6 +2266,21 @@ mod tests {
 
             assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
+    }
+
+    #[test]
+    fn target_info_from_abs_path_failed() {
+        let project_root = tempfile::tempdir().unwrap();
+        let cargo_toml_path = project_root.path().join("Cargo.toml");
+        let src_dir = project_root.path().join("src");
+        let main_rs_path = src_dir.join("main.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(&cargo_toml_path, "invalid_toml = {[[{").unwrap();
+        std::fs::write(&main_rs_path, "// rust").unwrap();
+
+        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None)).unwrap_err();
+        assert!(e.to_string().contains("Cargo metadata failed"));
     }
 
     #[test]

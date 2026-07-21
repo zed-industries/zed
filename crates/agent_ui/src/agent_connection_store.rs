@@ -55,6 +55,7 @@ impl AgentConnectionEntry {
 
 pub enum AgentConnectionEntryEvent {
     NewVersionAvailable(SharedString),
+    LoadingStatusChanged(Option<SharedString>),
 }
 
 impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
@@ -95,6 +96,13 @@ impl AgentConnectionStore {
             .get(key)
             .map(|entry| entry.read(cx).status())
             .unwrap_or(AgentConnectionStatus::Disconnected)
+    }
+
+    pub fn agent_version(&self, key: &Agent, cx: &App) -> Option<SharedString> {
+        match self.entries.get(key)?.read(cx) {
+            AgentConnectionEntry::Connected(state) => state.connection.agent_version(),
+            AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => None,
+        }
     }
 
     pub fn active_acp_connections(&self, cx: &App) -> Vec<ActiveAcpConnection> {
@@ -142,7 +150,8 @@ impl AgentConnectionStore {
             return entry.clone();
         }
 
-        let (mut new_version_rx, connect_task) = self.start_connection(server, cx);
+        let (mut new_version_rx, mut loading_status_rx, connect_task) =
+            self.start_connection(server, cx);
         let connect_task = connect_task.shared();
 
         let entry = cx.new(|_cx| AgentConnectionEntry::Connecting {
@@ -198,6 +207,7 @@ impl AgentConnectionStore {
         .detach();
 
         cx.spawn({
+            let key = key.clone();
             let entry = entry.downgrade();
             async move |this, cx| {
                 while let Ok(version) = new_version_rx.recv().await {
@@ -222,6 +232,31 @@ impl AgentConnectionStore {
                     })
                     .ok();
                     break;
+                }
+            }
+        })
+        .detach();
+
+        cx.spawn({
+            let entry = entry.downgrade();
+            async move |this, cx| {
+                while let Ok(status) = loading_status_rx.recv().await {
+                    let status = status.map(SharedString::from);
+                    let key = key.clone();
+                    let entry = entry.clone();
+                    this.update(cx, move |this, cx| {
+                        if this.entries.get(&key) != entry.upgrade().as_ref() {
+                            return;
+                        }
+
+                        entry
+                            .update(cx, move |_entry, cx| {
+                                cx.emit(AgentConnectionEntryEvent::LoadingStatusChanged(status));
+                            })
+                            .ok();
+                        cx.notify();
+                    })
+                    .ok();
                 }
             }
         })
@@ -252,12 +287,18 @@ impl AgentConnectionStore {
         cx: &mut Context<Self>,
     ) -> (
         Receiver<Option<String>>,
+        Receiver<Option<String>>,
         Task<Result<AgentConnectedState, LoadError>>,
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
+        let (loading_status_tx, loading_status_rx) = watch::channel::<Option<String>>(None);
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
+        let delegate = AgentServerDelegate::new(
+            agent_server_store,
+            Some(new_version_tx),
+            Some(loading_status_tx),
+        );
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);
         let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
@@ -267,6 +308,6 @@ impl AgentConnectionStore {
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
             },
         });
-        (new_version_rx, connect_task)
+        (new_version_rx, loading_status_rx, connect_task)
     }
 }
