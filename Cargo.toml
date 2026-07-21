@@ -164,6 +164,7 @@ members = [
     "crates/project_symbols",
     "crates/prompt_store",
     "crates/proto",
+    "crates/proxy_handshake",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -428,6 +429,7 @@ project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
+proxy_handshake = { path = "crates/proxy_handshake" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
@@ -734,6 +736,7 @@ pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", re
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+piper = "0.2"
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -822,10 +825,6 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.12"
 tokio = { version = "1" }
-tokio-socks = { version = "0.5.2", default-features = false, features = [
-    "futures-io",
-    "tokio",
-] }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = [
     "display",
