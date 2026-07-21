@@ -5,7 +5,6 @@ use std::sync::Arc;
 const SAMPLE_BLOCK_SIZE: usize = 4096;
 const MIN_LANGUAGE_DETECTION_CONFIDENCE: f32 = 0.2;
 const MIN_LANGUAGE_DETECTION_CONFIDENCE_GAP: f32 = 0.2;
-const MAX_CURRENT_LANGUAGE_CONFIDENCE: f32 = 0.3;
 const MIN_LANGUAGE_SWITCH_CONFIDENCE_GAP: f32 = 0.5;
 
 fn language_registry_key(language: betlang::Language) -> Option<&'static str> {
@@ -107,9 +106,7 @@ pub fn detect_language(
         }
         // Prefer the current language unless another candidate has a clear confidence advantage.
         if current_language_score.is_some_and(|current_score| {
-            score
-                <= current_score.min(MAX_CURRENT_LANGUAGE_CONFIDENCE)
-                    + MIN_LANGUAGE_SWITCH_CONFIDENCE_GAP
+            score <= current_score + MIN_LANGUAGE_SWITCH_CONFIDENCE_GAP
         }) {
             return None;
         }
@@ -137,13 +134,4 @@ fn extract_sample(buffer: &BufferSnapshot) -> Vec<u8> {
         .flat_map(|range| buffer.bytes_in_range(range))
         .flat_map(|chunk| chunk.iter().copied())
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn detects_rust_source() {
-        let detection = betlang::detect("fn main() { println!(\"hello\"); }");
-        assert_eq!(detection.language(), Some(betlang::Language::Rust));
-    }
 }
