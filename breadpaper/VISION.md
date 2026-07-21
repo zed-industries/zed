@@ -173,6 +173,43 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - _A second brain that ships with a system — not a blank page._
 - _Local-first life OS. Bring your own brain._
 
+## 12. Feature roadmap (living)
+
+> This section is the running build log. It is **updated over the course of the project** as features move `planned → in progress → shipped`. Status reflects code on the `main` fork, not intent.
+
+### Milestone 0 — Fork foundation
+- [x] **Fork Zed, isolate BreadPaper delta** — `/breadpaper/` docs + `crates/breadpaper/`, `upstream` remote for rebases. _(shipped)_
+- [x] **Vault model** — folder + `.breadpaper` marker + config, naming conventions encoded. _(shipped)_
+- [x] **Timeline panel** — Today / Yesterday / This Week / Last Week GPUI dock panel. _(shipped)_
+- [x] **Daily & weekly note creation** — resolve `YYYYMMDD_MMM-DDD.md` / `YYYY_WW_MMM.md`, create-if-missing. _(shipped)_
+- [ ] **Invisible git — checkpoint service** — background snapshots to hidden `.breadpaper/history` git-dir. _(in progress)_
+
+### Milestone 1 — The core loop (thinnest thing that proves it)
+- [ ] **Daily & Weekly Area** — first packaged Area (folders + templates + context view). _(planned)_
+- [ ] **Daily Closure skill** — reads tasks + commits, appends a review to the day's note. _(planned)_
+- [ ] **Invisible git — restore UI** — human "history / restore this version" surface; no git vocabulary. _(planned)_
+- [ ] **Checkpoint triggers** — autosave / idle / pre-AI-write commit points. _(planned)_
+- [ ] **BYO-LLM connection** — ride Zed's existing agent/console rails; user brings their own key. _(planned)_
+
+### Milestone 2 — Areas & Skills framework
+- [ ] **Area package format** — declarative bundle spec (folders + view + skills + README). _(planned)_
+- [ ] **Areas left rail + gallery** — switchable enabled domains; add/remove from a gallery. _(planned)_
+- [ ] **Skills view** — rituals as inspectable, editable objects with declared read/write scope. _(planned)_
+- [ ] **Skill contract & write sandbox** — enforce inputs/outputs so writes are previewable and scoped. _(planned)_
+
+### Milestone 3 — Context rail & connectors
+- [ ] **Page-aware Context right rail** — day-planner / week calendar / finance dashboard per open doc. _(planned)_
+- [ ] **MCP connector onboarding** — Monarch, GitHub/GitLab, calendar as a guided step, not hand-edited JSON. _(planned)_
+- [ ] **Week Review skill** — aggregate daily notes + PRs/MRs, append review, feed dashboard. _(planned)_
+- [ ] **Friday Finance skill** — live Monarch pull, credit-card sweep + LoC residual, action list, log outcome. _(planned)_
+- [ ] **Journaling Topic skill** — detect avoidance/momentum, surface a neglected topic. Read-only. _(planned)_
+- [ ] **Dashboard output type** — `data.js → static HTML that computes its own analytics`, generalized. _(planned)_
+
+### Milestone 4 — Onboarding & de-Zed-ification
+- [ ] **First-run onboarding** — point at a folder, connect an LLM, pick Areas, run first ritual in <10 min. _(planned)_
+- [ ] **Remove code-editor chrome** — disable git pane + subscription/billing surfaces that conflict with the life-OS framing. _(planned)_
+- [ ] **BYO-LLM cost visibility** — key/model choice, local vs cloud, graceful failure. _(planned)_
+
 ---
 
 _This is a starting point, not a spec. It exists to give designers and engineers a shared picture of the destination so we can argue productively about the route._

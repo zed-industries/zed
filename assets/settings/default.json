@@ -1616,6 +1616,7 @@
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
   // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.
   "file_scan_exclusions": [
+    "**/.breadpaper/history",
     "**/.git",
     "**/.svn",
     "**/.hg",
