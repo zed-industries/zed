@@ -202,7 +202,6 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
-    placeholder: SharedString,
     workspace: WeakEntity<Workspace>,
     session_capabilities: SharedSessionCapabilities,
     local_commands: SharedLocalCommands,
@@ -460,7 +459,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let placeholder = SharedString::from(placeholder);
         let language_registry = project
             .upgrade()
             .map(|project| project.read(cx).languages().clone());
@@ -476,6 +474,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
@@ -602,9 +601,8 @@ impl MessageEditor {
             .detach_and_log_err(cx);
         }
 
-        let mut message_editor = Self {
+        Self {
             editor,
-            placeholder: SharedString::default(),
             mention_set,
             workspace,
             session_capabilities,
@@ -613,17 +611,11 @@ impl MessageEditor {
             thread_store,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
-        };
-        message_editor.set_placeholder_text(&placeholder, window, cx);
-        message_editor
+        }
     }
 
     pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
         *self.local_commands.write() = commands;
-    }
-
-    pub fn placeholder_text(&self) -> &str {
-        &self.placeholder
     }
 
     pub fn set_session_capabilities(
@@ -1900,12 +1892,9 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.placeholder = placeholder.into();
-        let placeholder = self.placeholder.clone();
         self.editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(&placeholder, window, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
         });
-        cx.notify();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5555,21 +5544,6 @@ mod tests {
 
         cx.run_until_parked();
         (message_editor, cx)
-    }
-
-    #[gpui::test]
-    async fn test_set_placeholder_text_updates_cached_placeholder(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (message_editor, cx) = setup_message_editor(cx).await;
-
-        message_editor.update_in(cx, |message_editor, window, cx| {
-            message_editor.set_placeholder_text("Updated placeholder", window, cx);
-        });
-
-        let placeholder = message_editor.update(cx, |message_editor, _cx| {
-            message_editor.placeholder_text().to_string()
-        });
-        assert_eq!(placeholder, "Updated placeholder");
     }
 
     #[gpui::test]

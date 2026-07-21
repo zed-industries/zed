@@ -38,7 +38,6 @@ use language_model::{
 };
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
-use theme_settings::ThemeSettings;
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
@@ -51,18 +50,6 @@ use super::elicitation::{
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
-const MAX_MIN_PANEL_CONTENT_WIDTH: Pixels = px(360.);
-
-fn first_placeholder_line(placeholder: &str) -> &str {
-    placeholder.lines().next().unwrap_or_default()
-}
-
-fn minimum_panel_width_for_placeholder_width(
-    placeholder_width: Pixels,
-    rem_size: Pixels,
-) -> Pixels {
-    placeholder_width.min(MAX_MIN_PANEL_CONTENT_WIDTH) + rems(4.).to_pixels(rem_size)
-}
 
 #[derive(Default)]
 struct ThreadFeedbackState {
@@ -4360,11 +4347,14 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .w_full()
+                            .min_w_0()
                             .flex_none()
                             .flex_wrap()
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
+                                    .flex_wrap()
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
@@ -4373,6 +4363,7 @@ impl ThreadView {
                             )
                             .child(
                                 h_flex()
+                                    .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
@@ -4388,28 +4379,6 @@ impl ThreadView {
                     ),
             )
             .into_any()
-    }
-
-    pub(crate) fn minimum_panel_width(&self, window: &Window, cx: &App) -> Pixels {
-        let message_editor = self.message_editor.read(cx);
-        let placeholder = first_placeholder_line(message_editor.placeholder_text());
-        let settings = ThemeSettings::get_global(cx);
-        let text_run = TextRun {
-            len: placeholder.len(),
-            font: settings.buffer_font.clone(),
-            ..Default::default()
-        };
-        let placeholder_width = window
-            .text_system()
-            .shape_line(
-                placeholder.into(),
-                settings.agent_buffer_font_size(cx),
-                &[text_run],
-                None,
-            )
-            .width;
-
-        minimum_panel_width_for_placeholder_width(placeholder_width, window.rem_size())
     }
 
     fn render_queue_steer_button(
@@ -12492,19 +12461,6 @@ mod tests {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
-    }
-
-    #[test]
-    fn test_minimum_panel_width_caps_placeholder_and_uses_first_line() {
-        assert_eq!(first_placeholder_line("first\nsecond"), "first");
-        assert_eq!(
-            minimum_panel_width_for_placeholder_width(px(320.), px(16.)),
-            px(384.)
-        );
-        assert_eq!(
-            minimum_panel_width_for_placeholder_width(px(480.), px(16.)),
-            px(424.)
-        );
     }
 
     #[test]
