@@ -10,10 +10,10 @@ use crate::{
 use anyhow::{Context as _, anyhow};
 use dap::client::SessionId;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _,
-    FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription,
-    Task, TaskExt, TextStyleRefinement, WeakEntity, Window, canvas, div, px,
+    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
+    TaskExt, TextStyleRefinement, WeakEntity, Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -32,11 +32,10 @@ use std::{
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
-use ui::{
-    CopyButton, Disclosure, Scrollbars, Tooltip, WithScrollbar, prelude::*,
-    theme_is_transparent,
-};
 use theme_settings::ThemeSettings;
+use ui::{
+    CopyButton, Disclosure, Scrollbars, Tooltip, WithScrollbar, prelude::*, theme_is_transparent,
+};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -1178,30 +1177,37 @@ impl DebuggerHoverView {
                                                     .single_line()
                                                     .truncate()
                                                     .color(Color::Muted)
-                                                    .when_some(variable_colors.value, |this, color| {
-                                                        this.color(Color::from(color))
-                                                    }),
+                                                    .when_some(
+                                                        variable_colors.value,
+                                                        |this, color| {
+                                                            this.color(Color::from(color))
+                                                        },
+                                                    ),
                                             ),
                                     ),
                             )
                             .children(
-                                debugger_hover_type_suffix(depth, node.variable.type_name.as_deref())
-                                    .map(|type_name| {
-                                        div()
-                                            .min_w_0()
-                                            .max_w(DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH)
-                                            .flex_shrink()
-                                            .overflow_hidden()
-                                            .child(
-                                                Label::new(type_name)
-                                                    .single_line()
-                                                    .truncate_start()
-                                                    .color(Color::Muted)
-                                                    .when_some(variable_colors.type_name, |this, color| {
-                                                        this.color(Color::from(color))
-                                                    }),
-                                            )
-                                    }),
+                                debugger_hover_type_suffix(
+                                    depth,
+                                    node.variable.type_name.as_deref(),
+                                )
+                                .map(|type_name| {
+                                    div()
+                                        .min_w_0()
+                                        .max_w(DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH)
+                                        .flex_shrink()
+                                        .overflow_hidden()
+                                        .child(
+                                            Label::new(type_name)
+                                                .single_line()
+                                                .truncate_start()
+                                                .color(Color::Muted)
+                                                .when_some(
+                                                    variable_colors.type_name,
+                                                    |this, color| this.color(Color::from(color)),
+                                                ),
+                                        )
+                                }),
                             ),
                     ),
             )
@@ -1654,18 +1660,21 @@ impl HoverState {
 
 impl Editor {
     fn ensure_debugger_hover_selection_visible(&mut self, cx: &mut Context<Self>) {
-        let Some((debugger_hover, scroll_handle)) = self.hover_state.info_popovers.iter().find_map(
-            |info_popover| {
-                if !*info_popover.keyboard_grace.borrow() {
-                    return None;
-                }
+        let Some((debugger_hover, scroll_handle)) =
+            self.hover_state
+                .info_popovers
+                .iter()
+                .find_map(|info_popover| {
+                    if !*info_popover.keyboard_grace.borrow() {
+                        return None;
+                    }
 
-                info_popover
-                    .debugger_hover
-                    .clone()
-                    .map(|debugger_hover| (debugger_hover, info_popover.scroll_handle.clone()))
-            },
-        ) else {
+                    info_popover
+                        .debugger_hover
+                        .clone()
+                        .map(|debugger_hover| (debugger_hover, info_popover.scroll_handle.clone()))
+                })
+        else {
             return;
         };
 
@@ -1706,7 +1715,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(debugger_hover) = self.hover_state.keyboard_debugger_hover() {
-            debugger_hover.update(cx, |debugger_hover, cx| debugger_hover.collapse_selected(cx));
+            debugger_hover.update(cx, |debugger_hover, cx| {
+                debugger_hover.collapse_selected(cx)
+            });
         }
     }
 
@@ -1813,31 +1824,35 @@ impl InfoPopover {
                                     })
                                     .when_some(parsed_content, |this, markdown| {
                                         this.child(
-                                             MarkdownElement::new(
-                                                 markdown,
-                                                 hover_markdown_style(window, cx),
-                                             )
-                                             .scroll_handle(self.scroll_handle.clone())
-                                             .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                                 copy_button_visibility:
-                                                     CopyButtonVisibility::Hidden,
-                                                 wrap_button_visibility:
-                                                     markdown::WrapButtonVisibility::Hidden,
-                                                 border: false,
-                                             })
-                                             .on_url_click(move |link, window, cx| {
-                                                 open_markdown_url(
-                                                     this2
-                                                         .read_with(cx, |editor, _| editor.workspace())
-                                                         .ok()
-                                                         .flatten(),
-                                                     link,
-                                                     window,
-                                                     cx,
-                                                 )
-                                             }),
-                                         )
-                                     }),
+                                            MarkdownElement::new(
+                                                markdown,
+                                                hover_markdown_style(window, cx),
+                                            )
+                                            .scroll_handle(self.scroll_handle.clone())
+                                            .code_block_renderer(
+                                                markdown::CodeBlockRenderer::Default {
+                                                    copy_button_visibility:
+                                                        CopyButtonVisibility::Hidden,
+                                                    wrap_button_visibility:
+                                                        markdown::WrapButtonVisibility::Hidden,
+                                                    border: false,
+                                                },
+                                            )
+                                            .on_url_click(move |link, window, cx| {
+                                                open_markdown_url(
+                                                    this2
+                                                        .read_with(cx, |editor, _| {
+                                                            editor.workspace()
+                                                        })
+                                                        .ok()
+                                                        .flatten(),
+                                                    link,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        )
+                                    }),
                             )
                             .when(!debugger_hover_only, |this| {
                                 this.custom_scrollbars(
@@ -1848,8 +1863,8 @@ impl InfoPopover {
                                 )
                             }),
                     )
-                 },
-             )
+                },
+            )
             .into_any_element()
     }
 

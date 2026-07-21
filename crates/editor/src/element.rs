@@ -4499,7 +4499,10 @@ impl EditorElement {
                 .expect("expected single debugger hover popover");
             let popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
                 if can_place_below {
-                    point(hovered_point.x + popover.horizontal_offset, hovered_point.y + line_height)
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y + line_height,
+                    )
                 } else {
                     point(
                         hovered_point.x + popover.horizontal_offset,

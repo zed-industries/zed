@@ -973,7 +973,7 @@
     },
   },
   {
-    "context": "Editor && DebuggerHover && VimControl && vim_mode == normal",
+    "context": "Editor && DebuggerHover && VimControl && (vim_mode == normal || vim_mode == helix_normal)",
     "bindings": {
       "h": "editor::DebuggerHoverCollapseSelected",
       "j": "editor::DebuggerHoverSelectNext",
