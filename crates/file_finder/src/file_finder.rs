@@ -31,7 +31,7 @@ use project_panel::project_panel_settings::ProjectPanelSettings;
 use settings::Settings;
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, mem,
     ops::{Range, RangeInclusive},
     path::{Component, Path, PathBuf},
     sync::{
@@ -70,7 +70,6 @@ pub struct FileFinder {
     picker: Entity<Picker<FileFinderDelegate>>,
     picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
-    refresh_after_worktree_update: Option<Task<()>>,
 }
 
 pub fn init(cx: &mut App) {
@@ -195,32 +194,7 @@ impl FileFinder {
             picker,
             picker_focus_handle,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
-            refresh_after_worktree_update: None,
         }
-    }
-
-    fn refresh_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.refresh_after_worktree_update = None;
-        self.picker
-            .update(cx, |picker, cx| picker.refresh(window, cx));
-    }
-
-    fn refresh_picker_after_worktree_update(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let file_finder = cx.entity().downgrade();
-        self.refresh_after_worktree_update = Some(cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(WORKTREE_UPDATE_REFRESH_DEBOUNCE)
-                .await;
-            file_finder
-                .update_in(cx, |file_finder, window, cx| {
-                    file_finder.refresh_picker(window, cx);
-                })
-                .log_err();
-        }));
     }
 
     fn handle_modifiers_changed(
@@ -413,6 +387,7 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    debounce_next_refresh: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -1021,6 +996,7 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: include_ignored.or(FileFinderSettings::get_global(cx).include_ignored),
             include_ignored_refresh: Task::ready(()),
+            debounce_next_refresh: false,
         }
     }
 
@@ -1032,10 +1008,15 @@ impl FileFinderDelegate {
         cx.subscribe_in(project, window, |file_finder, _, event, window, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _) => {
-                    file_finder.refresh_picker_after_worktree_update(window, cx)
+                    file_finder.picker.update(cx, |picker, cx| {
+                        picker.delegate.debounce_next_refresh = true;
+                        picker.refresh(window, cx);
+                    })
                 }
                 project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                    file_finder.refresh_picker(window, cx)
+                    file_finder
+                        .picker
+                        .update(cx, |picker, cx| picker.refresh(window, cx))
                 }
                 _ => {}
             };
@@ -1870,6 +1851,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let debounce_refresh = mem::take(&mut self.debounce_next_refresh);
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1943,7 +1925,11 @@ impl PickerDelegate for FileFinderDelegate {
             let was_in_flight = search_in_flight.swap(true, atomic::Ordering::Relaxed);
 
             cx.spawn_in(window, async move |this, cx| {
-                if was_in_flight {
+                if debounce_refresh {
+                    cx.background_executor()
+                        .timer(WORKTREE_UPDATE_REFRESH_DEBOUNCE)
+                        .await;
+                } else if was_in_flight {
                     cx.background_executor().timer(SEARCH_DEBOUNCE).await;
                 }
                 let _ = maybe!(async move {
