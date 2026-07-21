@@ -773,12 +773,10 @@ impl ImageViewToolbarControls {
     }
 
     fn start_editing_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let zoom_level = self
-            .image_view
-            .as_ref()
-            .and_then(|v| v.upgrade())
-            .map(|v| v.read(cx).zoom_level)
-            .unwrap_or(1.0);
+        let Some(image_view) = self.image_view.as_ref().and_then(|v| v.upgrade()) else {
+            return;
+        };
+        let zoom_level = image_view.read(cx).zoom_level;
         let zoom_percentage = (zoom_level * 100.0).round() as i32;
 
         let editor = cx.new(|cx| {
