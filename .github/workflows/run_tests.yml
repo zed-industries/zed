@@ -405,7 +405,9 @@ jobs:
         check-latest: true
         package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
@@ -458,7 +460,9 @@ jobs:
         check-latest: true
         package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
@@ -697,7 +701,7 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: run_tests::check_dependencies::install_cargo_machete
-      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
         tool: cargo-machete@0.7.0
     - name: run_tests::check_dependencies::run_cargo_machete

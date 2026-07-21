@@ -206,17 +206,13 @@ pub fn taiki_install_action(tool: &str) -> Step<Use> {
         .uses(
             "taiki-e",
             "install-action",
-            "02cc5f8ca9f2301050c0c099055816a41ee05507", // v2
+            "a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9", // v2.84.0
         )
         .add_with(("tool", tool))
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
-    named::uses(
-        "taiki-e",
-        "install-action",
-        "921e2c9f7148d7ba14cd819f417db338f63e733c", // nextest
-    )
+    taiki_install_action("nextest")
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
