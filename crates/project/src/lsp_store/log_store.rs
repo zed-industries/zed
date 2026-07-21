@@ -19,8 +19,6 @@ use settings::WorktreeId;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 
-const SEND_LINE: &str = "\n// Send:";
-const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 const MAX_PENDING_REQUESTS: usize = MAX_STORED_LOG_ENTRIES;
 
@@ -302,6 +300,17 @@ impl TestRpcRequestTracker {
 enum RpcTiming {
     ObservedAt(Instant),
     Forwarded(Option<Duration>),
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs_f64();
+    if seconds < 0.001 {
+        format!("{:.0}µs", seconds * 1_000_000.0)
+    } else if seconds < 1.0 {
+        format!("{:.1}ms", seconds * 1_000.0)
+    } else {
+        format!("{seconds:.2}s")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -653,26 +662,31 @@ impl LogStore {
         };
 
         let received = kind == MessageKind::Receive;
-        let rpc_log_lines = &mut state.rpc_messages;
+        let direction = if received { "Receive" } else { "Send" };
+        let mut header = None;
         if state.last_message_kind != Some(kind) || elapsed.is_some() {
+            header = Some(match elapsed {
+                Some(elapsed) => format!("\n// {direction} (took {}):", format_duration(elapsed)),
+                None => format!("\n// {direction}:"),
+            });
+        }
+        state.last_message_kind = Some(kind);
+
+        if store_logs {
+            let rpc_log_lines = &mut state.rpc_messages;
             while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
                 rpc_log_lines.pop_front();
             }
-            let line_before_message = match (kind, elapsed) {
-                (MessageKind::Send, None) => SEND_LINE.to_string(),
-                (MessageKind::Receive, None) => RECEIVE_LINE.to_string(),
-                (MessageKind::Send, Some(elapsed)) => {
-                    format!("\n// Send (took {elapsed:?}):")
-                }
-                (MessageKind::Receive, Some(elapsed)) => {
-                    format!("\n// Receive (took {elapsed:?}):")
-                }
-            };
-            if store_logs {
-                rpc_log_lines.push_back(RpcMessage {
-                    message: line_before_message.clone(),
-                });
-            }
+            let message = message.trim();
+            rpc_log_lines.push_back(RpcMessage {
+                message: match &header {
+                    Some(header) => format!("{header}\n{message}"),
+                    None => message.to_owned(),
+                },
+            });
+        }
+
+        if let Some(header) = header {
             // Do not send a synthetic message over the wire, it will be derived from the actual RPC message
             cx.emit(Event::NewServerLogEntry {
                 id: language_server_id,
@@ -680,17 +694,7 @@ impl LogStore {
                     received,
                     elapsed: None,
                 },
-                text: line_before_message,
-            });
-        }
-
-        while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
-            rpc_log_lines.pop_front();
-        }
-
-        if store_logs {
-            rpc_log_lines.push_back(RpcMessage {
-                message: message.trim().to_owned(),
+                text: header,
             });
         }
 
