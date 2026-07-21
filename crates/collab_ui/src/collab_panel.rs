@@ -35,9 +35,9 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
-    DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
-    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab, TintColor,
-    Tooltip, prelude::*, tooltip_container,
+    DecoratedIcon, Disclosure, Divider, Facepile, HighlightedLabel, IconButtonShape,
+    IconDecoration, IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, Tab,
+    TintColor, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -90,6 +90,14 @@ actions!(
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct ChannelMoveClipboard {
     channel_id: ChannelId,
+}
+
+/// Tracks the open contact context menu and how it was triggered, so the
+/// contact's row can reflect it (e.g. keeping the ellipsis button visible
+/// while its menu is open, and suppressing the row tooltip).
+struct ContactContextMenu {
+    user_id: u64,
+    via_ellipsis_button: bool,
 }
 
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
@@ -258,6 +266,7 @@ pub struct CollabPanel {
     pending_favorites_serialization: Task<Option<()>>,
     pending_filter_serialization: Task<Option<()>>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    contact_context_menu: Option<ContactContextMenu>,
     scroll_handle: UniformListScrollHandle,
     filter_editor: Entity<Editor>,
     channel_name_editor: Entity<Editor>,
@@ -399,6 +408,7 @@ impl CollabPanel {
                 pending_favorites_serialization: Task::ready(None),
                 pending_filter_serialization: Task::ready(None),
                 context_menu: None,
+                contact_context_menu: None,
                 scroll_handle: UniformListScrollHandle::new(),
                 channel_name_editor,
                 filter_editor,
@@ -1681,9 +1691,14 @@ impl CollabPanel {
         &mut self,
         position: Point<Pixels>,
         contact: Arc<Contact>,
+        via_ellipsis_button: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.contact_context_menu = Some(ContactContextMenu {
+            user_id: contact.user.legacy_id,
+            via_ellipsis_button,
+        });
         let this = cx.entity();
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
 
@@ -1732,6 +1747,7 @@ impl CollabPanel {
                     cx.focus_self(window);
                 }
                 this.context_menu.take();
+                this.contact_context_menu.take();
                 cx.notify();
             },
         );
@@ -2402,7 +2418,7 @@ impl CollabPanel {
         };
 
         if let Some(contact) = self.selected_contact() {
-            self.deploy_contact_context_menu(bounds.center(), contact, window, cx);
+            self.deploy_contact_context_menu(bounds.center(), contact, false, window, cx);
             cx.stop_propagation();
         }
     }
@@ -3078,30 +3094,67 @@ impl CollabPanel {
         let online = contact.online;
         let busy = contact.busy || calling;
         let username = contact.user.username.clone();
+        let open_context_menu = self
+            .contact_context_menu
+            .as_ref()
+            .filter(|menu| menu.user_id == contact.user.legacy_id);
+        let context_menu_open_via_button =
+            open_context_menu.is_some_and(|menu| menu.via_ellipsis_button);
+
+        let context_menu_open_via_row =
+            open_context_menu.is_some_and(|menu| !menu.via_ellipsis_button);
 
         let item = ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .toggle_state(is_selected)
+            .toggle_state(is_selected || context_menu_open_via_row)
             .child(
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(render_participant_name_and_handle(&contact.user))
+                    .child(
+                        h_flex()
+                            .pl_2()
+                            .gap_1p5()
+                            .child(
+                                Avatar::new(contact.user.avatar_uri.clone())
+                                    .indicator::<AvatarAvailabilityIndicator>(if online {
+                                    let background = if is_selected || context_menu_open_via_row {
+                                        cx.theme().colors().ghost_element_selected
+                                    } else {
+                                        cx.theme().colors().panel_background
+                                    };
+                                    Some(
+                                        AvatarAvailabilityIndicator::new(match busy {
+                                            true => ui::CollaboratorAvailability::Busy,
+                                            false => ui::CollaboratorAvailability::Free,
+                                        })
+                                        .border_color(background),
+                                    )
+                                } else {
+                                    None
+                                }),
+                            )
+                            .child(render_participant_name_and_handle(&contact.user)),
+                    )
                     .when(calling, |el| {
-                        el.child(Label::new("Calling").color(Color::Muted))
+                        el.child(Label::new("Calling…").color(Color::Muted))
                     })
                     .when(!calling, |el| {
                         el.child(
                             IconButton::new("contact context menu", IconName::Ellipsis)
                                 .icon_color(Color::Muted)
-                                .visible_on_hover("")
+                                .toggle_state(context_menu_open_via_button)
+                                .when(!context_menu_open_via_button, |this| {
+                                    this.visible_on_hover("")
+                                })
                                 .on_click(cx.listener({
                                     let contact = contact.clone();
                                     move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
                                             event.position(),
                                             contact.clone(),
+                                            true,
                                             window,
                                             cx,
                                         );
@@ -3113,40 +3166,36 @@ impl CollabPanel {
             .on_secondary_mouse_down(cx.listener({
                 let contact = contact.clone();
                 move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_contact_context_menu(event.position, contact.clone(), window, cx);
+                    this.deploy_contact_context_menu(
+                        event.position,
+                        contact.clone(),
+                        false,
+                        window,
+                        cx,
+                    );
                 }
-            }))
-            .start_slot(
-                // todo handle contacts with no avatar
-                Avatar::new(contact.user.avatar_uri.clone())
-                    .indicator::<AvatarAvailabilityIndicator>(if online {
-                        Some(AvatarAvailabilityIndicator::new(match busy {
-                            true => ui::CollaboratorAvailability::Busy,
-                            false => ui::CollaboratorAvailability::Free,
-                        }))
-                    } else {
-                        None
-                    }),
-            );
+            }));
 
         div()
             .id(username.clone())
             .group("")
             .child(item)
-            .tooltip(move |_, cx| {
-                let text = if !online {
-                    format!(" {} is offline", &username)
-                } else if busy {
-                    format!(" {} is on a call", &username)
-                } else {
-                    let room = ActiveCall::global(cx).read(cx).room();
-                    if room.is_some() {
-                        format!("Invite {} to join call", &username)
+            .when(open_context_menu.is_none(), |this| {
+                this.tooltip(move |_, cx| {
+                    let text = if !online {
+                        format!(" {} is Offline", &username)
+                    } else if busy {
+                        format!(" {} is on a Call", &username)
                     } else {
-                        format!("Call {}", &username)
-                    }
-                };
-                Tooltip::simple(text, cx)
+                        let room = ActiveCall::global(cx).read(cx).room();
+                        if room.is_some() {
+                            format!("Invite {} to Join Call", &username)
+                        } else {
+                            format!("Call {}", &username)
+                        }
+                    };
+                    Tooltip::simple(text, cx)
+                })
             })
     }
 
@@ -3348,22 +3397,26 @@ impl CollabPanel {
             IconName::Lock
         };
 
+        let overlay_bg = if is_selected || is_active {
+            cx.theme().colors().ghost_element_selected
+        } else if self.hovered_channel == Some(channel_id) {
+            cx.theme().colors().ghost_element_hover
+        } else {
+            cx.theme().colors().panel_background
+        };
+
         let icon = if has_notes_notification {
             DecoratedIcon::new(
                 Icon::new(icon_name)
                     .size(IconSize::Small)
                     .color(Color::Muted),
                 Some(
-                    IconDecoration::new(
-                        IconDecorationKind::Dot,
-                        cx.theme().colors().panel_background,
-                        cx,
-                    )
-                    .color(cx.theme().colors().text_accent)
-                    .position(Point {
-                        x: px(-3.),
-                        y: px(6.),
-                    }),
+                    IconDecoration::new(IconDecorationKind::Dot, overlay_bg, cx)
+                        .color(cx.theme().colors().text_accent)
+                        .position(Point {
+                            x: px(-3.),
+                            y: px(6.),
+                        }),
                 ),
             )
             .into_any_element()
@@ -3444,16 +3497,9 @@ impl CollabPanel {
                         if is_open && self.hovered_channel != Some(channel_id) {
                             this.disclosure_slot(Empty)
                         } else {
-                            let background = if is_selected || is_active {
-                                cx.theme().colors().ghost_element_selected
-                            } else if self.hovered_channel == Some(channel_id) {
-                                cx.theme().colors().ghost_element_hover
-                            } else {
-                                cx.theme().colors().panel_background
-                            };
                             this.disclosure_slot(deferred(
                                 h_flex()
-                                    .bg(background)
+                                    .bg(overlay_bg)
                                     .child(
                                         Disclosure::new("toggle", is_open)
                                             .shape(IconButtonShape::Square)
@@ -3509,10 +3555,6 @@ impl CollabPanel {
                     .right_0()
                     .px_1()
                     .gap_px()
-                    // .rounded_l_md()
-                    .bg(cx.theme().colors().background)
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
