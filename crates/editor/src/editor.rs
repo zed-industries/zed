@@ -3252,6 +3252,21 @@ impl Editor {
         });
     }
 
+    pub fn edit_bottom_up_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        if self.read_only(cx) {
+            return;
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit_bottom_up(edits, self.autoindent_mode.clone(), cx)
+        });
+    }
+
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,

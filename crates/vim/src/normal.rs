@@ -778,7 +778,7 @@ impl Vim {
                     editor.edit(plain_edits, cx);
                 }
                 if !auto_indent_edits.is_empty() {
-                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                    editor.edit_bottom_up_with_autoindent(auto_indent_edits, cx);
                 }
 
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -1743,6 +1743,23 @@ mod test {
                 fn test() {
                     println!();
                     ˇ
+                }"},
+            Mode::Insert,
+        );
+
+        // Inserting a line above should auto-indent the newly added line and leave the previous
+        // line unchanged
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                        println!(ˇ);
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    ˇ
+                        println!();
                 }"},
             Mode::Insert,
         );
