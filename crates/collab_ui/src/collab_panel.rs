@@ -3444,6 +3444,10 @@ impl CollabPanel {
             }
         });
 
+        let panel_bg = cx.theme().colors().panel_background;
+        let hover_bg = panel_bg.blend(cx.theme().colors().ghost_element_hover);
+        let active_bg = panel_bg.blend(cx.theme().colors().ghost_element_active);
+
         h_flex()
             .id(ix)
             .group("")
@@ -3543,13 +3547,16 @@ impl CollabPanel {
             )
             .child(
                 h_flex()
+                    .id("channel-controls")
                     .visible_on_hover("")
-                    .block_mouse_except_scroll()
                     .h_full()
                     .absolute()
                     .right_0()
-                    .px_1()
+                    .pl_1()
+                    .pr_1p5()
                     .gap_px()
+                    .bg(hover_bg)
+                    .group_active("", |s| s.bg(active_bg))
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
