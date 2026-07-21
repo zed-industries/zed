@@ -5,9 +5,9 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use editor::{
-    Editor, EditorEvent, EditorSettings, actions::SelectAll, items::entry_git_aware_label_color,
+    Editor, EditorEvent, EditorSettings, RevealInFileManager, actions::SelectAll,
+    items::entry_git_aware_label_color,
 };
-use editor::{EditorSettings, RevealInFileManager, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
