@@ -7,19 +7,19 @@ use crate::{
     TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
-use acp_thread::{MentionUri, UserMessageId};
+use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
 use crate::sandboxing::{
-    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
+    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandbox_git_dirs,
+    sandbox_worktree_writable_paths, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
-use crate::tools::{SandboxGitPathCandidates, sandbox_git_paths};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -35,7 +35,8 @@ use futures::{
 };
 use futures::{StreamExt, stream};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, ReadGlobal as _, SharedString, Task,
+    WeakEntity,
 };
 use heck::ToSnakeCase as _;
 use language_model::{
@@ -46,7 +47,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::Project;
+use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -72,15 +73,33 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
+pub(crate) fn provider_compatible_tool_name(tool_name: &str) -> String {
+    let mut sanitized = String::new();
+    for character in tool_name.chars() {
+        if sanitized.len() >= MAX_TOOL_NAME_LENGTH {
+            break;
+        }
+
+        if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+            sanitized.push(character);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    if sanitized.is_empty() {
+        sanitized.push_str("tool");
+    }
+
+    sanitized
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SandboxStatusKey {
     pub settings_sandbox: ThreadSandbox,
     pub thread_sandbox: ThreadSandbox,
     pub baseline_writable_paths: Vec<PathBuf>,
     pub git_paths: Vec<PathBuf>,
-    pub repository_paths: Vec<(PathBuf, PathBuf, PathBuf, PathBuf)>,
-    pub settings_allow_git_access: bool,
-    pub thread_allow_git_access: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -241,7 +260,7 @@ impl Message {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
-    pub id: UserMessageId,
+    pub id: ClientUserMessageId,
     pub content: Arc<[UserMessageContent]>,
 }
 
@@ -588,7 +607,7 @@ impl AgentMessage {
                         "{}\n",
                         MarkdownCodeBlock {
                             tag: "json",
-                            text: &format!("{:#}", tool_use.input)
+                            text: &format!("{:#}", tool_use.input.to_display_json())
                         }
                     ));
                 }
@@ -1163,7 +1182,7 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub(crate) enum ThreadModel {
+pub enum ThreadModel {
     Ready(Arc<dyn LanguageModel>),
     Unresolved(SelectedModel),
     Unset,
@@ -1200,7 +1219,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
-    title_generation_failed: bool,
+    title_generation_error: Option<SharedString>,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
     messages: Vec<Arc<Message>>,
@@ -1215,7 +1234,7 @@ pub struct Thread {
     end_turn_at_next_boundary: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-    request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
+    request_token_usage: HashMap<ClientUserMessageId, language_model::TokenUsage>,
     cumulative_token_usage: TokenUsage,
     /// The per-field maximum usage snapshot already added to
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
@@ -1226,6 +1245,9 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    /// Whether `profile_id` was downgraded to `minimal` at thread start because
+    /// the workspace is restricted. Used purely to surface a warning in the UI.
+    profile_downgraded_for_restricted_workspace: bool,
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
     model: ThreadModel,
@@ -1320,7 +1342,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
+        let (profile_id, profile_downgraded_for_restricted_workspace) =
+            Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
         let enable_thinking = settings
             .default_model
             .as_ref()
@@ -1335,14 +1358,18 @@ impl Thread {
             .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
-        let model = model.map_or(ThreadModel::Unset, ThreadModel::Ready);
+        let model = match model {
+            Some(model) => ThreadModel::Ready(model),
+            None => Self::user_configured_model_selection(cx)
+                .map_or(ThreadModel::Unset, ThreadModel::Unresolved),
+        };
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
-            title_generation_failed: false,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
@@ -1363,6 +1390,7 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
@@ -1395,6 +1423,8 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+        self.profile_downgraded_for_restricted_workspace =
+            parent.profile_downgraded_for_restricted_workspace;
     }
 
     fn apply_model_selection(
@@ -1563,7 +1593,7 @@ impl Thread {
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
                         .status(status)
-                        .raw_input(tool_use.input.clone()),
+                        .raw_input(tool_use.input.to_display_json()),
                 )))
                 .ok();
             let mut fields = acp::ToolCallUpdateFields::new()
@@ -1576,15 +1606,12 @@ impl Thread {
             return;
         };
 
-        let title = tool.initial_title(tool_use.input.clone(), cx);
+        let Ok(input) = tool_use.input.clone().into_json() else {
+            return;
+        };
+        let title = tool.initial_title(input.clone(), cx);
         let kind = tool.kind();
-        stream.send_tool_call(
-            &tool_use.id,
-            &tool_use.name,
-            title,
-            kind,
-            tool_use.input.clone(),
-        );
+        stream.send_tool_call(&tool_use.id, &tool_use.name, title, kind, input.clone());
 
         if let Some(content) = replay_content {
             stream.update_tool_call_fields(
@@ -1605,8 +1632,7 @@ impl Thread {
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
             );
-            tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
-                .log_err();
+            tool.replay(input, output, tool_event_stream, cx).log_err();
         }
 
         stream.update_tool_call_fields(
@@ -1722,7 +1748,7 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
-            title_generation_failed: false,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
@@ -1738,6 +1764,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
             model,
@@ -1765,21 +1792,16 @@ impl Thread {
         }
     }
 
-    /// The sandbox grants configured for this thread, using unverified Git path
-    /// candidates. Use [`Self::refresh_verified_sandbox_status`] for UI or other
-    /// surfaces that need to match terminal enforcement.
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
         if !self.sandboxing_available(cx) {
             return None;
         }
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
-        let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
+        let git_dirs = sandbox_git_dirs(self.project.read(cx), cx);
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
-            .with_git(persistent.allow_git_access, git_dirs.clone());
-        let thread = grants
-            .thread_sandbox()
-            .with_git(grants.git_access_granted(), git_dirs);
+            .with_protected_paths(git_dirs.clone());
+        let thread = grants.thread_sandbox().with_protected_paths(git_dirs);
         Some((settings, thread))
     }
 
@@ -1795,69 +1817,27 @@ impl Thread {
         let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
         let grants = self.sandbox_grants.borrow();
         let thread_sandbox = grants.thread_sandbox();
-        let thread_allow_git_access = grants.git_access_granted();
         drop(grants);
 
-        let (sandbox_path_candidates, fs) = {
-            let project = self.project.read(cx);
-            (
-                SandboxGitPathCandidates::from_project(project, cx),
-                project.fs().clone(),
-            )
-        };
-        let baseline_writable_paths = sandbox_path_candidates.writable_paths.clone();
-        let git_paths = sandbox_path_candidates.git_paths.clone();
-        let repository_paths = sandbox_path_candidates.cache_key_repositories();
+        let project = self.project.read(cx);
+        let baseline_writable_paths = sandbox_worktree_writable_paths(project, cx);
+        let git_paths = sandbox_git_dirs(project, cx);
 
         let key = SandboxStatusKey {
             settings_sandbox: settings_sandbox.clone(),
             thread_sandbox: thread_sandbox.clone(),
             baseline_writable_paths: baseline_writable_paths.clone(),
             git_paths: git_paths.clone(),
-            repository_paths,
-            settings_allow_git_access: persistent.allow_git_access,
-            thread_allow_git_access,
         };
 
-        if settings_sandbox.is_unsandboxed() || thread_sandbox.is_unsandboxed() {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox,
-                    thread_sandbox,
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let git_access_requested = persistent.allow_git_access || thread_allow_git_access;
-        if !git_access_requested {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox: settings_sandbox.with_git(false, git_paths.clone()),
-                    thread_sandbox: thread_sandbox.with_git(false, git_paths),
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let task = cx.spawn(async move |_this, _cx| {
-            let sandbox_paths = sandbox_git_paths(sandbox_path_candidates, fs.as_ref(), true).await;
-            VerifiedSandboxStatus {
-                settings_sandbox: settings_sandbox.with_git(
-                    persistent.allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs.clone(),
-                ),
-                thread_sandbox: thread_sandbox.with_git(
-                    thread_allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs,
-                ),
+        Some((
+            key,
+            SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
+                settings_sandbox: settings_sandbox.with_protected_paths(git_paths.clone()),
+                thread_sandbox: thread_sandbox.with_protected_paths(git_paths),
                 baseline_writable_paths,
-            }
-        });
-
-        Some((key, SandboxStatusRefresh::Pending(task)))
+            }),
+        ))
     }
 
     /// Whether agent terminal commands are sandboxed for this thread's project,
@@ -1866,12 +1846,12 @@ impl Thread {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
     }
 
-    /// Whether sandboxing is *applicable* for this thread's project (feature on,
-    /// local project, supported platform), regardless of whether it's been
-    /// turned off in settings. The UI shows the sandbox indicator whenever this
-    /// is true, drawing it struck-out when sandboxing is disabled.
+    /// Whether sandboxing is *applicable* for this thread's project (local
+    /// project, supported platform), regardless of whether it's been turned off
+    /// in settings. The UI shows the sandbox indicator whenever this is true,
+    /// drawing it struck-out when sandboxing is disabled.
     pub fn sandboxing_available(&self, cx: &App) -> bool {
-        sandboxing_available_for_project(self.project.read(cx), cx)
+        sandboxing_available_for_project(self.project.read(cx))
     }
 
     /// The directory subtrees the sandbox always grants write access to for this
@@ -1967,6 +1947,10 @@ impl Thread {
         self.model.as_model()
     }
 
+    pub fn thread_model(&self) -> &ThreadModel {
+        &self.model
+    }
+
     pub(crate) fn ensure_model(
         &mut self,
         default_model: Option<&Arc<dyn LanguageModel>>,
@@ -1998,6 +1982,7 @@ impl Thread {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+        cx.emit(ModelChanged);
 
         for subagent in &self.running_subagents {
             subagent
@@ -2195,7 +2180,44 @@ impl Thread {
         &self.profile_id
     }
 
+    /// Whether this thread's profile was downgraded to `minimal` at thread start
+    /// because the workspace is restricted.
+    pub fn profile_was_downgraded(&self) -> bool {
+        self.profile_downgraded_for_restricted_workspace
+    }
+
+    /// Computes the profile a thread should start with, given the user's chosen
+    /// profile. In a restricted workspace, the built-in `write`/`ask` profiles
+    /// are downgraded to `minimal` — but only when both the chosen profile and
+    /// `minimal` are unmodified, shipped defaults, so we never override a user's
+    /// custom or customized profiles.
+    ///
+    /// Returns the (possibly downgraded) profile and whether a downgrade
+    /// happened.
+    fn profile_for_restricted_workspace(
+        profile_id: AgentProfileId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> (AgentProfileId, bool) {
+        let is_write_or_ask = profile_id.as_str() == builtin_profiles::WRITE
+            || profile_id.as_str() == builtin_profiles::ASK;
+        let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
+        if is_write_or_ask
+            && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
+            && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
+            && AgentProfileSettings::is_unmodified_default(&minimal, cx)
+        {
+            (minimal, true)
+        } else {
+            (profile_id, false)
+        }
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        // An explicit selection means any earlier automatic downgrade no longer
+        // applies, even if the user re-selects the same profile.
+        self.profile_downgraded_for_restricted_workspace = false;
+
         if self.profile_id == profile_id {
             return;
         }
@@ -2292,14 +2314,43 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
+    /// Records that the last request overflowed the model's context window so
+    /// the token usage indicator reports `Exceeded` instead of the stale usage
+    /// from the last successful request. Providers don't report usage for
+    /// failed requests, so we synthesize one from the reported overflow (when
+    /// available) or the model's context size.
+    fn mark_token_limit_exceeded(&mut self, tokens: Option<u64>, cx: &mut Context<Self>) {
+        let Some(model) = self.model() else {
+            return;
+        };
+        let input_tokens = tokens.unwrap_or(0).max(model.max_token_count());
+        let Some(last_user_message) = self.last_user_message() else {
+            return;
+        };
+
+        self.request_token_usage.insert(
+            last_user_message.id.clone(),
+            language_model::TokenUsage {
+                input_tokens,
+                ..Default::default()
+            },
+        );
+        cx.emit(TokenUsageUpdated(self.latest_token_usage()));
+        cx.notify();
+    }
+
+    pub fn truncate(
+        &mut self,
+        client_user_message_id: ClientUserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         self.cancel(cx).detach();
         // Clear pending message since cancel will try to flush it asynchronously,
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
-        let Some(position) = self.messages.iter().position(
-            |msg| matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &message_id),
-        ) else {
+        let Some(position) = self.messages.iter().position(|msg| {
+            matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &client_user_message_id)
+        }) else {
             return Err(anyhow!("Message not found"));
         };
 
@@ -2346,8 +2397,8 @@ impl Thread {
     /// - `target_id` is the first message (no previous message)
     /// - The previous message hasn't received a response yet (no usage data)
     /// - `target_id` is not found in the messages
-    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
-        let mut previous_user_message_id: Option<&UserMessageId> = None;
+    pub fn tokens_before_message(&self, target_id: &ClientUserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&ClientUserMessageId> = None;
 
         for message in &self.messages {
             if let Message::User(user_msg) = &**message {
@@ -2373,6 +2424,20 @@ impl Thread {
             .default_model
             .clone()?;
         Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    fn user_configured_model_selection(cx: &App) -> Option<SelectedModel> {
+        let selection = SettingsStore::global(cx)
+            .raw_user_settings()?
+            .content
+            .agent
+            .as_ref()?
+            .default_model
+            .as_ref()?;
+        Some(SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        })
     }
 
     /// Translate a stored model selection into the configured model from the registry.
@@ -2407,7 +2472,7 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send<T>(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>
@@ -2443,7 +2508,7 @@ impl Thread {
     /// regardless of the current token usage or context window size.
     pub fn compact(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         let model = self
@@ -2535,7 +2600,7 @@ impl Thread {
 
     pub fn push_acp_user_block(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         blocks: impl IntoIterator<Item = acp::ContentBlock>,
         path_style: PathStyle,
         cx: &mut Context<Self>,
@@ -2998,7 +3063,7 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let retry = this.update(cx, |this, cx| {
             let user_store = this.user_store.read(cx);
-            this.handle_completion_error(error, attempt, user_store.plan())
+            this.handle_completion_error(error, attempt, user_store.plan(), cx)
         })??;
         let timer = cx.background_executor().timer(retry.duration);
         event_stream.send_retry(retry);
@@ -3189,7 +3254,12 @@ impl Thread {
         error: LanguageModelCompletionError,
         attempt: u8,
         plan: Option<Plan>,
+        cx: &mut Context<Self>,
     ) -> Result<acp_thread::RetryStatus> {
+        if let LanguageModelCompletionError::PromptTooLarge { tokens } = &error {
+            self.mark_token_limit_exceeded(*tokens, cx);
+        }
+
         let Some(model) = self.model() else {
             return Err(anyhow!(error));
         };
@@ -3375,7 +3445,9 @@ impl Thread {
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
-            title = tool.initial_title(tool_use.input.clone(), cx);
+            if let Ok(input) = tool_use.input.clone().into_json() {
+                title = tool.initial_title(input, cx);
+            }
             kind = tool.kind();
         }
 
@@ -3392,16 +3464,33 @@ impl Thread {
             }));
         };
 
+        // Agent tools are JSON-schema tools. Custom text-tool deltas are rejected
+        // before considering partial-vs-complete input for these local tools.
+        let input = match tool_use.input.clone().into_json() {
+            Ok(input) => input,
+            Err(error) => {
+                return Some(Task::ready(LanguageModelToolResult {
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        error.to_string(),
+                    ))],
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    output: None,
+                }));
+            }
+        };
+
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
                 if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
-                    sender.send_partial(tool_use.input);
+                    sender.send_partial(input);
                     return None;
                 }
 
                 let (mut sender, tool_input) = ToolInputSender::channel();
-                sender.send_partial(tool_use.input);
+                sender.send_partial(input);
                 running_turn
                     .streaming_tool_inputs
                     .insert(tool_use.id.clone(), sender);
@@ -3428,12 +3517,12 @@ impl Thread {
             .streaming_tool_inputs
             .remove(&tool_use.id)
         {
-            sender.send_full(tool_use.input);
+            sender.send_full(input);
             return None;
         }
 
         log::debug!("Running tool {}", tool_use.name);
-        let tool_input = ToolInput::ready(tool_use.input);
+        let tool_input = ToolInput::ready(input);
         Some(self.run_tool(
             tool,
             tool_input,
@@ -3455,6 +3544,26 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
+        // A workspace can become restricted after a thread has already started.
+        // Tools that aren't allowed in restricted workspaces must never run in
+        // that state, even though they were exposed to the model earlier.
+        if !tool.allow_in_restricted_mode()
+            && TrustedWorktrees::has_restricted_worktrees(
+                &self.project.read(cx).worktree_store(),
+                cx,
+            )
+        {
+            return Task::ready(LanguageModelToolResult {
+                tool_use_id,
+                tool_name,
+                is_error: true,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "workspace has become restricted",
+                ))],
+                output: None,
+            });
+        }
+
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
@@ -3537,7 +3646,7 @@ impl Thread {
             id: tool_use_id,
             name: tool_name,
             raw_input: raw_input.to_string(),
-            input: serde_json::json!({}),
+            input: language_model::LanguageModelToolUseInput::Json(serde_json::json!({})),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -3613,7 +3722,7 @@ impl Thread {
                 &tool_use.name,
                 title,
                 kind,
-                tool_use.input.clone(),
+                tool_use.input.to_display_json(),
             );
             last_message
                 .content
@@ -3624,7 +3733,7 @@ impl Thread {
                 acp::ToolCallUpdateFields::new()
                     .title(title.as_str())
                     .kind(kind)
-                    .raw_input(tool_use.input.clone()),
+                    .raw_input(tool_use.input.to_display_json()),
                 None,
             );
         }
@@ -3643,7 +3752,11 @@ impl Thread {
     }
 
     pub fn has_failed_title_generation(&self) -> bool {
-        self.title_generation_failed
+        self.title_generation_error.is_some()
+    }
+
+    pub fn title_generation_error(&self) -> Option<SharedString> {
+        self.title_generation_error.clone()
     }
 
     pub fn can_generate_title(&self) -> bool {
@@ -3667,9 +3780,7 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
-            request.messages.extend(message.to_request());
-        }
+        self.extend_request_history_until(&mut request.messages, self.messages.len());
 
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
@@ -3748,7 +3859,7 @@ impl Thread {
         on_generated_title: Option<Box<dyn FnOnce(SharedString, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
-        self.title_generation_failed = false;
+        self.title_generation_error = None;
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
@@ -3759,22 +3870,26 @@ impl Thread {
                 .await
                 .context("failed to generate thread title")
                 .map(SharedString::from)
-                .log_err()
         });
 
         self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
             let title = title_generation.await;
             _ = this.update(cx, |this, cx| {
                 this.pending_title_generation = None;
-                if let Some(title) = title {
-                    this.set_title(title.clone(), cx);
-                    if let Some(on_generated_title) = on_generated_title {
-                        on_generated_title(title, cx);
+                match title {
+                    Ok(title) => {
+                        this.set_title(title.clone(), cx);
+                        if let Some(on_generated_title) = on_generated_title {
+                            on_generated_title(title, cx);
+                        }
                     }
-                } else {
-                    this.title_generation_failed = true;
-                    cx.emit(TitleUpdated);
-                    cx.notify();
+                    Err(error) => {
+                        let error = format!("{error:#}");
+                        log::error!("{error}");
+                        this.title_generation_error = Some(error.into());
+                        cx.emit(TitleUpdated);
+                        cx.notify();
+                    }
                 }
             });
         }));
@@ -3783,7 +3898,7 @@ impl Thread {
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.pending_title_generation = None;
-        self.title_generation_failed = false;
+        self.title_generation_error = None;
         if Some(&title) != self.title.as_ref() {
             self.title = Some(title);
             cx.emit(TitleUpdated);
@@ -3866,12 +3981,12 @@ impl Thread {
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
-                    Some(LanguageModelRequestTool {
-                        name: tool_name.to_string(),
-                        description: tool.description().to_string(),
-                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
-                        use_input_streaming: tool.supports_input_streaming(),
-                    })
+                    Some(LanguageModelRequestTool::function(
+                        tool_name.to_string(),
+                        tool.description().to_string(),
+                        tool.input_schema(model.tool_input_format()).log_err()?,
+                        tool.supports_input_streaming(),
+                    ))
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -3920,24 +4035,21 @@ impl Thread {
         let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
             return BTreeMap::new();
         };
-        fn truncate(tool_name: &SharedString) -> SharedString {
-            if tool_name.len() > MAX_TOOL_NAME_LENGTH {
-                let mut truncated = tool_name.to_string();
-                truncated.truncate(MAX_TOOL_NAME_LENGTH);
-                truncated.into()
-            } else {
-                tool_name.clone()
-            }
-        }
-
         // Terminal variants are configured by users under the canonical
         // `terminal` name. Expose the one matching the current sandbox state
         // to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
 
+        // Tools that aren't allowed in restricted workspaces must never be
+        // provided to the model while the workspace is restricted, regardless
+        // of what the active profile enables.
+        let is_restricted =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
+
         let mut tools = self
             .tools
             .iter()
+            .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
                     tool_name.as_ref(),
@@ -3957,7 +4069,10 @@ impl Thread {
                             Some((SharedString::from(TerminalTool::NAME), tool.clone()))
                         }
                         (TerminalTool::NAME | SandboxedTerminalTool::NAME, _) => None,
-                        _ => Some((truncate(tool_name), tool.clone())),
+                        _ => Some((
+                            provider_compatible_tool_name(tool_name.as_ref()).into(),
+                            tool.clone(),
+                        )),
                     }
                 } else {
                     None
@@ -3972,7 +4087,8 @@ impl Thread {
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
             for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
-                    let tool_name = truncate(tool_name);
+                    let tool_name: SharedString =
+                        provider_compatible_tool_name(tool_name.as_ref()).into();
                     if !seen_tools.insert(tool_name.clone()) {
                         duplicate_tool_names.insert(tool_name.clone());
                     }
@@ -3989,7 +4105,8 @@ impl Thread {
             if duplicate_tool_names.contains(&tool_name) {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
-                    let mut disambiguated = server_id.0.to_snake_case();
+                    let mut disambiguated =
+                        provider_compatible_tool_name(&server_id.0.to_snake_case()).to_string();
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
@@ -4131,32 +4248,10 @@ impl Thread {
 
     fn extend_request_history_until(
         &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
+        request_messages: &mut Vec<LanguageModelRequestMessage>,
         end_ix: usize,
     ) {
-        let Some(compaction_ix) = self.latest_compaction_message_ix_before(end_ix) else {
-            for message in &self.messages[..end_ix] {
-                messages.extend(message.to_request());
-            }
-            return;
-        };
-
-        if matches!(
-            &*self.messages[compaction_ix],
-            Message::Compaction(CompactionInfo::Summary(_))
-        ) {
-            messages.extend(self.retained_user_request_messages_before(compaction_ix));
-        }
-
-        for message in &self.messages[compaction_ix..end_ix] {
-            messages.extend(message.to_request());
-        }
-    }
-
-    fn latest_compaction_message_ix_before(&self, end_ix: usize) -> Option<usize> {
-        self.messages[..end_ix]
-            .iter()
-            .rposition(|message| matches!(&**message, Message::Compaction(_)))
+        extend_request_history_until(&self.messages, request_messages, end_ix);
     }
 
     fn build_compaction_telemetry(
@@ -4232,8 +4327,7 @@ impl Thread {
                         .map(|usage| (ix, usage))
                 })
         }?;
-        if self
-            .latest_compaction_message_ix_before(self.messages.len())
+        if latest_compaction_message_ix_before(&self.messages, self.messages.len())
             .is_some_and(|compaction_ix| compaction_ix > usage_ix)
         {
             return None;
@@ -4302,41 +4396,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn retained_user_request_messages_before(
-        &self,
-        compaction_ix: usize,
-    ) -> Vec<LanguageModelRequestMessage> {
-        let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
-        let mut retained_messages = Vec::new();
-
-        for message in self.messages[..compaction_ix].iter().rev() {
-            let Message::User(user_message) = &**message else {
-                continue;
-            };
-            if user_message.content.is_empty() {
-                continue;
-            }
-
-            let request_message = user_message.to_request();
-            let byte_count = user_message_byte_len(&request_message);
-            if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
-                remaining_bytes = bytes;
-                retained_messages.push(request_message);
-            } else {
-                if remaining_bytes > 0
-                    && let Some(request_message) =
-                        truncate_user_message_to_byte_budget(request_message, remaining_bytes)
-                {
-                    retained_messages.push(request_message);
-                }
-                break;
-            }
-        }
-
-        retained_messages.reverse();
-        retained_messages
     }
 
     pub fn to_markdown(&self) -> String {
@@ -4614,7 +4673,7 @@ enum CompactionInsertion {
     /// (which may be before a trailing not-yet-answered user message).
     Auto { insertion_ix: usize },
     /// Manual `/compact` appends a zero-content user message followed by the summary.
-    Manual { marker_id: UserMessageId },
+    Manual { marker_id: ClientUserMessageId },
 }
 
 struct RunningTurn {
@@ -4676,6 +4735,75 @@ pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
     markdown
 }
 
+fn extend_request_history_until(
+    messages: &[Arc<Message>],
+    request_messages: &mut Vec<LanguageModelRequestMessage>,
+    end_ix: usize,
+) {
+    let end_ix = end_ix.min(messages.len());
+    let Some(compaction_ix) = latest_compaction_message_ix_before(messages, end_ix) else {
+        for message in &messages[..end_ix] {
+            request_messages.extend(message.to_request());
+        }
+        return;
+    };
+
+    if matches!(
+        &*messages[compaction_ix],
+        Message::Compaction(CompactionInfo::Summary(_))
+    ) {
+        request_messages.extend(retained_user_request_messages_before(
+            messages,
+            compaction_ix,
+        ));
+    }
+
+    for message in &messages[compaction_ix..end_ix] {
+        request_messages.extend(message.to_request());
+    }
+}
+
+fn latest_compaction_message_ix_before(messages: &[Arc<Message>], end_ix: usize) -> Option<usize> {
+    messages[..end_ix]
+        .iter()
+        .rposition(|message| matches!(&**message, Message::Compaction(_)))
+}
+
+fn retained_user_request_messages_before(
+    messages: &[Arc<Message>],
+    compaction_ix: usize,
+) -> Vec<LanguageModelRequestMessage> {
+    let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
+    let mut retained_messages = Vec::new();
+
+    for message in messages[..compaction_ix].iter().rev() {
+        let Message::User(user_message) = &**message else {
+            continue;
+        };
+        if user_message.content.is_empty() {
+            continue;
+        }
+
+        let request_message = user_message.to_request();
+        let byte_count = user_message_byte_len(&request_message);
+        if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
+            remaining_bytes = bytes;
+            retained_messages.push(request_message);
+        } else {
+            if remaining_bytes > 0
+                && let Some(request_message) =
+                    truncate_user_message_to_byte_budget(request_message, remaining_bytes)
+            {
+                retained_messages.push(request_message);
+            }
+            break;
+        }
+    }
+
+    retained_messages.reverse();
+    retained_messages
+}
+
 pub fn build_thread_title_request(
     messages: &[Arc<Message>],
     temperature: Option<f32>,
@@ -4685,9 +4813,7 @@ pub fn build_thread_title_request(
         temperature,
         ..Default::default()
     };
-    for message in messages {
-        request.messages.extend(message.to_request());
-    }
+    extend_request_history_until(messages, &mut request.messages, messages.len());
     request.messages.push(LanguageModelRequestMessage {
         role: Role::User,
         content: vec![SUMMARIZE_THREAD_PROMPT.into()],
@@ -4724,6 +4850,10 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub struct TitleUpdated;
 
 impl EventEmitter<TitleUpdated> for Thread {}
+
+pub struct ModelChanged;
+
+impl EventEmitter<ModelChanged> for Thread {}
 
 /// A channel-based wrapper that delivers tool input to a running tool.
 ///
@@ -4900,6 +5030,14 @@ where
         true
     }
 
+    /// Whether this tool may be provided to an agent in a restricted workspace.
+    ///
+    /// Tools that return `false` are never exposed to the model while the
+    /// workspace is restricted, and will fail if invoked in that state.
+    fn allow_in_restricted_mode() -> bool {
+        true
+    }
+
     /// Runs the tool with the provided input.
     ///
     /// Returns `Result<Self::Output, Self::Output>` rather than `Result<Self::Output, anyhow::Error>`
@@ -4963,6 +5101,9 @@ pub trait AnyAgentTool {
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
+    fn allow_in_restricted_mode(&self) -> bool {
+        true
+    }
     /// See [`AgentTool::run`] for why this returns `Result<AgentToolOutput, AgentToolOutput>`.
     fn run(
         self: Arc<Self>,
@@ -5012,6 +5153,10 @@ where
 
     fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
         T::supports_provider(provider)
+    }
+
+    fn allow_in_restricted_mode(&self) -> bool {
+        T::allow_in_restricted_mode()
     }
 
     fn run(
@@ -5543,7 +5688,6 @@ impl ToolCallEventStream {
             command: None,
             network_hosts,
             network_all_hosts,
-            allow_git_access: request.allow_git_access,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5748,9 +5892,7 @@ impl ToolCallEventStream {
                         agent.set_sandbox_network_hosts(host_strings);
                     }
                 }
-                if request.allow_git_access {
-                    agent.allow_sandbox_git_access();
-                }
+
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
                 }
@@ -5794,6 +5936,20 @@ impl ToolCallEventStream {
         self.sandbox_grants.borrow().unsandboxed_granted()
     }
 
+    /// Whether unsandboxed access is currently in effect: granted for this
+    /// thread (a model-requested `unsandboxed` escape or a sandbox-creation
+    /// fallback) or configured persistently via `allow_unsandboxed`. When true,
+    /// commands already run without any OS sandbox, so per-host network grants
+    /// no longer provide isolation and callers may skip host authorization
+    /// entirely.
+    pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
+        self.unsandboxed_granted_for_thread()
+            || self.sandbox_fallback_granted_for_thread()
+            || AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .allow_unsandboxed
+    }
+
     /// Ask the user how to proceed when the OS sandbox could not be created
     /// for a command (for example, `bwrap` is missing or user namespaces are
     /// disabled).
@@ -5815,10 +5971,15 @@ impl ToolCallEventStream {
         &self,
         command: Option<String>,
         reason: String,
+        docs_section: Option<String>,
         retries: usize,
         cx: &mut App,
     ) -> Task<Result<SandboxFallbackDecision>> {
-        let details = acp_thread::SandboxFallbackAuthorizationDetails { command, reason };
+        let details = acp_thread::SandboxFallbackAuthorizationDetails {
+            command,
+            reason,
+            docs_section,
+        };
         let retry_label = if retries == 0 {
             "Retry".to_string()
         } else {
@@ -6507,7 +6668,7 @@ mod tests {
         );
     }
 
-    fn user_text_message(id: UserMessageId, text: &str) -> Arc<Message> {
+    fn user_text_message(id: ClientUserMessageId, text: &str) -> Arc<Message> {
         Arc::new(Message::User(UserMessage {
             id,
             content: vec![UserMessageContent::Text(text.to_string())].into(),
@@ -6539,11 +6700,101 @@ mod tests {
             .collect()
     }
 
+    fn request_texts(messages: &[LanguageModelRequestMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_thread_summary_request_uses_compacted_history(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let summary_model = Arc::new(FakeLanguageModel::default());
+
+        let summary_task = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model.clone()), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.messages.push(summary_compaction("first summary"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "between user",
+                ));
+                thread
+                    .messages
+                    .push(agent_text_message("between assistant"));
+                thread.messages.push(summary_compaction("latest summary"));
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "after user"));
+                thread.messages.push(agent_text_message("after assistant"));
+
+                thread.summary(cx)
+            })
+        });
+        cx.run_until_parked();
+
+        let summary_request = summary_model.pending_completions().pop().unwrap();
+        assert_eq!(
+            summary_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts(&summary_request.messages),
+            vec![
+                "old user".to_string(),
+                "between user".to_string(),
+                summary_request_text("latest summary"),
+                "after user".to_string(),
+                "after assistant".to_string(),
+                SUMMARIZE_THREAD_DETAILED_PROMPT.to_string(),
+            ]
+        );
+
+        summary_model.send_completion_stream_text_chunk(&summary_request, "thread summary");
+        summary_model.end_completion_stream(&summary_request);
+        assert_eq!(summary_task.await.as_deref(), Some("thread summary"));
+    }
+
+    #[test]
+    fn test_thread_title_request_uses_compacted_history() {
+        let messages = vec![
+            user_text_message(ClientUserMessageId::new(), "old user"),
+            agent_text_message("old assistant"),
+            summary_compaction("first summary"),
+            user_text_message(ClientUserMessageId::new(), "between user"),
+            agent_text_message("between assistant"),
+            summary_compaction("latest summary"),
+            user_text_message(ClientUserMessageId::new(), "after user"),
+            agent_text_message("after assistant"),
+        ];
+
+        let request = build_thread_title_request(&messages, Some(0.2));
+
+        assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
+        assert_eq!(request.temperature, Some(0.2));
+        assert_eq!(
+            request_texts(&request.messages),
+            vec![
+                "old user".to_string(),
+                "between user".to_string(),
+                summary_request_text("latest summary"),
+                "after user".to_string(),
+                "after assistant".to_string(),
+                SUMMARIZE_THREAD_PROMPT.to_string(),
+            ]
+        );
+    }
+
     #[gpui::test]
     async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6579,7 +6830,7 @@ mod tests {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         model.set_max_output_tokens(Some(32_000));
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6642,7 +6893,7 @@ mod tests {
     async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             set_auto_compact_settings(
@@ -6674,7 +6925,7 @@ mod tests {
     async fn test_compaction_threshold_respects_token_settings(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             set_auto_compact_settings(
@@ -6746,7 +6997,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         // A context window below the minimum disables auto-compaction.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6773,8 +7024,8 @@ mod tests {
     ) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let old_user_message_id = UserMessageId::new();
-        let new_user_message_id = UserMessageId::new();
+        let old_user_message_id = ClientUserMessageId::new();
+        let new_user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6852,8 +7103,8 @@ mod tests {
         // A context window below the minimum and no recorded token usage would
         // both disable *automatic* compaction. Manual compaction forces it anyway.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
-        let user_message_id = UserMessageId::new();
-        let compact_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
+        let compact_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6936,13 +7187,17 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
         // The compaction request is in flight but hasn't streamed a summary.
@@ -6971,13 +7226,17 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
         });
 
         let mut events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -7012,7 +7271,11 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -7028,13 +7291,13 @@ mod tests {
     #[gpui::test]
     async fn test_manual_compact_marker_replays_as_empty_user_message(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let marker_id = UserMessageId::new();
+        let marker_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "before"));
+                    .push(user_text_message(ClientUserMessageId::new(), "before"));
                 thread.messages.push(agent_text_message("answer"));
                 thread.messages.push(Arc::new(Message::User(UserMessage {
                     id: marker_id.clone(),
@@ -7241,8 +7504,8 @@ mod tests {
     async fn test_compaction_usage_counts_toward_cumulative_usage(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let old_user_message_id = UserMessageId::new();
-        let new_user_message_id = UserMessageId::new();
+        let old_user_message_id = ClientUserMessageId::new();
+        let new_user_message_id = ClientUserMessageId::new();
         let prior_usage = TokenUsage {
             input_tokens: 960_000,
             output_tokens: 25,
@@ -7341,7 +7604,7 @@ mod tests {
     #[gpui::test]
     async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7393,18 +7656,20 @@ mod tests {
 
         let request_messages = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread
-                    .messages
-                    .push(user_text_message(UserMessageId::new(), "before native"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "before native",
+                ));
                 thread.messages.push(Arc::new(Message::Compaction(
                     CompactionInfo::ProviderNative {
                         provider: LanguageModelProviderId::from("openai".to_string()),
                         items: vec![json!({"type": "compaction"})],
                     },
                 )));
-                thread
-                    .messages
-                    .push(user_text_message(UserMessageId::new(), "after native"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "after native",
+                ));
 
                 thread.build_request_messages(Vec::new(), cx)
             })
@@ -7426,7 +7691,7 @@ mod tests {
         let request_messages = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.messages.push(user_text_message(
-                    UserMessageId::new(),
+                    ClientUserMessageId::new(),
                     "dropped older user",
                 ));
                 thread
@@ -7434,15 +7699,15 @@ mod tests {
                     .push(agent_text_message("dropped assistant"));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), &long_text));
+                    .push(user_text_message(ClientUserMessageId::new(), &long_text));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "new"));
+                    .push(user_text_message(ClientUserMessageId::new(), "new"));
                 thread.messages.push(summary_compaction("summary context"));
                 thread.messages.push(agent_text_message("after assistant"));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "after user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "after user"));
 
                 thread.build_request_messages(Vec::new(), cx)
             })
@@ -7566,7 +7831,6 @@ mod tests {
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
             network: crate::sandboxing::NetworkRequest::None,
-            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -7590,7 +7854,6 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
-        assert_eq!(details.allow_git_access, request.allow_git_access);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
@@ -7658,6 +7921,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "bwrap not found on PATH".to_string(),
+                Some("installing-bubblewrap".to_string()),
                 0,
                 cx,
             )
@@ -7669,6 +7933,10 @@ mod tests {
         .expect("fallback authorization should include details");
         assert_eq!(details.command.as_deref(), Some("cargo build"));
         assert_eq!(details.reason, "bwrap not found on PATH");
+        assert_eq!(
+            details.docs_section.as_deref(),
+            Some("installing-bubblewrap")
+        );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat fallback permission options");
@@ -7709,6 +7977,7 @@ mod tests {
                 event_stream.authorize_sandbox_fallback(
                     None,
                     "probe failed".to_string(),
+                    None,
                     retries,
                     cx,
                 )
@@ -7753,6 +8022,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "user namespaces are disabled".to_string(),
+                None,
                 0,
                 cx,
             )
@@ -7782,7 +8052,13 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox_fallback(None, "bwrap probe failed".to_string(), 0, cx)
+            event_stream.authorize_sandbox_fallback(
+                None,
+                "bwrap probe failed".to_string(),
+                None,
+                0,
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         authorization
@@ -7857,7 +8133,7 @@ mod tests {
                     id: registered_tool_use_id.clone(),
                     name: ReplayImageTool::NAME.into(),
                     raw_input: "null".to_string(),
-                    input: json!(null),
+                    input: language_model::LanguageModelToolUseInput::Json(json!(null)),
                     is_input_complete: true,
                     thought_signature: None,
                 };
@@ -7865,7 +8141,7 @@ mod tests {
                     id: missing_tool_use_id.clone(),
                     name: "missing_image_tool".into(),
                     raw_input: "{}".to_string(),
-                    input: json!({}),
+                    input: language_model::LanguageModelToolUseInput::Json(json!({})),
                     is_input_complete: true,
                     thought_signature: None,
                 };
@@ -8172,7 +8448,10 @@ mod tests {
                         assert_eq!(tool_use.raw_input, raw_input.to_string());
                         assert!(tool_use.is_input_complete);
                         // Should fall back to empty object for invalid JSON
-                        assert_eq!(tool_use.input, json!({}));
+                        assert_eq!(
+                            tool_use.input,
+                            language_model::LanguageModelToolUseInput::Json(json!({}))
+                        );
                     }
                     _ => panic!("Expected ToolUse content"),
                 }

@@ -130,6 +130,7 @@ To disable this behavior use:
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
+    "show_worktree_name": true,     // Show/hide worktree name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
@@ -247,7 +248,8 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay_ms": 0,                  // Show after delay (ms)
+      "delay_ms": 0,               // Show after delay (ms)
+      "location": "inline",        // inline, status_bar
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -570,7 +572,7 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
     "sort_by": "path",            // path, name
-    "group_by": "status",         // none, status
+    "group_by": "status",         // none, status, staging
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }

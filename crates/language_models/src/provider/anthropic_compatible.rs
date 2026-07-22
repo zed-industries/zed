@@ -3,13 +3,14 @@ use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelRequest, LanguageModelToolChoice, ProviderSettingsView, RateLimiter,
+    SubPageProviderSettings,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -53,8 +54,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         settings::ModelMode::Thinking { budget_tokens } => {
             AnthropicModelMode::Thinking { budget_tokens }
         }
+        settings::ModelMode::Adaptive => AnthropicModelMode::AdaptiveThinking,
     };
-    let supports_thinking = matches!(mode, AnthropicModelMode::Thinking { .. });
+    let supports_thinking = matches!(
+        mode,
+        AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
+    );
+    let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking { .. });
 
     anthropic::Model {
         display_name: available
@@ -67,7 +73,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
         supports_thinking,
-        supports_adaptive_thinking: false,
+        supports_adaptive_thinking,
         supports_images: available.capabilities.images,
         supports_speed: false,
         supports_compaction: false,
@@ -181,27 +187,27 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| {
-            ApiCompatibleProviderConfigurationView::new(
-                self.state.clone(),
-                "Anthropic",
-                API_KEY_PLACEHOLDER,
-                window,
-                cx,
-            )
-        })
-        .into()
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(SubPageProviderSettings::new(
+            move |window, cx| {
+                cx.new(|cx| {
+                    ApiCompatibleProviderConfigurationView::new(
+                        state.clone(),
+                        "Anthropic",
+                        API_KEY_PLACEHOLDER,
+                        window,
+                        cx,
+                    )
+                })
+                .into()
+            },
+        )))
     }
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 }
 
@@ -332,14 +338,17 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
-        let mut request = into_anthropic(
+        let mut request = match into_anthropic(
             request,
             request_id,
             self.model.default_temperature,
             self.model.max_output_tokens,
             self.model.mode.clone(),
             self.cache_mode,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         if !self.model.supports_speed {
             request.speed = None;
         }
