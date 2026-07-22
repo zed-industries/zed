@@ -280,7 +280,6 @@ pub struct CollabPanel {
     filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
     hovered_channel: Option<(ChannelId, bool)>,
-    pressed_channel: Option<(ChannelId, bool)>,
     notification_store: Entity<NotificationStore>,
     current_notification_toast: Option<(u64, Task<()>)>,
     mark_as_read_tasks: HashMap<u64, Task<anyhow::Result<()>>>,
@@ -400,7 +399,6 @@ impl CollabPanel {
                 focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
                 hovered_channel: None,
-                pressed_channel: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_panel_serialization: Task::ready(None),
                 pending_favorites_serialization: Task::ready(None),
@@ -3448,8 +3446,6 @@ impl CollabPanel {
 
         let panel_bg = cx.theme().colors().panel_background;
         let hover_bg = panel_bg.blend(cx.theme().colors().ghost_element_hover);
-        let active_bg = panel_bg.blend(cx.theme().colors().ghost_element_active);
-        let is_pressed = self.pressed_channel == Some((channel_id, is_favorite_entry));
 
         h_flex()
             .id(ix)
@@ -3466,29 +3462,6 @@ impl CollabPanel {
                     cx.notify();
                 }
             }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.pressed_channel = Some((channel_id, is_favorite_entry));
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    if this.pressed_channel.take().is_some() {
-                        cx.notify();
-                    }
-                }),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    if this.pressed_channel.take().is_some() {
-                        cx.notify();
-                    }
-                }),
-            )
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
                     cx.new(|_| DraggedChannelView {
@@ -3581,10 +3554,12 @@ impl CollabPanel {
                     .pl_1()
                     .pr_2()
                     .gap_px()
-                    .bg(if is_pressed { active_bg } else { hover_bg })
+                    .bg(hover_bg)
+                    .rounded_l_md()
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .icon_size(IconSize::Small)
                             .icon_color(favorite_color)
                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -3602,6 +3577,7 @@ impl CollabPanel {
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
