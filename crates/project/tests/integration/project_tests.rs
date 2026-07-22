@@ -226,8 +226,24 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    project.update(cx, |project, cx| {
-        let tree = project.worktrees(cx).next().unwrap().read(cx);
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    // The root is reached via a symlink and is scanned as usual, while the
+    // symlinked directory inside the worktree is only scanned when expanded.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.file_count(), 4);
+        assert!(tree.entry_for_path(rel_path("finnochio")).is_some());
+    });
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("finnochio").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
         assert_eq!(tree.file_count(), 5);
         assert_eq!(
             tree.entry_for_path(rel_path("fennel/grape")).unwrap().inode,
