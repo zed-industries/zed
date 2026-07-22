@@ -25339,6 +25339,190 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 }
 
 #[gpui::test]
+async fn test_yaml_document_format_defaults_to_language_server(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::default())
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.yaml"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/file.yaml").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "YAML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["yaml".to_string(), "yml".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_yaml::LANGUAGE.into()),
+    )));
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
+        settings.languages.0.insert(
+            "YAML".into(),
+            LanguageSettingsContent {
+                formatter: Some(FormatterList::Single(Formatter::LanguageServer(
+                    settings::LanguageServerFormatterSpecifier::Current,
+                ))),
+                ..Default::default()
+            },
+        );
+    });
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "YAML",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            prettier_plugins: vec!["test_plugin"],
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.yaml"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("key: value\n", window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/file.yaml")).unwrap()
+            );
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "lsp-format\n".to_string(),
+            )]))
+        },
+    );
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    let formatted = editor.update(cx, |editor, cx| editor.text(cx));
+    assert!(
+        formatted.starts_with("lsp-format\nkey: value\n"),
+        "YAML default formatting should include language-server edits"
+    );
+}
+
+#[gpui::test]
+async fn test_yaml_document_format_can_be_overridden_to_prettier(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::default())
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.yaml"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/file.yaml").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "YAML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["yaml".to_string(), "yml".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_yaml::LANGUAGE.into()),
+    )));
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
+        settings.languages.0.insert(
+            "YAML".into(),
+            LanguageSettingsContent {
+                formatter: Some(FormatterList::Single(Formatter::Prettier)),
+                ..Default::default()
+            },
+        );
+    });
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "YAML",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            prettier_plugins: vec!["test_plugin"],
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.yaml"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("key: value\n", window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_, _| async move {
+            panic!("LSP formatter should not run when YAML formatter is set to Prettier")
+        },
+    );
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "key: value\n".to_string() + project::TEST_PRETTIER_FORMAT_SUFFIX,
+    );
+}
+
+#[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Single(Formatter::Prettier))
