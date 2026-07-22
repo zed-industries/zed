@@ -27,6 +27,7 @@ use std::{
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
+use text::Bias;
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
@@ -945,6 +946,47 @@ impl HoverState {
         px((dx.powi(2) + dy.powi(2)).sqrt())
     }
 
+    /// Resolves the display point that the active popover should anchor to.
+    ///
+    /// Diagnostic and text-symbol hovers anchor at the start of the hover range.
+    /// For inlay-hint hovers, however, the buffer anchor alone always maps to the
+    /// inlay's leading edge in display space, so the popover would pin to the start
+    /// of the inlay regardless of which character was hovered.
+    pub(crate) fn popover_anchor_display_point(
+        &self,
+        snapshot: &EditorSnapshot,
+    ) -> Option<DisplayPoint> {
+        let display_snapshot = &snapshot.display_snapshot;
+        if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
+            return Some(
+                diagnostic_popover
+                    .local_diagnostic
+                    .range
+                    .start
+                    .to_display_point(display_snapshot),
+            );
+        }
+        if let Some(text_anchor) =
+            self.info_popovers
+                .iter()
+                .find_map(|info_popover| match &info_popover.symbol_range {
+                    RangeInEditor::Text(range) => Some(&range.start),
+                    RangeInEditor::Inlay(_) => None,
+                })
+        {
+            return Some(text_anchor.to_display_point(display_snapshot));
+        }
+        let highlight = self.info_popovers.iter().find_map(|info_popover| {
+            match &info_popover.symbol_range {
+                RangeInEditor::Text(_) => None,
+                RangeInEditor::Inlay(range) => Some(range),
+            }
+        })?;
+        let hint_start = display_snapshot.anchor_to_inlay_offset(highlight.inlay_position);
+        let hovered_offset = InlayOffset(hint_start.0 + highlight.range.start);
+        Some(display_snapshot.inlay_offset_to_display_point(hovered_offset, Bias::Left))
+    }
+
     pub(crate) fn render(
         &mut self,
         snapshot: &EditorSnapshot,
@@ -957,29 +999,7 @@ impl HoverState {
         if !self.visible() {
             return None;
         }
-        // If there is a diagnostic, position the popovers based on that.
-        // Otherwise use the start of the hover range
-        let anchor = self
-            .diagnostic_popover
-            .as_ref()
-            .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
-            .or_else(|| {
-                self.info_popovers.iter().find_map(|info_popover| {
-                    match &info_popover.symbol_range {
-                        RangeInEditor::Text(range) => Some(&range.start),
-                        RangeInEditor::Inlay(_) => None,
-                    }
-                })
-            })
-            .or_else(|| {
-                self.info_popovers.iter().find_map(|info_popover| {
-                    match &info_popover.symbol_range {
-                        RangeInEditor::Text(_) => None,
-                        RangeInEditor::Inlay(range) => Some(&range.inlay_position),
-                    }
-                })
-            })?;
-        let mut point = anchor.to_display_point(&snapshot.display_snapshot);
+        let mut point = self.popover_anchor_display_point(snapshot)?;
         // Clamp the point within the visible rows in case the popup source spans multiple lines
         if visible_rows.end <= point.row() {
             point = crate::movement::up_by_rows(
@@ -2153,7 +2173,7 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, _, cx| {
+        cx.update_editor(|editor, window, cx| {
             let hover_state = &editor.hover_state;
             assert!(
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
@@ -2173,6 +2193,20 @@ mod tests {
             assert_eq!(
                 popover.get_rendered_text(cx),
                 format!("A tooltip for {new_type_label}"),
+            );
+
+            let snapshot = editor.snapshot(window, cx);
+            let popover_point = hover_state
+                .popover_anchor_display_point(&snapshot)
+                .expect("popover should resolve to a display point");
+            let inlay_start_display =
+                MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
+            assert_eq!(popover_point.row(), inlay_start_display.row());
+            assert_eq!(
+                popover_point.column(),
+                inlay_start_display.column() + ": ".len() as u32,
+                "Popover should anchor at the start of the hovered label part inside the inlay, \
+                 not at the start of the inlay",
             );
         });
 
@@ -2210,21 +2244,21 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, _, cx| {
+        cx.update_editor(|editor, window, cx| {
             let hover_state = &editor.hover_state;
             assert!(
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
             );
             let popover = hover_state.info_popovers.first().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let struct_part_offset = ": ".len() + new_type_label.len() + "<".len();
             assert_eq!(
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
                     inlay_position: buffer_snapshot
                         .anchor_after(MultiBufferOffset(inlay_range.start)),
-                    range: ": ".len() + new_type_label.len() + "<".len()
-                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
+                    range: struct_part_offset..struct_part_offset + struct_label.len(),
                 }),
                 "Popover range should match the struct label part"
             );
@@ -2233,7 +2267,212 @@ mod tests {
                 format!("A tooltip for {struct_label}"),
                 "Rendered markdown element should remove backticks from text"
             );
+
+            let snapshot = editor.snapshot(window, cx);
+            let popover_point = hover_state
+                .popover_anchor_display_point(&snapshot)
+                .expect("popover should resolve to a display point");
+            let inlay_start_display =
+                MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
+            assert_eq!(popover_point.row(), inlay_start_display.row());
+            assert_eq!(
+                popover_point.column(),
+                inlay_start_display.column() + struct_part_offset as u32,
+                "Popover should anchor at the start of the hovered label part inside the inlay, \
+                 not at the start of the inlay",
+            );
         });
+    }
+
+    /// When two type hints sit one source character apart (e.g. a `::T` hint
+    /// just before a closing token and another `::U` hint right after it),
+    /// `clip_point` skips through the lone source character with `Bias::Right`,
+    /// so both hints fall inside the buffer-position window used to find a
+    /// hovered hint. The hovered-offset filter must then disambiguate them by
+    /// checking which hint's inlay-offset range contains the mouse offset.
+    #[gpui::test]
+    async fn test_hover_inlay_picks_inlay_under_cursor(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(false),
+                show_other_hints: Some(false),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Right(
+                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                        resolve_provider: Some(false),
+                        ..Default::default()
+                    }),
+                )),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn main() {
+                let xˇ = a;
+            }
+        "});
+
+        // Anchor positions for the two adjacent type hints. The first hint is
+        // anchored right before `;` and the second right after it, so they end
+        // up rendered as `a::Foo;::Bar` with only `;` between them in display.
+        let first_hint_offset = cx.ranges(indoc! {"
+                fn main() {
+                    let x = a«»;
+                }
+            "})[0]
+            .start;
+        let second_hint_offset = cx.ranges(indoc! {"
+                fn main() {
+                    let x = a;«»
+                }
+            "})[0]
+            .start;
+        let first_position = cx.to_lsp(MultiBufferOffset(first_hint_offset));
+        let second_position = cx.to_lsp(MultiBufferOffset(second_hint_offset));
+
+        let first_label = "::Foo";
+        let second_label = "::Bar";
+        cx.lsp
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _| async move {
+                Ok(Some(vec![
+                    lsp::InlayHint {
+                        position: first_position,
+                        label: lsp::InlayHintLabel::String(first_label.to_string()),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: Some(lsp::InlayHintTooltip::String("Foo".to_string())),
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    },
+                    lsp::InlayHint {
+                        position: second_position,
+                        label: lsp::InlayHintLabel::String(second_label.to_string()),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: Some(lsp::InlayHintTooltip::String("Bar".to_string())),
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    },
+                ]))
+            })
+            .next()
+            .await;
+        cx.background_executor.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(
+                vec![first_label.to_string(), second_label.to_string()],
+                visible_hint_labels(editor, cx),
+            );
+        });
+
+        async fn assert_hovered_inlay(
+            cx: &mut EditorLspTestContext,
+            hint_offset: usize,
+            label_len: u32,
+            expected_tooltip: &str,
+            expected_inlay_id: InlayId,
+        ) {
+            let hover_position = cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let inlay_start = MultiBufferOffset(hint_offset).to_display_point(&snapshot);
+                let exact_unclipped =
+                    DisplayPoint::new(inlay_start.row(), inlay_start.column() + label_len / 2);
+                let previous_valid = snapshot.clip_point(exact_unclipped, Bias::Left);
+                let next_valid = snapshot.clip_point(exact_unclipped, Bias::Right);
+                let nearest_valid = if previous_valid == next_valid {
+                    previous_valid
+                } else {
+                    match snapshot.inlay_bias_at(exact_unclipped) {
+                        Some(Bias::Left) => next_valid,
+                        Some(Bias::Right) => previous_valid,
+                        None => previous_valid,
+                    }
+                };
+                PointForPosition {
+                    previous_valid,
+                    next_valid,
+                    nearest_valid,
+                    exact_unclipped,
+                    column_overshoot_after_line_end: 0,
+                }
+            });
+            cx.update_editor(|editor, window, cx| {
+                editor.hover_state = HoverState::default();
+                editor.update_inlay_link_and_hover_points(
+                    &editor.snapshot(window, cx),
+                    hover_position,
+                    None,
+                    true,
+                    false,
+                    window,
+                    cx,
+                );
+            });
+            cx.background_executor
+                .advance_clock(Duration::from_millis(get_hover_popover_delay(cx) + 100));
+            cx.background_executor.run_until_parked();
+
+            cx.update_editor(|editor, _, cx| {
+                let hover_state = &editor.hover_state;
+                assert_eq!(
+                    hover_state.info_popovers.len(),
+                    1,
+                    "expected exactly one popover for inlay {expected_inlay_id:?}",
+                );
+                let popover = hover_state.info_popovers.first().unwrap();
+                assert_eq!(
+                    popover.get_rendered_text(cx),
+                    expected_tooltip,
+                    "popover content should match the inlay under the cursor, \
+                     not the adjacent inlay one source character away",
+                );
+                let RangeInEditor::Inlay(highlight) = &popover.symbol_range else {
+                    panic!("expected an inlay popover, got {:?}", popover.symbol_range);
+                };
+                assert_eq!(
+                    highlight.inlay, expected_inlay_id,
+                    "popover should reference the hovered inlay",
+                );
+            });
+        }
+
+        // Hover the first inlay (`::Foo`): the buffer-position window also covers
+        // the second hint past `;`, so the hovered-offset filter must pick the first.
+        assert_hovered_inlay(
+            &mut cx,
+            first_hint_offset,
+            first_label.len() as u32,
+            "Foo",
+            InlayId::Hint(0),
+        )
+        .await;
+
+        // Symmetric check: hover the second inlay (`::Bar`) and verify the filter
+        // picks the second hint despite the first hint also being in range.
+        assert_hovered_inlay(
+            &mut cx,
+            second_hint_offset,
+            second_label.len() as u32,
+            "Bar",
+            InlayId::Hint(1),
+        )
+        .await;
     }
 
     #[test]

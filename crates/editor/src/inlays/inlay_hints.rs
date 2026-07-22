@@ -604,7 +604,7 @@ impl Editor {
                 point_for_position.next_valid.to_point(snapshot),
                 Bias::Right,
             );
-            if let Some(hovered_hint) = Self::visible_inlay_hints(self.display_map.read(cx))
+            let hovered_hint = Self::visible_inlay_hints(self.display_map.read(cx))
                 .filter(|hint| snapshot.can_resolve(&hint.position))
                 .skip_while(|hint| {
                     hint.position
@@ -616,8 +616,12 @@ impl Editor {
                         .cmp(&next_valid_anchor, &buffer_snapshot)
                         .is_le()
                 })
-                .max_by_key(|hint| hint.id)
-            {
+                .find(|hint| {
+                    let hint_start = snapshot.anchor_to_inlay_offset(hint.position);
+                    let hint_end = InlayOffset(hint_start.0 + hint.text().len());
+                    hovered_offset >= hint_start && hovered_offset < hint_end
+                });
+            if let Some(hovered_hint) = hovered_hint {
                 if let Some(ResolvedHint::Resolved(cached_hint)) = buffer_snapshot
                     .anchor_to_buffer_anchor(hovered_hint.position)
                     .and_then(|(anchor, _)| {
