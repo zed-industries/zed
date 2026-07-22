@@ -6650,7 +6650,7 @@ impl GitPanel {
                                                         short_sha.clone(),
                                                     ))
                                                 } else {
-                                                    SharedString::from(short_sha.clone())
+                                                    short_sha.clone()
                                                 };
 
                                                 Tooltip::with_meta(
