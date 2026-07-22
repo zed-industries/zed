@@ -15,6 +15,7 @@ path = "src/onboarding.rs"
 default = []
 
 [dependencies]
+agent_ui.workspace = true
 anyhow.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
@@ -44,3 +45,12 @@ zlog.workspace = true
 
 [dev-dependencies]
 db = {workspace = true, features = ["test-support"]}
+fs = {workspace = true, features = ["test-support"]}
+gpui = {workspace = true, features = ["test-support"]}
+project = {workspace = true, features = ["test-support"]}
+# `agent_ui` pulls in `remote_connection`; `workspace/test-support` turns on
+# `remote/test-support` (which adds `RemoteConnectionOptions::Mock`). Enable
+# `remote_connection/test-support` too so its match over that variant compiles.
+remote_connection = {workspace = true, features = ["test-support"]}
+settings = {workspace = true, features = ["test-support"]}
+workspace = {workspace = true, features = ["test-support"]}
