@@ -207,7 +207,9 @@ impl Vim {
                 let paste_text_last_character_offsets: Vec<_> = edits
                     .iter()
                     .map(|(_, text)| {
-                        text.char_indices()
+                        text.strip_suffix('\n')
+                            .unwrap_or(text.as_str())
+                            .char_indices()
                             .next_back()
                             .map_or(0, |(offset, _)| offset)
                     })
@@ -1353,5 +1355,29 @@ mod test {
         cx.simulate_keystrokes("p");
 
         cx.assert_state("ˇx", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_linewise_before(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+                ˇfirst line
+                second line
+                third line"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("y y j shift-p");
+        cx.simulate_keystrokes("` [ v ` ]");
+
+        cx.assert_state(
+            indoc! {"
+                first line
+                «first lineˇ»
+                second line
+                third line"},
+            Mode::Visual,
+        );
     }
 }
