@@ -85,7 +85,7 @@ use std::{
 };
 use sum_tree::Bias;
 use text::BufferId;
-use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme::{ActiveTheme, Appearance, PlayerColor, cycle_hsla};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ButtonLike, POPOVER_Y_PADDING, Tooltip, prelude::*, scrollbars::ShowScrollbar};
@@ -5077,47 +5077,33 @@ impl EditorElement {
             return;
         };
 
-        let faded_color = |color: Hsla, alpha: f32| {
-            let mut faded = color;
-            faded.a = alpha;
-            faded
-        };
-
         for indent_guide in indent_guides {
-            let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
             let settings = &indent_guide.settings;
-
-            // TODO fixed for now, expose them through themes later
-            const INDENT_AWARE_ALPHA: f32 = 0.2;
-            const INDENT_AWARE_ACTIVE_ALPHA: f32 = 0.4;
-            const INDENT_AWARE_BACKGROUND_ALPHA: f32 = 0.1;
-            const INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA: f32 = 0.2;
+            let colors = cx.theme().colors();
 
             let line_color = match (settings.coloring, indent_guide.active) {
                 (IndentGuideColoring::Disabled, _) => None,
-                (IndentGuideColoring::Fixed, false) => {
-                    Some(cx.theme().colors().editor_indent_guide)
-                }
-                (IndentGuideColoring::Fixed, true) => {
-                    Some(cx.theme().colors().editor_indent_guide_active)
-                }
-                (IndentGuideColoring::IndentAware, false) => {
-                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ALPHA))
-                }
-                (IndentGuideColoring::IndentAware, true) => {
-                    Some(faded_color(indent_accent_colors, INDENT_AWARE_ACTIVE_ALPHA))
-                }
+                (IndentGuideColoring::Fixed, false) => Some(colors.editor_indent_guide),
+                (IndentGuideColoring::Fixed, true) => Some(colors.editor_indent_guide_active),
+                (IndentGuideColoring::IndentAware, false) => Some(cycle_hsla(
+                    &colors.editor_indent_guide_cycle,
+                    indent_guide.depth,
+                )),
+                (IndentGuideColoring::IndentAware, true) => Some(cycle_hsla(
+                    &colors.editor_indent_guide_cycle_active,
+                    indent_guide.depth,
+                )),
             };
 
             let background_color = match (settings.background_coloring, indent_guide.active) {
                 (IndentGuideBackgroundColoring::Disabled, _) => None,
-                (IndentGuideBackgroundColoring::IndentAware, false) => Some(faded_color(
-                    indent_accent_colors,
-                    INDENT_AWARE_BACKGROUND_ALPHA,
+                (IndentGuideBackgroundColoring::IndentAware, false) => Some(cycle_hsla(
+                    &colors.editor_indent_guide_background_cycle,
+                    indent_guide.depth,
                 )),
-                (IndentGuideBackgroundColoring::IndentAware, true) => Some(faded_color(
-                    indent_accent_colors,
-                    INDENT_AWARE_BACKGROUND_ACTIVE_ALPHA,
+                (IndentGuideBackgroundColoring::IndentAware, true) => Some(cycle_hsla(
+                    &colors.editor_indent_guide_background_cycle_active,
+                    indent_guide.depth,
                 )),
             };
 

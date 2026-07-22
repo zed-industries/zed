@@ -833,11 +833,29 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.active_wrap_guide")]
     pub editor_active_wrap_guide: Option<String>,
 
+    /// Guide line color.
     #[serde(rename = "editor.indent_guide")]
     pub editor_indent_guide: Option<String>,
 
+    /// Guide line color.
     #[serde(rename = "editor.indent_guide_active")]
     pub editor_indent_guide_active: Option<String>,
+
+    /// Guide line color cycle in IndentAware mode.
+    #[serde(rename = "editor.indent_guide_cycle")]
+    pub editor_indent_guide_cycle: Option<Vec<Option<String>>>,
+
+    /// Guide line color cycle in IndentAware mode.
+    #[serde(rename = "editor.indent_guide_cycle_active")]
+    pub editor_indent_guide_cycle_active: Option<Vec<Option<String>>>,
+
+    /// Guide background color cycle in IndentAware mode.
+    #[serde(rename = "editor.indent_guide_background_cycle")]
+    pub editor_indent_guide_background_cycle: Option<Vec<Option<String>>>,
+
+    /// Guide background color cycle in IndentAware mode.
+    #[serde(rename = "editor.indent_guide_background_cycle_active")]
+    pub editor_indent_guide_background_cycle_active: Option<Vec<Option<String>>>,
 
     /// Read-access of a symbol, like reading a variable.
     ///
