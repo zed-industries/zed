@@ -91,7 +91,7 @@ impl TerminalProcessIds {
     /// job control a foreground job runs in a separate process group that
     /// `killpg` on the shell's group never reaches, so both are signalled
     /// (see #47412).
-    fn process_group_ids(&self) -> impl Iterator<Item = i32> {
+    fn process_group_ids(self) -> impl Iterator<Item = i32> {
         std::iter::once(self.child)
             .chain(
                 self.foreground
@@ -104,26 +104,37 @@ impl TerminalProcessIds {
             .filter(|process_group_id| *process_group_id > 0)
     }
 
-    pub(crate) fn terminate(&self) {
+    /// Returns whether at least one process group was signalled successfully;
+    /// `killpg` failing with `ESRCH` (the group already exited) is expected and
+    /// reported as an unsuccessful signal.
+    fn signal_process_groups(&self, signal: i32) -> bool {
+        let mut signalled = false;
         for process_group_id in self.process_group_ids() {
-            unsafe { libc::killpg(process_group_id, libc::SIGTERM) };
+            signalled |= unsafe { libc::killpg(process_group_id, signal) } == 0;
         }
+        signalled
     }
 
-    pub(crate) fn kill(&self) {
-        for process_group_id in self.process_group_ids() {
-            unsafe { libc::killpg(process_group_id, libc::SIGKILL) };
-        }
+    pub(crate) fn terminate(&self) -> bool {
+        self.signal_process_groups(libc::SIGTERM)
+    }
+
+    pub(crate) fn kill(&self) -> bool {
+        self.signal_process_groups(libc::SIGKILL)
     }
 }
 
 #[cfg(not(unix))]
 impl TerminalProcessIds {
-    pub(crate) fn terminate(&self) {}
+    pub(crate) fn terminate(&self) -> bool {
+        false
+    }
 
     // Windows has no process groups to escalate on; killing the child relies
     // on [`PtyProcessInfo::kill_child_process`] instead.
-    pub(crate) fn kill(&self) {}
+    pub(crate) fn kill(&self) -> bool {
+        false
+    }
 }
 
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
