@@ -806,6 +806,13 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+#[derive(Clone)]
+pub(crate) struct TooltipOwner {
+    owner_id: GlobalElementId,
+    hitbox_id: HitboxId,
+    owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+}
+
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
@@ -833,6 +840,7 @@ pub(crate) struct Frame {
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
+    pub(crate) tooltip_owners: Vec<TooltipOwner>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -847,6 +855,7 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
+    tooltip_owners_index: usize,
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
@@ -879,6 +888,7 @@ impl Frame {
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
+            tooltip_owners: Vec::new(),
             cursor_styles: Vec::new(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -901,6 +911,7 @@ impl Frame {
         self.scene.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
+        self.tooltip_owners.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
@@ -957,6 +968,23 @@ impl Frame {
             hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
+    }
+
+    fn topmost_tooltip_owner<'a>(
+        &'a self,
+        hit_test: &HitTest,
+        window: &Window,
+    ) -> Option<&'a GlobalElementId> {
+        for hitbox_id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if let Some(owner) =
+                self.tooltip_owners.iter().rev().find(|owner| {
+                    owner.hitbox_id == *hitbox_id && (owner.owns_mouse_position)(window)
+                })
+            {
+                return Some(&owner.owner_id);
+            }
+        }
+        None
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -2968,6 +2996,10 @@ impl Window {
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
+        let mut visible_tooltip = None;
+
+        // Even when a topmost tooltip wins rendering, other active tooltip owners need
+        // to update so losing ancestors can clear their active tooltip state.
         // Use indexing instead of iteration to avoid borrowing self for the duration of the loop.
         for tooltip_request_index in (0..self.next_frame.tooltip_requests.len()).rev() {
             let Some(Some(tooltip_request)) = self
@@ -3023,17 +3055,24 @@ impl Window {
                 continue;
             }
 
-            self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
-                element.prepaint(window, cx)
-            });
-
-            self.tooltip_bounds = Some(TooltipBounds {
-                id: tooltip_request.id,
-                bounds: tooltip_bounds,
-            });
-            return Some(element);
+            if visible_tooltip.is_none() {
+                visible_tooltip = Some((tooltip_request.id, tooltip_bounds, element));
+            }
         }
-        None
+
+        let Some((tooltip_id, tooltip_bounds, mut element)) = visible_tooltip else {
+            return None;
+        };
+
+        self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+            element.prepaint(window, cx)
+        });
+
+        self.tooltip_bounds = Some(TooltipBounds {
+            id: tooltip_id,
+            bounds: tooltip_bounds,
+        });
+        Some(element)
     }
 
     fn prepaint_deferred_draws(&mut self, cx: &mut App) {
@@ -3156,6 +3195,7 @@ impl Window {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
+            tooltip_owners_index: self.next_frame.tooltip_owners.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -3174,6 +3214,12 @@ impl Window {
                 [range.start.tooltips_index..range.end.tooltips_index]
                 .iter_mut()
                 .map(|request| request.take()),
+        );
+        self.next_frame.tooltip_owners.extend(
+            self.rendered_frame.tooltip_owners
+                [range.start.tooltip_owners_index..range.end.tooltip_owners_index]
+                .iter()
+                .cloned(),
         );
         self.next_frame.accessed_element_states.extend(
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
@@ -3315,6 +3361,37 @@ impl Window {
         id
     }
 
+    pub(crate) fn register_tooltip_owner(
+        &mut self,
+        owner_id: &GlobalElementId,
+        hitbox: &Hitbox,
+        owns_mouse_position: Rc<dyn Fn(&Window) -> bool>,
+    ) {
+        self.invalidator.debug_assert_prepaint();
+        self.next_frame.tooltip_owners.push(TooltipOwner {
+            owner_id: owner_id.clone(),
+            hitbox_id: hitbox.id,
+            owns_mouse_position,
+        });
+    }
+
+    pub(crate) fn is_topmost_tooltip_owner(&self, owner_id: &GlobalElementId) -> bool {
+        self.rendered_frame
+            .topmost_tooltip_owner(&self.mouse_hit_test, self)
+            .is_some_and(|topmost_owner_id| topmost_owner_id == owner_id)
+    }
+
+    pub(crate) fn is_topmost_tooltip_owner_during_prepaint(
+        &self,
+        owner_id: &GlobalElementId,
+    ) -> bool {
+        self.invalidator.debug_assert_prepaint();
+        let hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.next_frame
+            .topmost_tooltip_owner(&hit_test, self)
+            .is_some_and(|topmost_owner_id| topmost_owner_id == owner_id)
+    }
+
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask. This method should only be called during element drawing.
     // This function is called in a highly recursive manner in editor
@@ -3401,6 +3478,9 @@ impl Window {
             self.next_frame
                 .tooltip_requests
                 .truncate(index.tooltips_index);
+            self.next_frame
+                .tooltip_owners
+                .truncate(index.tooltip_owners_index);
             self.next_frame
                 .deferred_draws
                 .truncate(index.deferred_draws_index);
