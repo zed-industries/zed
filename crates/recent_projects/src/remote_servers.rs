@@ -808,6 +808,7 @@ impl Mode {
     }
 }
 
+#[derive(Debug)]
 enum RemoteMatch {
     AddServer,
     AddDevContainer,
@@ -832,10 +833,7 @@ enum RemoteMatch {
 
 impl RemoteMatch {
     fn is_selectable(&self) -> bool {
-        !matches!(
-            self,
-            RemoteMatch::Separator | RemoteMatch::ServerHeader { .. }
-        )
+        !matches!(self, RemoteMatch::Separator)
     }
 }
 
@@ -847,6 +845,17 @@ struct RemoteServerPickerDelegate {
     query: String,
     has_open_project: bool,
     is_local: bool,
+}
+#[derive(Debug, PartialEq)]
+enum FolderConnectTarget {
+    Existing {
+        index: ServerIndex,
+        options: RemoteConnectionOptions,
+    },
+    SshConfig {
+        host: SharedString,
+        options: RemoteConnectionOptions,
+    },
 }
 
 impl RemoteServerPickerDelegate {
@@ -993,6 +1002,8 @@ impl RemoteServerPickerDelegate {
         &self,
         server_index: usize,
         host_positions: &[usize],
+        selected: bool,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let server = self.state.servers.get(server_index)?;
         let connection = server.connection().into_owned();
@@ -1011,9 +1022,13 @@ impl RemoteServerPickerDelegate {
         Some(
             h_flex()
                 .w_full()
-                .pt_1()
+                .py_1()
                 .px_3()
                 .gap_1()
+                .rounded_sm()
+                .when(selected, |this| {
+                    this.bg(cx.theme().colors().ghost_element_selected)
+                })
                 .overflow_hidden()
                 .child(
                     h_flex()
@@ -1056,6 +1071,52 @@ impl RemoteServerPickerDelegate {
             .start_slot(Icon::new(icon).color(Color::Muted))
             .child(Label::new(label))
             .into_any_element()
+    }
+
+    /// Resolves the connection target for the server row at `server_index`,
+    /// without performing any I/O.
+    fn folder_connect_target(
+        servers: &[RemoteEntry],
+        server_index: usize,
+    ) -> Option<FolderConnectTarget> {
+        let server_entry = servers.get(server_index)?;
+        let options = server_entry.connection().into_owned().into();
+        Some(match server_entry {
+            RemoteEntry::Project { index, .. } => FolderConnectTarget::Existing {
+                index: *index,
+                options,
+            },
+            RemoteEntry::SshConfig { host, .. } => FolderConnectTarget::SshConfig {
+                host: host.clone(),
+                options,
+            },
+        })
+    }
+
+    /// Connects to the server at `server_index` and opens the remote folder
+    /// chooser. Shared by the host header and the "Open Folder" action so both
+    /// confirm to the same flow. SSH-config-only hosts are first persisted as a
+    /// connection through [`RemoteServerProjects::create_host_from_ssh_config`].
+    fn open_folder_for_server(
+        &self,
+        server_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(target) = Self::folder_connect_target(&self.state.servers, server_index) else {
+            return;
+        };
+        self.remote_server_projects
+            .update(cx, |this, cx| match target {
+                FolderConnectTarget::Existing { index, options } => {
+                    this.create_remote_project(index, options, window, cx);
+                }
+                FolderConnectTarget::SshConfig { host, options } => {
+                    let new_ix = this.create_host_from_ssh_config(&host, cx);
+                    this.create_remote_project(new_ix.into(), options, window, cx);
+                }
+            })
+            .ok();
     }
 }
 
@@ -1142,7 +1203,10 @@ impl PickerDelegate for RemoteServerPickerDelegate {
         };
         let remote_server_projects = self.remote_server_projects.clone();
         match entry {
-            RemoteMatch::Separator | RemoteMatch::ServerHeader { .. } => {}
+            RemoteMatch::Separator => {}
+            RemoteMatch::ServerHeader { server, .. } => {
+                self.open_folder_for_server(*server, window, cx);
+            }
             RemoteMatch::AddServer => {
                 remote_server_projects
                     .update(cx, |this, cx| {
@@ -1194,37 +1258,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     .ok();
             }
             RemoteMatch::OpenFolder { server } => {
-                let Some(server_entry) = self.state.servers.get(*server) else {
-                    return;
-                };
-                match server_entry {
-                    RemoteEntry::Project {
-                        connection, index, ..
-                    } => {
-                        let connection = connection.clone();
-                        let index = *index;
-                        remote_server_projects
-                            .update(cx, |this, cx| {
-                                this.create_remote_project(index, connection.into(), window, cx);
-                            })
-                            .ok();
-                    }
-                    RemoteEntry::SshConfig { host, .. } => {
-                        let host = host.clone();
-                        let connection = server_entry.connection().into_owned();
-                        remote_server_projects
-                            .update(cx, |this, cx| {
-                                let new_ix = this.create_host_from_ssh_config(&host, cx);
-                                this.create_remote_project(
-                                    new_ix.into(),
-                                    connection.into(),
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    }
-                }
+                self.open_folder_for_server(*server, window, cx);
             }
             RemoteMatch::ViewServerOptions { server } => {
                 let Some(RemoteEntry::Project {
@@ -1259,7 +1293,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::ServerHeader {
                 server,
                 host_positions,
-            } => self.render_server_header(*server, host_positions),
+            } => self.render_server_header(*server, host_positions, selected, cx),
             RemoteMatch::AddServer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect SSH Server", selected))
             }
@@ -1344,10 +1378,9 @@ impl PickerDelegate for RemoteServerPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let is_project_selected = matches!(
-            self.matches.get(self.selected_index),
-            Some(RemoteMatch::Project { .. })
-        );
+        let selected_match = self.matches.get(self.selected_index);
+        let is_project_selected = matches!(selected_match, Some(RemoteMatch::Project { .. }));
+        let is_host_selected = matches!(selected_match, Some(RemoteMatch::ServerHeader { .. }));
 
         let confirm_button = |label: SharedString| {
             Button::new("select", label)
@@ -1367,6 +1400,8 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 )
                 .child(confirm_button("Open".into()))
                 .into_any_element()
+        } else if is_host_selected {
+            confirm_button("Open Folder".into()).into_any_element()
         } else {
             confirm_button("Select".into()).into_any_element()
         };
@@ -3146,6 +3181,68 @@ mod filter_tests {
         state.filter_sync("");
         assert!(state.filtered_servers.is_none());
     }
+
+    #[test]
+    fn test_server_header_is_selectable() {
+        // Pressing Enter on a host must connect, so the header is a selectable
+        // confirm target; only separators stay inert.
+        assert!(
+            RemoteMatch::ServerHeader {
+                server: 0,
+                host_positions: Vec::new(),
+            }
+            .is_selectable()
+        );
+        assert!(!RemoteMatch::Separator.is_selectable());
+        assert!(RemoteMatch::OpenFolder { server: 0 }.is_selectable());
+    }
+
+    #[test]
+    fn test_folder_connect_target_routes_by_entry_kind() {
+        // Guards the routing that the host header and "Open Folder" both confirm
+        // through: a persisted project connects with its stored index, while an
+        // ssh-config-only host is flagged for persistence first. The connect
+        // itself isn't driven here (it needs a live connection); this pins the
+        // pure decision that decides what gets connected.
+        let project_connection = SshConnection {
+            host: "host-a.example".to_string(),
+            ..Default::default()
+        };
+        let servers = vec![
+            RemoteEntry::Project {
+                projects: Vec::new(),
+                connection: Connection::Ssh(project_connection.clone()),
+                index: ServerIndex::Ssh(SshServerIndex(3)),
+            },
+            ssh_config_entry("config-host"),
+        ];
+
+        assert_eq!(
+            RemoteServerPickerDelegate::folder_connect_target(&servers, 0),
+            Some(FolderConnectTarget::Existing {
+                index: ServerIndex::Ssh(SshServerIndex(3)),
+                options: Connection::Ssh(project_connection).into(),
+            }),
+        );
+
+        assert_eq!(
+            RemoteServerPickerDelegate::folder_connect_target(&servers, 1),
+            Some(FolderConnectTarget::SshConfig {
+                host: SharedString::from("config-host"),
+                options: Connection::Ssh(SshConnection {
+                    host: "config-host".to_string(),
+                    ..Default::default()
+                })
+                .into(),
+            }),
+        );
+
+        // Out-of-range indices are a safe no-op.
+        assert_eq!(
+            RemoteServerPickerDelegate::folder_connect_target(&servers, 99),
+            None,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3213,5 +3310,114 @@ mod create_host_tests {
 
         assert_eq!(connections[0].projects.len(), 1);
         assert!(connections[new_index.0].projects.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_searching_host_selects_header_not_project(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let fs: Arc<dyn Fs> = app_state.fs.clone();
+
+        cx.update(|cx| {
+            update_settings_file(fs.clone(), cx, |settings, _| {
+                settings.remote.ssh_connections = Some(vec![SshConnection {
+                    host: "host-a.example".to_string(),
+                    projects: BTreeSet::from_iter([RemoteProject {
+                        paths: vec!["/path/to/project-a".to_string()],
+                    }]),
+                    ..Default::default()
+                }]);
+            });
+        });
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let modal = workspace.update_in(cx, |_workspace, window, cx| {
+            let weak = cx.weak_entity();
+            cx.new(|cx| RemoteServerProjects::new(false, fs.clone(), window, weak, cx))
+        });
+
+        // Type the host name into the picker, as a user searching for it would.
+        workspace.update_in(cx, |_workspace, window, cx| {
+            modal.update(cx, |modal, cx| {
+                modal.default_picker.update(cx, |picker, cx| {
+                    picker.set_query("host-a", window, cx);
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        // Selection must land on the host header (so Enter connects), not on the
+        // previously-opened project row beneath it.
+        modal.read_with(cx, |modal, cx| {
+            let delegate = &modal.default_picker.read(cx).delegate;
+            let selected = delegate
+                .matches
+                .get(delegate.selected_index)
+                .expect("a match should be selected");
+            assert!(
+                matches!(selected, RemoteMatch::ServerHeader { server: 0, .. }),
+                "expected the host header to be selected, got {selected:?}",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ssh_config_host_has_selectable_header(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let fs: Arc<dyn Fs> = app_state.fs.clone();
+
+        cx.update(|cx| {
+            update_settings_file(fs.clone(), cx, |settings, _| {
+                settings.remote.read_ssh_config = Some(true);
+            });
+        });
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let modal = workspace.update_in(cx, |_workspace, window, cx| {
+            let weak = cx.weak_entity();
+            cx.new(|cx| RemoteServerProjects::new(false, fs.clone(), window, weak, cx))
+        });
+        cx.run_until_parked();
+
+        modal.update_in(cx, |modal, window, cx| {
+            modal.ssh_config_servers = BTreeSet::from_iter([SharedString::from("config-host")]);
+            modal.refresh_default_picker(window, cx);
+        });
+        cx.run_until_parked();
+
+        let picker = modal.read_with(cx, |modal, _cx| modal.default_picker.clone());
+        picker.update_in(cx, |picker, window, cx| {
+            let delegate = &picker.delegate;
+            let (header_index, server) = delegate
+                .matches
+                .iter()
+                .enumerate()
+                .find_map(|(index, entry)| match entry {
+                    RemoteMatch::ServerHeader { server, .. } => Some((index, *server)),
+                    _ => None,
+                })
+                .expect("the ssh-config host should produce a header row");
+
+            assert!(
+                delegate.can_select(header_index, window, cx),
+                "the host header must be a selectable confirm target",
+            );
+            assert!(
+                matches!(
+                    delegate.matches.get(header_index + 1),
+                    Some(RemoteMatch::OpenFolder { server: open_folder_server })
+                        if *open_folder_server == server,
+                ),
+                "the header should be followed by its Open Folder action, got {:?}",
+                delegate.matches.get(header_index + 1),
+            );
+        });
     }
 }
