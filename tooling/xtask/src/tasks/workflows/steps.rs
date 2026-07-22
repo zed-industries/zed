@@ -164,7 +164,7 @@ pub fn setup_pnpm() -> Step<Use> {
     named::uses(
         "pnpm",
         "action-setup",
-        "fe02b34f77f8bc703788d5817da081398fad5dd2", // v4.0.0
+        "fc06bc1257f339d1d5d8b3a19a8cae5388b55320", // v4.4.0
     )
     .add_with(("version", "9"))
 }
@@ -376,6 +376,16 @@ impl CommonJobConditions for Job {
     }
 }
 
+pub trait CommonPermissionSets: Sized {
+    fn with_minimal_permissions(self) -> Self;
+}
+
+impl CommonPermissionSets for Workflow {
+    fn with_minimal_permissions(self) -> Self {
+        self.permissions(Permissions::default().contents(Level::Read))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .with_repository_owner_guard()
@@ -503,6 +513,7 @@ pub mod named {
                     .collect::<Vec<_>>()
                     .join("::"),
             )
+            .permissions(Permissions::default())
             .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 

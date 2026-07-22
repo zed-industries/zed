@@ -1,6 +1,6 @@
 use gpui::Window;
 use gpui::{Pixels, Rems, Size};
-use ui::{Div, Styled};
+use ui::{Div, Styled, rems_from_px};
 
 use crate::preview::Layout;
 
@@ -18,6 +18,12 @@ pub(crate) struct PositionAndShape {
     /// either a height or a width depends on previews layoutmode.
     /// Should be zero when preview is disabled or hidden
     pub(crate) preview: Pixels,
+}
+
+impl PositionAndShape {
+    pub(crate) fn width(&self) -> Pixels {
+        self.right - self.left
+    }
 }
 
 macro_rules! relative_size {
@@ -236,12 +242,12 @@ impl Default for SizeBounds {
             // over the lower bar so clear another 5 rems there.
             max_height: (RelativeHeight::FULL - Rems(10.0)) * 0.95,
             min_results: Size {
-                width: Rems(15.0),
-                height: Rems(20.0),
+                width: rems_from_px(280.),
+                height: rems_from_px(320.),
             },
             min_preview: Size {
-                width: Rems(8.0),
-                height: Rems(6.0),
+                width: rems_from_px(128.),
+                height: rems_from_px(96.),
             },
         }
     }
@@ -377,6 +383,16 @@ impl SizeBounds {
         };
         let max_preview = (total - min_results).max(min_preview);
         working.preview = working.preview.clamp(min_preview, max_preview);
+    }
+
+    pub(crate) fn would_clamp_width_if_horizontal(&self, shape: &Shape, window: &Window) -> bool {
+        let min_width = self.min_width(Some(Layout::Right), window);
+
+        let unbounded_width = shape
+            .picker_position_and_size(Some(Layout::Right), window)
+            .width();
+
+        unbounded_width <= min_width
     }
 
     /// Clamps a whole picker rect (results + preview) into bounds: the total size

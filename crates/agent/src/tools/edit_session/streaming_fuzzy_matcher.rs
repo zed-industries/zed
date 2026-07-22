@@ -12,8 +12,16 @@ pub struct StreamingFuzzyMatcher {
     query_lines: Vec<String>,
     line_hint: Option<u32>,
     incomplete_line: String,
-    matches: Vec<Range<usize>>,
+    matches: Vec<SearchMatch>,
     matrix: SearchMatrix,
+}
+
+/// A match candidate: the matched byte range plus the 0-based
+/// `(query_row, buffer_row)` line pairs the search aligned to produce it.
+#[derive(Clone, Debug)]
+struct SearchMatch {
+    range: Range<usize>,
+    line_pairs: Vec<(u32, u32)>,
 }
 
 impl StreamingFuzzyMatcher {
@@ -32,6 +40,23 @@ impl StreamingFuzzyMatcher {
     /// Returns the query lines.
     pub fn query_lines(&self) -> &[String] {
         &self.query_lines
+    }
+
+    /// Returns the 0-based `(query_row, buffer_row)` line pairs that the
+    /// search aligned for the match with the given range. Lines that were
+    /// skipped on either side of the alignment are absent.
+    pub fn line_pairs(&self, range: &Range<usize>) -> Option<&[(u32, u32)]> {
+        self.matches
+            .iter()
+            .find(|search_match| search_match.range == *range)
+            .map(|search_match| search_match.line_pairs.as_slice())
+    }
+
+    fn match_ranges(&self) -> Vec<Range<usize>> {
+        self.matches
+            .iter()
+            .map(|search_match| search_match.range.clone())
+            .collect()
     }
 
     /// Push a new chunk of text and get the best match found so far.
@@ -62,7 +87,11 @@ impl StreamingFuzzyMatcher {
         }
 
         let best_match = self.select_best_match();
-        best_match.or_else(|| self.matches.first().cloned())
+        best_match.or_else(|| {
+            self.matches
+                .first()
+                .map(|search_match| search_match.range.clone())
+        })
     }
 
     /// Finish processing and return the final best match(es).
@@ -72,26 +101,35 @@ impl StreamingFuzzyMatcher {
     pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
-            if self.matches.len() == 1 {
-                let range = &mut self.matches[0];
+            if let [only_match] = self.matches.as_mut_slice() {
+                let range = &mut only_match.range;
                 if range.end < self.snapshot.len()
                     && self
                         .snapshot
                         .contains_str_at(range.end + 1, &self.incomplete_line)
                 {
                     range.end += 1 + self.incomplete_line.len();
-                    return self.matches.clone();
+                    // Record the line and its alignment so that `query_lines`
+                    // and `line_pairs` stay in sync with the lines covered by
+                    // the returned range.
+                    let extended_row = self.snapshot.offset_to_point(range.end).row;
+                    self.query_lines
+                        .push(std::mem::take(&mut self.incomplete_line));
+                    only_match
+                        .line_pairs
+                        .push(((self.query_lines.len() - 1) as u32, extended_row));
+                    return self.match_ranges();
                 }
             }
 
-            self.query_lines.push(self.incomplete_line.clone());
-            self.incomplete_line.clear();
+            self.query_lines
+                .push(std::mem::take(&mut self.incomplete_line));
             self.matches = self.resolve_location_fuzzy();
         }
-        self.matches.clone()
+        self.match_ranges()
     }
 
-    fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
+    fn resolve_location_fuzzy(&mut self) -> Vec<SearchMatch> {
         let new_query_line_count = self.query_lines.len();
         let old_query_line_count = self.matrix.rows.saturating_sub(1);
         if new_query_line_count == old_query_line_count {
@@ -167,7 +205,7 @@ impl StreamingFuzzyMatcher {
         // Find ranges for the matches
         let mut valid_matches = Vec::new();
         for &buffer_row_end in &matches_with_best_cost {
-            let mut matched_lines = 0;
+            let mut line_pairs = Vec::new();
             let mut query_row = new_query_line_count;
             let mut buffer_row_start = buffer_row_end;
             while query_row > 0 && buffer_row_start > 0 {
@@ -176,7 +214,7 @@ impl StreamingFuzzyMatcher {
                     SearchDirection::Diagonal => {
                         query_row -= 1;
                         buffer_row_start -= 1;
-                        matched_lines += 1;
+                        line_pairs.push((query_row as u32, buffer_row_start));
                     }
                     SearchDirection::Up => {
                         query_row -= 1;
@@ -186,9 +224,10 @@ impl StreamingFuzzyMatcher {
                     }
                 }
             }
+            line_pairs.reverse();
 
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
-            let matched_ratio = matched_lines as f32
+            let matched_ratio = line_pairs.len() as f32
                 / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
             if matched_ratio >= 0.8 {
                 let buffer_start_ix = self
@@ -198,11 +237,14 @@ impl StreamingFuzzyMatcher {
                     buffer_row_end - 1,
                     self.snapshot.line_len(buffer_row_end - 1),
                 ));
-                valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
+                valid_matches.push(SearchMatch {
+                    range: buffer_start_ix..buffer_end_ix,
+                    line_pairs,
+                });
             }
         }
 
-        valid_matches.into_iter().map(|(_, range)| range).collect()
+        valid_matches
     }
 
     /// Return the best match with starting position close enough to line_hint.
@@ -216,8 +258,8 @@ impl StreamingFuzzyMatcher {
             return None;
         }
 
-        if self.matches.len() == 1 {
-            return self.matches.first().cloned();
+        if let [only_match] = self.matches.as_slice() {
+            return Some(only_match.range.clone());
         }
 
         let Some(line_hint) = self.line_hint else {
@@ -228,14 +270,14 @@ impl StreamingFuzzyMatcher {
         let mut best_match = None;
         let mut best_distance = u32::MAX;
 
-        for range in &self.matches {
-            let start_point = self.snapshot.offset_to_point(range.start);
+        for search_match in &self.matches {
+            let start_point = self.snapshot.offset_to_point(search_match.range.start);
             let start_line = start_point.row;
             let distance = start_line.abs_diff(line_hint);
 
             if distance <= LINE_HINT_TOLERANCE && distance < best_distance {
                 best_distance = distance;
-                best_match = Some(range.clone());
+                best_match = Some(search_match.range.clone());
             }
         }
 
@@ -829,6 +871,79 @@ mod tests {
                 actual_ranges
             );
         }
+    }
+
+    #[test]
+    fn test_line_pairs_skip_unmatched_buffer_line() {
+        let text = indoc! {r#"
+            class Outer:
+                def method(self):
+                    self.kept = "unchanged"
+                    self.target_a = "before"
+                    self.extra = "row"
+                    self.target_b = "before"
+                    self.target_c = "before"
+                    self.target_d = "before"
+                    self.kept_2 = "unchanged"
+        "#};
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            text.to_string(),
+        );
+        let mut matcher = StreamingFuzzyMatcher::new(buffer.snapshot().clone());
+
+        // The query omits the `self.extra` row that sits between the matched
+        // buffer lines.
+        matcher.push(
+            concat!(
+                "        self.target_a = \"before\"\n",
+                "        self.target_b = \"before\"\n",
+                "        self.target_c = \"before\"\n",
+                "        self.target_d = \"before\"\n",
+            ),
+            None,
+        );
+        let matches = matcher.finish();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matcher.line_pairs(&matches[0]),
+            Some(&[(0, 3), (1, 5), (2, 6), (3, 7)][..])
+        );
+    }
+
+    #[test]
+    fn test_line_pairs_include_extended_incomplete_line() {
+        let text = indoc! {r#"
+            fn on_query_change(&mut self, cx: &mut Context<Self>) {
+                self.filter(cx);
+            }
+
+
+
+            fn render_search(&self, cx: &mut Context<Self>) -> Div {
+                div()
+            }
+        "#};
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            text.to_string(),
+        );
+        let mut matcher = StreamingFuzzyMatcher::new(buffer.snapshot().clone());
+
+        // The last query line is incomplete and gets appended to the match by
+        // `finish` via verbatim comparison rather than the fuzzy search.
+        matcher.push("}\n\n\n\nfn render_search", None);
+        let matches = matcher.finish();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matcher.line_pairs(&matches[0]),
+            Some(&[(0, 2), (1, 3), (2, 4), (3, 5), (4, 6)][..])
+        );
+        assert_eq!(matcher.query_lines().len(), 5);
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {

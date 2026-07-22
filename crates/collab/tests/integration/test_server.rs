@@ -48,7 +48,7 @@ use std::{
 use util::path;
 use workspace::{MultiWorkspace, Workspace, WorkspaceStore};
 
-use livekit_client::test::TestServer as LivekitTestServer;
+use livekit_client::test::{ManualUnixTimestampSource, TestServer as LivekitTestServer};
 
 use crate::db_tests::TestDb;
 
@@ -56,6 +56,7 @@ pub struct TestServer {
     pub app_state: Arc<AppState>,
     pub test_livekit_server: Arc<LivekitTestServer>,
     pub test_db: TestDb,
+    livekit_timestamp_source: Arc<ManualUnixTimestampSource>,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
@@ -96,11 +97,13 @@ impl TestServer {
             TestDb::sqlite(deterministic.clone())
         };
         let livekit_server_id = NEXT_LIVEKIT_SERVER_ID.fetch_add(1, SeqCst);
-        let livekit_server = LivekitTestServer::create(
+        let livekit_timestamp_source = Arc::new(ManualUnixTimestampSource::new(1_234_567));
+        let livekit_server = LivekitTestServer::create_with_timestamp_source(
             format!("http://livekit.{}.test", livekit_server_id),
             format!("devkey-{}", livekit_server_id),
             format!("secret-{}", livekit_server_id),
             deterministic.clone(),
+            livekit_timestamp_source.clone(),
         )
         .unwrap();
         let executor = Executor::Deterministic(deterministic.clone());
@@ -121,8 +124,13 @@ impl TestServer {
             forbid_connections: Default::default(),
             next_github_user_id: 0,
             test_db,
+            livekit_timestamp_source,
             test_livekit_server: livekit_server,
         }
+    }
+
+    pub fn advance_livekit_timestamp(&self) {
+        self.livekit_timestamp_source.advance();
     }
 
     pub async fn start2(

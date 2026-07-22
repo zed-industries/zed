@@ -68,7 +68,7 @@ impl OpenPathDelegate {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
             prompt_root: match path_style {
-                PathStyle::Posix => "/".to_string(),
+                PathStyle::Unix => "/".to_string(),
                 PathStyle::Windows => "C:\\".to_string(),
             },
             path_style,
@@ -158,7 +158,7 @@ impl OpenPathDelegate {
 
     fn current_dir(&self) -> &'static str {
         match self.path_style {
-            PathStyle::Posix => "./",
+            PathStyle::Unix => "./",
             PathStyle::Windows => ".\\",
         }
     }
@@ -577,7 +577,45 @@ impl PickerDelegate for OpenPathDelegate {
             .ok();
         })
     }
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let candidate = self.get_entry(self.selected_index)?;
+        if candidate.path.string.is_empty() || !candidate.is_dir {
+            return None;
+        }
+        let path_style = self.path_style;
+        match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => Some(format!(
+                "{}{}{}",
+                parent_path,
+                candidate.path.string,
+                path_style.primary_separator()
+            )),
+            DirectoryState::None { .. } => None,
+        }
+    }
 
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let parent_path = match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => parent_path,
+            DirectoryState::None { .. } => return None,
+        };
+        if parent_path == &self.prompt_root {
+            return None;
+        }
+        let trimmed = parent_path.trim_end_matches(['/', '\\']);
+        let (dir, _) = get_dir_and_suffix(trimmed.to_string(), self.path_style);
+        Some(dir)
+    }
     fn confirm_completion(
         &mut self,
         query: String,
@@ -929,7 +967,7 @@ fn path_candidates(
 
 fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
     match path_style {
-        PathStyle::Posix => {
+        PathStyle::Unix => {
             let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
                 (query[..index].to_string(), query[index + 1..].to_string())
             } else {
@@ -1028,39 +1066,39 @@ mod tests {
 
     #[test]
     fn test_get_dir_and_suffix_with_posix_style() {
-        let (dir, suffix) = get_dir_and_suffix("".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/Use".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Use".into(), PathStyle::Unix);
         assert_eq!(dir, "/");
         assert_eq!(suffix, "Use");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Docum".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Docum".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/");
         assert_eq!(suffix, "Docum");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/");
         assert_eq!(suffix, "Documents");
 
-        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/".into(), PathStyle::Unix);
         assert_eq!(dir, "/Users/Junkui/Documents/");
         assert_eq!(suffix, "");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/.".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/.".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, ".");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/..".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/..".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, "..");
 
-        let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Posix);
+        let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Unix);
         assert_eq!(dir, "/root/");
         assert_eq!(suffix, ".hidden");
     }
