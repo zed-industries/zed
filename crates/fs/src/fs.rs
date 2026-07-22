@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -629,6 +629,64 @@ fn path_to_c_string(path: &Path) -> io::Result<CString> {
     })
 }
 
+// Reads a directory's entries eagerly so the directory handle is opened and closed
+// within this call. On unix we go through libc directly instead of `std::fs::read_dir`
+// because `std`'s `ReadDir` aborts the process if `closedir` fails (it `assert!`s the
+// result), which turns transient errors (e.g. EBADF under file-descriptor pressure)
+// into an unrecoverable crash via Zed's panic hook. Tolerating a failing `closedir`
+// here keeps directory scanning resilient.
+#[cfg(unix)]
+fn read_dir_entries(path: &Path) -> Result<Vec<PathBuf>> {
+    use std::ffi::CStr;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("path contains interior NUL: {path:?}"))?;
+
+    // SAFETY: `c_path` is a valid NUL-terminated C string for the lifetime of the call.
+    let dir = unsafe { libc::opendir(c_path.as_ptr()) };
+    if dir.is_null() {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("failed to open directory {path:?}"));
+    }
+
+    let mut entries = Vec::new();
+    loop {
+        // A null return is end-of-stream (a rare mid-iteration read error is treated as
+        // end-of-stream rather than aborting; the next scan will pick up any changes).
+        // SAFETY: `dir` is a valid, open directory stream owned by this thread.
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
+            break;
+        }
+        // SAFETY: `entry` points to a valid `dirent` whose `d_name` is NUL-terminated
+        // and remains valid until the next `readdir`/`closedir` call.
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        entries.push(path.join(OsStr::from_bytes(name)));
+    }
+
+    // Deliberately ignore the result: unlike `std`, a failing `closedir` must not crash.
+    // SAFETY: `dir` is a valid directory stream that is not used again after this call.
+    unsafe { libc::closedir(dir) };
+
+    Ok(entries)
+}
+
+#[cfg(not(unix))]
+fn read_dir_entries(path: &Path) -> Result<Vec<PathBuf>> {
+    // Non-unix `std` directory iteration does not abort on close, so reuse it; collect
+    // eagerly so the handle is dropped inside this call.
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        entries.push(entry?.path());
+    }
+    Ok(entries)
+}
+
 #[async_trait::async_trait]
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1063,16 +1121,11 @@ impl Fs for RealFs {
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         let path = path.to_owned();
-        let result = iter(
-            self.executor
-                .spawn(async move { std::fs::read_dir(path) })
-                .await?,
-        )
-        .map(|entry| match entry {
-            Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
-        });
-        Ok(Box::pin(result))
+        let entries = self
+            .executor
+            .spawn(async move { read_dir_entries(&path) })
+            .await?;
+        Ok(Box::pin(iter(entries.into_iter().map(Ok))))
     }
 
     async fn watch(
@@ -1591,7 +1644,7 @@ impl FakeFsState {
         Ok(self
             .try_entry(target, true)
             .ok_or_else(|| {
-                anyhow!(io::Error::new(
+                anyhow::anyhow!(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("not found: {target:?}")
                 ))
@@ -3435,5 +3488,41 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
+    }
+}
+
+#[cfg(test)]
+mod read_dir_tests {
+    use super::read_dir_entries;
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    #[test]
+    fn lists_entries_and_excludes_dot_and_dotdot() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), b"a").unwrap();
+        std::fs::write(root.join(".hidden"), b"h").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+
+        let got: BTreeSet<PathBuf> = read_dir_entries(root).unwrap().into_iter().collect();
+        let want: BTreeSet<PathBuf> = [root.join("a.txt"), root.join(".hidden"), root.join("sub")]
+            .into_iter()
+            .collect();
+
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn empty_dir_yields_no_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_dir_entries(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn missing_dir_is_err_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        assert!(read_dir_entries(&missing).is_err());
     }
 }
