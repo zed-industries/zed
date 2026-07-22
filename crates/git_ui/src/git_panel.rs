@@ -6773,6 +6773,7 @@ impl GitPanel {
                     Button::new("initialize_repository", "Initialize Repository")
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
+                        .track_focus(&self.focus_handle)
                         .tooltip(Tooltip::for_action_title_in(
                             "git init",
                             &git::Init,
@@ -8063,7 +8064,9 @@ impl Render for GitPanel {
 
 impl Focusable for GitPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        if self.entries.is_empty() || self.commit_editor_expanded {
+        if (self.entries.is_empty() || self.commit_editor_expanded)
+            && self.active_repository.is_some()
+        {
             self.commit_editor.focus_handle(cx)
         } else {
             self.focus_handle.clone()
@@ -12264,6 +12267,70 @@ mod tests {
                 "should have ChangesList context after re-focusing changes list"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_closes_git_panel_without_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/project"), json!({ "file.txt": "hi\n" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.active_repository.is_none(),
+                "precondition: project has no git repository"
+            );
+        });
+
+        let panel_is_open = |cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, cx| {
+                workspace.all_docks().iter().any(|dock| {
+                    let dock = dock.read(cx);
+                    dock.panel::<GitPanel>().is_some() && dock.is_open()
+                })
+            })
+        };
+
+        let toggle = |cx: &mut VisualTestContext| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
+                    workspace.close_panel::<GitPanel>(window, cx);
+                }
+            });
+            cx.simulate_resize(gpui::size(px(800.), px(600.)));
+            cx.run_until_parked();
+        };
+
+        toggle(cx);
+        assert!(panel_is_open(cx), "first toggle should open the panel");
+
+        toggle(cx);
+        assert!(
+            !panel_is_open(cx),
+            "second toggle should close the panel (focus must leave it first)"
+        );
     }
 
     #[gpui::test]

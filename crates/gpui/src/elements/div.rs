@@ -2828,6 +2828,7 @@ impl Interactivity {
 
                                 if let Some(button) = keyboard_button
                                     && !stroke.modifiers.modified()
+                                    && window.focus_unchanged_since_key_down()
                                 {
                                     let pending =
                                         std::mem::take(&mut *pending_keyboard_down.borrow_mut());

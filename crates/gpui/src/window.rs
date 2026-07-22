@@ -1043,6 +1043,8 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    /// Focus at the last non-repeat key down; a keyboard click fires only if focus is unchanged.
+    key_down_focus: Option<FocusId>,
     focus_enabled: bool,
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
@@ -1751,6 +1753,7 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            key_down_focus: None,
             focus_enabled: true,
             focus_generation: 0,
             pending_input: None,
@@ -1904,6 +1907,10 @@ impl Window {
     pub fn focused(&self, cx: &App) -> Option<FocusHandle> {
         self.focus
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
+
+    pub(crate) fn focus_unchanged_since_key_down(&self) -> bool {
+        self.focus.is_some() && self.focus == self.key_down_focus
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -4912,6 +4919,11 @@ impl Window {
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
+            // Record focus at the initial press, before a matched binding can move it;
+            // skipping repeats keeps it stable if the key is held across a focus change.
+            if !key_down_event.is_held {
+                self.key_down_focus = self.focus;
+            }
             if key_down_event.keystroke.key_char.is_some()
                 && matches!(
                     cx.cursor_hide_mode,

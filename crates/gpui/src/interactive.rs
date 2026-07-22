@@ -875,4 +875,231 @@ mod test {
             })
             .unwrap();
     }
+
+    struct ClickView {
+        clicked: bool,
+        focus_handle: FocusHandle,
+    }
+
+    impl Render for ClickView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            use crate::StatefulInteractiveElement as _;
+            div()
+                .id("clickable")
+                .track_focus(&self.focus_handle)
+                .on_click(cx.listener(|this: &mut ClickView, _, _, _| {
+                    this.clicked = true;
+                }))
+        }
+    }
+
+    fn open_click_view(cx: &mut TestAppContext) -> crate::WindowHandle<ClickView> {
+        cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| ClickView {
+                    clicked: false,
+                    focus_handle: cx.focus_handle(),
+                })
+            })
+            .unwrap()
+        })
+    }
+
+    fn key_down(cx: &mut TestAppContext, window: crate::AnyWindowHandle, key: &str, is_held: bool) {
+        use crate::{KeyDownEvent, PlatformInput};
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke::parse(key).unwrap(),
+                    is_held,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+
+    fn key_up(cx: &mut TestAppContext, window: crate::AnyWindowHandle, key: &str) {
+        use crate::{KeyUpEvent, PlatformInput};
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyUp(KeyUpEvent {
+                    keystroke: Keystroke::parse(key).unwrap(),
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_keyboard_click_fires_with_matching_key_down_and_up(cx: &mut TestAppContext) {
+        let window = open_click_view(cx);
+        window
+            .update(cx, |view, window, cx| {
+                window.focus(&view.focus_handle, cx);
+            })
+            .unwrap();
+
+        key_down(cx, *window, "enter", false);
+        key_up(cx, *window, "enter");
+
+        window
+            .update(cx, |view, _, _| {
+                assert!(
+                    view.clicked,
+                    "enter pressed and released while focused should activate the element"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_keyboard_click_ignores_key_up_without_key_down(cx: &mut TestAppContext) {
+        let window = open_click_view(cx);
+        window
+            .update(cx, |view, window, cx| {
+                window.focus(&view.focus_handle, cx);
+            })
+            .unwrap();
+
+        key_up(cx, *window, "enter");
+
+        window
+            .update(cx, |view, _, _| {
+                assert!(
+                    !view.clicked,
+                    "a key up without a matching key down must not activate the element"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_keyboard_click_ignores_held_key_down(cx: &mut TestAppContext) {
+        let window = open_click_view(cx);
+        window
+            .update(cx, |view, window, cx| {
+                window.focus(&view.focus_handle, cx);
+            })
+            .unwrap();
+
+        key_down(cx, *window, "enter", true);
+        key_down(cx, *window, "enter", true);
+        key_up(cx, *window, "enter");
+
+        window
+            .update(cx, |view, _, _| {
+                assert!(
+                    !view.clicked,
+                    "a held key down must not trigger a keyboard click"
+                );
+            })
+            .unwrap();
+    }
+
+    struct TwoButtonView {
+        a_clicked: bool,
+        b_clicked: bool,
+        a: FocusHandle,
+        b: FocusHandle,
+    }
+
+    impl Render for TwoButtonView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            use crate::StatefulInteractiveElement as _;
+            div()
+                .child(div().id("a").track_focus(&self.a).on_click(cx.listener(
+                    |this: &mut TwoButtonView, _, _, _| {
+                        this.a_clicked = true;
+                    },
+                )))
+                .child(div().id("b").track_focus(&self.b).on_click(cx.listener(
+                    |this: &mut TwoButtonView, _, _, _| {
+                        this.b_clicked = true;
+                    },
+                )))
+        }
+    }
+
+    #[gpui::test]
+    fn test_keyboard_click_ignores_focus_change_between_down_and_up(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| TwoButtonView {
+                    a_clicked: false,
+                    b_clicked: false,
+                    a: cx.focus_handle(),
+                    b: cx.focus_handle(),
+                })
+            })
+            .unwrap()
+        });
+
+        window
+            .update(cx, |view, window, cx| window.focus(&view.a, cx))
+            .unwrap();
+        key_down(cx, *window, "enter", false);
+
+        window
+            .update(cx, |view, window, cx| window.focus(&view.b, cx))
+            .unwrap();
+        key_up(cx, *window, "enter");
+
+        window
+            .update(cx, |view, _, _| {
+                assert!(!view.a_clicked, "A did not receive the key up");
+                assert!(
+                    !view.b_clicked,
+                    "B was focused only after the key down, so the key up must not activate it"
+                );
+            })
+            .unwrap();
+    }
+
+    struct NestedView {
+        inner_clicked: bool,
+        handle: FocusHandle,
+    }
+
+    impl Render for NestedView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            use crate::StatefulInteractiveElement as _;
+            div().track_focus(&self.handle).child(
+                div()
+                    .id("inner")
+                    .track_focus(&self.handle)
+                    .on_click(cx.listener(|this: &mut NestedView, _, _, _| {
+                        this.inner_clicked = true;
+                    })),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_keyboard_click_targets_deepest_element_sharing_focus_handle(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| NestedView {
+                    inner_clicked: false,
+                    handle: cx.focus_handle(),
+                })
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |view, window, cx| window.focus(&view.handle, cx))
+            .unwrap();
+        key_down(cx, *window, "enter", false);
+        key_up(cx, *window, "enter");
+        window
+            .update(cx, |view, _, _| {
+                assert!(
+                    view.inner_clicked,
+                    "deepest element sharing the focus handle should be activated"
+                );
+            })
+            .unwrap();
+    }
 }

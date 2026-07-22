@@ -2716,6 +2716,7 @@ impl CollabPanel {
                     .full_width()
                     .start_icon(Icon::new(button_icon).color(Color::Muted))
                     .style(ButtonStyle::Outlined)
+                    .track_focus(&self.focus_handle)
                     .disabled(is_busy)
                     .on_click(cx.listener(|this, _, window, cx| {
                         let client = this.client.clone();
@@ -3993,7 +3994,17 @@ impl Panel for CollabPanel {
 
 impl Focusable for CollabPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx)
+        let status = *self.client.status().borrow();
+        let is_collaboration_disabled = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled);
+        if !is_collaboration_disabled && status.is_or_was_connected() && !status.is_signing_in() {
+            self.filter_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
