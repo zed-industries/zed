@@ -243,13 +243,13 @@ pub struct EditorSettingsContent {
     ///
     /// 1. Show the scrollbar if there's important information or
     ///    follow the system's configured behavior
-    ///   "auto"
+    ///   "auto" (default)
     /// 2. Match the system's configured behavior:
     ///    "system"
     /// 3. Always show the scrollbar:
     ///    "always"
     /// 4. Never show the scrollbar:
-    ///    "never" (default)
+    ///    "never"
     pub completion_menu_scrollbar: Option<ShowScrollbar>,
 
     /// Whether to align detail text in code completions context menus left or right.
