@@ -695,9 +695,15 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         .merge_from_option(preferred_line_length.as_ref());
     settings.tab_size.merge_from_option(tab_size.as_ref());
     settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
-    settings
-        .remove_trailing_whitespace_on_save
-        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    // Avoid re-enabling destructive whitespace trimming when Zed settings have
+    // disabled it, e.g. for Markdown hard breaks.
+    if !matches!(remove_trailing_whitespace_on_save, Some(true))
+        || settings.remove_trailing_whitespace_on_save
+    {
+        settings
+            .remove_trailing_whitespace_on_save
+            .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    }
     settings
         .ensure_final_newline_on_save
         .merge_from_option(ensure_final_newline_on_save.as_ref());
