@@ -66,7 +66,41 @@ const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
 #[derive(Clone, Debug, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
 
-impl PackageJsonData {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TypeScriptProjectMetadata {
+    package_json_data: PackageJsonData,
+    jest_package_path: Option<Arc<Path>>,
+    mocha_package_path: Option<Arc<Path>>,
+    vitest_package_path: Option<Arc<Path>>,
+    jasmine_package_path: Option<Arc<Path>>,
+    bun_package_path: Option<Arc<Path>>,
+    node_package_path: Option<Arc<Path>>,
+}
+
+impl TypeScriptProjectMetadata {
+    fn new(package_json_data: PackageJsonData) -> Self {
+        Self {
+            package_json_data,
+            ..Self::default()
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.package_json_data.merge(other.package_json_data);
+        self.jest_package_path = self.jest_package_path.take().or(other.jest_package_path);
+        self.mocha_package_path = self.mocha_package_path.take().or(other.mocha_package_path);
+        self.vitest_package_path = self
+            .vitest_package_path
+            .take()
+            .or(other.vitest_package_path);
+        self.jasmine_package_path = self
+            .jasmine_package_path
+            .take()
+            .or(other.jasmine_package_path);
+        self.bun_package_path = self.bun_package_path.take().or(other.bun_package_path);
+        self.node_package_path = self.node_package_path.take().or(other.node_package_path);
+    }
+
     fn fill_task_templates(&self, task_templates: &mut TaskTemplates) {
         if self.jest_package_path.is_some() {
             task_templates.0.push(TaskTemplate {
@@ -286,14 +320,14 @@ impl PackageJsonData {
             });
         }
 
-        let script_name_counts: HashMap<_, usize> =
-            self.scripts
-                .iter()
-                .fold(HashMap::default(), |mut acc, (_, script)| {
-                    *acc.entry(script).or_default() += 1;
-                    acc
-                });
-        for (path, script) in &self.scripts {
+        let script_name_counts: HashMap<_, usize> = self.package_json_data.scripts.iter().fold(
+            HashMap::default(),
+            |mut acc, (_, script)| {
+                *acc.entry(script).or_default() += 1;
+                acc
+            },
+        );
+        for (path, script) in &self.package_json_data.scripts {
             let label = if script_name_counts.get(script).copied().unwrap_or_default() > 1
                 && let Some(parent) = path.parent().and_then(|parent| parent.file_name())
             {
@@ -333,7 +367,7 @@ impl TypeScriptContextProvider {
         worktree_root: &Path,
         file_relative_path: &RelPath,
         cx: &App,
-    ) -> Task<anyhow::Result<PackageJsonData>> {
+    ) -> Task<anyhow::Result<TypeScriptProjectMetadata>> {
         let new_json_data = file_relative_path
             .ancestors()
             .map(|path| worktree_root.join(path.as_std_path()))
@@ -343,7 +377,7 @@ impl TypeScriptContextProvider {
             .collect::<Vec<_>>();
 
         cx.background_spawn(async move {
-            let mut package_json_data = PackageJsonData::default();
+            let mut package_json_data = TypeScriptProjectMetadata::default();
             for new_data in join_all(new_json_data).await.into_iter().flatten() {
                 package_json_data.merge(new_data);
             }
@@ -357,7 +391,7 @@ impl TypeScriptContextProvider {
         existing_package_json: PackageJsonContents,
         fs: Arc<dyn Fs>,
         cx: &App,
-    ) -> Task<anyhow::Result<PackageJsonData>> {
+    ) -> Task<anyhow::Result<TypeScriptProjectMetadata>> {
         let package_json_path = directory_path.join("package.json");
         let metadata_check_fs = fs.clone();
         cx.background_spawn(async move {
@@ -374,8 +408,8 @@ impl TypeScriptContextProvider {
                     .filter(|package_json| package_json.mtime == mtime)
                     .map(|package_json| package_json.data.clone())
             };
-            match existing_data {
-                Some(existing_data) => Ok(existing_data),
+            let package_json_data = match existing_data {
+                Some(existing_data) => existing_data,
                 None => {
                     let package_json_string =
                         fs.load(&package_json_path).await.with_context(|| {
@@ -390,27 +424,96 @@ impl TypeScriptContextProvider {
                     {
                         let mut contents = existing_package_json.0.write().await;
                         contents.insert(
-                            package_json_path,
+                            package_json_path.clone(),
                             PackageJson {
                                 mtime,
                                 data: new_data.clone(),
                             },
                         );
                     }
-                    Ok(new_data)
+                    new_data
                 }
-            }
+            };
+            let mut typescript_package_json_data =
+                TypeScriptProjectMetadata::new(package_json_data);
+            add_installed_test_runners(
+                &package_json_path,
+                &mut typescript_package_json_data,
+                fs.as_ref(),
+            )
+            .await;
+            Ok(typescript_package_json_data)
         })
     }
+}
+
+async fn add_installed_test_runners(
+    package_json_path: &Path,
+    package_json_data: &mut TypeScriptProjectMetadata,
+    fs: &dyn Fs,
+) {
+    let Some(package_json_dir) = package_json_path.parent() else {
+        return;
+    };
+
+    let node_modules_path = package_json_dir.join("node_modules");
+    if node_modules_package_exists(&node_modules_path, "jest", fs).await {
+        package_json_data
+            .jest_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+
+    if node_modules_package_exists(&node_modules_path, "mocha", fs).await {
+        package_json_data
+            .mocha_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+
+    if node_modules_package_exists(&node_modules_path, "vitest", fs).await {
+        package_json_data
+            .vitest_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+
+    if node_modules_package_exists(&node_modules_path, "jasmine", fs).await {
+        package_json_data
+            .jasmine_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+
+    if node_modules_package_exists(&node_modules_path, "@types/bun", fs).await {
+        package_json_data
+            .bun_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+
+    if node_modules_package_exists(&node_modules_path, "@types/node", fs).await {
+        package_json_data
+            .node_package_path
+            .get_or_insert_with(|| package_json_path.into());
+    }
+}
+
+async fn node_modules_package_exists(
+    node_modules_path: &Path,
+    package_name: &str,
+    fs: &dyn Fs,
+) -> bool {
+    let package_path = package_name
+        .split('/')
+        .fold(node_modules_path.to_path_buf(), |path, component| {
+            path.join(component)
+        });
+    fs.is_dir(&package_path).await
 }
 
 async fn detect_package_manager(
     worktree_root: PathBuf,
     fs: Arc<dyn Fs>,
-    package_json_data: Option<PackageJsonData>,
+    package_json_data: Option<TypeScriptProjectMetadata>,
 ) -> &'static str {
     if let Some(package_json_data) = package_json_data
-        && let Some(package_manager) = package_json_data.package_manager
+        && let Some(package_manager) = package_json_data.package_json_data.package_manager
     {
         return package_manager;
     }
@@ -916,7 +1019,8 @@ mod tests {
     use util::{path, rel_path::rel_path};
 
     use crate::typescript::{
-        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+        PackageJsonData, TypeScriptContextProvider, TypeScriptProjectMetadata,
+        replace_test_name_parameters,
     };
 
     #[gpui::test]
@@ -1638,10 +1742,6 @@ mod tests {
         });
 
         let package_json_1 = json!({
-            "dependencies": {
-                "mocha": "1.0.0",
-                "vitest": "1.0.0"
-            },
             "scripts": {
                 "test": ""
             }
@@ -1649,9 +1749,6 @@ mod tests {
         .to_string();
 
         let package_json_2 = json!({
-            "devDependencies": {
-                "vitest": "2.0.0"
-            },
             "scripts": {
                 "test": ""
             }
@@ -1663,8 +1760,14 @@ mod tests {
             path!("/root"),
             json!({
                 "package.json": package_json_1,
+                "node_modules": {
+                    "mocha": {}
+                },
                 "sub": {
                     "package.json": package_json_2,
+                    "node_modules": {
+                        "vitest": {}
+                    },
                     "file.js": "",
                 }
             }),
@@ -1685,26 +1788,28 @@ mod tests {
             .unwrap();
         pretty_assertions::assert_eq!(
             package_json_data,
-            PackageJsonData {
+            TypeScriptProjectMetadata {
+                package_json_data: PackageJsonData {
+                    scripts: [
+                        (
+                            Path::new(path!("/root/package.json")).into(),
+                            "test".to_owned()
+                        ),
+                        (
+                            Path::new(path!("/root/sub/package.json")).into(),
+                            "test".to_owned()
+                        )
+                    ]
+                    .into_iter()
+                    .collect(),
+                    package_manager: None,
+                },
                 jest_package_path: None,
                 mocha_package_path: Some(Path::new(path!("/root/package.json")).into()),
                 vitest_package_path: Some(Path::new(path!("/root/sub/package.json")).into()),
                 jasmine_package_path: None,
                 bun_package_path: None,
                 node_package_path: None,
-                scripts: [
-                    (
-                        Path::new(path!("/root/package.json")).into(),
-                        "test".to_owned()
-                    ),
-                    (
-                        Path::new(path!("/root/sub/package.json")).into(),
-                        "test".to_owned()
-                    )
-                ]
-                .into_iter()
-                .collect(),
-                package_manager: None,
             }
         );
 
@@ -1743,6 +1848,73 @@ mod tests {
                     Some(path!("/root/sub").into())
                 ),
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_package_json_discovery_rechecks_node_modules_without_package_json_dependency(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let package_json = json!({
+            "scripts": {
+                "test": ""
+            }
+        })
+        .to_string();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "package.json": package_json,
+                "file.js": "",
+            }),
+        )
+        .await;
+
+        let provider = TypeScriptContextProvider::new(fs.clone());
+        let package_json_data = cx
+            .update(|cx| {
+                provider.combined_package_json_data(
+                    fs.clone(),
+                    path!("/root").as_ref(),
+                    rel_path("file.js"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(package_json_data.vitest_package_path.is_none());
+
+        fs.insert_tree(
+            path!("/root/node_modules"),
+            json!({
+                "vitest": {},
+            }),
+        )
+        .await;
+
+        let package_json_data = cx
+            .update(|cx| {
+                provider.combined_package_json_data(
+                    fs.clone(),
+                    path!("/root").as_ref(),
+                    rel_path("file.js"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            package_json_data.vitest_package_path,
+            Some(Path::new(path!("/root/package.json")).into())
         );
     }
 
@@ -1796,16 +1968,7 @@ mod tests {
             settings::init(cx);
         });
 
-        // Test case with all test runners present
         let package_json_all_runners = json!({
-            "devDependencies": {
-                "@types/bun": "1.0.0",
-                "@types/node": "^20.0.0",
-                "jest": "29.0.0",
-                "mocha": "10.0.0",
-                "vitest": "1.0.0",
-                "jasmine": "5.0.0",
-            },
             "scripts": {
                 "test": "jest"
             }
@@ -1817,6 +1980,16 @@ mod tests {
             path!("/root"),
             json!({
                 "package.json": package_json_all_runners,
+                "node_modules": {
+                    "@types": {
+                        "bun": {},
+                        "node": {},
+                    },
+                    "jest": {},
+                    "mocha": {},
+                    "vitest": {},
+                    "jasmine": {},
+                },
                 "file.js": "",
             }),
         )
