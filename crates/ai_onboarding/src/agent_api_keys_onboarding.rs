@@ -1,4 +1,4 @@
-use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
+use gpui::{Action, IntoElement, ParentElement, RenderOnce};
 use language_model::{IconOrSvg, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
 
@@ -68,13 +68,9 @@ impl Render for ApiKeysWithProviders {
             .border_x_1()
             .border_color(cx.theme().colors().border.opacity(0.5))
             .bg(cx.theme().colors().background.alpha(0.5))
-            .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.15),
-                offset: point(px(1.), px(-1.)),
-                blur_radius: px(3.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .shadow(vec![
+                gpui::BoxShadow::new(px(1.), px(-1.), gpui::black().opacity(0.15)).blur_radius(px(3.)),
+            ])
             .child(
                 h_flex()
                     .px_2p5()

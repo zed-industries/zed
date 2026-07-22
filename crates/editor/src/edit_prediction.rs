@@ -152,6 +152,7 @@ impl Editor {
     pub fn set_edit_prediction_provider<T>(
         &mut self,
         provider: Option<Entity<T>>,
+        trigger: EditPredictionRequestTrigger,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
@@ -166,13 +167,7 @@ impl Editor {
             provider: Arc::new(provider),
         });
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(
-            false,
-            false,
-            EditPredictionRequestTrigger::Other,
-            window,
-            cx,
-        );
+        self.refresh_edit_prediction(false, false, trigger, window, cx);
     }
 
     pub fn set_edit_predictions_hidden_for_vim_mode(
@@ -189,7 +184,7 @@ impl Editor {
                 self.refresh_edit_prediction(
                     true,
                     false,
-                    EditPredictionRequestTrigger::Other,
+                    EditPredictionRequestTrigger::VimModeChanged,
                     window,
                     cx,
                 );
@@ -399,7 +394,7 @@ impl Editor {
                                 ));
                             self.highlight_rows::<EditPredictionPreview>(
                                 target..target,
-                                cx.theme().colors().editor_highlighted_line_background,
+                                |cx| cx.theme().colors().editor_highlighted_line_background,
                                 RowHighlightOptions {
                                     autoscroll: true,
                                     ..Default::default()
@@ -1660,13 +1655,16 @@ impl Editor {
     ) -> Task<Result<()>> {
         workspace.update(cx, |workspace, cx| {
             let path = snapshot.file().map(|file| file.full_path(cx));
-            let Some(path) =
-                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
+            let Some(project_path) = path
+                .as_ref()
+                .and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
             else {
-                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
+                return Task::ready(Err(anyhow::anyhow!(
+                    "project path not found for edit prediction target {path:?}"
+                )));
             };
             let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(path, None, true, window, cx);
+            let item = workspace.open_path(project_path, None, true, window, cx);
             window.spawn(cx, async move |cx| {
                 let Some(editor) = item.await?.downcast::<Editor>() else {
                     return Ok(());
@@ -2017,13 +2015,10 @@ impl Editor {
                     .gap_1()
                     // Workaround: For some reason, there's a gap if we don't do this
                     .ml(-BORDER_WIDTH)
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.05),
-                        offset: point(px(1.), px(1.)),
-                        blur_radius: px(2.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .shadow(vec![
+                        gpui::BoxShadow::new(px(1.), px(1.), gpui::black().opacity(0.05))
+                            .blur_radius(px(2.)),
+                    ])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)
                     .border_color(cx.theme().colors().border)
@@ -2298,7 +2293,7 @@ impl Editor {
         let file_name = snapshot
             .file()
             .map(|file| SharedString::new(file.file_name(cx)))
-            .unwrap_or(SharedString::new_static("untitled"));
+            .unwrap_or(SharedString::new_static(MultiBuffer::DEFAULT_TITLE));
 
         h_flex()
             .id("ep-jump-outside-popover")
@@ -2432,7 +2427,7 @@ impl Editor {
                 let file_name = snapshot
                     .file()
                     .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
+                    .unwrap_or(MultiBuffer::DEFAULT_TITLE);
                 Some(
                     h_flex()
                         .px_2()

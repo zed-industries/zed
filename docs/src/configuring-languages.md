@@ -115,7 +115,7 @@ You can specify your preference using the `language_servers` setting:
 ```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."]
     }
   }
 ```
@@ -123,7 +123,7 @@ You can specify your preference using the `language_servers` setting:
 In this example:
 
 - `intelephense` is set as the primary language server.
-- `phpactor` and `phptools` are disabled (note the `!` prefix).
+- `phpactor`, `phptools` and `phpantom` are disabled (note the `!` prefix).
 - `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
 
 The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
@@ -214,7 +214,7 @@ Here's how you would structure these settings in Zed's `settings.json`:
 
 #### Possible configuration options
 
-Depending on how a particular language server is implemented, they may depend on different configuration options, both specified in the LSP.
+Language servers may use different configuration options depending on the implementation.
 
 - [initializationOptions](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#version_3_17_0)
 

@@ -100,7 +100,9 @@ impl EditorconfigStore {
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
                                 path: LocalSettingsPath::InWorktree(
-                                    rel_path.join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
+                                    rel_path
+                                        .join(RelPath::from_unix_str(EDITORCONFIG_NAME).unwrap())
+                                        .into(),
                                 ),
                             });
                         }

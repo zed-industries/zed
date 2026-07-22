@@ -67,8 +67,7 @@ impl PaintingViewer {
         builder.line_to(point(px(50.), px(130.)));
         builder.close();
         let path = builder.build().unwrap();
-        let mut red = rgb(0xFF0000);
-        red.a = 0.5;
+        let red = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red.into()));
 
         // 50% opaque blue path that extends across black quad.
@@ -79,8 +78,7 @@ impl PaintingViewer {
         builder.line_to(point(px(150.), px(130.)));
         builder.close();
         let path = builder.build().unwrap();
-        let mut blue = rgb(0x0000FF);
-        blue.a = 0.5;
+        let blue = rgb(0x0000FF).alpha(0.5);
         lines.push((path, blue.into()));
 
         // 50% opaque green path that extends across black quad.
@@ -91,8 +89,7 @@ impl PaintingViewer {
         builder.line_to(point(px(250.), px(130.)));
         builder.close();
         let path = builder.build().unwrap();
-        let mut green = rgb(0x00FF00);
-        green.a = 0.5;
+        let green = rgb(0x00FF00).alpha(0.5);
         lines.push((path, green.into()));
 
         // 50% opaque black path that extends across black quad.
@@ -103,8 +100,7 @@ impl PaintingViewer {
         builder.line_to(point(px(350.), px(130.)));
         builder.close();
         let path = builder.build().unwrap();
-        let mut black = rgb(0x000000);
-        black.a = 0.5;
+        let black = rgb(0x000000).alpha(0.5);
         lines.push((path, black.into()));
 
         // Two 50% opaque red circles overlapping - center should be darker red
@@ -128,8 +124,7 @@ impl PaintingViewer {
         );
         builder.close();
         let path = builder.build().unwrap();
-        let mut red1 = rgb(0xFF0000);
-        red1.a = 0.5;
+        let red1 = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red1.into()));
 
         let mut builder = PathBuilder::fill();
@@ -152,8 +147,7 @@ impl PaintingViewer {
         );
         builder.close();
         let path = builder.build().unwrap();
-        let mut red2 = rgb(0xFF0000);
-        red2.a = 0.5;
+        let red2 = rgb(0xFF0000).alpha(0.5);
         lines.push((path, red2.into()));
 
         // draw a Rust logo

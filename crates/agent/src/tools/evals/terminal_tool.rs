@@ -232,6 +232,8 @@ impl TerminalToolTest {
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
                 sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             template.render(&Templates::new())?
         };
@@ -325,7 +327,9 @@ async fn extract_tool_use(
             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
                 if tool_use.is_input_complete && tool_use.name.as_ref() == TerminalTool::NAME =>
             {
-                let input: TerminalToolInput = serde_json::from_value(tool_use.input)
+                let input: TerminalToolInput = tool_use
+                    .input
+                    .parse()
                     .context("Failed to parse tool input as TerminalToolInput")?;
                 return Ok(input);
             }
