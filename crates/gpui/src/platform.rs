@@ -1906,9 +1906,10 @@ impl WindowBounds {
         }
     }
 
-    /// Creates a new window bounds that centers the window on the screen.
+    /// Creates window bounds centered on the active display, falling back to primary display.
     pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
-        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+        let display_id = cx.active_display().map(|display| display.id());
+        WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
     }
 }
 
