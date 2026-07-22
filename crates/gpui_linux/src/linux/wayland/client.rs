@@ -61,6 +61,7 @@ use wayland_protocols::xdg::shell::client::{
     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland_protocols::xdg::system_bell::v1::client::xdg_system_bell_v1;
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 use wayland_protocols::{
     wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
     xdg::dialog::v1::client::xdg_wm_dialog_v1::{self, XdgWmDialogV1},
@@ -215,6 +216,7 @@ pub struct Globals {
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    pub xdg_output_manager: Option<zxdg_output_manager_v1::ZxdgOutputManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
@@ -257,6 +259,7 @@ impl Globals {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
+            xdg_output_manager: globals.bind(&qh, 1..=3, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
@@ -274,22 +277,24 @@ pub struct InProgressOutput {
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
+    logical_position: Option<Point<DevicePixels>>,
+    logical_size: Option<Size<DevicePixels>>,
     subpixel: Option<wl_output::Subpixel>,
 }
 
 impl InProgressOutput {
     fn complete(&self) -> Option<Output> {
-        if let Some((position, size)) = self.position.zip(self.size) {
-            let scale = self.scale.unwrap_or(1);
-            Some(Output {
-                name: self.name.clone(),
-                scale,
-                bounds: Bounds::new(position, size),
-                subpixel: self.subpixel,
-            })
-        } else {
-            None
-        }
+        let position = self.logical_position.or(self.position)?;
+        let size = self.logical_size.or(self.size)?;
+
+        let scale = self.scale.unwrap_or(1);
+
+        Some(Output {
+            name: self.name.clone(),
+            scale,
+            bounds: Bounds::new(position, size),
+            subpixel: self.subpixel,
+        })
     }
 }
 
@@ -323,8 +328,10 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
+    registry_name_to_output: HashMap<u32, ObjectId>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
+    xdg_outputs: HashMap<ObjectId, zxdg_output_v1::ZxdgOutputV1>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -646,6 +653,7 @@ impl WaylandClient {
         let mut in_progress_outputs = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
+        let mut registry_name_to_output: HashMap<u32, ObjectId> = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -664,6 +672,9 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
+
+                        registry_name_to_output.insert(global.name, output.id());
+
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
                         wl_outputs.insert(output.id(), output);
                     }
@@ -715,6 +726,15 @@ impl WaylandClient {
             qh.clone(),
             seat.clone(),
         );
+
+        let mut xdg_outputs = HashMap::default();
+
+        if let Some(manager) = globals.xdg_output_manager.as_ref() {
+            for output in wl_outputs.values() {
+                let xdg_output = manager.get_xdg_output(output, &qh, output.id());
+                xdg_outputs.insert(output.id(), xdg_output);
+            }
+        }
 
         let data_device = globals
             .data_device_manager
@@ -790,8 +810,10 @@ impl WaylandClient {
             composing: false,
             last_ime_cursor_rectangle: None,
             outputs: HashMap::default(),
+            registry_name_to_output,
             in_progress_outputs,
             wl_outputs,
+            xdg_outputs,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -1268,11 +1290,25 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+
+                    state.registry_name_to_output.insert(name, output.id());
+
+                    if let Some(manager) = state.globals.xdg_output_manager.as_ref() {
+                        let xdg_output = manager.get_xdg_output(&output, qh, output.id());
+                        state.xdg_outputs.insert(output.id(), xdg_output);
+                    }
+
                     state.wl_outputs.insert(output.id(), output);
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
+            wl_registry::Event::GlobalRemove { name } => {
+                if let Some(id) = state.registry_name_to_output.remove(&name) {
+                    state.wl_outputs.remove(&id);
+                    state.outputs.remove(&id);
+                    state.in_progress_outputs.remove(&id);
+                    state.xdg_outputs.remove(&id);
+                }
                 // TODO: handle global removal
             }
             _ => {}
@@ -1300,6 +1336,7 @@ delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextI
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+delegate_noop!(WaylandClientStatePtr: ignore zxdg_output_manager_v1::ZxdgOutputManagerV1);
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(
@@ -1389,7 +1426,39 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 if let Some(complete) = in_progress_output.complete() {
                     state.outputs.insert(output.id(), complete);
                 }
-                state.in_progress_outputs.remove(&output.id());
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zxdg_output_v1::ZxdgOutputV1, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        state: &mut Self,
+        _: &zxdg_output_v1::ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        output_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = state.get_client();
+        let mut state = client.borrow_mut();
+
+        let Some(in_progress) = state.in_progress_outputs.get_mut(output_id) else {
+            return;
+        };
+
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                in_progress.logical_position = Some(point(DevicePixels(x), DevicePixels(y)));
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                in_progress.logical_size = Some(size(DevicePixels(width), DevicePixels(height)));
+            }
+            zxdg_output_v1::Event::Done => {
+                if let Some(complete) = in_progress.complete() {
+                    state.outputs.insert(output_id.clone(), complete);
+                }
             }
             _ => {}
         }
