@@ -1,5 +1,5 @@
 use edit_prediction_types::{
-    EditPredictionDelegate, EditPredictionIconSet, EditPredictionRequestTrigger,
+    Direction, EditPredictionDelegate, EditPredictionIconSet, EditPredictionRequestTrigger,
     PredictedCursorPosition,
 };
 use futures::StreamExt;
@@ -10,7 +10,7 @@ use gpui::{
 use indoc::indoc;
 use language::EditPredictionsMode;
 use language::{Buffer, CodeLabel};
-use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{Anchor, MultiBufferSnapshot, PathKey, ToPoint};
 use project::{Completion, CompletionResponse, CompletionSource};
 use std::{
     ops::Range,
@@ -21,13 +21,14 @@ use std::{
         atomic::{self, AtomicUsize},
     },
 };
-use text::{Point, ToOffset};
+use text::{OffsetRangeExt, Point, ToOffset, ToPoint as TextToPoint};
 use ui::prelude::*;
 
 use crate::{
     AcceptEditPrediction, CodeContextMenu, CompletionContext, CompletionProvider, EditPrediction,
     EditPredictionKeybindAction, EditPredictionKeybindSurface, MenuEditPredictionsPolicy,
     MultiBuffer, ShowCompletions,
+    edit_prediction::EditPredictionJumpAction,
     editor_tests::{init_test, update_test_language_settings},
     test::{
         build_editor, editor_lsp_test_context::EditorLspTestContext,
@@ -518,6 +519,343 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
                 }
             }
         }
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_fully_hidden_non_jump_provider_creates_no_prediction(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeNonZedEditPredictionDelegate::default());
+    assign_editor_completion_provider_non_zed(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row ˇ1
+        row 2
+        row 3
+        row 4
+        row 5
+    "});
+    set_editor_excerpts(&mut cx, [Point::new(0, 0)..Point::new(2, 0)]);
+
+    propose_edits_non_zed(
+        &provider,
+        vec![(Point::new(4, 5)..Point::new(4, 5), " hidden")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_jump_expansion_preserves_unrelated_excerpts(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row ˇ1
+        row 2
+        row 3
+        row 4
+        row 5
+        row 6
+        row 7
+        row 8
+        row 9
+        row 10
+        row 11
+    "});
+    set_editor_excerpts(
+        &mut cx,
+        [
+            Point::new(0, 0)..Point::new(2, 0),
+            Point::new(10, 0)..Point::new(11, 0),
+        ],
+    );
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(4, 5)..Point::new(4, 5), " changed")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    accept_completion(&mut cx);
+
+    let excerpt_rows = editor_excerpt_rows(&mut cx);
+    assert!(
+        excerpt_rows
+            .iter()
+            .any(|range| range.start <= 4 && range.end >= 4),
+        "expanded excerpt should include the hidden edit, got {excerpt_rows:?}"
+    );
+    assert!(
+        excerpt_rows
+            .iter()
+            .any(|range| range.start <= 10 && range.end >= 11),
+        "unrelated visible excerpt should be preserved, got {excerpt_rows:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_cross_excerpt_visible_jump_only_moves_cursor(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row ˇ1
+        row 2
+        row 3
+        row 4
+        row 5
+        row 6
+        row 7
+        row 8
+        row 9
+        row 10
+        row 11
+    "});
+    set_editor_excerpts(
+        &mut cx,
+        [
+            Point::new(0, 0)..Point::new(2, 0),
+            Point::new(10, 0)..Point::new(12, 0),
+        ],
+    );
+
+    let edit_location = Point::new(10, 5);
+    propose_edits(
+        &provider,
+        vec![(edit_location..edit_location, " changed")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, cx| {
+        let Some(completion_state) = &editor.active_edit_prediction else {
+            panic!("editor has no active completion");
+        };
+        let EditPrediction::MoveWithin {
+            target,
+            accept_action: None,
+        } = &completion_state.completion
+        else {
+            panic!("expected visible cross-excerpt edit to produce a pure move completion");
+        };
+
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let (target, target_snapshot) = snapshot
+            .anchor_to_buffer_anchor(*target)
+            .expect("target should resolve to buffer anchor");
+        assert_eq!(target.to_point(&target_snapshot), edit_location);
+    });
+
+    let excerpt_rows_before = editor_excerpt_rows(&mut cx);
+    accept_completion(&mut cx);
+
+    cx.editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let cursor = editor.selections.newest_anchor().head();
+        let (cursor, cursor_snapshot) = snapshot
+            .anchor_to_buffer_anchor(cursor)
+            .expect("cursor should resolve to buffer anchor");
+        assert_eq!(cursor.to_point(&cursor_snapshot), edit_location);
+    });
+    assert_eq!(editor_excerpt_rows(&mut cx), excerpt_rows_before);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_jump_expansion_preserves_sorted_path_key(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row ˇ1
+        row 2
+        row 3
+        row 4
+        row 5
+        row 6
+    "});
+
+    let sorted_path = PathKey::sorted(1);
+    set_editor_excerpts_for_path(
+        &mut cx,
+        sorted_path.clone(),
+        [Point::new(0, 0)..Point::new(2, 0)],
+    );
+    assert_eq!(
+        editor_single_buffer_path(&mut cx),
+        Some(sorted_path.clone())
+    );
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(4, 5)..Point::new(4, 5), " changed")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    accept_completion(&mut cx);
+
+    assert_eq!(editor_single_buffer_path(&mut cx), Some(sorted_path));
+    let excerpt_rows = editor_excerpt_rows(&mut cx);
+    assert!(
+        excerpt_rows
+            .iter()
+            .any(|range| range.start <= 4 && range.end >= 4),
+        "expanded excerpt should include the hidden edit, got {excerpt_rows:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_jump_uses_hidden_edit_distance(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row ˇ1
+        row 2
+        row 3
+        row 4
+        row 5
+        row 6
+        row 7
+        row 8
+        row 9
+        row 10
+        row 11
+        row 12
+        row 13
+        row 14
+        row 15
+        row 16
+        row 17
+        row 18
+        row 19
+        row 20
+        row 21
+        row 22
+        row 23
+        row 24
+        row 25
+        row 26
+        row 27
+        row 28
+        row 29
+        row 30
+        row 31
+    "});
+    set_editor_excerpts(
+        &mut cx,
+        [
+            Point::new(0, 0)..Point::new(2, 0),
+            Point::new(30, 0)..Point::new(31, 0),
+        ],
+    );
+
+    propose_edits(
+        &provider,
+        vec![
+            (Point::new(1, 5)..Point::new(1, 5), " visible"),
+            (Point::new(18, 6)..Point::new(18, 6), " hidden"),
+        ],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, _| {
+        let Some(completion_state) = &editor.active_edit_prediction else {
+            panic!("editor has no active completion");
+        };
+        if let EditPrediction::MoveWithin {
+            accept_action: Some(EditPredictionJumpAction::Open { target, snapshot }),
+            ..
+        } = &completion_state.completion
+        {
+            assert_eq!(target.to_point(snapshot), Point::new(18, 6));
+        } else {
+            panic!("expected hidden edit beyond threshold to open on accept");
+        };
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_hidden_edit_direction_uses_unsnapped_target(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state(indoc! {"
+        row 0
+        row 1
+        row 2
+        row 3
+        row 4
+        ˇrow 5
+        row 6
+        row 7
+    "});
+    set_editor_excerpts(&mut cx, [Point::new(5, 0)..Point::new(7, 0)]);
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(4, 0)..Point::new(4, 0), "hidden above\n")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.editor(|editor, _, cx| {
+        let Some(completion_state) = &editor.active_edit_prediction else {
+            panic!("editor has no active completion");
+        };
+        let EditPrediction::MoveWithin {
+            target,
+            accept_action: Some(accept_action),
+        } = &completion_state.completion
+        else {
+            panic!("expected hidden edit to produce a move completion");
+        };
+
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let (snapped_target, snapped_target_snapshot) = snapshot
+            .anchor_to_buffer_anchor(*target)
+            .expect("target should resolve to buffer anchor");
+        assert_eq!(
+            snapped_target.to_point(&snapped_target_snapshot),
+            Point::new(5, 0)
+        );
+        assert!(matches!(
+            accept_action.hidden_edit_direction(*target, &snapshot, cx),
+            Some(Direction::Prev)
+        ));
     });
 }
 
@@ -1497,6 +1835,56 @@ async fn test_discard_clears_delegate_completion(cx: &mut gpui::TestAppContext) 
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
         editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
+    })
+}
+
+fn set_editor_excerpts<const COUNT: usize>(
+    cx: &mut EditorTestContext,
+    ranges: [Range<Point>; COUNT],
+) {
+    let path = cx.multibuffer(|multi_buffer, cx| {
+        let Some(buffer) = multi_buffer.as_singleton() else {
+            panic!("expected a singleton buffer");
+        };
+        PathKey::for_buffer(&buffer, cx)
+    });
+    set_editor_excerpts_for_path(cx, path, ranges);
+}
+
+fn set_editor_excerpts_for_path<const COUNT: usize>(
+    cx: &mut EditorTestContext,
+    path: PathKey,
+    ranges: [Range<Point>; COUNT],
+) {
+    cx.update_multibuffer(|multi_buffer, cx| {
+        let Some(buffer) = multi_buffer.as_singleton() else {
+            panic!("expected a singleton buffer");
+        };
+        multi_buffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
+    });
+}
+
+fn editor_single_buffer_path(cx: &mut EditorTestContext) -> Option<PathKey> {
+    cx.multibuffer(|multi_buffer, cx| {
+        let snapshot = multi_buffer.snapshot(cx);
+        let buffer = snapshot.as_singleton()?;
+        snapshot.path_for_buffer(buffer.remote_id()).cloned()
+    })
+}
+
+fn editor_excerpt_rows(cx: &mut EditorTestContext) -> Vec<Range<u32>> {
+    cx.multibuffer(|multi_buffer, cx| {
+        let snapshot = multi_buffer.snapshot(cx);
+        let Some(buffer) = snapshot.as_singleton() else {
+            panic!("expected a singleton buffer");
+        };
+        snapshot
+            .excerpts_for_buffer(buffer.remote_id())
+            .map(|excerpt| {
+                let range = excerpt.context.to_point(&buffer);
+                range.start.row..range.end.row
+            })
+            .collect()
     })
 }
 

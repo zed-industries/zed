@@ -94,6 +94,11 @@ pub(crate) use edit_prediction::{
 pub(crate) use edit_prediction::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use edit_prediction::{
+    EditPredictionMultiBufferPreviewCase, edit_prediction_multibuffer_preview_cases,
+    edit_prediction_multibuffer_preview_editor,
+};
 pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
