@@ -1810,7 +1810,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, WindowHandle};
     use language::{Buffer, DiskState, Point};
-    use project::{FakeFs, Project};
+    use project::Project;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
