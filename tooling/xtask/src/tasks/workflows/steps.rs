@@ -150,11 +150,21 @@ pub fn checkout_repo() -> CheckoutStep {
     CheckoutStep::default()
 }
 
+// Audit mode: logs egress, blocks nothing. Namespace requires v2.19.0+.
+pub fn harden_runner() -> Step<Use> {
+    named::uses(
+        "step-security",
+        "harden-runner",
+        "9af89fc71515a100421586dfdb3dc9c984fbf411", // v2.19.4
+    )
+    .add_with(("egress-policy", "audit"))
+}
+
 pub fn setup_pnpm() -> Step<Use> {
     named::uses(
         "pnpm",
         "action-setup",
-        "fe02b34f77f8bc703788d5817da081398fad5dd2", // v4.0.0
+        "fc06bc1257f339d1d5d8b3a19a8cae5388b55320", // v4.4.0
     )
     .add_with(("version", "9"))
 }
@@ -163,9 +173,10 @@ pub fn setup_node() -> Step<Use> {
     named::uses(
         "actions",
         "setup-node",
-        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+        "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", // v6.4
     )
-    .add_with(("node-version", "20"))
+    .add_with(("node-version", "24"))
+    .add_with(("check-latest", true))
 }
 
 pub fn setup_sentry() -> Step<Use> {
@@ -365,6 +376,16 @@ impl CommonJobConditions for Job {
     }
 }
 
+pub trait CommonPermissionSets: Sized {
+    fn with_minimal_permissions(self) -> Self;
+}
+
+impl CommonPermissionSets for Workflow {
+    fn with_minimal_permissions(self) -> Self {
+        self.permissions(Permissions::default().contents(Level::Read))
+    }
+}
+
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .with_repository_owner_guard()
@@ -492,6 +513,7 @@ pub mod named {
                     .collect::<Vec<_>>()
                     .join("::"),
             )
+            .permissions(Permissions::default())
             .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 
@@ -752,11 +774,6 @@ pub fn download_artifact() -> DownloadArtifactStep {
         name: function_name(1),
         ..Default::default()
     }
-}
-
-pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
-        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 /// Non-exhaustive list of the permissions to be set for a GitHub app token.

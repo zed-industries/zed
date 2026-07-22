@@ -103,6 +103,9 @@ impl Editor {
                 Some(OutlineItem {
                     depth: item.depth,
                     range: range_start..range_end,
+                    selection_range: multi_buffer_snapshot
+                        .anchor_in_buffer(item.selection_range.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(item.selection_range.end)?,
                     source_range_for_text: source_range_for_text_start..source_range_for_text_end,
                     text: item.text.clone(),
                     highlight_ranges: item.highlight_ranges.clone(),
@@ -331,7 +334,9 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::TestAppContext;
+    use multi_buffer::ToPoint;
     use settings::{DocumentSymbols, SettingsStore};
+    use text::Point;
     use util::path;
     use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -755,7 +760,7 @@ mod tests {
         assert!(symbol_request.next().await.is_some());
         cx.run_until_parked();
 
-        cx.update_editor(|editor, _window, _cx| {
+        cx.update_editor(|editor, _window, cx| {
             let (_, symbols) = editor
                 .outline_symbols_at_cursor
                 .as_ref()
@@ -763,7 +768,19 @@ mod tests {
             assert_eq!(symbols.len(), 1);
 
             let symbol = &symbols[0];
+            let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
             assert_eq!(symbol.text, "fn test");
+            assert_eq!(
+                symbol
+                    .selection_range
+                    .start
+                    .to_point(&multi_buffer_snapshot),
+                Point::new(1, 3)
+            );
+            assert_eq!(
+                symbol.selection_range.end.to_point(&multi_buffer_snapshot),
+                Point::new(1, 7)
+            );
 
             // Verify all highlight ranges are valid byte boundaries in the text
             for (range, _style) in &symbol.highlight_ranges {

@@ -21,6 +21,10 @@ enum CliCommand {
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
     /// Publishes GPUI and its dependencies to crates.io.
     PublishGpui(tasks::publish_gpui::PublishGpuiArgs),
+    /// Runs the Linux Bubblewrap sandboxing NixOS VM tests.
+    SandboxTests(tasks::sandbox_tests::SandboxTestsArgs),
+    /// Runs the Windows WSL Bubblewrap sandbox behavior tests.
+    WslSandboxTests(tasks::wsl_sandbox_tests::WslSandboxTestsArgs),
     /// Downloads the pinned `webrtc-sys` release and configures `LK_CUSTOM_WEBRTC`.
     SetupWebrtc(tasks::setup_webrtc::SetupWebrtcArgs),
     /// Builds GPUI web examples and serves them.
@@ -40,6 +44,8 @@ fn main() -> Result<()> {
             tasks::package_conformity::run_package_conformity(args)
         }
         CliCommand::PublishGpui(args) => tasks::publish_gpui::run_publish_gpui(args),
+        CliCommand::SandboxTests(args) => tasks::sandbox_tests::run_sandbox_tests(args),
+        CliCommand::WslSandboxTests(args) => tasks::wsl_sandbox_tests::run_wsl_sandbox_tests(args),
         CliCommand::SetupWebrtc(args) => tasks::setup_webrtc::run_setup_webrtc(args),
         CliCommand::WebExamples(args) => tasks::web_examples::run_web_examples(args),
         CliCommand::Workflows(args) => tasks::workflows::run_workflows(args),

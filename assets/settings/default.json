@@ -73,6 +73,12 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The default font size for the markdown preview. Falls back to the UI font size if unset.
+  "markdown_preview_font_size": null,
+  // The font family for the markdown preview. Falls back to the UI font family if unset.
+  "markdown_preview_font_family": null,
+  // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
+  "markdown_preview_code_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -103,6 +109,16 @@
   "image_viewer": {
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
+  },
+  // Markdown preview settings
+  "markdown_preview": {
+    // Whether to limit the width of the rendered markdown content. When
+    // enabled, content is constrained to `max_width` and centered
+    // horizontally within the preview pane.
+    "limit_content_width": true,
+    // The maximum width, in pixels, of the rendered markdown content when
+    // limit_content_width is enabled.
+    "max_width": 800,
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
@@ -146,10 +162,17 @@
   // May take 2 values:
   //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open directories in a new window (reuse existing windows for files
-  //     that are already part of an open project)
+  //  2. Open paths in a new window, unless they are subpaths of an existing project
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
+  // The default behavior when opening projects from the UI.
+  //
+  // May take 2 values:
+  //  1. Open projects as a new workspace in the current Zed window's sidebar
+  //         "default_open_behavior": "existing_window"
+  //  2. Open projects in a new window
+  //         "default_open_behavior": "new_window"
+  "default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
@@ -210,6 +233,9 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -242,6 +268,15 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to reduce non-essential motion in the UI, such as loading
+  // spinners and pulsating labels, by rendering them in a static state.
+  //
+  // May take 2 values:
+  // 1. Always reduce motion:
+  //    "on"
+  // 2. Never reduce motion:
+  //    "off"
+  "reduce_motion": "off",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
@@ -375,6 +410,14 @@
   // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
   //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
+  // Where to show LSP results that can contain multiple locations
+  // (Go to Definition, Go to Implementation, Find All References). A single
+  // result always opens directly. Individual actions can override this with
+  // their `open_results_in` argument.
+  //
+  // 1. Open the results in a multibuffer: `multi_buffer` (default)
+  // 2. Open the results in a filterable picker: `picker`
+  "lsp_results_location": "multi_buffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -505,6 +548,8 @@
     "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
+    // Whether to show the worktree name button in the titlebar.
+    "show_worktree_name": true,
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
@@ -956,10 +1001,14 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-    // Whether to sort entries in the panel by path or by status (the default).
+    // How to sort entries in the git panel.
     //
-    // Default: false
-    "sort_by_path": false,
+    // Default: path
+    "sort_by": "path",
+    // How to group entries in the git panel.
+    //
+    // Default: status
+    "group_by": "status",
     // Whether to collapse untracked files in the diff panel.
     //
     // Default: false
@@ -990,17 +1039,20 @@
     // Maximum length of the commit message title before a warning is shown.
     // Set to 0 to disable.
     //
-    // Default: 72
-    "commit_title_max_length": 72,
-  },
-  "message_editor": {
-    // Whether to automatically replace emoji shortcodes with emoji characters.
-    // For example: typing `:wave:` gets replaced with `👋`.
-    "auto_replace_emoji_shortcode": true,
+    // Default: 0
+    "commit_title_max_length": 0,
+    // Default action when clicking a changed file in the Git panel.
+    //
+    // Choices: project_diff, file_diff, view_file
+    // Default: project_diff
+    "entry_primary_click_action": "project_diff",
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
+    // Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    // in the prompt when generating git commit messages.
+    "commit_message_include_project_rules": true,
     // Whether the agent is enabled.
     "enabled": true,
     // Whether to show the agent panel button in the status bar.
@@ -1098,6 +1150,22 @@
     },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
+    // Settings for automatic agent context compaction, which summarizes earlier
+    // messages to free up room in the model's context window once it grows too
+    // large.
+    "auto_compact": {
+      // Whether to automatically compact the agent's context near the limit.
+      "enabled": true,
+      // The threshold at which auto-compaction runs. One of:
+      //   - A percentage string ending in "%" (e.g. "90%"), measured against
+      //     the model's context window. Decimals are allowed (e.g. "95.5%").
+      //   - A positive integer: compact after that many tokens have been used
+      //     (e.g. 100000 compacts after 100,000 tokens are used).
+      //   - A negative integer: compact once that many tokens remain in the
+      //     context window (e.g. -20000 compacts once fewer than 20,000 remain).
+      // 0 is not a valid threshold.
+      "threshold": "90%",
+    },
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
     "default_profile": "write",
@@ -1181,6 +1249,13 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    // The command is sent to the shell as if typed, so it is interpreted by your
+    // configured shell (including on Windows and remote/WSL projects).
+    // Set to "" to disable.
+    //
+    // Example: "terminal_init_command": "claude"
+    "terminal_init_command": "",
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
@@ -1405,9 +1480,15 @@
   // The EditorConfig `end_of_line` property overrides this setting and behaves
   // like `enforce_lf` or `enforce_crlf`.
   "line_ending": "detect",
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving:
+  //   "on" — format the whole buffer
+  //   "off" — do not format
+  //   "modifications" — format only lines with unstaged changes; skips formatting
+  //     when no git diff is available or the language server lacks range formatting
+  //   "modifications_if_available" — same, but falls back to formatting the whole
+  //     buffer when range formatting cannot be used
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
-  "format_on_save": "on",
+  "format_on_save": "off",
   // How to perform a buffer format. This setting can take multiple values:
   //
   // 1. Default. Format files using Zed's Prettier integration (if applicable),
@@ -1471,6 +1552,9 @@
     "diagnostics": true,
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true,
+    // Allow sending requests to Anthropic models that cannot be offered with
+    // Zero Data Retention
+    "anthropic_retention": false,
   },
   // Whether to disable all AI features in Zed.
   //
@@ -1584,13 +1668,15 @@
     ///
     /// Default: 0
     "gutter_debounce": 0,
-    // Control whether the git blame information is shown inline,
-    // in the currently focused line.
+    // Control whether the git blame information is shown for the currently
+    // focused line, and where it is rendered.
     "inline_blame": {
       "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // Where to render the blame information when it is enabled.
+      "location": "inline",
       // The amount of padding between the end of the source line and the start
       // of the inline blame in units of em widths.
       "padding": 7,
@@ -1605,6 +1691,10 @@
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true,
+    },
+    "file_diff": {
+      // Whether newly opened file diffs show the full file instead of changes only.
+      "show_full_file": true,
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
@@ -1839,6 +1929,12 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    // when the terminal application has enabled mouse reporting (e.g. vim with
+    // mouse=a, htop). When false, these clicks are forwarded to the application
+    // instead, and hyperlinks can still be opened with shift-cmd-click
+    // (shift-ctrl-click).
+    "open_links_in_mouse_mode": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -2109,6 +2205,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "format_on_save": "on",
       "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
@@ -2121,14 +2218,12 @@
       },
     },
     "C": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
       },
     },
     "C++": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
@@ -2143,6 +2238,7 @@
       },
     },
     "Dart": {
+      "format_on_save": "on",
       "tab_size": 2,
     },
     "Diff": {
@@ -2151,12 +2247,15 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
+      "format_on_save": "on",
       "tab_size": 4,
     },
     "Erlang": {
@@ -2168,6 +2267,7 @@
       "preferred_line_length": 72,
     },
     "Go": {
+      "format_on_save": "on",
       "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true,
@@ -2175,11 +2275,13 @@
       "debuggers": ["Delve"],
     },
     "GraphQL": {
+      "format_on_save": "on",
       "prettier": {
         "allowed": true,
       },
     },
     "HEEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
@@ -2216,6 +2318,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Kotlin": {
+      "format_on_save": "on",
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."],
     },
     "LaTeX": {
@@ -2227,7 +2330,6 @@
       },
     },
     "Markdown": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
@@ -2240,7 +2342,7 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2282,6 +2384,7 @@
       ],
     },
     "Rust": {
+      "format_on_save": "on",
       "debuggers": ["CodeLLDB"],
     },
     "SCSS": {
@@ -2290,6 +2393,7 @@
       },
     },
     "Starlark": {
+      "format_on_save": "on",
       "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
@@ -2317,7 +2421,6 @@
       },
     },
     "SystemVerilog": {
-      "format_on_save": "off",
       "language_servers": ["!slang", "..."],
       "use_on_type_format": false,
     },
@@ -2342,6 +2445,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Zig": {
+      "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
   },
@@ -2350,12 +2454,16 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com",
     },
+    "anthropic_compatible": {},
     "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com",
     },
     "ollama": {
       "api_url": "http://localhost:11434",
+    },
+    "llama.cpp": {
+      "api_url": "http://localhost:8080",
     },
     "openai": {
       "api_url": "https://api.openai.com/v1",
@@ -2453,6 +2561,11 @@
     //
     // Default: 120
     "request_timeout": 120,
+    // The maximum line length a buffer may contain before language server features are disabled
+    // for the entire buffer.
+    //
+    // Default: 20000
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -2585,7 +2698,7 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."],
       },
     },
   },

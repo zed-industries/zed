@@ -71,7 +71,17 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "agent_ui_font_size": 15,
   // Controls the font size for the agent panel's message editor, user message,
   // and any other snippet of code.
-  "agent_buffer_font_size": 12
+  "agent_buffer_font_size": 12,
+
+  // Controls the font size for the markdown preview.
+  // If not specified, it falls back to the editor font size.
+  "markdown_preview_font_size": null,
+  // Controls the font family for the markdown preview.
+  // If not specified, it falls back to the UI font family.
+  "markdown_preview_font_family": null,
+  // Controls the font family for code blocks in the markdown preview.
+  // If not specified, it falls back to the editor font family.
+  "markdown_preview_code_font_family": null
 ```
 
 ### Font ligatures
@@ -120,6 +130,7 @@ To disable this behavior use:
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
+    "show_worktree_name": true,     // Show/hide worktree name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
@@ -237,7 +248,8 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay_ms": 0,                  // Show after delay (ms)
+      "delay_ms": 0,               // Show after delay (ms)
+      "location": "inline",        // inline, status_bar
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -559,7 +571,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left",               // Where to dock: left, right
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
-    "sort_by_path": false,        // Sort by path (false) or status (true)
+    "sort_by": "path",            // path, name
+    "group_by": "status",         // none, status, staging
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }

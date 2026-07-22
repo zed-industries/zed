@@ -52,8 +52,8 @@ impl MouseButtonCode {
     fn from_button(e: MouseButton) -> Self {
         match e {
             gpui::MouseButton::Left => MouseButtonCode::LeftButton,
-            gpui::MouseButton::Right => MouseButtonCode::MiddleButton,
-            gpui::MouseButton::Middle => MouseButtonCode::RightButton,
+            gpui::MouseButton::Middle => MouseButtonCode::MiddleButton,
+            gpui::MouseButton::Right => MouseButtonCode::RightButton,
             gpui::MouseButton::Navigate(_) => MouseButtonCode::Other,
         }
     }

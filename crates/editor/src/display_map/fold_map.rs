@@ -722,6 +722,11 @@ impl FoldSnapshot {
         self.folds.items(&self.inlay_snapshot.buffer).len()
     }
 
+    #[inline(always)]
+    pub fn has_folds(&self) -> bool {
+        !self.folds.is_empty()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
         let mut summary = MBTextSummary::default();
@@ -1018,6 +1023,11 @@ pub struct FoldPointCursor<'transforms> {
 }
 
 impl FoldPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: InlayPoint, bias: Bias) -> FoldPoint {
         let cursor = &mut self.cursor;

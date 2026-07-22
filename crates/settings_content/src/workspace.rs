@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    ActionName, CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    CenteredPaddingSettings, CommandAliasTarget, DelayMs, DockPosition, DockSide, InactiveOpacity,
     ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
@@ -54,6 +54,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: existing_window
     pub cli_default_open_behavior: Option<CliDefaultOpenBehavior>,
+    /// The default behavior when opening projects from the UI.
+    ///
+    /// Default: existing_window
+    pub default_open_behavior: Option<DefaultOpenBehavior>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
@@ -73,6 +77,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to optimize Zed's interface for assistive technology such as
+    /// screen readers.
+    ///
+    /// Default: false
+    pub accessible_mode: Option<bool>,
     /// Whether to use the system provided dialogs for Open and Save As.
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
@@ -90,7 +99,7 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: {}
     #[serde(default)]
-    pub command_aliases: HashMap<String, ActionName>,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
@@ -404,8 +413,32 @@ pub enum CliDefaultOpenBehavior {
     #[default]
     #[strum(serialize = "Add to Existing Window")]
     ExistingWindow,
-    /// Open directories in a new window, but reuse an existing window when
-    /// opening files that are already part of an open project.
+    /// Open paths in a new window unless they are subpaths of an existing project.
+    #[strum(serialize = "Open a New Window")]
+    NewWindow,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultOpenBehavior {
+    /// Open projects in the current Zed window.
+    #[default]
+    #[strum(serialize = "Add to Existing Window")]
+    ExistingWindow,
+    /// Open projects in a new window.
     #[strum(serialize = "Open a New Window")]
     NewWindow,
 }

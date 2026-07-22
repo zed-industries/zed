@@ -528,8 +528,12 @@ pub mod simple_message_notification {
                     if let Some(auto_hide) = this.auto_hide.as_mut() {
                         auto_hide.finish_timer();
                         if !auto_hide.hovered {
-                            auto_hide.start_fading_out();
-                            cx.notify();
+                            if cx.reduce_motion() {
+                                cx.emit(DismissEvent);
+                            } else {
+                                auto_hide.start_fading_out();
+                                cx.notify();
+                            }
                         }
                     }
                 }) {
@@ -956,7 +960,7 @@ pub mod simple_message_notification {
                 cx.emit(DismissEvent);
             }
 
-            if self.needs_animation_frame() {
+            if self.needs_animation_frame() && !cx.reduce_motion() {
                 window.request_animation_frame();
             }
 
@@ -977,6 +981,7 @@ pub mod simple_message_notification {
 
             let copy_text = self.copy_text.clone();
             let header_actions = h_flex()
+                .flex_shrink_0()
                 .gap_1()
                 .when_some(copy_text, |el, text| {
                     el.child(
@@ -1157,6 +1162,8 @@ pub mod simple_message_notification {
                                 .items_start()
                                 .child(
                                     v_flex()
+                                        .flex_1()
+                                        .min_w_0()
                                         .gap_0p5()
                                         .when_some(self.title.clone(), |div, title| {
                                             div.child(Label::new(title))
@@ -1270,13 +1277,11 @@ pub mod simple_message_notification {
             struct LanguageServerError;
             impl WorkspaceError for LanguageServerError {
                 fn primary_message(&self) -> SharedString {
-                    "Couldn't reach the language server.".into()
+                    "Error: Prepare rename via rust-analyzer failed: No references found at position"
+                        .into()
                 }
                 fn secondary_message(&self) -> Option<SharedString> {
-                    Some(
-                        "Make sure the server is installed and your network connection is working."
-                            .into(),
-                    )
+                    None
                 }
                 fn primary_action(&self) -> ErrorAction {
                     ErrorAction::dismiss()

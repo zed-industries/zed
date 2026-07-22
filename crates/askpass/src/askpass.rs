@@ -91,6 +91,9 @@ pub struct AskPassSession {
 #[cfg(not(target_os = "windows"))]
 const ASKPASS_SCRIPT_NAME: &str = "askpass.sh";
 
+#[cfg(not(target_os = "windows"))]
+const GPG_WRAPPER_SCRIPT_NAME: &str = "gpg-wrapper.sh";
+
 impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
@@ -153,15 +156,25 @@ impl AskPassSession {
     // The caller is responsible for examining the result of their own commands and cancelling this
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
-    pub async fn run(&mut self) -> AskPassResult {
-        // This is the default timeout setting used by VSCode.
-        let connection_timeout = Duration::from_secs(17);
+    //
+    // When `timeout` is provided, this resolves with `AskPassResult::Timedout` if no askpass prompt
+    // has been opened within that duration. This is intended for connection establishment (e.g.
+    // SSH), where "no prompt and no connection" indicates an unreachable host. Callers wrapping
+    // commands that may legitimately run for a long time without prompting (e.g. git) should pass
+    // `None` and rely on the command's own completion instead.
+    pub async fn run(&mut self, timeout: Option<Duration>) -> AskPassResult {
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
             .take()
             .expect("Only call run once");
         let executor = self.executor.clone();
+        let timer = async move {
+            match timeout {
+                Some(timeout) => executor.timer(timeout).await,
+                None => std::future::pending().await,
+            }
+        };
 
         select_biased! {
             _ = askpass_opened_rx.fuse() => {
@@ -170,7 +183,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(executor.timer(connection_timeout)) => {
+            _ = futures::FutureExt::fuse(timer) => {
                 AskPassResult::Timedout
             }
         }
@@ -187,6 +200,15 @@ impl AskPassSession {
     /// On Windows this is the path to cli.exe directly — no script needed.
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         self.askpass_task.script_path()
+    }
+
+    /// Path to a script suitable for git's `gpg.program`, routing GnuPG
+    /// passphrase prompts through Zed's askpass UI. `None` if unavailable.
+    pub fn gpg_wrapper_path(&self) -> Option<&std::path::Path> {
+        #[cfg(not(target_os = "windows"))]
+        return self.askpass_task.gpg_wrapper_path();
+        #[cfg(target_os = "windows")]
+        return None;
     }
 
     /// Returns the socket path to set as ZED_ASKPASS_SOCKET.
@@ -206,6 +228,8 @@ pub struct PasswordProxy {
     /// On Unix: path to the generated .sh askpass script (set as SSH_ASKPASS).
     /// On Windows: path to cli.exe (set as SSH_ASKPASS directly — no script needed).
     askpass_script_path: std::path::PathBuf,
+    #[cfg(not(target_os = "windows"))]
+    gpg_wrapper_script_path: Option<std::path::PathBuf>,
     /// On Windows only: path to the Unix socket, passed as ZED_ASKPASS_SOCKET
     /// so cli.exe can find it without --askpass argument parsing.
     #[cfg(target_os = "windows")]
@@ -237,6 +261,24 @@ impl PasswordProxy {
         let askpass_script_path = askpass_program.to_path_buf();
 
         let askpass_socket_path = askpass_socket.clone();
+
+        // Create a gpg wrapper script that routes GnuPG passphrase prompts through
+        // the same socket (and thus through Zed's askpass UI). This only works on
+        // Unix where we control the pinentry via loopback mode. We compute the path
+        // before the socket task takes ownership of `temp_dir`, and write the file
+        // afterwards.
+        #[cfg(not(target_os = "windows"))]
+        let (gpg_wrapper_script_path, gpg_wrapper_script) =
+            match generate_gpg_wrapper_script(askpass_program, &askpass_socket_path) {
+                Ok(script) => (
+                    Some(temp_dir.path().join(GPG_WRAPPER_SCRIPT_NAME)),
+                    Some(script),
+                ),
+                Err(err) => {
+                    log::warn!("could not create gpg askpass wrapper: {err:#}");
+                    (None, None)
+                }
+            };
 
         let _task = executor.spawn(async move {
             maybe!(async move {
@@ -291,9 +333,36 @@ impl PasswordProxy {
                 })?;
         }
 
+        // Write the gpg wrapper script (computed above) and mark it executable.
+        #[cfg(not(target_os = "windows"))]
+        let gpg_wrapper_script_path =
+            if let Some((path, script)) = gpg_wrapper_script_path.zip(gpg_wrapper_script) {
+                match async {
+                    fs::write(&path, script)
+                        .await
+                        .with_context(|| format!("creating gpg wrapper script at {path:?}"))?;
+                    make_file_executable(&path).await.with_context(|| {
+                        format!("marking gpg wrapper script executable at {path:?}")
+                    })?;
+                    anyhow::Ok(())
+                }
+                .await
+                {
+                    Ok(()) => Some(path),
+                    Err(err) => {
+                        log::warn!("could not write gpg askpass wrapper: {err:#}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
         Ok(Self {
             _task,
             askpass_script_path,
+            #[cfg(not(target_os = "windows"))]
+            gpg_wrapper_script_path,
             #[cfg(target_os = "windows")]
             askpass_socket_path,
         })
@@ -306,6 +375,11 @@ impl PasswordProxy {
     #[cfg(target_os = "windows")]
     pub fn socket_path(&self) -> impl AsRef<OsStr> {
         &self.askpass_socket_path
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn gpg_wrapper_path(&self) -> Option<&std::path::Path> {
+        self.gpg_wrapper_script_path.as_deref()
     }
 }
 
@@ -397,4 +471,100 @@ fn generate_askpass_script(
     Ok(format!(
         "{shebang}\n{print_args} | {askpass_program} --askpass={askpass_socket} 2> /dev/null \n",
     ))
+}
+
+#[inline]
+#[cfg(not(target_os = "windows"))]
+fn generate_gpg_wrapper_script(
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let shell_kind = ShellKind::Posix;
+    let gpg_program = find_gpg_program().context("could not find a gpg binary on PATH")?;
+    let gpg_program = gpg_program
+        .to_str()
+        .context("gpg program is on a non-utf8 path")?;
+    let gpg_program = shell_kind
+        .try_quote_prefix_aware(gpg_program)
+        .context("Failed to shell-escape gpg program path")?;
+
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+
+    let prompt = shell_kind
+        .try_quote_prefix_aware("Enter passphrase for your Git signing key:")
+        .context("Failed to shell-escape gpg passphrase prompt")?;
+
+    // The wrapper only intervenes when git asks gpg to *sign* (e.g. `gpg -bsau
+    // <key>`); other invocations like `--verify` run unchanged. For signing we
+    // first try plain gpg so gpg-agent/keychain can supply a cached or empty
+    // passphrase silently, and only fall back to asking Zed (loopback mode, fd
+    // 3) when that fails, e.g. the "Inappropriate ioctl for device" case with no
+    // TTY for pinentry.
+    //
+    // git streams the payload on stdin (readable once) and reads the signature
+    // from stdout, so we buffer stdin to replay it into both attempts and buffer
+    // the first attempt's output, forwarding it only if it succeeds. The
+    // passphrase goes to fd 3 via a pipe.
+    Ok(format!(
+        r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        # Long-form signing options.
+        --sign|--detach-sign|--clearsign|--clear-sign) is_signing=1 ;;
+        # Skip other long options so flags like `--status-fd` don't match below.
+        --*) ;;
+        # Short-flag clusters containing `s`, e.g. git's `-bsau`.
+        -*s*) is_signing=1 ;;
+    esac
+done
+
+# Not a signing request: run gpg as-is, leaving its prompting untouched.
+if [ -z "${{is_signing}}" ]; then
+    exec {gpg_program} "$@"
+fi
+
+# Signing. Buffer stdin (the payload) and the first attempt's output
+# so we can retry cleanly on failure without git seeing partial output.
+tmpdir=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+payload="$tmpdir/payload"
+signature="$tmpdir/signature"
+status="$tmpdir/status"
+cat > "$payload" || exit 1
+
+# First try letting gpg-agent/keychain supply the passphrase without any
+# interactive pinentry. If that succeeds (cached passphrase)
+# forward its output and we're done, so Zed never shows a modal.
+if {gpg_program} --pinentry-mode error "$@" < "$payload" > "$signature" 2> "$status"; then
+    cat "$status" >&2
+    cat "$signature"
+    exit 0
+fi
+
+# The silent attempt failed: ask Zed for the passphrase, then hand it to gpg on
+# fd 3 using loopback mode so no pinentry/terminal is required.
+passphrase=$(printf '%s\0' {prompt} | {askpass_program} --askpass={askpass_socket} 2>/dev/null)
+printf '%s\n' "$passphrase" |
+{gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<&0 < "$payload"
+"#,
+    ))
+}
+
+/// Finds the real `gpg` (or `gpg2`) executable on `PATH`.
+#[inline]
+#[cfg(not(target_os = "windows"))]
+fn find_gpg_program() -> Option<std::path::PathBuf> {
+    ["gpg", "gpg2"]
+        .into_iter()
+        .find_map(|candidate| which::which(candidate).ok())
 }
