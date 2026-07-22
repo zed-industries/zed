@@ -4520,6 +4520,53 @@ impl BufferSnapshot {
         self.outline_ranges_containing(range).next()
     }
 
+    pub fn fold_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<Point>> + '_ {
+        let range = range.to_offset(self);
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.folds_config.as_ref().map(|c| &c.query)
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|g| g.folds_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
+
+        std::iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let config = &configs[mat.grammar_index];
+                let containing_fold_node = maybe!({
+                    let fold_node = mat.captures.iter().find_map(|cap| {
+                        if cap.index == config.fold_capture_ix {
+                            Some(cap.node)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    let fold_byte_range = fold_node.byte_range();
+                    if fold_byte_range.end < range.start || fold_byte_range.start > range.end {
+                        None
+                    } else {
+                        Some(fold_node)
+                    }
+                });
+
+                let range = containing_fold_node.as_ref().map(|fold_node| {
+                    Point::from_ts_point(fold_node.start_position())
+                        ..Point::from_ts_point(fold_node.end_position())
+                });
+                matches.advance();
+                if range.is_some() {
+                    return range;
+                }
+            }
+            None
+        })
+    }
+
     pub fn outline_items_containing<T: ToOffset>(
         &self,
         range: Range<T>,

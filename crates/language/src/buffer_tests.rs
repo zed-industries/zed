@@ -2890,6 +2890,58 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_fold_ranges_containing_markdown_sections(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            # Ä
+
+            body
+
+            ## B
+
+            nested
+
+            ### C
+
+            deep
+
+            ## D
+
+            tail
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language(Some(markdown_lang()), cx);
+        let snapshot = buffer.snapshot();
+
+        let heading_c_row_range = Point::new(8, 0)..Point::new(8, 5);
+        let ranges = snapshot
+            .fold_ranges_containing(heading_c_row_range)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ranges,
+            vec![
+                Point::new(0, 0)..Point::new(15, 0),
+                Point::new(4, 0)..Point::new(12, 0),
+                Point::new(8, 0)..Point::new(12, 0),
+            ],
+            "expected outermost-first section ranges containing the ### C heading"
+        );
+
+        let body_row_range = Point::new(2, 0)..Point::new(2, 4);
+        let ranges = snapshot
+            .fold_ranges_containing(body_row_range)
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec![Point::new(0, 0)..Point::new(15, 0)]);
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_language_at_with_hidden_languages(cx: &mut App) {
     init_settings(cx, |_| {});
 

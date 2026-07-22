@@ -36,6 +36,7 @@ pub struct Grammar {
     pub runnable_config: Option<RunnableConfig>,
     pub indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
+    pub folds_config: Option<FoldsConfig>,
     pub text_object_config: Option<TextObjectConfig>,
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
@@ -66,6 +67,11 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+pub struct FoldsConfig {
+    pub query: Query,
+    pub fold_capture_ix: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -263,6 +269,7 @@ impl Grammar {
             highlights_config: None,
             brackets_config: None,
             outline_config: None,
+            folds_config: None,
             text_object_config: None,
             indents_config: None,
             injection_config: None,
@@ -324,6 +331,11 @@ impl Grammar {
             self = self
                 .with_outline_query(query.as_ref(), name)
                 .context("Error loading outline query")?;
+        }
+        if let Some(query) = queries.folds {
+            self = self
+                .with_folds_query(query.as_ref(), name)
+                .context("Error loading folds query")?;
         }
         if let Some(query) = queries.injections {
             self = self
@@ -452,6 +464,24 @@ impl Grammar {
                 open_capture_ix,
                 close_capture_ix,
                 annotation_capture_ix,
+            });
+        }
+        Ok(self)
+    }
+
+    pub fn with_folds_query(mut self, source: &str, language_name: &LanguageName) -> Result<Self> {
+        let query = Query::new(&self.ts_language, source)?;
+        let mut fold_capture_ix = 0;
+        if populate_capture_indices(
+            &query,
+            language_name,
+            "folds",
+            &[],
+            &mut [Capture::Required("fold", &mut fold_capture_ix)],
+        ) {
+            self.folds_config = Some(FoldsConfig {
+                query,
+                fold_capture_ix,
             });
         }
         Ok(self)

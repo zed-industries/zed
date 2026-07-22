@@ -2283,6 +2283,42 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
+    /// Returns the crease range for a fold query (`folds.scm`) node starting
+    /// on `buffer_row`, keeping the first line visible and trimming trailing
+    /// blank rows.
+    pub fn fold_query_range(&self, buffer_row: MultiBufferRow) -> Option<Range<Point>> {
+        if self.use_lsp_folding_ranges {
+            return None;
+        }
+        let snapshot = self.buffer_snapshot();
+        if buffer_row > snapshot.max_row() {
+            return None;
+        }
+        let row_start = Point::new(buffer_row.0, 0);
+        let row_end = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+        let fold_ranges = snapshot.fold_ranges_containing(row_start..row_end)?;
+        fold_ranges.into_iter().find_map(|fold_range| {
+            let fold_range = snapshot.offset_to_point(fold_range.start)
+                ..snapshot.offset_to_point(fold_range.end);
+            if fold_range.start.row != buffer_row.0 {
+                return None;
+            }
+            let mut end_row = fold_range.end.row;
+            if fold_range.end.column == 0 {
+                end_row = end_row.saturating_sub(1);
+            }
+            while end_row > buffer_row.0 && snapshot.is_line_blank(MultiBufferRow(end_row)) {
+                end_row -= 1;
+            }
+            if end_row <= buffer_row.0 {
+                return None;
+            }
+            let start = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+            let end = Point::new(end_row, snapshot.line_len(MultiBufferRow(end_row)));
+            Some(start..end)
+        })
+    }
+
     /// Returns the indent length of `row` if it starts with a closing bracket.
     fn closing_bracket_indent_len(&self, row: u32) -> Option<u32> {
         let snapshot = self.buffer_snapshot();
@@ -2344,6 +2380,16 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
+        } else if !self.is_line_folded(buffer_row)
+            && let Some(range) = self.fold_query_range(buffer_row)
+        {
+            Some(Crease::Inline {
+                range,
+                placeholder: self.fold_placeholder.clone(),
+                render_toggle: None,
+                render_trailer: None,
+                metadata: None,
+            })
         } else if !self.use_lsp_folding_ranges
             && self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))

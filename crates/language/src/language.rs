@@ -996,6 +996,10 @@ impl Language {
         self.with_grammar_query_and_name(|grammar, name| grammar.with_outline_query(source, name))
     }
 
+    pub fn with_folds_query(self, source: &str) -> Result<Self> {
+        self.with_grammar_query_and_name(|grammar, name| grammar.with_folds_query(source, name))
+    }
+
     pub fn with_text_object_query(self, source: &str) -> Result<Self> {
         self.with_grammar_query_and_name(|grammar, name| {
             grammar.with_text_object_query(source, name)
@@ -1669,6 +1673,7 @@ pub fn rust_lang() -> Arc<Language> {
             "../../grammars/src/rust/overrides.scm"
         ))),
         redactions: None,
+        folds: None,
         runnables: Some(Cow::from(include_str!(
             "../../grammars/src/rust/runnables.scm"
         ))),
@@ -1711,6 +1716,9 @@ pub fn markdown_lang() -> Arc<Language> {
         ))),
         outline: Some(Cow::from(include_str!(
             "../../grammars/src/markdown/outline.scm"
+        ))),
+        folds: Some(Cow::from(include_str!(
+            "../../grammars/src/markdown/folds.scm"
         ))),
         ..LanguageQueries::default()
     })
