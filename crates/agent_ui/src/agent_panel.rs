@@ -6291,6 +6291,10 @@ impl AgentPanel {
                 this.drag_over::<ExternalPaths>(|this, _, _, _| this.visible())
             })
             .on_drop(cx.listener(move |this, tab: &DraggedTab, window, cx| {
+                if this.handle_dragged_terminal_tab(tab, window, cx) {
+                    return;
+                }
+
                 let item = tab.pane.read(cx).item_for_index(tab.ix);
                 let project_paths = item
                     .and_then(|item| item.project_path(cx))
@@ -6379,6 +6383,71 @@ impl AgentPanel {
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.add_paths_to_terminal(paths.paths(), window, cx);
         });
+    }
+
+    fn handle_dragged_terminal_tab(
+        &mut self,
+        tab: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.supports_terminal(cx) {
+            return false;
+        }
+
+        let Some(terminal_view) = tab
+            .pane
+            .read(cx)
+            .item_for_index(tab.ix)
+            .and_then(|item| item.downcast::<TerminalView>())
+        else {
+            return false;
+        };
+
+        if let Some((&terminal_id, _)) = self
+            .terminals
+            .iter()
+            .find(|(_, terminal)| terminal.view == terminal_view)
+        {
+            self.activate_terminal(terminal_id, true, window, cx);
+            return true;
+        }
+
+        let (working_directory, custom_title, initial_title) = {
+            let terminal_view = terminal_view.read(cx);
+            let working_directory = terminal_view.terminal().read(cx).working_directory();
+            let custom_title = terminal_view
+                .custom_title()
+                .map(|title| SharedString::from(title.to_string()));
+            let initial_title = Some(AgentTerminal::terminal_title_for_view(terminal_view, cx));
+            (working_directory, custom_title, initial_title)
+        };
+
+        let item_id = terminal_view.item_id();
+        tab.pane.update(cx, |pane, cx| {
+            pane.remove_item(item_id, false, true, window, cx);
+        });
+
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_show_workspace_actions(false, cx);
+        });
+
+        let terminal_id = TerminalId::new();
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
+        self.insert_terminal(
+            terminal_id,
+            terminal_view,
+            working_directory,
+            custom_title,
+            initial_title,
+            None,
+            true,
+            true,
+            AgentThreadSource::AgentPanel,
+            window,
+            cx,
+        );
+        true
     }
 
     fn handle_drop(
@@ -9242,6 +9311,98 @@ mod tests {
             written,
             expected_terminal_drop_text(std::slice::from_ref(&image_path))
         );
+    }
+
+    #[gpui::test]
+    async fn test_dragged_terminal_tab_moves_into_agent_panel(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let workspace = panel
+            .read_with(&cx, |panel, _cx| panel.workspace.upgrade())
+            .expect("workspace should still be open");
+        let (source_pane, terminal_view, dragged_tab) =
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let source_pane = workspace.active_pane().clone();
+                let project = workspace.project().clone();
+                let settings = TerminalSettings::get_global(cx).clone();
+                let path_style = project.read(cx).path_style(cx);
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        settings.cursor_shape,
+                        settings.alternate_scroll,
+                        settings.max_scroll_history_lines,
+                        0,
+                        cx.background_executor(),
+                        path_style,
+                    )
+                    .subscribe(cx)
+                });
+                let terminal_view = cx.new(|cx| {
+                    let mut view = TerminalView::new(
+                        terminal,
+                        workspace.weak_handle(),
+                        workspace.database_id(),
+                        project.downgrade(),
+                        window,
+                        cx,
+                    );
+                    view.set_custom_title(Some("Moved Terminal".to_string()), cx);
+                    view
+                });
+                source_pane.update(cx, |pane, cx| {
+                    pane.add_item(
+                        Box::new(terminal_view.clone()),
+                        true,
+                        false,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+
+                let dragged_tab = DraggedTab {
+                    pane: source_pane.clone(),
+                    item: Box::new(terminal_view.clone()),
+                    ix: 0,
+                    detail: 0,
+                    is_active: true,
+                };
+                (source_pane, terminal_view, dragged_tab)
+            });
+
+        let handled = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.handle_dragged_terminal_tab(&dragged_tab, window, cx)
+        });
+        assert!(
+            handled,
+            "terminal tab drop should be handled by the agent panel"
+        );
+
+        source_pane.read_with(&cx, |pane, _cx| {
+            assert_eq!(
+                pane.items_len(),
+                0,
+                "terminal should move out of source pane"
+            );
+        });
+        panel.read_with(&cx, |panel, cx| {
+            let terminal_id = panel
+                .active_terminal_id()
+                .expect("moved terminal should become active");
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("moved terminal should be registered");
+            assert_eq!(terminal.view.entity_id(), terminal_view.entity_id());
+            assert_eq!(
+                terminal.custom_title(cx).as_deref(),
+                Some("Moved Terminal"),
+                "custom title should be preserved"
+            );
+        });
     }
 
     #[gpui::test]
