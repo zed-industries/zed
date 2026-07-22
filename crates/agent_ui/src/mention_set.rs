@@ -35,7 +35,7 @@ use std::{
 use text::OffsetRangeExt;
 use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{ItemHandle, OpenOptions, Workspace, notifications::NotifyResultExt as _};
 
 use crate::ui::MentionCrease;
 
@@ -920,8 +920,8 @@ pub(crate) async fn insert_images_as_context(
                 name.clone(),
                 IconName::Image.path().into(),
                 None,
-                None,
-                None,
+                Some(mention_uri.clone()),
+                Some(workspace.clone()),
                 Some(Task::ready(Ok(image.clone())).shared()),
                 editor.clone(),
                 window,
@@ -1370,7 +1370,9 @@ impl Render for LoadingContext {
 
         let id = ElementId::from(("loading_context", self.id));
 
-        MentionCrease::new(id, self.icon.clone(), self.label.clone())
+        let is_pasted_image = matches!(&self.mention_uri, Some(MentionUri::PastedImage { .. }));
+
+        let mut crease = MentionCrease::new(id, self.icon.clone(), self.label.clone())
             .mention_uri(self.mention_uri.clone())
             .workspace(self.workspace.clone())
             .is_toggled(is_in_text_selection)
@@ -1397,8 +1399,153 @@ impl Render for LoadingContext {
                     })
                     .into()
                 })
-            })
+            });
+
+        // Pasted images only exist as in-memory data, so clicking the crease
+        // materializes the image and opens it full-size in an editor tab.
+        if is_pasted_image {
+            if let Some(image_task) = self.image.clone() {
+                let workspace = self.workspace.clone();
+                crease = crease.on_click_image(move |window, cx| {
+                    if let Err(err) = open_pasted_image(&image_task, &workspace, window, cx) {
+                        log::error!("Failed to open pasted image: {err}");
+                        if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_error(err, cx);
+                            });
+                        }
+                    }
+                });
+            }
+        }
+
+        crease
     }
+}
+
+/// Set to `true` when the application is quitting so that temp files for
+/// opened pasted images are not deleted on shutdown.
+///
+/// We deliberately keep these files around across Zed restarts (and OS
+/// reboots) so that a pasted-image tab the user left open is restored
+/// faithfully, showing the same image, until the user explicitly closes it.
+static APP_QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Signals that the application is quitting, so that temp files backing open
+/// pasted-image tabs are preserved rather than deleted as their editors are
+/// released during shutdown.
+pub fn set_app_quitting() {
+    APP_QUIT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Writes a pasted image to a persistent file and opens it in an editor tab.
+///
+/// Pasted images only exist as in-memory data, so to show them at full size we
+/// materialize them on disk. The file is written under the Zed data directory
+/// (not the OS temp dir) so it survives Zed restarts and OS reboots, letting an
+/// open pasted-image tab be restored faithfully. When the tab is closed, the
+/// editor entity is released and we delete the file - unless the app is
+/// quitting, in which case we keep it so the tab can be restored next launch.
+fn open_pasted_image(
+    image_task: &Shared<Task<Result<Arc<Image>, String>>>,
+    workspace: &Option<WeakEntity<Workspace>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> anyhow::Result<()> {
+    let workspace = workspace
+        .as_ref()
+        .and_then(|w| w.upgrade())
+        .ok_or_else(|| anyhow!("Failed to upgrade workspace"))?;
+
+    let image = image_task
+        .peek()
+        .cloned()
+        .transpose()
+        .map_err(|e| anyhow!("Failed to load pasted image: {e}"))?
+        .ok_or_else(|| anyhow!("Image data not available yet"))?;
+
+    let extension = match image.format {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpeg",
+        ImageFormat::Webp => "webp",
+        ImageFormat::Gif => "gif",
+        ImageFormat::Svg => "svg",
+        ImageFormat::Bmp => "bmp",
+        ImageFormat::Tiff => "tiff",
+        ImageFormat::Ico => "ico",
+        ImageFormat::Pnm => "pnm",
+    };
+    let directory = paths::data_dir().join("pasted_images");
+    std::fs::create_dir_all(&directory).map_err(|e| {
+        anyhow!(
+            "Failed to create pasted image directory {}: {e}",
+            directory.display()
+        )
+    })?;
+    let file_name = format!("zed-pasted-image-{}.{}", uuid::Uuid::new_v4(), extension);
+    let image_location = directory.join(&file_name);
+
+    std::fs::write(&image_location, image.bytes()).map_err(|e| {
+        anyhow!(
+            "Failed to write pasted image file {}: {e}",
+            image_location.display()
+        )
+    })?;
+
+    let open_task = workspace.update(cx, |workspace, cx| {
+        workspace.open_abs_path(
+            image_location.clone(),
+            OpenOptions {
+                focus: Some(true),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+    });
+
+    register_pasted_image_cleanup(open_task, image_location, cx);
+
+    Ok(())
+}
+
+/// After a pasted image opens in an editor, arranges to delete its backing
+/// file once the editor's tab is closed (the editor entity is released).
+/// Cleanup is skipped while the app is quitting so the file survives to back
+/// the restored tab on the next launch.
+fn register_pasted_image_cleanup(
+    open_task: Task<anyhow::Result<Box<dyn ItemHandle>>>,
+    image_location: PathBuf,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        let item_handle = match open_task.await {
+            Ok(item_handle) => item_handle,
+            Err(e) => {
+                log::error!("Failed to open pasted image in editor: {e}");
+                return;
+            }
+        };
+        let Some(editor) = item_handle.downcast::<Editor>() else {
+            log::error!("Opened pasted image item was not an editor");
+            return;
+        };
+        cx.update(|cx| {
+            cx.observe_release(&editor, move |_editor, _cx| {
+                if APP_QUIT.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                if let Err(e) = std::fs::remove_file(&image_location) {
+                    log::error!(
+                        "Failed to delete pasted image file {}: {e}",
+                        image_location.display()
+                    );
+                }
+            })
+            .detach();
+        });
+    })
+    .detach();
 }
 
 struct ImageHover {

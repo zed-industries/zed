@@ -13,7 +13,6 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
-use base64::Engine as _;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -1829,7 +1828,10 @@ impl MessageEditor {
         for (range, mention_uri, mention) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
-            let image_preview = image_preview_task_for_mention(&mention);
+            // For image mentions, hand the decoded image to the crease so it
+            // shows a hover preview - matching freshly pasted images.
+            let image_preview =
+                decode_mention_image(&mention).map(|image| Task::ready(Ok(image)).shared());
             let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                 snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
@@ -2109,29 +2111,18 @@ fn build_chunks_from_creases(
     (chunks, tracked_buffers)
 }
 
-fn image_preview_task_for_mention(
-    mention: &Mention,
-) -> Option<futures::future::Shared<Task<Result<Arc<Image>, String>>>> {
+/// Decode a `Mention::Image`'s base64-encoded data into an `Arc<Image>`,
+/// suitable for handing to a crease as its hover-preview source.
+/// Returns `None` for non-image mentions or when decoding fails.
+fn decode_mention_image(mention: &Mention) -> Option<Arc<Image>> {
     let Mention::Image(mention_image) = mention else {
         return None;
     };
-
-    let bytes =
-        match base64::engine::general_purpose::STANDARD.decode(mention_image.data.as_bytes()) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                log::error!("failed to decode image mention: {error}");
-                return None;
-            }
-        };
-
-    Some(
-        Task::ready(Ok::<Arc<Image>, String>(Arc::new(Image::from_bytes(
-            mention_image.format,
-            bytes,
-        ))))
-        .shared(),
-    )
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(mention_image.data.as_bytes())
+        .log_err()?;
+    Some(Arc::new(Image::from_bytes(mention_image.format, bytes)))
 }
 
 fn mention_to_content_block(
