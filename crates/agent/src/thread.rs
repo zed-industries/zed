@@ -1846,12 +1846,12 @@ impl Thread {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
     }
 
-    /// Whether sandboxing is *applicable* for this thread's project (local
-    /// project, supported platform), regardless of whether it's been turned off
-    /// in settings. The UI shows the sandbox indicator whenever this is true,
-    /// drawing it struck-out when sandboxing is disabled.
+    /// Whether sandboxing is *applicable* for this thread's project (feature on,
+    /// local project, supported platform), regardless of whether it's been
+    /// turned off in settings. The UI shows the sandbox indicator whenever this
+    /// is true, drawing it struck-out when sandboxing is disabled.
     pub fn sandboxing_available(&self, cx: &App) -> bool {
-        sandboxing_available_for_project(self.project.read(cx))
+        sandboxing_available_for_project(self.project.read(cx), cx)
     }
 
     /// The directory subtrees the sandbox always grants write access to for this
