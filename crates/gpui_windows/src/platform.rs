@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     ffi::OsStr,
     path::{Path, PathBuf},
+    ptr::NonNull,
     rc::{Rc, Weak},
     sync::{
         Arc,
@@ -845,19 +846,27 @@ impl Platform for WindowsPlatform {
                 return Err(err.into());
             }
 
-            if credentials.is_null() {
-                Ok(None)
-            } else {
-                let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let credential_blob = unsafe {
-                    std::slice::from_raw_parts(
-                        (*credentials).CredentialBlob,
-                        (*credentials).CredentialBlobSize as usize,
-                    )
-                };
-                let password = credential_blob.to_vec();
-                unsafe { CredFree(credentials as *const _ as _) };
-                Ok(Some((username, password)))
+            match NonNull::new(credentials) {
+                Some(credentials) => {
+                    let username = unsafe { credentials.as_ref().UserName.to_string() };
+                    let password: Result<Vec<u8>> = {
+                        let size = credentials.as_ref().CredentialBlobSize as usize;
+                        match NonNull::new(credentials.as_ref().CredentialBlob) {
+                            Some(credential_blob) => Ok(unsafe {
+                                std::slice::from_raw_parts(credential_blob.as_ptr(), size)
+                            }
+                            .to_vec()),
+                            None if size == 0 => Ok(Vec::new()),
+                            None => Err(anyhow!(
+                                "Windows credential blob was null with nonzero size"
+                            )),
+                        }
+                    };
+                    unsafe { CredFree(credentials.as_ptr() as *const _ as _) };
+
+                    Ok(Some((username?, password?)))
+                }
+                None => Ok(None),
             }
         })
     }
