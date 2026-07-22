@@ -1269,6 +1269,11 @@ fn register_actions(
                     app_state.clone(),
                     cx,
                     |workspace, window, cx| {
+                        if WorkspaceSettings::get_global(cx).restore_on_startup
+                            == workspace::RestoreOnStartupBehavior::Launchpad
+                        {
+                            return;
+                        }
                         cx.activate(true);
                         // Create buffer synchronously to avoid flicker
                         let project = workspace.project().clone();
