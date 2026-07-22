@@ -2553,7 +2553,7 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        paths_to_edit.sort_unstable_by_key(|(path, _, _, _)| path.clone());
+        paths_to_edit.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();

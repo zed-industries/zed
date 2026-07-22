@@ -61,7 +61,7 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot,
-    future::{Either, Shared, join_all, pending, select},
+    future::{Either, Shared, join_all, select},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -99,7 +99,7 @@ use lsp::{
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
     LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType, OneOf,
     RenameFilesParams, TextDocumentSyncSaveOptions, TextEdit, Uri, WillRenameFiles,
-    WorkDoneProgressCancelParams, WorkspaceFolder, notification::DidRenameFiles,
+    WorkDoneProgressCancelParams, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -123,7 +123,6 @@ use std::{
     collections::{VecDeque, hash_map},
     convert::TryInto,
     ffi::OsStr,
-    future::ready,
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
@@ -985,10 +984,7 @@ impl LocalLspStore {
                         let root = server.workspace_folders();
                         Ok(Some(
                             root.into_iter()
-                                .map(|uri| WorkspaceFolder {
-                                    uri,
-                                    name: Default::default(),
-                                })
+                                .map(lsp::workspace_folder_for_uri)
                                 .collect(),
                         ))
                     }
@@ -14152,9 +14148,10 @@ fn lsp_workspace_diagnostics_refresh(
         let mut requests = 0;
 
         loop {
-            let Some(mut completion_tx) = refresh_rx.recv().await else {
+            let Some(completion_tx) = refresh_rx.recv().await else {
                 return;
             };
+            let mut completion_txs = completion_tx.into_iter().collect::<Vec<_>>();
 
             'request: loop {
                 requests += 1;
@@ -14169,6 +14166,12 @@ fn lsp_workspace_diagnostics_refresh(
                     .timer(Duration::from_millis(backoff_millis))
                     .await;
                 attempts += 1;
+
+                // Absorb refresh requests that queued up in the meantime, so their
+                // waiters are resolved by this attempt instead of waiting behind it.
+                while let Ok(queued_refresh) = refresh_rx.try_recv() {
+                    completion_txs.extend(queued_refresh);
+                }
 
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
@@ -14196,8 +14199,21 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                let timer = server.request_timer(timeout).fuse();
-                let progress = pin!(progress_rx.recv().fuse());
+                // Restart the timeout whenever a partial result arrives: streaming
+                // servers may legitimately take longer than a single timeout period,
+                // but a server that stops streaming without completing the request
+                // should still time out instead of hanging forever.
+                let timer = async {
+                    loop {
+                        let timer = pin!(server.request_timer(timeout).fuse());
+                        let progress = pin!(progress_rx.recv().fuse());
+                        match select(timer, progress).await {
+                            Either::Left((message, ..)) => break message,
+                            Either::Right((Some(()), ..)) => {}
+                            Either::Right((None, timer)) => break timer.await,
+                        }
+                    }
+                };
                 let response_result = server
                     .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
                         lsp::WorkspaceDiagnosticParams {
@@ -14208,10 +14224,7 @@ fn lsp_workspace_diagnostics_refresh(
                                 partial_result_token: Some(lsp::ProgressToken::String(token)),
                             },
                         },
-                        select(timer, progress).then(|either| match either {
-                            Either::Left((message, ..)) => ready(message).left_future(),
-                            Either::Right(..) => pending::<String>().right_future(),
-                        }),
+                        timer,
                     )
                     .await;
 
@@ -14220,6 +14233,16 @@ fn lsp_workspace_diagnostics_refresh(
                 match response_result {
                     ConnectionResult::Timeout => {
                         log::error!("Timeout during workspace diagnostics pull");
+                        // Release everyone waiting on this refresh (e.g. the agent's
+                        // diagnostics tool), including waiters that queued up while the
+                        // request was in flight, so they can fall back to cached
+                        // diagnostics instead of waiting through every retry.
+                        while let Ok(queued_refresh) = refresh_rx.try_recv() {
+                            completion_txs.extend(queued_refresh);
+                        }
+                        for tx in completion_txs.drain(..) {
+                            tx.send(false).ok();
+                        }
                         continue 'request;
                     }
                     ConnectionResult::ConnectionReset => {
@@ -14228,7 +14251,7 @@ fn lsp_workspace_diagnostics_refresh(
                     }
                     ConnectionResult::Result(Err(e)) => {
                         log::error!("Error during workspace diagnostics pull: {e:#}");
-                        if let Some(tx) = completion_tx.take() {
+                        for tx in completion_txs.drain(..) {
                             tx.send(false).ok();
                         }
                         break 'request;
@@ -14248,7 +14271,7 @@ fn lsp_workspace_diagnostics_refresh(
                         {
                             return;
                         }
-                        if let Some(tx) = completion_tx.take() {
+                        for tx in completion_txs.drain(..) {
                             tx.send(true).ok();
                         }
                         break 'request;
@@ -14680,8 +14703,13 @@ impl PartialEq for LanguageServerPromptRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace { verbose_info: Option<String> },
-    Rpc { received: bool },
+    Trace {
+        verbose_info: Option<String>,
+    },
+    Rpc {
+        received: bool,
+        elapsed: Option<Duration>,
+    },
 }
 
 impl LanguageServerLogType {
@@ -14708,14 +14736,19 @@ impl LanguageServerLogType {
                     verbose_info: verbose_info.to_owned(),
                 })
             }
-            Self::Rpc { received } => {
+            Self::Rpc { received, elapsed } => {
                 let kind = if *received {
                     proto::rpc_message::Kind::Received
                 } else {
                     proto::rpc_message::Kind::Sent
                 };
                 let kind = kind as i32;
-                proto::language_server_log::LogType::Rpc(proto::RpcMessage { kind })
+                let elapsed_nanos =
+                    elapsed.map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+                proto::language_server_log::LogType::Rpc(proto::RpcMessage {
+                    kind,
+                    elapsed_nanos,
+                })
             }
         }
     }
@@ -14742,6 +14775,7 @@ impl LanguageServerLogType {
                     rpc_message::Kind::Received => true,
                     rpc_message::Kind::Sent => false,
                 },
+                elapsed: message.elapsed_nanos.map(Duration::from_nanos),
             },
         }
     }
