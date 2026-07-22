@@ -1032,10 +1032,13 @@ impl ProjectSearchView {
         let excerpts;
         let mut replacement_text = None;
         let mut query_text = String::new();
+        let mut included_files_text = String::new();
+        let mut excluded_files_text = String::new();
         let mut subscriptions = Vec::new();
+        let mut included_opened_only = false;
 
         // Read in settings if available
-        let (mut options, filters_enabled) = if let Some(settings) = settings {
+        let (mut options, mut filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
             let search_options =
@@ -1051,7 +1054,34 @@ impl ProjectSearchView {
                 query_text = active_query.as_str().to_string();
                 replacement_text = active_query.replacement().map(ToOwned::to_owned);
                 options = SearchOptions::from_query(active_query);
+                if included_files_text.is_empty() {
+                    included_files_text = active_query.files_to_include().sources().join(",");
+                }
+                if excluded_files_text.is_empty() {
+                    excluded_files_text = active_query.files_to_exclude().sources().join(",");
+                }
+                included_opened_only = active_query.is_opened_only();
+                if active_query.filters_path()
+                    || active_query.include_ignored()
+                    || included_opened_only
+                {
+                    filters_enabled = true;
+                }
             }
+        }
+        if included_files_text.is_empty() {
+            included_files_text = entity
+                .update(cx, |model, cx| {
+                    Self::history_value_for_empty_editor(model, SearchInputKind::Include, cx)
+                })
+                .unwrap_or_default();
+        }
+        if excluded_files_text.is_empty() {
+            excluded_files_text = entity
+                .update(cx, |model, cx| {
+                    Self::history_value_for_empty_editor(model, SearchInputKind::Exclude, cx)
+                })
+                .unwrap_or_default();
         }
         subscriptions.push(cx.observe_in(&entity, window, |this, _, window, cx| {
             this.entity_changed(window, cx)
@@ -1184,10 +1214,21 @@ impl ProjectSearchView {
             filters_enabled,
             replace_enabled: false,
             pending_replace_all: false,
-            included_opened_only: false,
+            included_opened_only,
             regex_language: None,
             _subscriptions: subscriptions,
         };
+
+        if !included_files_text.is_empty() {
+            this.included_files_editor.update(cx, |editor, cx| {
+                editor.set_text(included_files_text, window, cx);
+            });
+        }
+        if !excluded_files_text.is_empty() {
+            this.excluded_files_editor.update(cx, |editor, cx| {
+                editor.set_text(excluded_files_text, window, cx);
+            });
+        }
 
         this.entity_changed(window, cx);
         this
@@ -1207,10 +1248,8 @@ impl ProjectSearchView {
         let search = cx.new(|cx| ProjectSearchView::new(weak_workspace, entity, window, cx, None));
         workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, window, cx);
         search.update(cx, |search, cx| {
-            search
-                .included_files_editor
-                .update(cx, |editor, cx| editor.set_text(filter_str, window, cx));
             search.filters_enabled = true;
+            search.set_search_editor(SearchInputKind::Include, &filter_str, window, cx);
             search.focus_query_editor(window, cx)
         });
     }
@@ -1383,16 +1422,12 @@ impl ProjectSearchView {
                 search.set_query(&query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
-                search
-                    .included_files_editor
-                    .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
                 search.filters_enabled = true;
+                search.set_search_editor(SearchInputKind::Include, included_files, window, cx);
             }
             if let Some(excluded_files) = action.excluded_files.as_deref() {
-                search
-                    .excluded_files_editor
-                    .update(cx, |editor, cx| editor.set_text(excluded_files, window, cx));
                 search.filters_enabled = true;
+                search.set_search_editor(SearchInputKind::Exclude, excluded_files, window, cx);
             }
             search.focus_query_editor(window, cx)
         });
@@ -1481,6 +1516,28 @@ impl ProjectSearchView {
 
     pub fn search_query_text(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
+    }
+
+    fn history_value_for_empty_editor(
+        model: &mut ProjectSearch,
+        kind: SearchInputKind,
+        cx: &mut Context<ProjectSearch>,
+    ) -> Option<String> {
+        let project = model.project.clone();
+        if let Some(current_query) = project
+            .read(cx)
+            .search_history(kind)
+            .current(model.cursor(kind))
+        {
+            return Some(current_query.to_string());
+        }
+
+        project.update(cx, |project, _| {
+            project
+                .search_history_mut(kind)
+                .previous(model.cursor_mut(kind), "")
+                .map(str::to_string)
+        })
     }
 
     fn build_search_query(
@@ -3785,6 +3842,230 @@ pub mod tests {
                     "Search view results should contain the queried result in the previously excluded file with filters toggled off"
                 );
             });
+            })
+            .unwrap();
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_new_project_search_prefills_latest_filter_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "lib.rs": "pub fn run() {}",
+                },
+                "node_modules": {
+                    "left-pad": {
+                        "index.js": "module.exports = {};",
+                    },
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, move |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::find(),
+                window,
+                cx,
+            )
+        });
+
+        let first_search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("search view expected to appear after deploy search");
+
+        window
+            .update(cx, |_, window, cx| {
+                first_search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |editor, cx| {
+                        editor.set_text("run", window, cx);
+                    });
+                    search_view.toggle_filters(cx);
+                    search_view.included_files_editor.update(cx, |editor, cx| {
+                        editor.set_text("src/**/*.rs", window, cx);
+                    });
+                    search_view.excluded_files_editor.update(cx, |editor, cx| {
+                        editor.set_text("node_modules/**", window, cx);
+                    });
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        });
+
+        let second_search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("new search view expected to become active");
+
+        assert_ne!(
+            first_search_view.entity_id(),
+            second_search_view.entity_id(),
+            "new search should create a new tab"
+        );
+
+        window
+            .update(cx, |_, _, cx| {
+                second_search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "filters should stay enabled for the next search tab"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**/*.rs",
+                        "include filters should prefill from the latest search history"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "node_modules/**",
+                        "exclude filters should prefill from the latest search history"
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_search_in_new_preserves_filter_fields(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "src": {
+                    "one.rs": "const ONE: usize = 1;",
+                    "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                },
+                "vendor": {
+                    "one.rs": "const ONE: usize = 10;",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, move |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::find(),
+                window,
+                cx,
+            )
+        });
+
+        let first_search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("search view expected to appear after deploy search");
+
+        window
+            .update(cx, |_, window, cx| {
+                first_search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |editor, cx| {
+                        editor.set_text("ONE", window, cx);
+                    });
+                    search_view.toggle_filters(cx);
+                    search_view.included_files_editor.update(cx, |editor, cx| {
+                        editor.set_text("src/**/*.rs", window, cx);
+                    });
+                    search_view.excluded_files_editor.update(cx, |editor, cx| {
+                        editor.set_text("vendor/**", window, cx);
+                    });
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::search_in_new(workspace, &SearchInNew, window, cx)
+        });
+
+        let second_search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("search in new should activate a new search view");
+
+        window
+            .update(cx, |_, _, cx| {
+                second_search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.filters_enabled,
+                        "filtered searches opened in a new tab should keep filters visible"
+                    );
+                    assert_eq!(
+                        search_view.included_files_editor.read(cx).text(cx),
+                        "src/**/*.rs",
+                        "include filters should stay visible in the new search tab"
+                    );
+                    assert_eq!(
+                        search_view.excluded_files_editor.read(cx).text(cx),
+                        "vendor/**",
+                        "exclude filters should stay visible in the new search tab"
+                    );
+                });
             })
             .unwrap();
     }
