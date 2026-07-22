@@ -2042,6 +2042,16 @@ impl Workspace {
                 } else {
                     let window_bounds_override = window_bounds_env_override();
 
+                    let active_display = cx.update(|cx| {
+                        cx.active_window().and_then(|handle| {
+                            cx.update_window(handle, |_, window, app| {
+                                window.display(app).and_then(|d| d.uuid().ok())
+                            })
+                            .ok()
+                            .flatten()
+                        })
+                    });
+
                     let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                         (Some(WindowBounds::Windowed(bounds)), None)
                     } else if let Some(workspace) = serialized_workspace.as_ref()
@@ -2050,6 +2060,8 @@ impl Workspace {
                     {
                         // Reopening an existing workspace - restore its saved bounds
                         (Some(bounds.0), Some(display))
+                    } else if let Some(display) = active_display {
+                        (None, Some(display))
                     } else if let Some((display, bounds)) =
                         persistence::read_default_window_bounds(&kvp)
                     {
