@@ -13,6 +13,10 @@ const TIMELINE_MANIFEST: &str = include_str!("../assets/areas/timeline/manifest.
 const TIMELINE_DOC: &str = include_str!("../assets/areas/timeline/doc.md");
 const TIMELINE_WEEK_REVIEW_SKILL: &str =
     include_str!("../assets/areas/timeline/skills/week-review.md");
+const TIMELINE_WRAP_TODAY_SKILL: &str =
+    include_str!("../assets/areas/timeline/skills/wrap-today.md");
+const TIMELINE_WRAP_YESTERDAY_SKILL: &str =
+    include_str!("../assets/areas/timeline/skills/wrap-yesterday.md");
 const TIMELINE_DASHBOARD_HTML: &str = include_str!("../assets/areas/timeline/assets/index.html");
 const TIMELINE_DASHBOARD_SEED: &str =
     include_str!("../assets/areas/timeline/assets/data.seed.js");
@@ -175,11 +179,60 @@ fn parse_manifest(manifest_toml: &str) -> Result<AreaManifest> {
         .resolve()
 }
 
+/// Vault-relative root under which Claude Code discovers project skills. Its
+/// files are generated from the manifest, not shipped as static assets.
+pub const CLAUDE_SKILLS_DIR: &str = ".claude/skills";
+
 /// A file an Area ships into the vault, pairing the vault-relative destination
 /// with the asset path inside the catalog package it came from.
 struct ShippedFile {
     destination: String,
     source: String,
+}
+
+/// A `.claude/skills/<id>/SKILL.md` bridge generated from a skill's manifest
+/// entry. Claude Code only discovers skills under `.claude/skills/`, so each
+/// Area skill gets a thin bridge there whose front matter Claude Code reads and
+/// whose body points back to the canonical skill file — keeping one source of
+/// truth for the ritual itself.
+struct ClaudeBridge {
+    destination: String,
+    content: String,
+}
+
+fn yaml_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn claude_bridge_content(skill: &AreaSkill) -> String {
+    let mut content = format!(
+        "---\nname: {name}\ndescription: {description}\ndisable-model-invocation: true\n---\n\n\
+         This is a BreadPaper Area skill. Read and follow the full instructions in\n\
+         `{file}` (relative to the vault root), then carry out the ritual it describes.\n\
+         It appends to your notes and never rewrites what you wrote.\n",
+        name = yaml_quote(&skill.name),
+        description = yaml_quote(&skill.summary),
+        file = skill.file,
+    );
+    if !skill.reads.is_empty() {
+        content.push_str(&format!("\nReads: {}\n", skill.reads.join(", ")));
+    }
+    if !skill.writes.is_empty() {
+        content.push_str(&format!("Writes: {}\n", skill.writes.join(", ")));
+    }
+    content
+}
+
+fn claude_bridge_files(manifest: &AreaManifest) -> Vec<ClaudeBridge> {
+    manifest
+        .skills
+        .iter()
+        .map(|skill| ClaudeBridge {
+            destination: format!("{CLAUDE_SKILLS_DIR}/{}/SKILL.md", skill.id),
+            content: claude_bridge_content(skill),
+        })
+        .collect()
 }
 
 fn shipped_files(manifest: &AreaManifest) -> Vec<ShippedFile> {
@@ -229,6 +282,8 @@ pub fn catalog() -> Result<Vec<CatalogArea>> {
         assets: &[
             ("doc.md", TIMELINE_DOC),
             ("skills/week-review.md", TIMELINE_WEEK_REVIEW_SKILL),
+            ("skills/wrap-today.md", TIMELINE_WRAP_TODAY_SKILL),
+            ("skills/wrap-yesterday.md", TIMELINE_WRAP_YESTERDAY_SKILL),
             ("assets/index.html", TIMELINE_DASHBOARD_HTML),
             ("assets/data.seed.js", TIMELINE_DASHBOARD_SEED),
         ],
@@ -303,6 +358,12 @@ pub fn materialize_area(vault_root: &Path, area: &CatalogArea) -> Result<()> {
         })?;
         write_if_missing(&vault_file_path(vault_root, &file.destination)?, contents)?;
     }
+    for bridge in claude_bridge_files(&area.manifest) {
+        write_if_missing(
+            &vault_file_path(vault_root, &bridge.destination)?,
+            &bridge.content,
+        )?;
+    }
 
     // The installed manifest is provenance owned by the app, not a user file,
     // so re-installing overwrites it to record the current package.
@@ -335,6 +396,24 @@ pub fn install_area(vault_root: &Path, area_id: &str) -> Result<()> {
             });
         }
     })
+}
+
+/// Re-materializes every enabled installed Area (create-if-missing), so a vault
+/// opened after an app update gains any newly shipped Area files — new skills
+/// and their Claude Code bridges — without a manual reinstall. Idempotent and
+/// never clobbers user edits; the registry is left untouched. Areas that are
+/// registered but absent from the catalog are skipped. Blocking I/O — call from
+/// a background thread.
+pub fn reconcile_enabled_areas(vault: &Vault) -> Result<()> {
+    for entry in &vault.config.areas.installed {
+        if !entry.enabled {
+            continue;
+        }
+        if let Some(area) = catalog_area(&entry.id)? {
+            materialize_area(&vault.root, &area)?;
+        }
+    }
+    Ok(())
 }
 
 /// Disables an Area in the registry without touching any files.
@@ -428,6 +507,23 @@ pub fn plan_removal(vault_root: &Path, area_id: &str) -> Result<RemovalPlan> {
             _ => plan.keep_modified.push(file.destination),
         }
     }
+    // Claude Code bridges are generated, not shipped as assets, so compare each
+    // against its freshly-generated content instead of a catalog source.
+    for bridge in claude_bridge_files(&manifest) {
+        let path = vault_file_path(vault_root, &bridge.destination)?;
+        let current = match fs::read_to_string(&path) {
+            Ok(current) => current,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", path.display()));
+            }
+        };
+        if current == bridge.content {
+            plan.delete.push(bridge.destination);
+        } else {
+            plan.keep_modified.push(bridge.destination);
+        }
+    }
     Ok(plan)
 }
 
@@ -516,8 +612,10 @@ mod tests {
         assert_eq!(manifest.id, TIMELINE_AREA_ID);
         assert_eq!(manifest.version, 1);
         assert_eq!(manifest.doc, "areas/Timeline.md");
-        assert_eq!(manifest.skills.len(), 1);
+        assert_eq!(manifest.skills.len(), 3);
         assert_eq!(manifest.skills[0].file, "skills/timeline/week-review.md");
+        assert_eq!(manifest.skills[1].file, "skills/timeline/wrap-today.md");
+        assert_eq!(manifest.skills[2].file, "skills/timeline/wrap-yesterday.md");
         assert_eq!(manifest.surfaces.len(), 1);
         assert_eq!(manifest.surfaces[0].open, "_weekly/site/index.html");
         // Every shipped file must have a bundled asset behind it.
@@ -539,6 +637,16 @@ mod tests {
         assert!(dir.path().join("_weekly/site/index.html").is_file());
         assert!(dir.path().join("_weekly/site/data.js").is_file());
         assert!(installed_manifest_path(dir.path(), TIMELINE_AREA_ID).is_file());
+        // Claude Code bridges are generated for every skill so a `claude`
+        // session opened in the vault can invoke them via `/<skill-id>`.
+        for skill_id in ["week-review", "wrap-today", "wrap-yesterday"] {
+            assert!(
+                dir.path()
+                    .join(format!(".claude/skills/{skill_id}/SKILL.md"))
+                    .is_file(),
+                "missing Claude bridge for {skill_id}"
+            );
+        }
 
         let vault = detect(dir.path());
         let installed = &vault.config.areas.installed;
@@ -546,6 +654,67 @@ mod tests {
         assert_eq!(installed[0].id, TIMELINE_AREA_ID);
         assert!(installed[0].enabled);
         assert_eq!(enabled_areas(&vault).len(), 1);
+    }
+
+    #[test]
+    fn claude_bridges_carry_frontmatter_and_survive_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        scaffold_vault(dir.path()).unwrap();
+        let bridge = dir.path().join(".claude/skills/wrap-today/SKILL.md");
+        let content = fs::read_to_string(&bridge).unwrap();
+        // Diego's choice: explicit `/wrap-today` only, never model-invoked.
+        assert!(content.contains("disable-model-invocation: true"));
+        // Body points back to the canonical skill file — one source of truth.
+        assert!(content.contains("skills/timeline/wrap-today.md"));
+
+        // create-if-missing: a user (or their LLM) edit survives re-materialize.
+        fs::write(&bridge, "edited by hand").unwrap();
+        let area = catalog_area(TIMELINE_AREA_ID).unwrap().unwrap();
+        materialize_area(dir.path(), &area).unwrap();
+        assert_eq!(fs::read_to_string(&bridge).unwrap(), "edited by hand");
+
+        // An edited bridge is preserved on removal, like any user-touched file.
+        let plan = plan_removal(dir.path(), TIMELINE_AREA_ID).unwrap();
+        assert!(
+            plan.keep_modified
+                .contains(&".claude/skills/wrap-today/SKILL.md".to_string())
+        );
+    }
+
+    #[test]
+    fn reconcile_backfills_missing_files_on_existing_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        scaffold_vault(dir.path()).unwrap();
+        // Simulate a vault scaffolded by an older app that lacked bridges and
+        // the wrap skills: drop the whole `.claude` tree and one skill file.
+        fs::remove_dir_all(dir.path().join(".claude")).unwrap();
+        fs::remove_file(dir.path().join("skills/timeline/wrap-yesterday.md")).unwrap();
+
+        let vault = detect(dir.path());
+        reconcile_enabled_areas(&vault).unwrap();
+        assert!(dir.path().join("skills/timeline/wrap-yesterday.md").is_file());
+        assert!(
+            dir.path()
+                .join(".claude/skills/wrap-today/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            dir.path()
+                .join(".claude/skills/week-review/SKILL.md")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn reconcile_skips_disabled_areas() {
+        let dir = tempfile::tempdir().unwrap();
+        scaffold_vault(dir.path()).unwrap();
+        deactivate_area(dir.path(), TIMELINE_AREA_ID).unwrap();
+        fs::remove_dir_all(dir.path().join(".claude")).unwrap();
+
+        let vault = detect(dir.path());
+        reconcile_enabled_areas(&vault).unwrap();
+        assert!(!dir.path().join(".claude").exists());
     }
 
     #[test]
@@ -583,6 +752,9 @@ mod tests {
         assert!(skill_path.is_file());
         assert!(!dir.path().join("areas/Timeline.md").is_file());
         assert!(!dir.path().join("_weekly/site").exists());
+        // The generated bridges are unmodified, so removal deletes them and
+        // prunes the now-empty `.claude` tree.
+        assert!(!dir.path().join(".claude").exists());
         assert!(!installed_manifest_path(dir.path(), TIMELINE_AREA_ID).exists());
         // The now-empty installed-areas dir is pruned, but `.breadpaper/`
         // survives because config.toml keeps it non-empty.

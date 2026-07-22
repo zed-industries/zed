@@ -183,8 +183,31 @@ impl TimelinePanel {
         if status != self.vault_status {
             self.vault_status = status;
             self.refresh_areas();
+            self.reconcile_areas(cx);
             cx.notify();
         }
+    }
+
+    /// Re-materializes enabled Areas in the background whenever a vault is
+    /// (re)detected, so a vault opened after an app update self-heals any
+    /// newly shipped Area files (new skills, their Claude Code bridges) that a
+    /// plain open would otherwise never create. Idempotent and never clobbers
+    /// user edits; writing files leaves the registry unchanged, so it does not
+    /// re-trigger `refresh_vault_status`.
+    fn reconcile_areas(&mut self, cx: &mut Context<Self>) {
+        let VaultStatus::Valid(vault) = &self.vault_status else {
+            return;
+        };
+        let vault = vault.clone();
+        let reconcile = cx.background_spawn(async move { areas::reconcile_enabled_areas(&vault) });
+        cx.spawn(async move |this, cx| {
+            reconcile.await?;
+            this.update(cx, |this, cx| {
+                this.refresh_areas();
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     /// Reloads the Areas section state from the vault's registry and the

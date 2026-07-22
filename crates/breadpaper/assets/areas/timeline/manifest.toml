@@ -28,6 +28,22 @@ summary = "Aggregate the week's notes + PRs/MRs, append a review, feed the dashb
 reads   = ["daily/**", "weekly/**", "mcp:github", "mcp:gitlab"]
 writes  = ["weekly/<week>.md (append)", "_weekly/site/data.js (append)"]
 
+[[skill]]
+id      = "wrap-today"
+name    = "Wrap Today"
+file    = "skills/timeline/wrap-today.md"
+summary = "Close out today's note — tasks + commits + recent context, append a daily closure."
+reads   = ["daily/**", "git:log", "mcp:github", "mcp:gitlab"]
+writes  = ["daily/<today>.md (append)"]
+
+[[skill]]
+id      = "wrap-yesterday"
+name    = "Wrap Yesterday"
+file    = "skills/timeline/wrap-yesterday.md"
+summary = "Close out yesterday's note — tasks + commits + surrounding context, append a daily closure."
+reads   = ["daily/**", "git:log", "mcp:github", "mcp:gitlab"]
+writes  = ["daily/<yesterday>.md (append)"]
+
 [[surface]]
 kind = "dashboard"
 name = "Weekly Dashboard"
