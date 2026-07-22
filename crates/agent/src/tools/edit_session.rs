@@ -16,14 +16,14 @@ use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
-use reindent::{Reindenter, compute_indent_delta, compute_rest_indent_delta};
+use reindent::{IndentDelta, Reindenter, compute_indent_delta, compute_rest_indent_delta};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
-use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
+use streaming_fuzzy_matcher::{SearchMatch, SearchMatches, StreamingFuzzyMatcher};
 use streaming_parser::{EditEvent, StreamingParser, WriteEvent};
 use text::ToOffset;
 use ui::SharedString;
@@ -506,7 +506,10 @@ impl EditPipeline {
                 if !chunk.is_empty() {
                     matcher.push(chunk, None);
                 }
-                let range = extract_match(
+                let ResolvedMatch {
+                    search_match: SearchMatch { range, line_pairs },
+                    is_exact,
+                } = extract_match(
                     matcher.finish(),
                     buffer,
                     edit_index,
@@ -535,16 +538,20 @@ impl EditPipeline {
                         .unwrap_or("")
                         .chars(),
                 );
-                let first_line_delta = compute_indent_delta(buffer_indent, query_indent);
-
+                let contextual_delta = compute_indent_delta(buffer_indent, query_indent);
+                let first_line_delta = if is_exact {
+                    // An exact range may start mid-line, where the retained prefix already
+                    // provides the first replacement line's indentation.
+                    IndentDelta::Spaces(0)
+                } else {
+                    contextual_delta
+                };
                 // Query row 0 is excluded: its delta is `first_line_delta`,
                 // which intentionally differs when the model stripped the
                 // first line's indentation.
                 let rest_delta = compute_rest_indent_delta(
-                    first_line_delta,
-                    matcher
-                        .line_pairs(&range)
-                        .unwrap_or(&[])
+                    contextual_delta,
+                    line_pairs
                         .iter()
                         .filter(|(query_row, _)| *query_row != 0)
                         .filter_map(|(query_row, buffer_row)| {
@@ -933,32 +940,46 @@ fn apply_char_operations(
     }
 }
 
+struct ResolvedMatch {
+    search_match: SearchMatch,
+    is_exact: bool,
+}
+
 fn extract_match(
-    matches: Vec<Range<usize>>,
+    matches: SearchMatches,
     buffer: &Entity<Buffer>,
     edit_index: &usize,
     file_changed_since_last_read: bool,
     cx: &mut AsyncApp,
-) -> Result<Range<usize>, String> {
+) -> Result<ResolvedMatch, String> {
+    let (matches, is_exact) = match matches {
+        SearchMatches::Exact(matches) => (matches, true),
+        SearchMatches::Fuzzy(matches) => (matches, false),
+    };
     let file_changed_since_last_read_message = if file_changed_since_last_read {
         " The file has changed on disk since you last read it."
     } else {
         ""
     };
 
-    match matches.len() {
-        0 => Err(format!(
+    match matches.as_slice() {
+        [] => Err(format!(
             "Could not find matching text for edit at index {}. \
                 The old_text did not match any content in the file.{} \
                 Please read the file again to get the current content.",
             edit_index, file_changed_since_last_read_message,
         )),
-        1 => Ok(matches.into_iter().next().unwrap()),
+        [search_match] => Ok(ResolvedMatch {
+            search_match: search_match.clone(),
+            is_exact,
+        }),
         _ => {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
             let lines = matches
                 .iter()
-                .map(|range| (snapshot.offset_to_point(range.start).row + 1).to_string())
+                .map(|search_match| {
+                    (snapshot.offset_to_point(search_match.range.start).row + 1).to_string()
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(format!(

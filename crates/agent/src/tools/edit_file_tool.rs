@@ -325,6 +325,102 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_mid_line_fragment(cx: &mut TestAppContext) {
+        let content = concat!(
+            "fn main() {\n",
+            "    println!(\"keyboard WASD, voxel-based\");\n",
+            "}\n",
+        );
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.rs".into(),
+                        edits: vec![Edit {
+                            old_text: "keyboard WASD, voxel-based".into(),
+                            new_text: "arrow keys".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(
+            new_text,
+            concat!("fn main() {\n", "    println!(\"arrow keys\");\n", "}\n")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_mid_line_multiline_replacement(cx: &mut TestAppContext) {
+        let content = concat!("fn f() {\n", "    old();\n", "}\n");
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.rs".into(),
+                        edits: vec![Edit {
+                            old_text: "old();".into(),
+                            new_text: "new();\nmore();".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(
+            new_text,
+            concat!("fn f() {\n", "    new();\n", "    more();\n", "}\n")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_tab_indented_mid_line_multiline_replacement(
+        cx: &mut TestAppContext,
+    ) {
+        let content = concat!("fn f() {\n", "\told();\n", "}\n");
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": content})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.rs".into(),
+                        edits: vec![Edit {
+                            old_text: "old();".into(),
+                            new_text: "new();\nmore();".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(
+            new_text,
+            concat!("fn f() {\n", "\tnew();\n", "\tmore();\n", "}\n")
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_first_line_missing_indent(cx: &mut TestAppContext) {
         // Reproduces https://github.com/zed-industries/zed/issues/60302: the
         // first line of the multi-line `old_text` omits its leading
@@ -625,6 +721,33 @@ mod tests {
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_rejects_overlapping_matches(cx: &mut TestAppContext) {
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "aaaaa"})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![Edit {
+                            old_text: "aaaa".into(),
+                            new_text: "replacement".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error { error, diff, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(error.contains("matched multiple locations"));
+        assert!(diff.is_empty());
     }
 
     /// When the edit fails after a session is created but before any edits are
@@ -2922,6 +3045,62 @@ mod tests {
             expected,
             "Edit should preserve a single blank line before test_after"
         );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_uses_old_text_trailing_newline_to_disambiguate(
+        cx: &mut TestAppContext,
+    ) {
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "foo suffix\nfoo\n"})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![Edit {
+                            old_text: "foo\n".into(),
+                            new_text: "bar\n".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "foo suffix\nbar\n");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_newline_only_replacement_preserves_line_ending(
+        cx: &mut TestAppContext,
+    ) {
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "before\nafter"})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![Edit {
+                            old_text: "\n".into(),
+                            new_text: "\n".into(),
+                        }],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "before\nafter");
     }
 
     #[test]
