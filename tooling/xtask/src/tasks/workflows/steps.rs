@@ -321,6 +321,10 @@ pub fn cache_nix_store_macos() -> Step<Use> {
     .add_with(("path", "~/nix-cache"))
 }
 
+pub fn disable_macos_gatekeeper() -> Step<Run> {
+    named::bash("sudo spctl --master-disable")
+}
+
 pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
