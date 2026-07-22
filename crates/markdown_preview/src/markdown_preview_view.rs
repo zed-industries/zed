@@ -643,15 +643,20 @@ impl MarkdownPreviewView {
 
     /// The absolute path of the file that is currently being previewed.
     fn get_folder_for_active_editor(editor: &Editor, cx: &App) -> Option<PathBuf> {
-        if let Some(file) = editor.file_at(MultiBufferOffset(0), cx) {
-            if let Some(file) = file.as_local() {
-                file.abs_path(cx).parent().map(|p| p.to_path_buf())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        let file = editor.file_at(MultiBufferOffset(0), cx)?;
+        let absolute_path = editor
+            .project()
+            .and_then(|project| {
+                project.read(cx).absolute_path(
+                    &ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    },
+                    cx,
+                )
+            })
+            .or_else(|| file.as_local().map(|file| file.abs_path(cx)))?;
+        absolute_path.parent().map(Path::to_path_buf)
     }
 
     fn line_scroll_amount(&self, cx: &App) -> Pixels {
@@ -1802,9 +1807,10 @@ mod tests {
     use crate::markdown_preview_view::resolve_preview_image;
     use buffer_diff::BufferDiff;
     use editor::Editor;
+    use fs::FakeFs;
     use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, WindowHandle};
-    use language::Point;
-    use project::{FakeFs, Project};
+    use language::{Buffer, DiskState, Point};
+    use project::Project;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -2767,6 +2773,35 @@ mod tests {
                 "the focused pane's content must be unaffected"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn derives_remote_preview_source_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx)
+        });
+        let file: Arc<dyn language::File> = Arc::new(project::File {
+            worktree,
+            path: rel_path("docs/readme.md").into(),
+            disk_state: DiskState::New,
+            entry_id: None,
+            is_local: false,
+            is_private: false,
+        });
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local("# readme\n", cx);
+            buffer.file_updated(file, cx);
+            buffer
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        let folder = editor.read_with(cx, |editor, cx| {
+            MarkdownPreviewView::get_folder_for_active_editor(editor, cx)
+        });
+        assert_eq!(folder, Some(PathBuf::from("/remote/project/docs")));
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
