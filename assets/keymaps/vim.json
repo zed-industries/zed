@@ -954,7 +954,7 @@
     },
   },
   {
-    "context": "!Editor && !Terminal",
+    "context": "!Editor && !Terminal && !ProjectPanel && !OutlinePanel && !ThreadsSidebar && !GitPanel && !CollabPanel && !BreakpointList",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch",
