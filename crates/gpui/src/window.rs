@@ -1570,8 +1570,11 @@ impl Window {
                     deferred_force_render |= request_frame_options.force_render;
                     return;
                 }
+                // Take the deferred flag first: `||` short-circuits, and leaving
+                // the flag set when this request already forces a render would
+                // force a second, redundant render on the next frame.
                 let force_render =
-                    request_frame_options.force_render || mem::take(&mut deferred_force_render);
+                    mem::take(&mut deferred_force_render) || request_frame_options.force_render;
 
                 let thermal_state = handle
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
