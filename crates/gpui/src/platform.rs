@@ -1825,6 +1825,10 @@ pub struct WindowOptions {
 pub struct WindowParams {
     pub bounds: Bounds<Pixels>,
 
+    /// Whether the window should request maximization before its initial map/configure.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub initial_maximized: bool,
+
     /// The titlebar configuration of the window
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub titlebar: Option<TitlebarOptions>,

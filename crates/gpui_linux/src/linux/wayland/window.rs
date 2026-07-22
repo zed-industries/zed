@@ -274,6 +274,10 @@ impl WaylandSurfaceState {
             toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
 
+        if params.initial_maximized {
+            toplevel.set_maximized();
+        }
+
         // Attempt to set up window decorations based on the requested configuration
         let decoration = globals
             .decoration_manager
@@ -610,7 +614,7 @@ impl WaylandWindowState {
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
-            maximized: false,
+            maximized: options.initial_maximized,
             tiling: Tiling::default(),
             window_bounds: options.bounds,
             in_progress_configure: None,

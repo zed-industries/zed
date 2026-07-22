@@ -1315,10 +1315,12 @@ impl Window {
             .and_then(|titlebar| titlebar.title.clone());
 
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let initial_maximized = matches!(window_bounds, WindowBounds::Maximized(_));
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
                 bounds: window_bounds.get_bounds(),
+                initial_maximized,
                 titlebar,
                 kind,
                 is_movable,
@@ -1365,8 +1367,9 @@ impl Window {
 
         match window_bounds {
             WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
             WindowBounds::Maximized(_) => platform_window.zoom(),
-            WindowBounds::Windowed(_) => {}
+            _ => {}
         }
 
         let accessibility_force_disabled = cx.accessibility_force_disabled;
