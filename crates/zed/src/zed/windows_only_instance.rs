@@ -1,7 +1,7 @@
 use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, CliTerminalOrigin, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::ResultExt;
@@ -22,6 +22,7 @@ use windows::{
     },
     core::HSTRING,
 };
+use zed_env_vars::{ZED_CLI_ORIGIN_WINDOW_ID, ZED_CLI_ORIGIN_WORKSPACE_ID};
 
 use crate::{Args, OpenListener, RawOpenRequest};
 
@@ -163,6 +164,15 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             user_data_dir: args.user_data_dir.clone(),
             dev_container: args.dev_container,
             cwd: std::env::current_dir().ok(),
+            terminal_origin: std::env::var(ZED_CLI_ORIGIN_WINDOW_ID)
+                .ok()
+                .zip(std::env::var(ZED_CLI_ORIGIN_WORKSPACE_ID).ok())
+                .and_then(|(window_id, workspace_id)| {
+                    Some(CliTerminalOrigin {
+                        window_id: window_id.parse().ok()?,
+                        workspace_id: workspace_id.parse().ok()?,
+                    })
+                }),
         }
     };
 

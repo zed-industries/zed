@@ -2,7 +2,7 @@ use crate::handle_open_request;
 use crate::restore_or_create_workspace;
 use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
-use cli::{CliRequest, CliResponse, CliResponseSink};
+use cli::{CliRequest, CliResponse, CliResponseSink, CliTerminalOrigin};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use db::kvp::KeyValueStore;
@@ -14,7 +14,7 @@ use futures::future;
 
 use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
-use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
+use gpui::{App, AsyncApp, Global, TaskExt, WeakEntity, WindowHandle, WindowId};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
@@ -43,6 +43,7 @@ pub struct OpenRequest {
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub open_behavior: Option<cli::OpenBehavior>,
+    pub terminal_origin: Option<CliTerminalOrigin>,
 }
 
 pub enum OpenRequestKind {
@@ -138,6 +139,7 @@ impl OpenRequest {
         this.diff_all = request.diff_all;
         this.dev_container = request.dev_container;
         this.open_behavior = request.open_behavior;
+        this.terminal_origin = request.terminal_origin;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -387,6 +389,7 @@ pub struct RawOpenRequest {
     pub dev_container: bool,
     pub wsl: Option<String>,
     pub open_behavior: Option<cli::OpenBehavior>,
+    pub terminal_origin: Option<CliTerminalOrigin>,
 }
 
 impl Global for OpenListener {}
@@ -594,6 +597,7 @@ pub async fn handle_cli_connection(
                 user_data_dir: _,
                 dev_container,
                 cwd,
+                terminal_origin,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -605,6 +609,7 @@ pub async fn handle_cli_connection(
                                 dev_container,
                                 wsl,
                                 open_behavior: Some(open_behavior),
+                                terminal_origin,
                             },
                             cx,
                         ) {
@@ -663,6 +668,7 @@ pub async fn handle_cli_connection(
                     app_state.clone(),
                     env,
                     cwd,
+                    terminal_origin,
                     cx,
                 )
                 .await;
@@ -831,6 +837,47 @@ fn open_behavior_for_default_setting(cx: &App) -> cli::OpenBehavior {
     }
 }
 
+fn terminal_origin_workspace(
+    terminal_origin: CliTerminalOrigin,
+    cx: &App,
+) -> Option<(
+    WindowHandle<MultiWorkspace>,
+    WeakEntity<workspace::Workspace>,
+)> {
+    let origin_window = WindowHandle::new(WindowId::from(terminal_origin.window_id));
+    let origin_window = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .find(|window| *window == origin_window)?;
+    let origin_workspace = origin_window
+        .read(cx)
+        .ok()?
+        .workspaces()
+        .find(|workspace| workspace.entity_id().as_u64() == terminal_origin.workspace_id)?;
+    Some((origin_window, origin_workspace.downgrade()))
+}
+
+pub(crate) fn apply_terminal_origin(
+    open_options: &mut workspace::OpenOptions,
+    terminal_origin: Option<CliTerminalOrigin>,
+    cx: &App,
+) {
+    if open_options.workspace_matching == workspace::WorkspaceMatching::MatchSubpaths
+        || (open_options.workspace_matching == workspace::WorkspaceMatching::None
+            && open_options.requesting_window.is_none())
+    {
+        return;
+    }
+
+    if let Some((origin_window, origin_workspace)) =
+        terminal_origin.and_then(|origin| terminal_origin_workspace(origin, cx))
+    {
+        open_options.requesting_window = Some(origin_window);
+        open_options.requesting_workspace = Some(origin_workspace);
+    }
+}
+
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
@@ -842,6 +889,7 @@ async fn open_workspaces(
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
     cwd: Option<PathBuf>,
+    terminal_origin: Option<CliTerminalOrigin>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     if paths.is_empty()
@@ -886,8 +934,9 @@ async fn open_workspaces(
     let mut errored = false;
 
     for (location, workspace_paths) in grouped_locations {
-        let base_open_options =
+        let mut base_open_options =
             cx.update(|cx| open_options_for_behavior(open_behavior, &location, cx));
+        cx.update(|cx| apply_terminal_origin(&mut base_open_options, terminal_origin, cx));
         let open_options = workspace::OpenOptions {
             wait,
             env: env.clone(),
@@ -1131,6 +1180,7 @@ mod tests {
     use futures::poll;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal as _};
     use language::LineEnding;
+    use project::Project;
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
@@ -1352,6 +1402,31 @@ mod tests {
         });
 
         assert_eq!(request.open_behavior, Some(cli::OpenBehavior::AlwaysNew));
+    }
+
+    #[gpui::test]
+    fn test_parse_file_url_preserves_terminal_origin(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["file:///tmp/example.rs".into()],
+                    terminal_origin: Some(CliTerminalOrigin {
+                        window_id: 42,
+                        workspace_id: 24,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(request.open_paths, vec!["/tmp/example.rs"]);
+        let terminal_origin = request.terminal_origin.unwrap();
+        assert_eq!(terminal_origin.window_id, 42);
+        assert_eq!(terminal_origin.workspace_id, 24);
     }
 
     #[gpui::test]
@@ -2005,36 +2080,23 @@ mod tests {
             })
             .await;
 
-        // Now test the reuse functionality - should replace the existing workspace
-        let workspace_paths_reuse = vec![file1_path.to_string()];
-        let paths: Vec<PathBuf> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
-        let window_to_replace = workspace::find_existing_workspace(
-            &paths,
-            &workspace::OpenOptions::default(),
-            &workspace::SerializedWorkspaceLocation::Local,
-            &mut cx.to_async(),
-        )
-        .await
-        .0
-        .unwrap()
-        .0;
-
-        let errored_reuse = cx
+        let reuse_result = cx
             .spawn({
                 let app_state = app_state.clone();
                 |mut cx| async move {
                     let response_sink = DiscardResponseSink;
-                    open_local_workspace(
-                        workspace_paths_reuse,
+                    open_workspaces(
+                        vec![file2_path.to_string()],
                         vec![],
                         false,
-                        workspace::OpenOptions {
-                            requesting_window: Some(window_to_replace),
-                            ..Default::default()
-                        },
-                        None,
+                        cli::OpenBehavior::Reuse,
                         &response_sink,
-                        &app_state,
+                        false,
+                        false,
+                        app_state,
+                        None,
+                        None,
+                        None,
                         &mut cx,
                     )
                     .await
@@ -2042,7 +2104,38 @@ mod tests {
             })
             .await;
 
-        assert!(!errored_reuse);
+        assert!(reuse_result.is_ok());
+        assert_eq!(cx.windows().len(), 1);
+
+        let stale_origin_result = cx
+            .spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
+                    open_workspaces(
+                        vec![file1_path.to_string()],
+                        vec![],
+                        false,
+                        cli::OpenBehavior::Reuse,
+                        &response_sink,
+                        false,
+                        false,
+                        app_state,
+                        None,
+                        None,
+                        Some(CliTerminalOrigin {
+                            window_id: 999_999,
+                            workspace_id: 999_999,
+                        }),
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(stale_origin_result.is_ok());
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[gpui::test]
@@ -2122,7 +2215,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_add_flag_prefers_focused_window(cx: &mut TestAppContext) {
+    async fn test_add_flag_prefers_terminal_origin_window(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
         let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
@@ -2220,8 +2313,14 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
         let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
 
-        // Focus window2
-        multi_workspace_2
+        let terminal_origin = multi_workspace_2
+            .update(cx, |multi_workspace, window, _| CliTerminalOrigin {
+                window_id: window.window_handle().window_id().as_u64(),
+                workspace_id: multi_workspace.workspace().entity_id().as_u64(),
+            })
+            .unwrap();
+
+        multi_workspace_1
             .update(cx, |_, window, _| {
                 window.activate_window();
             })
@@ -2241,33 +2340,35 @@ mod tests {
             .unwrap();
 
         let workspace_paths_add = vec![new_file_path.to_string()];
-        let _errored = cx
+        let result = cx
             .spawn({
                 let app_state = app_state.clone();
                 |mut cx| async move {
                     let response_sink = DiscardResponseSink;
-                    open_local_workspace(
+                    open_workspaces(
                         workspace_paths_add,
                         Vec::new(),
                         false,
-                        workspace::OpenOptions {
-                            workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory, // --add flag
-                            ..Default::default()
-                        },
-                        None,
+                        cli::OpenBehavior::Add,
                         &response_sink,
-                        &app_state,
+                        false,
+                        false,
+                        app_state,
+                        None,
+                        None,
+                        Some(terminal_origin),
                         &mut cx,
                     )
                     .await
                 }
             })
             .await;
+        assert!(result.is_ok());
 
         // Should still have 2 windows (file added to existing focused window)
         assert_eq!(cx.windows().len(), 2);
 
-        // Verify the file was added to window2 (the focused one)
+        // Verify the file was added to window2, despite window1 being active.
         multi_workspace_2
             .update(cx, |workspace, _, cx| {
                 let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();
@@ -2283,6 +2384,221 @@ mod tests {
                 assert_eq!(items.len(), 1, "Other window should still have 1 item");
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_directory_prefers_terminal_origin_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file1_path = if cfg!(windows) {
+            "C:\\root\\file1.txt"
+        } else {
+            "/root/file1.txt"
+        };
+        let file2_path = if cfg!(windows) {
+            "C:\\root\\file2.txt"
+        } else {
+            "/root/file2.txt"
+        };
+        let unmatched_dir = if cfg!(windows) {
+            "C:\\unmatched-dir"
+        } else {
+            "/unmatched-dir"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file1_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file2_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_dir(Path::new(unmatched_dir))
+            .await
+            .unwrap();
+
+        open_workspace_file(
+            file1_path,
+            workspace::OpenOptions::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
+        assert_eq!(cx.windows().len(), 1);
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+
+        open_workspace_file(
+            file2_path,
+            workspace::OpenOptions {
+                workspace_matching: workspace::WorkspaceMatching::None,
+                ..Default::default()
+            },
+            app_state.clone(),
+            cx,
+        )
+        .await;
+        assert_eq!(cx.windows().len(), 2);
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+
+        let terminal_origin = multi_workspace_2
+            .update(cx, |multi_workspace, window, _| CliTerminalOrigin {
+                window_id: window.window_handle().window_id().as_u64(),
+                workspace_id: multi_workspace.workspace().entity_id().as_u64(),
+            })
+            .unwrap();
+
+        // Focus window 1 so we can prove the directory routes to the origin
+        // window (2) rather than the active one.
+        multi_workspace_1
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+
+        let result = cx
+            .spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
+                    open_workspaces(
+                        vec![unmatched_dir.to_string()],
+                        Vec::new(),
+                        false,
+                        cli::OpenBehavior::ExistingWindow,
+                        &response_sink,
+                        false,
+                        false,
+                        app_state,
+                        None,
+                        None,
+                        Some(terminal_origin),
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+        assert!(result.is_ok());
+
+        // No new window should be opened for the unmatched directory.
+        assert_eq!(cx.windows().len(), 2);
+
+        // The directory should be added to the origin window's multi-workspace,
+        // not the active window's.
+        let workspaces_1 = multi_workspace_1
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.workspaces().count()
+            })
+            .unwrap();
+        let workspaces_2 = multi_workspace_2
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.workspaces().count()
+            })
+            .unwrap();
+        assert_eq!(workspaces_1, 1, "active window should be untouched");
+        assert_eq!(
+            workspaces_2, 2,
+            "origin window should host the unmatched directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_fallback_prefers_terminal_origin_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let source_file = if cfg!(windows) {
+            "C:\\root\\source.txt"
+        } else {
+            "/root/source.txt"
+        };
+        let unmatched_file = if cfg!(windows) {
+            "C:\\unmatched.txt"
+        } else {
+            "/unmatched.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(source_file), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(unmatched_file), Default::default())
+            .await
+            .unwrap();
+
+        open_workspace_file(
+            source_file,
+            workspace::OpenOptions::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let source_workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let active_project = Project::test(app_state.fs.clone(), [], cx).await;
+        let active_workspace = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(active_project, window, cx)
+            })
+            .unwrap();
+        let terminal_origin = multi_workspace
+            .update(cx, |_, window, _| CliTerminalOrigin {
+                window_id: window.window_handle().window_id().as_u64(),
+                workspace_id: source_workspace.entity_id().as_u64(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            multi_workspace
+                .read_with(cx, |multi_workspace, _| multi_workspace
+                    .workspace()
+                    .entity_id())
+                .unwrap(),
+            active_workspace.entity_id()
+        );
+
+        let result = cx
+            .spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
+                    open_workspaces(
+                        vec![unmatched_file.to_string()],
+                        Vec::new(),
+                        false,
+                        cli::OpenBehavior::ExistingWindow,
+                        &response_sink,
+                        false,
+                        false,
+                        app_state,
+                        None,
+                        None,
+                        Some(terminal_origin),
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(result.is_ok());
+        source_workspace.update(cx, |workspace, cx| {
+            assert_eq!(workspace.items(cx).count(), 2);
+        });
+        active_workspace.update(cx, |workspace, cx| {
+            assert_eq!(workspace.items(cx).count(), 0);
+        });
     }
 
     #[gpui::test]
@@ -2420,6 +2736,7 @@ mod tests {
             user_data_dir: None,
             dev_container: false,
             cwd: None,
+            terminal_origin: None,
         }
     }
 
@@ -2439,6 +2756,7 @@ mod tests {
             user_data_dir: None,
             dev_container: false,
             cwd: None,
+            terminal_origin: None,
         }
     }
 

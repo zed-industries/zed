@@ -44,6 +44,7 @@ url.workspace = true
 util.workspace = true
 urlencoding.workspace = true
 vte.workspace = true
+zed_env_vars.workspace = true
 parking_lot.workspace = true
 percent-encoding.workspace = true
 

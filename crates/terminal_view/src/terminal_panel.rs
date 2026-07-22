@@ -20,7 +20,7 @@ use project::{Fs, Project};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{Terminal, terminal_settings::TerminalSettings};
+use terminal::{Terminal, TerminalSource, terminal_settings::TerminalSettings};
 use ui::{
     ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
     Tooltip, prelude::*,
@@ -435,6 +435,7 @@ impl TerminalPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
+        let workspace_id = workspace.entity_id().as_u64();
         let workspace = workspace.read(cx);
         let database_id = workspace.database_id();
         let weak_workspace = self.workspace.clone();
@@ -468,15 +469,24 @@ impl TerminalPanel {
         } else {
             false
         };
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id,
+        });
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
                 .update(cx, |project, cx| match terminal_view {
-                    Some(view) => project.clone_terminal(
+                    Some(view) => project.clone_terminal_with_origin(
                         &view.read(cx).terminal.clone(),
                         cx,
                         working_directory,
+                        terminal_source,
                     ),
-                    None => project.create_terminal_shell(working_directory, cx),
+                    None => project.create_terminal_shell_with_origin(
+                        working_directory,
+                        terminal_source,
+                        cx,
+                    ),
                 })
                 .await
                 .log_err()?;
@@ -625,9 +635,18 @@ impl TerminalPanel {
             RevealTarget::Center => self
                 .workspace
                 .update(cx, |workspace, cx| {
-                    Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(spawn_task, cx)
-                    })
+                    Self::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, origin_window_id, cx| {
+                            project.create_terminal_task_with_origin(
+                                spawn_task,
+                                origin_window_id,
+                                cx,
+                            )
+                        },
+                    )
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
             RevealTarget::Dock => self.add_terminal_task(spawn_task, reveal, window, cx),
@@ -651,13 +670,22 @@ impl TerminalPanel {
         if center_pane_has_focus && active_center_item_is_terminal {
             let working_directory = default_working_directory(workspace, cx);
             let local = action.local;
-            Self::add_center_terminal(workspace, window, cx, move |project, cx| {
-                if local {
-                    project.create_local_terminal(cx)
-                } else {
-                    project.create_terminal_shell(working_directory, cx)
-                }
-            })
+            Self::add_center_terminal(
+                workspace,
+                window,
+                cx,
+                move |project, origin_window_id, cx| {
+                    if local {
+                        project.create_local_terminal_with_origin(origin_window_id, cx)
+                    } else {
+                        project.create_terminal_shell_with_origin(
+                            working_directory,
+                            origin_window_id,
+                            cx,
+                        )
+                    }
+                },
+            )
             .detach_and_log_err(cx);
             return;
         }
@@ -743,6 +771,7 @@ impl TerminalPanel {
         cx: &mut Context<Workspace>,
         create_terminal: impl FnOnce(
             &mut Project,
+            Option<TerminalSource>,
             &mut Context<Project>,
         ) -> Task<Result<Entity<Terminal>>>
         + 'static,
@@ -753,8 +782,16 @@ impl TerminalPanel {
             )));
         }
         let project = workspace.project().downgrade();
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id: cx.entity_id().as_u64(),
+        });
         cx.spawn_in(window, async move |workspace, cx| {
-            let terminal = project.update(cx, create_terminal)?.await?;
+            let terminal = project
+                .update(cx, |project, cx| {
+                    create_terminal(project, terminal_source, cx)
+                })?
+                .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = cx.new(|cx| {
@@ -791,6 +828,10 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id: self.workspace.entity_id().as_u64(),
+        });
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for remote projects");
@@ -801,7 +842,9 @@ impl TerminalPanel {
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_task_with_origin(task, terminal_source, cx)
+                })
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -869,7 +912,10 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
-
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id: self.workspace.entity_id().as_u64(),
+        });
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for collaborative projects");
@@ -881,11 +927,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal_with_origin(terminal_source, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell_with_origin(cwd, terminal_source, cx)
+                    })
                     .await
             };
 
@@ -996,6 +1046,10 @@ impl TerminalPanel {
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let task_workspace = self.workspace.clone();
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id: self.workspace.entity_id().as_u64(),
+        });
         cx.spawn_in(window, async move |terminal_panel, cx| {
             let project = terminal_panel.update(cx, |this, cx| {
                 this.workspace
@@ -1003,7 +1057,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal_task(spawn_task, cx)
+                    project.create_terminal_task_with_origin(spawn_task, terminal_source, cx)
                 })
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
@@ -2174,9 +2228,14 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, origin_window_id, cx| {
+                            project.create_terminal_shell_with_origin(None, origin_window_id, cx)
+                        },
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -2343,9 +2402,14 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, origin_window_id, cx| {
+                            project.create_terminal_shell_with_origin(None, origin_window_id, cx)
+                        },
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -2433,9 +2497,14 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, origin_window_id, cx| {
+                            project.create_terminal_shell_with_origin(None, origin_window_id, cx)
+                        },
+                    )
                 })
             })
             .expect("Failed to update workspace")

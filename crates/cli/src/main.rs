@@ -13,7 +13,7 @@ use crate::completions::Shell;
 
 use anyhow::{Context as _, Result};
 use clap::{CommandFactory, Parser};
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, CliResponse, CliTerminalOrigin, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -28,6 +28,7 @@ use std::{
 use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
 use walkdir::WalkDir;
+use zed_env_vars::{ZED_CLI_ORIGIN_WINDOW_ID, ZED_CLI_ORIGIN_WORKSPACE_ID};
 
 use std::io::IsTerminal;
 
@@ -311,6 +312,7 @@ fn create_empty_stub(temp_dir: &mut TempDir, rel: &Path) -> anyhow::Result<PathB
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::HashMap;
     use util::path;
     use util::paths::SanitizedPath;
     use util::test::TempTree;
@@ -427,6 +429,43 @@ mod tests {
         .unwrap();
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_terminal_origin_from_env_valid() {
+        let vars = HashMap::from([
+            (ZED_CLI_ORIGIN_WINDOW_ID.to_string(), "42".to_string()),
+            (ZED_CLI_ORIGIN_WORKSPACE_ID.to_string(), "24".to_string()),
+        ]);
+        let origin = terminal_origin_from_env(|key| vars.get(key).cloned()).unwrap();
+        assert_eq!(origin.window_id, 42);
+        assert_eq!(origin.workspace_id, 24);
+    }
+
+    #[test]
+    fn test_terminal_origin_from_env_missing() {
+        // Neither var present.
+        assert!(terminal_origin_from_env(|_| None).is_none());
+
+        // Only one of the two present is not enough.
+        let only_window = HashMap::from([(ZED_CLI_ORIGIN_WINDOW_ID.to_string(), "42".to_string())]);
+        assert!(terminal_origin_from_env(|key| only_window.get(key).cloned()).is_none());
+
+        let only_workspace =
+            HashMap::from([(ZED_CLI_ORIGIN_WORKSPACE_ID.to_string(), "24".to_string())]);
+        assert!(terminal_origin_from_env(|key| only_workspace.get(key).cloned()).is_none());
+    }
+
+    #[test]
+    fn test_terminal_origin_from_env_malformed() {
+        let vars = HashMap::from([
+            (
+                ZED_CLI_ORIGIN_WINDOW_ID.to_string(),
+                "not-a-number".to_string(),
+            ),
+            (ZED_CLI_ORIGIN_WORKSPACE_ID.to_string(), "24".to_string()),
+        ]);
+        assert!(terminal_origin_from_env(|key| vars.get(key).cloned()).is_none());
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -479,6 +518,18 @@ fn main() {
         eprintln!("error: {error:#}");
         std::process::exit(1);
     }
+}
+
+/// Reads the terminal origin from the environment. Both env vars must be present
+/// and parse as `u64`, otherwise there is no usable origin. `get_var` is injected
+/// so this can be exercised without touching the process environment.
+fn terminal_origin_from_env(get_var: impl Fn(&str) -> Option<String>) -> Option<CliTerminalOrigin> {
+    let window_id = get_var(ZED_CLI_ORIGIN_WINDOW_ID)?;
+    let workspace_id = get_var(ZED_CLI_ORIGIN_WORKSPACE_ID)?;
+    Some(CliTerminalOrigin {
+        window_id: window_id.parse().ok()?,
+        workspace_id: workspace_id.parse().ok()?,
+    })
 }
 
 fn run() -> Result<()> {
@@ -599,7 +650,7 @@ fn run() -> Result<()> {
         cli::OpenBehavior::Default
     };
 
-    let env = {
+    let mut env: Option<collections::HashMap<String, String>> = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             use collections::HashMap;
@@ -630,6 +681,17 @@ fn run() -> Result<()> {
             Some(std::env::vars().collect::<HashMap<_, _>>())
         }
     };
+
+    let terminal_origin = terminal_origin_from_env(|key| env::var(key).ok());
+
+    // The terminal origin is forwarded in its own `terminal_origin` field, so
+    // strip it from the environment we hand to Zed. Otherwise a project opened
+    // via `zed <path>` from an integrated terminal would inherit that terminal's
+    // origin as part of its project environment.
+    if let Some(env) = env.as_mut() {
+        env.remove(ZED_CLI_ORIGIN_WINDOW_ID);
+        env.remove(ZED_CLI_ORIGIN_WORKSPACE_ID);
+    }
 
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
@@ -729,6 +791,7 @@ fn run() -> Result<()> {
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
                     cwd: env::current_dir().ok(),
+                    terminal_origin,
                 };
 
                 tx.send(open_request)?;

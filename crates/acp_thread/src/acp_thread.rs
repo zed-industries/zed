@@ -5320,6 +5320,7 @@ mod tests {
                     0,
                     false,
                     0,
+                    None,
                     Some(completion_tx),
                     cx,
                     vec![],

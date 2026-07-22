@@ -72,9 +72,10 @@ use workspace::{
     restore_multiworkspace,
 };
 use zed::{
-    OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
-    derive_paths_with_position, edit_prediction_registry, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions,
+    OpenListener, OpenRequest, RawOpenRequest, app_menus, apply_terminal_origin,
+    build_window_options, derive_paths_with_position, edit_prediction_registry,
+    handle_cli_connection, handle_keymap_file_changes, initialize_workspace,
+    open_paths_with_positions,
 };
 
 use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme};
@@ -979,6 +980,7 @@ fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
+    let terminal_origin = request.terminal_origin;
     if let Some(kind) = request.kind {
         match kind {
             OpenRequestKind::CliConnection(connection) => {
@@ -1181,11 +1183,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 });
             }
             OpenRequestKind::GitCommit { sha } => {
-                let base_open_options = zed::open_options_for_request(
+                let mut base_open_options = zed::open_options_for_request(
                     request.open_behavior,
                     &workspace::SerializedWorkspaceLocation::Local,
                     cx,
                 );
+                apply_terminal_origin(&mut base_open_options, terminal_origin, cx);
                 cx.spawn(async move |cx| {
                     let paths_with_position =
                         derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
@@ -1238,7 +1241,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if let Some(connection_options) = request.remote_connection {
         let open_behavior = request.open_behavior;
         let location = workspace::SerializedWorkspaceLocation::Remote(connection_options.clone());
-        let base_open_options = zed::open_options_for_request(open_behavior, &location, cx);
+        let mut base_open_options = zed::open_options_for_request(open_behavior, &location, cx);
+        apply_terminal_origin(&mut base_open_options, terminal_origin, cx);
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_remote_project(connection_options, paths, app_state, base_open_options, cx).await
@@ -1251,11 +1255,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     let dev_container = request.dev_container;
     if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
-        let base_open_options = zed::open_options_for_request(
+        let mut base_open_options = zed::open_options_for_request(
             request.open_behavior,
             &workspace::SerializedWorkspaceLocation::Local,
             cx,
         );
+        apply_terminal_origin(&mut base_open_options, terminal_origin, cx);
         task = Some(cx.spawn(async move |cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
