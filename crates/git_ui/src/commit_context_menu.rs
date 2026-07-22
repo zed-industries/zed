@@ -16,6 +16,8 @@ actions!(
         CopyCommitTag,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Diffs the clicked commit with the selected commit.
+        DiffWithSelectedCommit,
     ]
 );
 
@@ -40,6 +42,7 @@ pub(crate) fn commit_context_menu(
     focus_handle: FocusHandle,
     repository: Option<WeakEntity<Repository>>,
     workspace: WeakEntity<Workspace>,
+    diff_with_selected_commit: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
@@ -84,6 +87,15 @@ pub(crate) fn commit_context_menu(
                     cx.write_to_clipboard(ClipboardItem::new_string(sha.to_string()));
                 },
             )
+            .when(diff_with_selected_commit, |menu| {
+                menu.entry(
+                    "Diff with Selected Commit",
+                    Some(DiffWithSelectedCommit.boxed_clone()),
+                    move |window, cx| {
+                        window.dispatch_action(Box::new(DiffWithSelectedCommit), cx);
+                    },
+                )
+            })
             .when_some(ref_name.clone(), |menu, ref_name| {
                 menu.entry("Copy Ref Name", None, move |_window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));

@@ -295,6 +295,19 @@ message LoadCommitDiffResponse {
   repeated CommitFile files = 1;
 }
 
+message LoadRevisionTexts {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string base_revision = 3;
+  string head_revision = 4;
+  string path = 5;
+}
+
+message LoadRevisionTextsResponse {
+  optional string base_text = 1;
+  optional string head_text = 2;
+}
+
 message CommitFile {
   string path = 1;
   optional string old_text = 2;

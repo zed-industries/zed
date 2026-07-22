@@ -1,4 +1,6 @@
-pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
+pub use crate::commit_context_menu::{
+    CopyCommitSha, CopyCommitTag, DiffWithSelectedCommit, OpenCommitView,
+};
 use crate::{
     commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
     commit_tooltip::CommitAvatar,
@@ -2407,6 +2409,46 @@ impl GitGraph {
         self.copy_commit_tag(selected_entry_index, window, cx);
     }
 
+    fn diff_context_menu_commit_with_selected(
+        &mut self,
+        _: &DiffWithSelectedCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_index) = self.selected_entry_idx else {
+            return;
+        };
+        let Some(context_menu_index) = self.context_menu.as_ref().and_then(|menu| menu.entry_idx)
+        else {
+            return;
+        };
+        if selected_index == context_menu_index {
+            return;
+        }
+        let LogSource::Path(path) = self.log_source.clone() else {
+            return;
+        };
+        let Some(selected_commit) = self.graph_data.commits.get(selected_index) else {
+            return;
+        };
+        let Some(context_menu_commit) = self.graph_data.commits.get(context_menu_index) else {
+            return;
+        };
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+
+        CommitView::open_comparison(
+            selected_commit.data.sha.to_string(),
+            context_menu_commit.data.sha.to_string(),
+            path,
+            repository.downgrade(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2421,6 +2463,11 @@ impl GitGraph {
         let repository = self
             .get_repository(cx)
             .map(|repository| repository.downgrade());
+        let can_diff_with_selected_commit = matches!(self.log_source, LogSource::Path(_))
+            && self
+                .selected_entry_idx
+                .is_some_and(|selected_index| selected_index != index)
+            && ref_name.is_none();
         let context_menu = commit_context_menu(
             CommitContextMenuData {
                 sha: commit.data.sha,
@@ -2436,6 +2483,7 @@ impl GitGraph {
             self.focus_handle.clone(),
             repository,
             self.workspace.clone(),
+            can_diff_with_selected_commit,
             window,
             cx,
         );
@@ -4042,6 +4090,7 @@ impl Render for GitGraph {
             }))
             .on_action(cx.listener(Self::copy_selected_commit_sha))
             .on_action(cx.listener(Self::copy_selected_commit_tag))
+            .on_action(cx.listener(Self::diff_context_menu_commit_with_selected))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search_state
