@@ -39,7 +39,7 @@ use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use git_ui::staged_diff::StagedDiffToolbar;
 use git_ui::unstaged_diff::UnstagedDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
+    Action, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
     PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
@@ -1655,6 +1655,10 @@ fn open_about_window(cx: &mut App) {
         width: px(440.),
         height: px(300.),
     };
+    let display_id = cx
+        .active_display()
+        .or_else(|| cx.primary_display())
+        .map(|display| display.id());
 
     cx.open_window(
         WindowOptions {
@@ -1663,7 +1667,12 @@ fn open_about_window(cx: &mut App) {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(12.))),
             }),
-            window_bounds: Some(WindowBounds::centered(window_size, cx)),
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                display_id,
+                window_size,
+                cx,
+            ))),
+            display_id,
             is_resizable: false,
             is_minimizable: false,
             kind: WindowKind::Floating,

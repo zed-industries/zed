@@ -1788,8 +1788,8 @@ pub struct WindowOptions {
     /// Whether the window should be minimized by the user
     pub is_minimizable: bool,
 
-    /// The display to create the window on, if this is None,
-    /// the window will be created on the main display
+    /// The display to create the window on. If this is `None`, the window will be created on the
+    /// active window's display, falling back to the primary display.
     pub display_id: Option<DisplayId>,
 
     /// The appearance of the window background.
