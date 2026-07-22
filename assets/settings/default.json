@@ -1831,6 +1831,10 @@
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
     "cursor_position_button": true,
+    // Whether to show the word count in the status bar. When enabled, the word
+    // count of the current document is shown next to the cursor position, and
+    // the word count of the current selection is shown when text is selected.
+    "word_count_button": false,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.

@@ -1,6 +1,6 @@
 use editor::{Editor, EditorEvent, MBTextSummary, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
-use settings::{RegisterSetting, Settings};
+use settings::{RegisterSetting, Settings, SettingsStore};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -14,16 +14,40 @@ use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, it
 pub(crate) struct SelectionStats {
     pub lines: usize,
     pub characters: usize,
+    pub words: usize,
     pub selections: usize,
 }
 
 pub struct CursorPosition {
     position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
+    document_words: usize,
+    active_editor: Option<WeakEntity<Editor>>,
     context: Option<FocusHandle>,
     workspace: WeakEntity<Workspace>,
     update_position: Task<()>,
+    update_document_words: Task<()>,
     _observe_active_editor: Option<Subscription>,
+    _observe_settings: Subscription,
+}
+
+/// Counts words as maximal runs of non-whitespace characters, matching the
+/// behavior of `wc -w`. The `in_word` state is carried across chunk boundaries
+/// so that a word split across two chunks is not double counted.
+fn count_words<'a>(chunks: impl Iterator<Item = &'a str>) -> usize {
+    let mut words = 0;
+    let mut in_word = false;
+    for chunk in chunks {
+        for character in chunk.chars() {
+            if character.is_whitespace() {
+                in_word = false;
+            } else if !in_word {
+                in_word = true;
+                words += 1;
+            }
+        }
+    }
+    words
 }
 
 /// A position in the editor, where user's caret is located at.
@@ -67,14 +91,24 @@ impl UserCaretPosition {
 }
 
 impl CursorPosition {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
+        // Recompute the document word count when the relevant setting is toggled
+        // so the status bar reflects the change immediately.
+        let observe_settings = cx.observe_global::<SettingsStore>(|cursor_position, cx| {
+            cursor_position.update_document_words(None, cx);
+            cx.notify();
+        });
         Self {
             position: None,
             context: None,
             selected_count: Default::default(),
+            document_words: 0,
+            active_editor: None,
             workspace: workspace.weak_handle(),
             update_position: Task::ready(()),
+            update_document_words: Task::ready(()),
             _observe_active_editor: None,
+            _observe_settings: observe_settings,
         }
     }
 
@@ -109,6 +143,8 @@ impl CursorPosition {
                                 cursor_position.context = None;
                             }
                             editor::EditorMode::Full { .. } => {
+                                let word_count_enabled =
+                                    StatusBarSettings::get_global(cx).word_count_button;
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.display_snapshot(cx);
                                 if snapshot.buffer_snapshot().excerpts().count() > 0 {
@@ -120,6 +156,13 @@ impl CursorPosition {
                                         );
                                         cursor_position.selected_count.characters +=
                                             selection_summary.chars;
+                                        if word_count_enabled {
+                                            cursor_position.selected_count.words += count_words(
+                                                snapshot
+                                                    .buffer_snapshot()
+                                                    .text_for_range(selection.start..selection.end),
+                                            );
+                                        }
                                         if selection.end != selection.start {
                                             cursor_position.selected_count.lines +=
                                                 (selection.end.row - selection.start.row) as usize;
@@ -154,38 +197,84 @@ impl CursorPosition {
         });
     }
 
-    fn write_position(&self, text: &mut String, cx: &App) {
-        if self.selected_count
-            <= (SelectionStats {
-                selections: 1,
-                ..Default::default()
-            })
-        {
-            // Do not write out anything if we have just one empty selection.
+    fn update_document_words(&mut self, debounce: Option<Duration>, cx: &mut Context<Self>) {
+        if !StatusBarSettings::get_global(cx).word_count_button {
+            if self.document_words != 0 {
+                self.document_words = 0;
+                cx.notify();
+            }
             return;
         }
+        let Some(editor) = self.active_editor.clone() else {
+            return;
+        };
+        self.update_document_words = cx.spawn(async move |cursor_position, cx| {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
+            }
+            let words = editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                count_words(snapshot.text_for_range(Point::zero()..snapshot.max_point()))
+            });
+            if let Ok(words) = words {
+                cursor_position
+                    .update(cx, |cursor_position, cx| {
+                        if cursor_position.document_words != words {
+                            cursor_position.document_words = words;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            }
+        });
+    }
+
+    fn write_position(&self, text: &mut String, cx: &App) {
+        let format = LineIndicatorFormat::get(None, cx);
+        let is_short_format = format == &LineIndicatorFormat::Short;
+        let word_count_enabled = StatusBarSettings::get_global(cx).word_count_button;
+
         let SelectionStats {
             lines,
             characters,
+            words,
             selections,
         } = self.selected_count;
-        let format = LineIndicatorFormat::get(None, cx);
-        let is_short_format = format == &LineIndicatorFormat::Short;
-        let lines = (lines > 1).then_some((lines, "line"));
-        let selections = (selections > 1).then_some((selections, "selection"));
-        let characters = (characters > 0).then_some((characters, "character"));
-        if (None, None, None) == (characters, selections, lines) {
-            // Nothing to display.
+        let has_selection = characters > 0 || lines > 0 || selections > 1;
+
+        let mut entries: Vec<(usize, &'static str)> = Vec::new();
+        if has_selection {
+            if selections > 1 {
+                entries.push((selections, "selection"));
+            }
+            if lines > 1 {
+                entries.push((lines, "line"));
+            }
+            if word_count_enabled {
+                entries.push((words, "word"));
+            }
+            if characters > 0 {
+                entries.push((characters, "character"));
+            }
+        } else if word_count_enabled {
+            // With no active selection, show the whole document's word count.
+            entries.push((self.document_words, "word"));
+        }
+
+        if entries.is_empty() {
             return;
         }
+
         write!(text, " (").unwrap();
         let mut wrote_once = false;
-        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+        for (count, name) in entries {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }
             let name = if is_short_format { &name[..1] } else { name };
-            let plural_suffix = if count > 1 && !is_short_format {
+            // Use a plural suffix for any count that isn't exactly one, so that a
+            // zero document word count reads as "0 words" rather than "0 word".
+            let plural_suffix = if count != 1 && !is_short_format {
                 "s"
             } else {
                 ""
@@ -199,6 +288,11 @@ impl CursorPosition {
     #[cfg(test)]
     pub(crate) fn selection_stats(&self) -> &SelectionStats {
         &self.selected_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn document_words(&self) -> usize {
+        self.document_words
     }
 
     #[cfg(test)]
@@ -264,6 +358,9 @@ impl Render for CursorPosition {
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+// The document word count requires scanning the whole buffer, so coalesce rapid
+// edits (e.g. while typing) behind a slightly longer debounce.
+const WORD_COUNT_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
@@ -273,6 +370,7 @@ impl StatusItemView for CursorPosition {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+            self.active_editor = Some(editor.downgrade());
             self._observe_active_editor = Some(cx.subscribe_in(
                 &editor,
                 window,
@@ -284,12 +382,18 @@ impl StatusItemView for CursorPosition {
                         window,
                         cx,
                     ),
+                    EditorEvent::BufferEdited => {
+                        cursor_position.update_document_words(Some(WORD_COUNT_DEBOUNCE), cx)
+                    }
                     _ => {}
                 },
             ));
             self.update_position(&editor, None, window, cx);
+            self.update_document_words(None, cx);
         } else {
             self.position = None;
+            self.active_editor = None;
+            self.document_words = 0;
             self._observe_active_editor = None;
         }
 
