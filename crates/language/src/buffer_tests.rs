@@ -277,7 +277,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |settings| {
-            settings.file_types.get_or_insert_default().extend([
+            settings.file_types.get_or_insert_default().0.extend([
                 ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
@@ -2978,6 +2978,104 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         }
 
         buffer
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
+    let markdown_language = markdown_lang();
+    let markdown_inline_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "markdown-inline".into(),
+                grammar: Some("markdown-inline".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!(
+            "../../grammars/src/markdown-inline/highlights.scm"
+        ))
+        .unwrap()
+        .with_injection_query(include_str!(
+            "../../grammars/src/markdown-inline/injections.scm"
+        ))
+        .unwrap(),
+    );
+    let html_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_highlights_query("(comment) @comment (tag_name) @tag")
+        .unwrap(),
+    );
+    let syntax_theme = SyntaxTheme::new([
+        ("comment".to_string(), gpui::rgba(0xffffffff).into()),
+        ("tag".to_string(), gpui::rgba(0xff0000ff).into()),
+    ]);
+    markdown_language.set_theme(&syntax_theme);
+    markdown_inline_language.set_theme(&syntax_theme);
+    html_language.set_theme(&syntax_theme);
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    language_registry.add(markdown_language.clone());
+    language_registry.add(markdown_inline_language);
+    language_registry.add(html_language);
+
+    let text = "<!--Annotation from the start is OK-->\n\n\
+        Annotation in the middle <!--is rendered badly.-->\n\n\
+        An inline comment can span <!--multiple\nlines--> within a paragraph.\n\n\
+        Ordinary inline HTML: <em>emphasized</em>.";
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+        buffer
+    });
+
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _cx| {
+        let snapshot = buffer.snapshot();
+        let highlighted_text = |capture_name: &str| {
+            let highlight_id = syntax_theme
+                .highlight_id(capture_name)
+                .map(HighlightId::new);
+            assert!(highlight_id.is_some(), "{capture_name} not in test theme");
+            let mut runs: Vec<String> = Vec::new();
+            let mut previous_chunk_matched = false;
+            let chunks = snapshot.chunks(
+                0..snapshot.len(),
+                LanguageAwareStyling {
+                    tree_sitter: true,
+                    diagnostics: false,
+                },
+            );
+            for chunk in chunks {
+                let chunk_matches = chunk.syntax_highlight_id == highlight_id;
+                if chunk_matches {
+                    match runs.last_mut() {
+                        Some(last_run) if previous_chunk_matched => last_run.push_str(chunk.text),
+                        _ => runs.push(chunk.text.to_string()),
+                    }
+                }
+                previous_chunk_matched = chunk_matches;
+            }
+            runs
+        };
+
+        assert_eq!(
+            highlighted_text("comment"),
+            vec![
+                "<!--Annotation from the start is OK-->",
+                "<!--is rendered badly.-->",
+                "<!--multiple\nlines-->",
+            ]
+        );
+        assert_eq!(highlighted_text("tag"), vec!["em", "em"]);
     });
 }
 

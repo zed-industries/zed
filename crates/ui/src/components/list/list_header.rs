@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Disclosure, prelude::*};
+use crate::{Disclosure, IconButtonShape, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
 use theme::UiDensity;
@@ -18,6 +18,7 @@ pub struct ListHeader {
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
+    disclosure_shape: Option<IconButtonShape>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     inset: bool,
     selected: bool,
@@ -32,6 +33,7 @@ impl ListHeader {
             end_hover_slot: None,
             inset: false,
             toggle: None,
+            disclosure_shape: None,
             on_toggle: None,
             selected: false,
         }
@@ -39,6 +41,12 @@ impl ListHeader {
 
     pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
         self.toggle = toggle.into();
+        self
+    }
+
+    /// Sets the shape of the disclosure button.
+    pub fn disclosure_shape(mut self, shape: IconButtonShape) -> Self {
+        self.disclosure_shape = Some(shape);
         self
     }
 
@@ -108,6 +116,9 @@ impl RenderOnce for ListHeader {
                             .gap(DynamicSpacing::Base04.rems(cx))
                             .children(self.toggle.map(|is_open| {
                                 Disclosure::new("toggle", is_open)
+                                    .when_some(self.disclosure_shape, |this, shape| {
+                                        this.shape(shape)
+                                    })
                                     .on_toggle_expanded(self.on_toggle.clone())
                             }))
                             .child(
