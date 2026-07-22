@@ -451,7 +451,7 @@ impl MacPlatform {
                     match menu_type {
                         SystemMenuType::Services => {
                             let app: id = msg_send![APP_CLASS, sharedApplication];
-                            app.setServicesMenu_(item);
+                            app.setServicesMenu_(submenu);
                         }
                     }
 
@@ -1218,6 +1218,12 @@ impl Platform for MacPlatform {
 unsafe fn path_from_objc(path: id) -> PathBuf {
     let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
     let bytes = unsafe { path.UTF8String() as *const u8 };
+    // `UTF8String` can return null; building a slice from null is undefined
+    // behavior, so treat that as an empty path.
+    if bytes.is_null() {
+        log::error!("NSString UTF8String returned null; using empty path");
+        return PathBuf::new();
+    }
     let path = str::from_utf8(unsafe { slice::from_raw_parts(bytes, len) }).unwrap();
     PathBuf::from(path)
 }
@@ -1388,7 +1394,15 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
         (0..urls.count())
             .filter_map(|i| {
                 let url = urls.objectAtIndex(i);
-                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
+                // `absoluteString` is nullable, and `UTF8String` on nil yields
+                // null; constructing a CStr from null would be undefined
+                // behavior, so skip the entry.
+                let string = url.absoluteString().UTF8String() as *const c_char;
+                if string.is_null() {
+                    log::error!("skipping url with null absoluteString");
+                    return None;
+                }
+                match CStr::from_ptr(string).to_str() {
                     Ok(string) => Some(string.to_string()),
                     Err(err) => {
                         log::error!("error converting path to string: {}", err);
@@ -1474,7 +1488,14 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
     anyhow::ensure!(!path.is_null(), "url is not a file path: {}", unsafe {
-        CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
+        let absolute_string = url.absoluteString().UTF8String();
+        if absolute_string.is_null() {
+            "<null>".to_string()
+        } else {
+            CStr::from_ptr(absolute_string)
+                .to_string_lossy()
+                .into_owned()
+        }
     });
     Ok(PathBuf::from(OsStr::from_bytes(unsafe {
         CStr::from_ptr(path).to_bytes()

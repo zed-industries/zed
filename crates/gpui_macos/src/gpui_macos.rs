@@ -64,6 +64,12 @@ impl BoolExt for bool {
 }
 
 trait NSStringExt {
+    /// # Safety
+    ///
+    /// The returned `&str` borrows the receiver's internal UTF-8 buffer, which
+    /// is owned by the (typically autoreleased) `NSString`. The result must not
+    /// outlive the receiver's autorelease scope; callers should copy it (for
+    /// example with `to_string`) before that scope ends.
     unsafe fn to_str(&self) -> &str;
 }
 

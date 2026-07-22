@@ -9,14 +9,15 @@ use cocoa::{
 use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 
 use core_foundation::base::TCFType;
 use core_video::{
-    metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
+    metal_texture::{CVMetalTexture, CVMetalTextureGetTexture},
+    metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
@@ -83,6 +84,10 @@ impl InstanceBufferPool {
         device: &metal::Device,
         unified_memory: bool,
     ) -> InstanceBuffer {
+        // The draw functions align each offset up to a 256-byte boundary before
+        // computing a pointer into the buffer, so the buffer size must itself be
+        // a multiple of 256 for that pointer arithmetic to stay in bounds.
+        debug_assert!(self.buffer_size.is_multiple_of(256));
         let buffer = self.buffers.pop().unwrap_or_else(|| {
             let options = if unified_memory {
                 MTLResourceOptions::StorageModeShared
@@ -478,13 +483,16 @@ impl MetalRenderer {
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
-                Ok(command_buffer) => {
+                Ok((command_buffer, surface_textures)) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        // Release the video-frame CVMetalTextures only after the
+                        // GPU has finished sampling them.
+                        let _ = &surface_textures;
                     });
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
@@ -551,13 +559,16 @@ impl MetalRenderer {
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
-                Ok(command_buffer) => {
+                Ok((command_buffer, surface_textures)) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        // Release the video-frame CVMetalTextures only after the
+                        // GPU has finished sampling them.
+                        let _ = &surface_textures;
                     });
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
@@ -657,13 +668,16 @@ impl MetalRenderer {
                 self.draw_primitives_to_texture(scene, &mut instance_buffer, &target_texture, size);
 
             match command_buffer {
-                Ok(command_buffer) => {
+                Ok((command_buffer, surface_textures)) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        // Release the video-frame CVMetalTextures only after the
+                        // GPU has finished sampling them.
+                        let _ = &surface_textures;
                     });
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
@@ -779,13 +793,16 @@ impl MetalRenderer {
                 self.draw_primitives_to_texture(scene, &mut instance_buffer, &target_texture, size);
 
             match command_buffer {
-                Ok(command_buffer) => {
+                Ok((command_buffer, surface_textures)) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        // Release the video-frame CVMetalTextures only after the
+                        // GPU has finished sampling them.
+                        let _ = &surface_textures;
                     });
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
@@ -821,7 +838,7 @@ impl MetalRenderer {
         instance_buffer: &mut InstanceBuffer,
         drawable: &metal::MetalDrawableRef,
         viewport_size: Size<DevicePixels>,
-    ) -> Result<metal::CommandBuffer> {
+    ) -> Result<(metal::CommandBuffer, Vec<CVMetalTexture>)> {
         self.draw_primitives_to_texture(scene, instance_buffer, drawable.texture(), viewport_size)
     }
 
@@ -831,11 +848,15 @@ impl MetalRenderer {
         instance_buffer: &mut InstanceBuffer,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
-    ) -> Result<metal::CommandBuffer> {
+    ) -> Result<(metal::CommandBuffer, Vec<CVMetalTexture>)> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
         let alpha = if self.opaque { 1. } else { 0. };
         let mut instance_offset = 0;
+        // Collects the CVMetalTextures wrapping the video surfaces drawn this
+        // frame so their lifetime can be extended to GPU completion by the
+        // caller's completed handler.
+        let mut surface_textures = Vec::new();
 
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
@@ -927,6 +948,7 @@ impl MetalRenderer {
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
+                    &mut surface_textures,
                 ),
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
@@ -955,7 +977,7 @@ impl MetalRenderer {
             });
         }
 
-        Ok(command_buffer.to_owned())
+        Ok((command_buffer.to_owned(), surface_textures))
     }
 
     fn draw_paths_to_intermediate(
@@ -1081,14 +1103,13 @@ impl MetalRenderer {
         );
 
         let shadow_bytes_len = mem::size_of_val(shadows);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + shadow_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 shadows.as_ptr() as *const u8,
@@ -1144,14 +1165,13 @@ impl MetalRenderer {
         );
 
         let quad_bytes_len = mem::size_of_val(quads);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + quad_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
         }
@@ -1293,14 +1313,13 @@ impl MetalRenderer {
         );
 
         let underline_bytes_len = mem::size_of_val(underlines);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + underline_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 underlines.as_ptr() as *const u8,
@@ -1334,9 +1353,6 @@ impl MetalRenderer {
         align_offset(instance_offset);
 
         let sprite_bytes_len = mem::size_of_val(sprites);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + sprite_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
@@ -1375,6 +1391,8 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -1441,14 +1459,13 @@ impl MetalRenderer {
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
         let sprite_bytes_len = mem::size_of_val(sprites);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + sprite_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -1474,6 +1491,7 @@ impl MetalRenderer {
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
+        surface_textures: &mut Vec<CVMetalTexture>,
     ) -> bool {
         command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
         command_encoder.set_vertex_buffer(
@@ -1521,8 +1539,20 @@ impl MetalRenderer {
                 )
                 .unwrap();
 
+            // CVMetalTextureGetTexture can return null (e.g. if the texture
+            // cache failed to wrap the plane); constructing a TextureRef from
+            // null would be undefined behavior, so skip the surface instead.
+            let y_texture_ptr =
+                unsafe { CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef()) };
+            let cb_cr_texture_ptr =
+                unsafe { CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef()) };
+            if y_texture_ptr.is_null() || cb_cr_texture_ptr.is_null() {
+                log::error!("CVMetalTextureGetTexture returned null; skipping surface");
+                continue;
+            }
+
             align_offset(instance_offset);
-            let next_offset = *instance_offset + mem::size_of::<Surface>();
+            let next_offset = *instance_offset + mem::size_of::<SurfaceBounds>();
             if next_offset > instance_buffer.size {
                 return false;
             }
@@ -1537,14 +1567,11 @@ impl MetalRenderer {
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
-            // let y_texture = y_texture.get_texture().unwrap().
             command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                Some(metal::TextureRef::from_ptr(y_texture_ptr as *mut _))
             });
             command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                Some(metal::TextureRef::from_ptr(cb_cr_texture_ptr as *mut _))
             });
 
             unsafe {
@@ -1562,6 +1589,13 @@ impl MetalRenderer {
 
             command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
             *instance_offset = next_offset;
+
+            // Keep the CVMetalTextures alive until the GPU finishes sampling
+            // them. The texture cache recycles the backing IOSurface once these
+            // handles are released, so they must outlive command buffer
+            // completion (handled by the caller's completed handler).
+            surface_textures.push(y_texture);
+            surface_textures.push(cb_cr_texture);
         }
         true
     }

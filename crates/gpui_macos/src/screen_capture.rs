@@ -54,6 +54,13 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
         let (display_id, size) = unsafe {
             let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
             let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
+            // CGDisplayCopyDisplayMode returns null for a disconnected display;
+            // passing that to the CGDisplayMode* functions would dereference
+            // null inside CoreGraphics.
+            anyhow::ensure!(
+                !display_mode_ref.is_null(),
+                "no display mode for display {display_id}"
+            );
             let width = CGDisplayModeGetPixelWidth(display_mode_ref);
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
             CGDisplayModeRelease(display_mode_ref);
@@ -82,6 +89,14 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
         _foreground_executor: &ForegroundExecutor,
         frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
+        let (tx, rx) = oneshot::channel();
+        let meta = match self.metadata() {
+            Ok(meta) => meta,
+            Err(error) => {
+                tx.send(Err(error)).ok();
+                return rx;
+            }
+        };
         unsafe {
             let stream: id = msg_send![class!(SCStream), alloc];
             let filter: id = msg_send![class!(SCContentFilter), alloc];
@@ -104,7 +119,6 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
-            let meta = self.metadata().unwrap();
             let _: id = msg_send![configuration, setWidth: meta.resolution.width.0 as i64];
             let _: id = msg_send![configuration, setHeight: meta.resolution.height.0 as i64];
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
@@ -114,8 +128,6 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let _: () = msg_send![filter, release];
             let _: () = msg_send![configuration, release];
             let _: () = msg_send![delegate, release];
-
-            let (tx, rx) = oneshot::channel();
 
             let mut error: id = nil;
             let _: () = msg_send![stream, addStreamOutput:output type:SCStreamOutputTypeScreen sampleHandlerQueue:0 error:&mut error as *mut id];

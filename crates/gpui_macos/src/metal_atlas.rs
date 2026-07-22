@@ -270,7 +270,11 @@ fn point_from_etagere(value: etagere::Point) -> Point<DevicePixels> {
 #[derive(Deref, DerefMut)]
 struct AssertSend<T>(T);
 
-unsafe impl<T> Send for AssertSend<T> {}
+// Implemented only for the concrete Metal types actually stored in an
+// AssertSend, rather than as a blanket impl over all `T`, so that a future
+// `AssertSend<SomethingNotThreadSafe>` cannot silently become `Send`.
+unsafe impl Send for AssertSend<Device> {}
+unsafe impl Send for AssertSend<metal::Texture> {}
 
 #[cfg(test)]
 mod tests {
