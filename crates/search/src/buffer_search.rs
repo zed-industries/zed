@@ -15,7 +15,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     DiffStyleControls, Editor, EditorSettings, MultiBufferOffset, SplittableEditor,
-    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, ToggleSoftWrap, UnfoldAll},
     scroll::Autoscroll,
 };
 use futures::channel::oneshot;
@@ -462,6 +462,7 @@ impl Render for BufferSearchBar {
             .capture_action(cx.listener(Self::tab))
             .capture_action(cx.listener(Self::backtab))
             .capture_action(cx.listener(Self::toggle_fold_all))
+            .capture_action(cx.listener(Self::toggle_soft_wrap))
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
@@ -993,6 +994,38 @@ impl BufferSearchBar {
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_fold_all_in_item(window, cx);
+    }
+
+    // The query editor is an editor itself and would otherwise swallow this
+    // action without any visible effect, so relay it to the searched editor
+    // while keeping the focus in the search bar.
+    fn toggle_soft_wrap(
+        &mut self,
+        action: &ToggleSoftWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = &self.active_searchable_item else {
+            return;
+        };
+        // A split diff editor picks which side to toggle and keeps both sides
+        // in sync, while its `act_as_type(Editor)` only exposes the RHS
+        // editor, so relay to the split editor itself when it is split.
+        if let Some(split_editor) = item.act_as_type(TypeId::of::<SplittableEditor>(), cx) {
+            let split_editor = split_editor
+                .downcast::<SplittableEditor>()
+                .expect("Is a splittable editor");
+            if split_editor.read(cx).is_split() {
+                split_editor.update(cx, |split_editor, cx| {
+                    split_editor.toggle_soft_wrap(action, window, cx)
+                });
+                return;
+            }
+        }
+        if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
+            let editor = item.downcast::<Editor>().expect("Is an editor");
+            editor.update(cx, |editor, cx| editor.toggle_soft_wrap(action, window, cx));
+        }
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1846,7 +1879,7 @@ mod tests {
     use super::*;
     use editor::{
         DisplayPoint, Editor, HighlightKey, MultiBuffer, PathKey,
-        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects,
+        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects, SoftWrap,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
@@ -3184,6 +3217,55 @@ mod tests {
             assert!(
                 !search_bar.query_editor.focus_handle(cx).is_focused(window),
                 "search editor should not be focused when replacement editor is focused",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_soft_wrap_relays_to_searched_editor(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let (editor, search_bar, cx) = init_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(
+                &Deploy {
+                    focus: true,
+                    replace_enabled: false,
+                    selection_search_enabled: false,
+                },
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "query editor should be focused after deploying the search bar",
+            );
+        });
+        editor.update_in(cx, |editor, _, cx| {
+            assert!(
+                matches!(editor.soft_wrap_mode(cx), SoftWrap::None),
+                "soft wrap should be disabled initially",
+            );
+        });
+
+        cx.dispatch_action(ToggleSoftWrap);
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _, cx| {
+            assert!(
+                matches!(editor.soft_wrap_mode(cx), SoftWrap::EditorWidth),
+                "toggling soft wrap while the search bar is focused should affect the searched editor",
+            );
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "focus should stay in the search bar",
             );
         });
     }

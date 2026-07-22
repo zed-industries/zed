@@ -548,6 +548,8 @@
     "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
+    // Whether to show the worktree name button in the titlebar.
+    "show_worktree_name": true,
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.

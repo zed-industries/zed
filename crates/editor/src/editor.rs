@@ -282,7 +282,7 @@ use crate::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
-    runnables::{ResolvedTasks, RunnableData, RunnableTasks},
+    runnables::{ResolvedTasks, RunnableData, RunnableTaskStatus, RunnableTasks},
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
     semantic_tokens::SemanticTokenState,
@@ -10793,7 +10793,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    fn lsp_data_enabled(&self) -> bool {
+    pub(crate) fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 

@@ -127,12 +127,27 @@ impl DockerExecConnection {
         }
     }
 
+    /// Run a shell command inside the container and reliably extract its output
+    /// using unique delimiters, so that shell initialization noise (e.g. from
+    /// BASH_ENV or .bashrc) does not corrupt the result.
+    async fn run_docker_exec_delimited(&self, script: &str) -> Result<String> {
+        const MARKER: &str = "=====ZED_DELIM_7f3a9c=====";
+        let wrapped =
+            format!("printf '{MARKER}'; {script}; __exit=$?; printf '{MARKER}'; exit $__exit");
+        let output = self
+            .run_docker_exec("sh", None, &Default::default(), &["-c", &wrapped])
+            .await?;
+        let start = output.find(MARKER).map(|i| i + MARKER.len()).unwrap_or(0);
+        let end = output[start..]
+            .find(MARKER)
+            .map(|i| start + i)
+            .unwrap_or(output.len());
+        Ok(output[start..end].to_string())
+    }
+
     async fn discover_shell(&self) -> String {
         let default_shell = "sh";
-        match self
-            .run_docker_exec("sh", None, &Default::default(), &["-c", "echo $SHELL"])
-            .await
-        {
+        match self.run_docker_exec_delimited("echo $SHELL").await {
             Ok(shell) => match shell.trim() {
                 "" => {
                     log::info!("$SHELL is not set, checking passwd for user");
@@ -147,12 +162,7 @@ impl DockerExecConnection {
         }
 
         match self
-            .run_docker_exec(
-                "sh",
-                None,
-                &Default::default(),
-                &["-c", "getent passwd \"$(id -un)\" | cut -d: -f7"],
-            )
+            .run_docker_exec_delimited("getent passwd \"$(id -un)\" | cut -d: -f7")
             .await
         {
             Ok(shell) => match shell.trim() {
@@ -171,9 +181,7 @@ impl DockerExecConnection {
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
-        let uname = self
-            .run_docker_exec("uname", None, &Default::default(), &["-sm"])
-            .await?;
+        let uname = self.run_docker_exec_delimited("uname -sm").await?;
         parse_platform(&uname)
     }
 
@@ -338,14 +346,7 @@ impl DockerExecConnection {
     }
 
     async fn docker_user_home_dir(&self) -> Result<String> {
-        let inner_program = self.shell();
-        self.run_docker_exec(
-            &inner_program,
-            None,
-            &Default::default(),
-            &["-c", "echo $HOME"],
-        )
-        .await
+        self.run_docker_exec_delimited("echo $HOME").await
     }
 
     async fn extract_server_binary(
