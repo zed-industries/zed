@@ -36,7 +36,8 @@ pub struct GetAuthenticatedUserResponse {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct AuthenticatedUser {
-    pub id: i32,
+    pub id_v2: String,
+    pub legacy_user_id: i32,
     pub metrics_id: String,
     pub username: String,
     pub avatar_url: String,
