@@ -2504,7 +2504,7 @@ impl LocalLspStore {
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-full");
-            language_server
+            let response = language_server
                 .request::<lsp::request::Formatting>(
                     lsp::DocumentFormattingParams {
                         text_document,
@@ -2514,7 +2514,64 @@ impl LocalLspStore {
                     request_timeout,
                 )
                 .await
-                .into_response()?
+                .into_response()?;
+
+            let Some(edits) = response else {
+                return Ok(Vec::with_capacity(0));
+            };
+
+            match edits.len() {
+                0 => None,
+                1 => {
+                    let text_edit = &edits[0];
+
+                    let te_start = text_edit.range.start;
+                    let te_end = text_edit.range.end;
+                    let buf_end = buffer.update(cx, |buffer, _| {
+                        let rope = buffer.as_rope();
+                        let endpos = rope.max_point();
+                        (endpos.row, endpos.column)
+                    });
+
+                    let did_replace_whole_buffer = te_start.line == 0
+                        && te_start.character == 0
+                        && te_end.line == buf_end.0
+                        && te_end.character == buf_end.1;
+
+                    if !did_replace_whole_buffer {
+                        Some(edits)
+                    } else {
+                        // prevents scrolling to the bottom of the buffer every format
+                        let diff = buffer
+                            .update(cx, |buffer, cx| buffer.diff(text_edit.new_text.clone(), cx))
+                            .await;
+                        Some(buffer.update(cx, |buffer, _| {
+                            let rope = buffer.as_rope();
+                            diff.edits
+                                .iter()
+                                .map(|(range, text)| {
+                                    let start_point = rope.offset_to_point(range.start);
+                                    let end_point = rope.offset_to_point(range.end);
+                                    TextEdit {
+                                        range: lsp::Range {
+                                            start: lsp::Position {
+                                                line: start_point.row,
+                                                character: start_point.column,
+                                            },
+                                            end: lsp::Position {
+                                                line: end_point.row,
+                                                character: end_point.column,
+                                            },
+                                        },
+                                        new_text: text.to_string(),
+                                    }
+                                })
+                                .collect::<Vec<TextEdit>>()
+                        }))
+                    }
+                }
+                _ => Some(edits),
+            }
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
