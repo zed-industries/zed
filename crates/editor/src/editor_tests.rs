@@ -35681,6 +35681,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
@@ -35791,6 +35792,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
