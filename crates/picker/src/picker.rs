@@ -303,7 +303,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     /// Called when `SelectChild` fires (e.g. shift-right-arrow). Return `Some(query)`
     /// to step into the currently selected item (e.g. a directory); the picker
-    /// will set the query and refresh matches. 
+    /// will set the query and refresh matches.
     fn select_child(
         &mut self,
         _window: &mut Window,
@@ -1023,12 +1023,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx.propagate()
         }
     }
-    fn select_child(
-        &mut self,
-        _: &menu::SelectChild,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(new_query) = self.delegate.select_child(window, cx) {
             self.set_query(&new_query, window, cx);
         } else {
