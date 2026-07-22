@@ -6592,12 +6592,13 @@ impl GitPanel {
                                         .child(
                                             h_flex()
                                                 .gap_1p5()
-                                                .child(avatar)
+                                                .child(div().flex_none().child(avatar))
                                                 .when(!author_name.is_empty(), |this| {
                                                     this.child(
                                                         Label::new(author_name)
                                                             .size(LabelSize::Small)
-                                                            .color(Color::Muted),
+                                                            .color(Color::Muted)
+                                                            .truncate(),
                                                     )
                                                     .child(dot_separator())
                                                 })
@@ -6605,14 +6606,16 @@ impl GitPanel {
                                                     this.child(
                                                         Label::new(relative_time)
                                                             .size(LabelSize::Small)
-                                                            .color(Color::Muted),
+                                                            .color(Color::Muted)
+                                                            .flex_none(),
                                                     )
                                                     .child(dot_separator())
                                                 })
                                                 .child(
                                                     Label::new(short_sha.clone())
                                                         .size(LabelSize::Small)
-                                                        .color(Color::Muted),
+                                                        .color(Color::Muted)
+                                                        .flex_none(),
                                                 ),
                                         )
                                         .when(!has_context_menu, |this| {
