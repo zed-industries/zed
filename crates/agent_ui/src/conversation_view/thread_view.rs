@@ -8605,22 +8605,20 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let url = zed_urls::sandboxing_docs(section, cx);
-        let tooltip = format!("Opens {url}");
-        // Wrap in a row so the button shrinks to its content width instead of
-        // stretching to fill the enclosing column.
-        h_flex()
-            .child(
-                Button::new(id, "Learn more")
-                    .label_size(LabelSize::Small)
+
+        Button::new(id, "View Sandboxing Docs")
+            .label_size(LabelSize::Small)
+            .color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
                     .color(Color::Muted)
-                    .end_icon(
-                        Icon::new(IconName::ArrowUpRight)
-                            .color(Color::Muted)
-                            .size(IconSize::XSmall),
-                    )
-                    .tooltip(Tooltip::text(tooltip))
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                    .size(IconSize::XSmall),
             )
+            .tooltip({
+                let url = url.clone();
+                move |_, cx| Tooltip::with_meta("Open Docs", None, url.clone(), cx)
+            })
+            .on_click(move |_, _, cx| cx.open_url(&url))
             .into_any_element()
     }
 
@@ -8796,7 +8794,7 @@ impl ThreadView {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Label::new("Write access")
+                                    Label::new("Write Access")
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
@@ -8825,13 +8823,7 @@ impl ThreadView {
                 .when(has_path_list && is_open, |this| {
                     this.child(v_flex().children(paths.iter().enumerate().map(
                         |(path_ix, path)| {
-                            self.render_sandbox_authorization_path_row(
-                                entry_ix,
-                                path_ix,
-                                path,
-                                path_ix < paths.len() - 1,
-                                cx,
-                            )
+                            self.render_sandbox_authorization_path_row(entry_ix, path_ix, path, cx)
                         },
                     )))
                 })
@@ -8860,10 +8852,9 @@ impl ThreadView {
                 .py_1()
                 .gap_0p5()
                 .child(
-                    Label::new("Reason from agent")
+                    Label::new("Reason")
                         .size(LabelSize::XSmall)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
+                        .color(Color::Muted),
                 )
                 .child(Label::new(details.reason.clone()).size(LabelSize::Small))
         });
@@ -9112,7 +9103,6 @@ impl ThreadView {
         entry_ix: usize,
         path_ix: usize,
         granted: &settings::GrantedWritePath,
-        show_border: bool,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         // The path that is actually granted is the resolved canonical target.
@@ -9129,86 +9119,40 @@ impl ThreadView {
 
         let granted_display = granted_path.display().to_string();
         let requested_display = requested_path.display().to_string();
-        let tooltip_text = if is_redirected {
-            format!("Requested: {requested_display}\nGrants write to: {granted_display}")
-        } else {
-            granted_display.clone()
-        };
 
-        // A small caption above a monospace path value, so the two are never
-        // confused for each other.
-        let captioned_path =
-            |caption: SharedString, path: String, value_color: Color, cx: &Context<Self>| {
-                v_flex()
-                    .min_w_0()
-                    .gap_0p5()
-                    .child(
-                        Label::new(caption)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(path)
-                            .size(LabelSize::XSmall)
-                            .color(value_color)
-                            .buffer_font(cx),
-                    )
-            };
-
-        let body = if is_redirected {
+        let captioned_path = |caption: SharedString, path: String, cx: &Context<Self>| {
             v_flex()
                 .min_w_0()
-                .gap_2()
-                .child(captioned_path(
-                    "Requested".into(),
-                    requested_display,
-                    Color::Muted,
-                    cx,
-                ))
+                .gap_0p5()
                 .child(
-                    v_flex()
-                        .min_w_0()
-                        .gap_0p5()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .color(Color::Warning)
-                                        .size(IconSize::XSmall),
-                                )
-                                .child(
-                                    Label::new("Grants write to — resolved through a symlink")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Warning),
-                                ),
-                        )
-                        .child(
-                            Label::new(granted_display)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Warning)
-                                .buffer_font(cx),
-                        ),
+                    Label::new(caption)
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
                 )
-        } else {
-            captioned_path("Write path".into(), granted_display, Color::Default, cx)
+                .child(Label::new(path).size(LabelSize::Small).buffer_font(cx))
         };
 
-        h_flex()
-            .id(SharedString::from(format!(
-                "sandbox-authorization-path-{entry_ix}-{path_ix}"
-            )))
+        v_flex()
+            .id(format!("sandbox-authorization-path-{entry_ix}-{path_ix}"))
             .min_w_0()
+            .gap_1()
             .px_2()
             .py_1p5()
             .bg(cx.theme().colors().editor_background)
-            .when(show_border, |this| {
-                this.border_b_1().border_color(cx.theme().colors().border)
+            .map(|this| {
+                if is_redirected {
+                    this.child(captioned_path("Source".into(), requested_display, cx))
+                        .child(
+                            Icon::new(IconName::ArrowDown)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                        .child(captioned_path("Target".into(), granted_display, cx))
+                } else {
+                    this.child(captioned_path("Write Path".into(), granted_display, cx))
+                }
             })
-            .child(body)
-            .tooltip(move |_window, cx| {
-                Tooltip::with_meta("Write path", None, tooltip_text.clone(), cx)
-            })
+            .child(Divider::horizontal())
     }
 
     fn render_permission_buttons(
