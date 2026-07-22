@@ -122,11 +122,8 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let existing_servers = if let Some(local) = self.as_local() {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
+        let existing_servers = if self.as_local().is_some() {
+            self.local_language_server_ids_for_request(buffer, &GetCodeLens, cx)
                 .unwrap_or_default()
         } else {
             self.relevant_server_ids_for_capability_check(buffer, cx)
@@ -191,6 +188,12 @@ impl LspStore {
                         let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
                         let code_lens = lsp_data.code_lens.as_mut()?;
                         if let Some(fetched_lens) = fetched_lens {
+                            code_lens
+                                .lens
+                                .retain(|server_id, _| existing_servers.contains(server_id));
+                            code_lens
+                                .resolving
+                                .retain(|(server_id, _), _| existing_servers.contains(server_id));
                             let mut tagged: HashMap<LanguageServerId, CodeLensActions> =
                                 HashMap::default();
                             for (server_id, actions) in fetched_lens {

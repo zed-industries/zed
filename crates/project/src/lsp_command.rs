@@ -4714,8 +4714,11 @@ impl LspCommand for GetDocumentDiagnostics {
         "Get diagnostics"
     }
 
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .diagnostic_provider
+            .is_some()
     }
 
     fn to_lsp(

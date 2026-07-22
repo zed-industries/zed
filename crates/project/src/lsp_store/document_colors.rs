@@ -54,22 +54,19 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_language_servers =
+            self.local_language_server_ids_for_request(&buffer, &GetDocumentColor, cx);
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_colors) = &lsp_data.document_colors {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
                     let has_different_servers =
-                        current_language_servers.is_some_and(|current_language_servers| {
-                            current_language_servers
-                                != cached_colors.colors.keys().copied().collect()
-                        });
+                        current_language_servers
+                            .as_ref()
+                            .is_some_and(|current_language_servers| {
+                                current_language_servers
+                                    != &cached_colors.colors.keys().copied().collect()
+                            });
                     if !has_different_servers {
                         return Some(
                             Task::ready(Ok(DocumentColors {
@@ -133,6 +130,11 @@ impl LspStore {
                         let lsp_colors = lsp_data.document_colors.get_or_insert_default();
 
                         if let Some(fetched_colors) = fetched_colors {
+                            if let Some(current_language_servers) = &current_language_servers {
+                                lsp_colors.colors.retain(|server_id, _| {
+                                    current_language_servers.contains(server_id)
+                                });
+                            }
                             if lsp_data.buffer_version == buffer_version_queried_for {
                                 lsp_colors.colors.extend(fetched_colors);
                             } else if !lsp_data
