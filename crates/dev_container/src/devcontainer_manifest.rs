@@ -709,12 +709,14 @@ impl DevContainerManifest {
         let update_remote_user_uid = self.dev_container().update_remote_user_uid.unwrap_or(true);
         #[cfg(target_os = "windows")]
         let update_remote_user_uid = false;
+        let use_podman = self.docker_client.docker_cli() == "podman";
         let feature_layers: String = self
             .features
             .iter()
             .map(|manifest| {
                 manifest.generate_dockerfile_feature_layer(
                     use_buildkit,
+                    use_podman,
                     FEATURES_CONTAINER_TEMP_DEST_FOLDER,
                 )
             })
@@ -4834,6 +4836,59 @@ chmod +x ./install.sh
                     ),
                 ])
         }))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_dockerfile_features_and_podman(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-podman-selinux-test",
+              "image": "test_image:latest",
+              "features": {
+                "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+              },
+            }
+            "#;
+
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_podman(true);
+        let (test_dependencies, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            FakeFs::new(cx.executor()),
+            fake_http_client(),
+            Arc::new(fake_docker),
+            Arc::new(TestCommandRunner::new()),
+            HashMap::new(),
+            given_devcontainer_contents,
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+        let feature_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
+            })
+            .expect("to be found");
+        let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
+
+        assert!(
+            feature_dockerfile.contains(",relabel=private"),
+            "Podman builds must include relabel=private on bind mounts to allow \
+             access under SELinux enforcement; got:\n{feature_dockerfile}"
+        );
+        assert!(
+            feature_dockerfile.contains("target=/tmp/build-features-src/"),
+            "mount target path should still be /tmp/build-features-src/"
+        );
     }
 
     // updateRemoteUserUID is treated as false in Windows, so this test will fail
