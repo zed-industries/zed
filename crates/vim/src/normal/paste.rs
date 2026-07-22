@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp;
+use text::LineEnding;
 use vim_mode_setting::HelixModeSetting;
 
 use crate::{
@@ -124,6 +125,7 @@ impl Vim {
                         } else {
                             (text.to_string(), first_selection_indent_column)
                         };
+                    LineEnding::normalize(&mut to_insert);
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
 
