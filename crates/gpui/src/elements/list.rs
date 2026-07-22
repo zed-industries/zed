@@ -1532,6 +1532,28 @@ impl Element for List {
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
+            // Save a proportional scroll position before invalidation so
+            // `layout_items()` can restore it after re-measuring at the
+            // new width. This mirrors the logic in `remeasure_items()`.
+            if let Some(scroll_top) = state.logical_scroll_top {
+                let mut cursor = state.items.cursor::<Count>(());
+                cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+
+                if let Some(item) = cursor.item() {
+                    if let Some(size) = item.size() {
+                        let fraction = if size.height.0 > 0.0 {
+                            (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        state.pending_scroll = Some(PendingScrollFraction {
+                            item_ix: scroll_top.item_ix,
+                            fraction,
+                        });
+                    }
+                }
+            }
+
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     size_hint: None,
@@ -2022,6 +2044,52 @@ mod test {
             view.into_any_element()
         });
         assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
+    }
+
+    #[gpui::test]
+    fn test_scroll_position_preserved_after_width_change(cx: &mut TestAppContext) {
+        // When the list width changes, all items are invalidated and
+        // re-measured. The scroll position should be proportionally
+        // restored so the user doesn't lose their place.
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        // 10 items × 50px = 500px content, 200px viewport.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        // Scroll to item 4 (200px from the top).
+        state.scroll_to(ListOffset {
+            item_ix: 4,
+            offset_in_item: px(0.),
+        });
+
+        // Change width — triggers invalidation and re-measurement.
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(
+            offset.item_ix, 4,
+            "scroll position should be preserved after width change"
+        );
+        assert_eq!(offset.offset_in_item, px(0.));
     }
 
     #[gpui::test]
