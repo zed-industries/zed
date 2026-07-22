@@ -1,5 +1,5 @@
 use crate::{
-    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenMode, OpenOptions,
     OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
     Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
     focus_follows_mouse::FocusFollowsMouse as _,
@@ -454,6 +454,8 @@ pub struct Pane {
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 
     pub in_center_group: bool,
+    /// Tracks the last dragged tab to enable drag-to-new-window functionality
+    last_dragged_tab: Option<DraggedTab>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -625,6 +627,7 @@ impl Pane {
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
             in_center_group: false,
+            last_dragged_tab: None,
         }
     }
 
@@ -2947,7 +2950,13 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, _, _, cx| cx.new(|_| tab.clone()),
+                move |tab, _, _, cx| {
+                    // Track the dragged tab to enable drag-to-new-window functionality
+                    tab.pane.update(cx, |this, _cx| {
+                        this.last_dragged_tab = Some(tab.clone());
+                    });
+                    cx.new(|_| tab.clone())
+                },
             )
             .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
                 let mut styled_tab = tab
@@ -2972,6 +2981,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
+                    this.last_dragged_tab = None;
                     this.handle_tab_drop(dragged_tab, ix, false, window, cx)
                 }),
             )
@@ -3563,7 +3573,17 @@ impl Pane {
                     })
             }))
             .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx));
-        tab_bar.into_any_element()
+        div()
+            .child(tab_bar)
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    if let Some(dragged_tab) = this.last_dragged_tab.take() {
+                        this.handle_tab_dragged_to_new_window(&dragged_tab, window, cx);
+                    }
+                }),
+            )
+            .into_any_element()
     }
 
     fn render_two_row_tab_bar(
@@ -3593,16 +3613,27 @@ impl Pane {
                     .children(pinned_tabs)
                     .child(self.render_pinned_tab_bar_drop_target(cx)),
             );
-        v_flex()
-            .w_full()
-            .flex_none()
-            .child(pinned_tab_bar)
+        div()
             .child(
-                TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
-                    unpinned_tabs,
-                    tab_count,
-                    cx,
-                )),
+                v_flex()
+                    .w_full()
+                    .flex_none()
+                    .child(pinned_tab_bar)
+                    .child(
+                        TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
+                            unpinned_tabs,
+                            tab_count,
+                            cx,
+                        )),
+                    )
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    if let Some(dragged_tab) = this.last_dragged_tab.take() {
+                        this.handle_tab_dragged_to_new_window(&dragged_tab, window, cx);
+                    }
+                }),
             )
             .into_any_element()
     }
@@ -3647,6 +3678,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
+                    this.last_dragged_tab = None;
                     this.handle_tab_drop(dragged_tab, this.items.len(), false, window, cx)
                 }),
             )
@@ -3940,6 +3972,82 @@ impl Pane {
                 });
             })
             .log_err();
+    }
+
+    fn handle_tab_dragged_to_new_window(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item_id = dragged_tab.item.item_id();
+
+        let Some((item_ix, item)) = self
+            .items()
+            .enumerate()
+            .find(|(_, item)| item.item_id() == item_id)
+            .map(|(ix, item)| (ix, item.boxed_clone()))
+        else {
+            return;
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let (app_state, root_paths, abs_path) = workspace.read_with(cx, |workspace, cx| {
+            let app_state = workspace.app_state().clone();
+            let root_paths: Vec<std::path::PathBuf> = workspace
+                .root_paths(cx)
+                .into_iter()
+                .map(|p| p.to_path_buf())
+                .collect();
+            let abs_path = item
+                .project_path(cx)
+                .and_then(|pp| workspace.project().read(cx).absolute_path(&pp, cx));
+            (app_state, root_paths, abs_path)
+        });
+
+        self.remove_item_and_focus_on_pane(item_ix, false, cx.entity(), window, cx);
+
+        if root_paths.is_empty() {
+            return;
+        }
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let open_result = cx
+                .update(|_pane, cx| {
+                    Workspace::new_local(
+                        root_paths,
+                        app_state,
+                        None,
+                        None,
+                        None,
+                        OpenMode::NewWindow,
+                        cx,
+                    )
+                })?;
+
+            let open_result = open_result.await?;
+
+            if let Some(abs_path) = abs_path {
+                let open_paths_task = open_result
+                    .workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            vec![abs_path],
+                            OpenOptions::default(),
+                            None,
+                            window,
+                            cx,
+                        )
+                    })?;
+                open_paths_task.await;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_dragged_selection_drop(
@@ -4540,6 +4648,7 @@ impl Render for Pane {
                                 this.can_drop(move |a, window, cx| p(a, window, cx))
                             })
                             .on_drop(cx.listener(move |this, dragged_tab, window, cx| {
+                                this.last_dragged_tab = None;
                                 this.handle_tab_drop(
                                     dragged_tab,
                                     this.active_item_index(),
