@@ -28,7 +28,7 @@ use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, 
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Point,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::{AllLanguageSettings, ConfiguredLanguageServer, LanguageSettings},
 };
 use lsp::{
     CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
@@ -557,7 +557,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-local-settings"],
+            [ConfiguredLanguageServer::new("from-local-settings")],
             "User language settings should be synchronized with the server settings"
         )
     });
@@ -578,7 +578,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-server-settings".to_string()],
+            [ConfiguredLanguageServer::new("from-server-settings")],
             "Server language settings should take precedence over the user settings"
         )
     });
@@ -639,14 +639,14 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             )
             .language(None, Some(&"Rust".into()), cx)
             .language_servers,
-            ["override-rust-analyzer".to_string()]
+            [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
 
     cx.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()]
+            [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
 }
@@ -793,7 +793,10 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
-            ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
+            [
+                ConfiguredLanguageServer::new("rust-analyzer"),
+                ConfiguredLanguageServer::new("fake-analyzer"),
+            ]
         )
     });
 
