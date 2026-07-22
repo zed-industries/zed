@@ -198,8 +198,14 @@ impl Vim {
                     .iter()
                     .map(|(range, _)| buffer_snapshot.anchor_before(range.start))
                     .collect();
-                let paste_text_lengths: Vec<_> =
-                    edits.iter().map(|(_, text)| text.len()).collect();
+                let paste_text_last_character_offsets: Vec<_> = edits
+                    .iter()
+                    .map(|(_, text)| {
+                        text.char_indices()
+                            .next_back()
+                            .map_or(0, |(offset, _)| offset)
+                    })
+                    .collect();
 
                 let cursor_offset = editor
                     .selections
@@ -229,10 +235,10 @@ impl Vim {
                     .collect();
                 let end_anchors: Vec<_> = mark_start_anchors
                     .iter()
-                    .zip(paste_text_lengths.iter())
-                    .map(|(anchor, &len)| {
+                    .zip(paste_text_last_character_offsets.iter())
+                    .map(|(anchor, &last_character_offset)| {
                         let start = anchor.to_offset(&buffer_snapshot);
-                        let end = (start + len).saturating_sub_usize(1);
+                        let end = start + last_character_offset;
                         buffer_snapshot.anchor_after(end)
                     })
                     .collect();
