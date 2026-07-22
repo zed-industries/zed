@@ -2901,7 +2901,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         language_registry.add(markdown_lang());
-        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(markdown_inline_lang());
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
@@ -2943,7 +2943,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         language_registry.add(markdown_lang());
-        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(markdown_inline_lang());
         language_registry.add(rust_lang());
 
         let mut buffer = Buffer::local(text, cx);
@@ -4442,19 +4442,6 @@ fn c_lang() -> Arc<Language> {
         .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
         .unwrap(),
     )
-}
-
-pub fn markdown_inline_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown-Inline".into(),
-            hidden: true,
-            ..LanguageConfig::default()
-        },
-        Some(tree_sitter_md::INLINE_LANGUAGE.into()),
-    )
-    .with_highlights_query("(emphasis) @emphasis")
-    .unwrap()
 }
 
 fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> String {

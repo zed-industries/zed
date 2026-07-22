@@ -35,8 +35,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::markdown_lang;
-use languages::rust_lang;
+use languages::{markdown_inline_lang, markdown_lang, rust_lang};
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -41739,8 +41738,16 @@ async fn test_select_delimiters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    language_registry.add(markdown_lang());
+    language_registry.add(markdown_inline_lang());
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_lang()), cx);
+    });
 
     // Inside.
     assert_select_delimiters(
@@ -41797,6 +41804,12 @@ async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
         r#"This is hello, ˇworld!."#,
         &mut cx,
     );
+    assert_select_delimiters(
+        false,
+        r#"this is `my great` and `my stˇring`"#,
+        r#"this is `my great` and `«my stringˇ»`"#,
+        &mut cx,
+    );
 
     // Around.
     assert_select_delimiters(
@@ -41815,6 +41828,22 @@ async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
         true,
         r#"This is `hello, ˇworld!`."#,
         r#"This is «`hello, world!`ˇ»."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        true,
+        r#"this is `my great` and `my stˇring`"#,
+        r#"this is `my great` and «`my string`ˇ»"#,
+        &mut cx,
+    );
+
+    // Even though backticks are symmetric characters, a cursor between two code
+    // spans should not update the selection when attempting to select inside
+    // delimiters.
+    assert_select_delimiters(
+        false,
+        r#"this is `my great` andˇ `my string`"#,
+        r#"this is `my great` andˇ `my string`"#,
         &mut cx,
     );
 }
