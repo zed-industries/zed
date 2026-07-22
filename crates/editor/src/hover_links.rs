@@ -1066,8 +1066,9 @@ mod tests {
     use futures::StreamExt;
     use gpui::{Modifiers, MousePressureEvent, PressureStage};
     use indoc::indoc;
+    use language::Point;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
-    use multi_buffer::MultiBufferOffset;
+    use multi_buffer::{MultiBufferOffset, PathKey};
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1193,6 +1194,72 @@ mod tests {
             struct «Aˇ»;
             let variable = A;
         "});
+    }
+
+    #[gpui::test]
+    #[should_panic(expected = "anchor's path was never added to multibuffer")]
+    async fn test_hover_link_after_multibuffer_path_changes(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+        cx.set_state("https://zed.dev/ˇreleases");
+        let old_snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
+        let link_start = MultiBufferOffset(17).to_display_point(&old_snapshot.display_snapshot);
+        let link_end = MultiBufferOffset(22).to_display_point(&old_snapshot.display_snapshot);
+        let point_for_position = |point| PointForPosition {
+            previous_valid: point,
+            next_valid: point,
+            nearest_valid: point,
+            exact_unclipped: point,
+            column_overshoot_after_line_end: 0,
+        };
+
+        let buffer = cx.editor(|editor, _, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain a singleton buffer")
+        });
+        cx.update_multibuffer(|multibuffer, cx| {
+            let max_point = buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer,
+                [Point::zero()..max_point],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let modifiers = if cfg!(target_os = "macos") {
+            Modifiers::command_shift()
+        } else {
+            Modifiers::control_shift()
+        };
+        cx.update_editor(|editor, window, cx| {
+            editor.update_hovered_link(
+                point_for_position(link_start),
+                None,
+                &old_snapshot,
+                modifiers,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.update_hovered_link(
+                point_for_position(link_end),
+                None,
+                &old_snapshot,
+                modifiers,
+                window,
+                cx,
+            );
+        });
     }
 
     #[gpui::test]
