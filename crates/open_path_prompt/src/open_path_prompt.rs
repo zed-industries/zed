@@ -577,7 +577,45 @@ impl PickerDelegate for OpenPathDelegate {
             .ok();
         })
     }
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let candidate = self.get_entry(self.selected_index)?;
+        if candidate.path.string.is_empty() || !candidate.is_dir {
+            return None;
+        }
+        let path_style = self.path_style;
+        match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => Some(format!(
+                "{}{}{}",
+                parent_path,
+                candidate.path.string,
+                path_style.primary_separator()
+            )),
+            DirectoryState::None { .. } => None,
+        }
+    }
 
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let parent_path = match &self.directory_state {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => parent_path,
+            DirectoryState::None { .. } => return None,
+        };
+        if parent_path == &self.prompt_root {
+            return None;
+        }
+        let trimmed = parent_path.trim_end_matches(['/', '\\']);
+        let (dir, _) = get_dir_and_suffix(trimmed.to_string(), self.path_style);
+        Some(dir)
+    }
     fn confirm_completion(
         &mut self,
         query: String,
