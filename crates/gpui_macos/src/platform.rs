@@ -90,7 +90,7 @@ unsafe fn build_classes() {
             );
             decl.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
-                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, BOOL) -> BOOL,
             );
             decl.add_method(
                 sel!(applicationWillTerminate:),
@@ -1299,8 +1299,13 @@ unsafe fn register_system_wake_observer(observer: id) {
     }
 }
 
-extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
-    if !has_open_windows {
+extern "C" fn should_handle_reopen(
+    this: &mut Object,
+    _: Sel,
+    _: id,
+    has_open_windows: BOOL,
+) -> BOOL {
+    if has_open_windows == NO {
         let platform = unsafe { get_mac_platform(this) };
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.reopen.take() {
@@ -1309,6 +1314,8 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             platform.0.lock().reopen.get_or_insert(callback);
         }
     }
+    // GPUI handles reopen itself, so AppKit should not perform any default handling.
+    NO
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {

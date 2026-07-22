@@ -1110,7 +1110,7 @@ impl MacWindow {
                 return None;
             }
 
-            if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            if is_window_class(main_window) {
                 let handle = get_window_state(&*main_window).lock().handle;
                 Some(handle)
             } else {
@@ -1128,7 +1128,7 @@ impl MacWindow {
             let mut window_handles = Vec::new();
             for i in 0..count {
                 let window: id = msg_send![windows, objectAtIndex:i];
-                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                if is_window_class(window) {
                     let handle = get_window_state(&*window).lock().handle;
                     window_handles.push(handle);
                 }
@@ -1715,7 +1715,7 @@ impl PlatformWindow for MacWindow {
             let mut result = Vec::new();
             for i in 0..count {
                 let window: id = msg_send![windows, objectAtIndex:i];
-                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                if is_window_class(window) {
                     let handle = get_window_state(&*window).lock().handle;
                     let title: id = msg_send![window, title];
                     let title = SharedString::from(title.to_str().to_string());
@@ -1950,9 +1950,20 @@ fn get_scale_factor(native_window: id) -> f32 {
 
 /// Returns whether `window` is one of GPUI's managed windows.
 unsafe fn is_gpui_window(window: id) -> bool {
+    unsafe { is_window_class(window) || is_panel_class(window) }
+}
+
+unsafe fn is_window_class(window: id) -> bool {
     unsafe {
-        msg_send![window, isKindOfClass: WINDOW_CLASS]
-            || msg_send![window, isKindOfClass: PANEL_CLASS]
+        let result: BOOL = msg_send![window, isKindOfClass: WINDOW_CLASS];
+        result == YES
+    }
+}
+
+unsafe fn is_panel_class(window: id) -> bool {
+    unsafe {
+        let result: BOOL = msg_send![window, isKindOfClass: PANEL_CLASS];
+        result == YES
     }
 }
 
@@ -2828,10 +2839,13 @@ extern "C" fn attributed_substring_for_proposed_range(
         let mut adjusted: Option<Range<usize>> = None;
 
         let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
+        // Apple documents `actualRange` as `NSRangePointer?` and says it can be `NULL`.
+        // https://developer.apple.com/documentation/appkit/nstextinputclient/attributedsubstring(forproposedrange:actualrange:)
         if let Some(adjusted) = adjusted
             && adjusted != range
+            && let Some(actual_range) = NonNull::new(actual_range as *mut NSRange)
         {
-            unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+            unsafe { actual_range.write(NSRange::from(adjusted)) };
         }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
