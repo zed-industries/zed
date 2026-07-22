@@ -6379,10 +6379,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
             };
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !file_exists() {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6399,10 +6405,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
             };
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !file_gone() {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_and_remove_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6467,10 +6479,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6479,10 +6497,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_and_remove_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6491,6 +6515,41 @@ impl WorktreeModelHandle for Entity<Worktree> {
         }
         .boxed_local()
     }
+}
+
+#[cfg(feature = "test-support")]
+const SENTINEL_RETRY_TICKS: usize = 10;
+
+// On macOS an FS event can rarely be dropped while notify's shared FSEventStream
+// is being swapped out by a concurrent watch/unwatch: events already queued for
+// the old stream's callback are discarded when it is stopped. A dropped sentinel
+// event would park the test forever, so touch the sentinel again to emit a fresh
+// event on the current stream.
+#[cfg(feature = "test-support")]
+async fn retouch_sentinel(fs: &dyn Fs, abs_path: &std::path::Path) {
+    fs.create_file(
+        abs_path,
+        fs::CreateOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[cfg(feature = "test-support")]
+async fn retouch_and_remove_sentinel(fs: &dyn Fs, abs_path: &std::path::Path) {
+    retouch_sentinel(fs, abs_path).await;
+    fs.remove_file(
+        abs_path,
+        RemoveOptions {
+            recursive: false,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .unwrap();
 }
 
 #[derive(Clone, Debug)]

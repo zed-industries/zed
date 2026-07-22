@@ -483,12 +483,12 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_line_numbers);
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
-        register_action(editor, window, Editor::toggle_inlay_hints);
         register_action(editor, window, Editor::toggle_inline_values);
-        register_action(editor, window, Editor::toggle_code_lens_action);
-        register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
-        if editor.read(cx).diagnostics_enabled() {
+        if editor.read(cx).lsp_data_enabled() {
+            register_action(editor, window, Editor::toggle_inlay_hints);
+            register_action(editor, window, Editor::toggle_code_lens_action);
+            register_action(editor, window, Editor::toggle_semantic_highlights);
             register_action(editor, window, Editor::toggle_diagnostics);
         }
         if editor.read(cx).inline_diagnostics_enabled() {
@@ -2611,6 +2611,14 @@ impl EditorElement {
             run_indicators
                 .iter()
                 .filter_map(|display_row| {
+                    let task_status = gutter
+                        .row_infos
+                        .get((display_row.0.saturating_sub(gutter.range.start.0)) as usize)
+                        .and_then(|row_info| Some((row_info.buffer_id?, row_info.buffer_row?)))
+                        .and_then(|(buffer_id, buffer_row)| {
+                            editor.runnable_task_status(buffer_id, buffer_row)
+                        });
+
                     gutter.layout_item(
                         *display_row,
                         |cx, _| {
@@ -2619,6 +2627,7 @@ impl EditorElement {
                                     &self.style,
                                     Some(*display_row) == active_task_indicator_row,
                                     breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    task_status,
                                     *display_row,
                                     cx,
                                 )
