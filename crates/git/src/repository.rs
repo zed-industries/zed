@@ -1,6 +1,6 @@
-use crate::commit::parse_git_diff_name_status;
+use crate::commit::{CommitDiffObject, CommitDiffObjectKind, parse_git_diff_raw};
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{DiffTreeType, GitStatus, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -572,6 +572,57 @@ pub fn is_binary_content(content: &[u8]) -> bool {
     content[..check_len].contains(&0)
 }
 
+struct LoadedCommitObject {
+    text: String,
+    is_binary: bool,
+}
+
+async fn read_commit_blob<R: smol::io::AsyncBufRead + Unpin>(
+    stdout: &mut R,
+    info_line: &mut String,
+    newline: &mut [u8; 1],
+) -> Result<LoadedCommitObject> {
+    info_line.clear();
+    stdout.read_line(info_line).await?;
+
+    let len = info_line
+        .trim_end()
+        .parse()
+        .with_context(|| format!("invalid object size output from cat-file {info_line}"))?;
+
+    let mut bytes = vec![0; len];
+    stdout.read_exact(&mut bytes).await?;
+    stdout.read_exact(newline).await?;
+
+    let is_binary = is_binary_content(&bytes);
+    Ok(LoadedCommitObject {
+        text: if is_binary {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&bytes).to_string()
+        },
+        is_binary,
+    })
+}
+
+async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
+    object: Option<CommitDiffObject<'_>>,
+    stdout: &mut R,
+    info_line: &mut String,
+    newline: &mut [u8; 1],
+) -> Result<Option<LoadedCommitObject>> {
+    match object {
+        Some(object) if object.kind == CommitDiffObjectKind::Gitlink => {
+            Ok(Some(LoadedCommitObject {
+                text: format!("Subproject commit {}\n", object.oid),
+                is_binary: false,
+            }))
+        }
+        Some(_) => Ok(Some(read_commit_blob(stdout, info_line, newline).await?)),
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -962,6 +1013,10 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Only used to serve `proto::RunGitHook` requests from older remote clients;
+    /// new code lets `git commit` run hooks itself.
+    ///
+    /// TODO: remove together with `proto::RunGitHook` (see the deprecation note in git.proto).
     fn run_hook(
         &self,
         hook: RunHook,
@@ -1054,6 +1109,7 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
@@ -1136,6 +1192,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Clone, Copy)]
+pub enum DiffStatType {
+    HeadToIndex,
+    HeadToWorktree,
+    IndexToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -1421,7 +1484,8 @@ impl GitRepository for RealGitRepository {
                     "--format=",
                     "-z",
                     "--no-renames",
-                    "--name-status",
+                    "--raw",
+                    "--no-abbrev",
                     "--first-parent",
                 ])
                 .arg(&commit)
@@ -1431,10 +1495,14 @@ impl GitRepository for RealGitRepository {
                 .output()
                 .await
                 .context("starting git show process")?;
+            anyhow::ensure!(
+                show_output.status.success(),
+                "git show failed: {}",
+                String::from_utf8_lossy(&show_output.stderr)
+            );
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_name_status(&show_stdout);
-            let parent_sha = format!("{}^", commit);
+            let changes = parse_git_diff_raw(&show_stdout);
 
             let mut cat_file_process = git
                 .build_command(&["cat-file", "--batch=%(objectsize)"])
@@ -1445,85 +1513,62 @@ impl GitRepository for RealGitRepository {
                 .context("starting git cat-file process")?;
 
             let mut files = Vec::<CommitFile>::new();
-            let mut stdin = BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
-            let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
+            let stdin = cat_file_process
+                .stdin
+                .take()
+                .context("git cat-file process has no stdin")?;
+            let stdout = cat_file_process
+                .stdout
+                .take()
+                .context("git cat-file process has no stdout")?;
+            let mut stdin = BufWriter::with_capacity(512, stdin);
+            let mut stdout = BufReader::new(stdout);
             let mut info_line = String::new();
             let mut newline = [b'\0'];
-            for (path, status_code) in changes {
+            for change in changes {
+                let change = change?;
+                let path = change.path;
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
                     continue;
                 };
 
-                match status_code {
-                    StatusCode::Modified | StatusCode::TypeChanged => {
-                        stdin.write_all(commit.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
+                let objects = [change.new_object, change.old_object];
+                let mut has_blobs = false;
+                for object in objects.iter().flatten() {
+                    if object.kind == CommitDiffObjectKind::Blob {
+                        stdin.write_all(object.oid.as_bytes()).await?;
                         stdin.write_all(b"\n").await?;
-                        stdin.write_all(parent_sha.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
+                        has_blobs = true;
                     }
-                    StatusCode::Added => {
-                        stdin.write_all(commit.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
-                    }
-                    StatusCode::Deleted => {
-                        stdin.write_all(parent_sha.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
-                    }
-                    _ => continue,
                 }
-                stdin.flush().await?;
-
-                info_line.clear();
-                stdout.read_line(&mut info_line).await?;
-
-                let len = info_line.trim_end().parse().with_context(|| {
-                    format!("invalid object size output from cat-file {info_line}")
-                })?;
-                let mut text_bytes = vec![0; len];
-                stdout.read_exact(&mut text_bytes).await?;
-                stdout.read_exact(&mut newline).await?;
-
-                let mut old_text = None;
-                let mut new_text = None;
-                let mut is_binary = is_binary_content(&text_bytes);
-                let text = if is_binary {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(&text_bytes).to_string()
-                };
-
-                match status_code {
-                    StatusCode::Modified | StatusCode::TypeChanged => {
-                        info_line.clear();
-                        stdout.read_line(&mut info_line).await?;
-                        let len = info_line.trim_end().parse().with_context(|| {
-                            format!("invalid object size output from cat-file {}", info_line)
-                        })?;
-                        let mut parent_bytes = vec![0; len];
-                        stdout.read_exact(&mut parent_bytes).await?;
-                        stdout.read_exact(&mut newline).await?;
-                        is_binary = is_binary || is_binary_content(&parent_bytes);
-                        if is_binary {
-                            old_text = Some(String::new());
-                            new_text = Some(String::new());
-                        } else {
-                            old_text = Some(String::from_utf8_lossy(&parent_bytes).to_string());
-                            new_text = Some(text);
-                        }
-                    }
-                    StatusCode::Added => new_text = Some(text),
-                    StatusCode::Deleted => old_text = Some(text),
-                    _ => continue,
+                if has_blobs {
+                    stdin.flush().await?;
                 }
+
+                let [new_object, old_object] = objects;
+                let new_object =
+                    load_commit_object(new_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let old_object =
+                    load_commit_object(old_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
+                    || old_object.as_ref().is_some_and(|object| object.is_binary);
+                let new_text = new_object.map(|object| {
+                    if is_binary {
+                        String::new()
+                    } else {
+                        object.text
+                    }
+                });
+                let old_text = old_object.map(|object| {
+                    if is_binary {
+                        String::new()
+                    } else {
+                        object.text
+                    }
+                });
 
                 files.push(CommitFile {
                     path: RepoPath(Arc::from(rel_path)),
@@ -2296,6 +2341,7 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2304,12 +2350,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match diff {
+                    DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
+                    DiffStatType::HeadToWorktree => args.push("HEAD".into()),
+                    DiffStatType::IndexToWorktree => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(
@@ -2499,7 +2546,6 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
@@ -3711,6 +3757,16 @@ async fn run_git_command(
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force");
+
+        if !env.contains_key("GIT_CONFIG_COUNT")
+            && let Some(gpg_wrapper) = ask_pass.gpg_wrapper_path()
+        {
+            command
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "gpg.program")
+                .env("GIT_CONFIG_VALUE_0", gpg_wrapper);
+        }
+
         #[cfg(target_os = "windows")]
         command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
         let git_process = command.spawn()?;
@@ -3724,12 +3780,15 @@ async fn run_askpass_command(
     git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
-        result = ask_pass.run().fuse() => {
+        // Git can legitimately run long without prompting (e.g. large fetches,
+        // hooks), so completion is determined by the process itself.
+        result = ask_pass.run(None).fuse() => {
             match result {
                 AskPassResult::CancelledByUser => {
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
+                    // Unreachable since no timeout is passed to run()
                     Err(anyhow!("Connecting to host timed out"))?
                 }
             }
@@ -3760,7 +3819,7 @@ impl std::fmt::Debug for RepoPath {
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::unix(s.as_ref())?;
+        let rel_path = RelPath::from_unix_str(s.as_ref())?;
         Ok(Self::from_rel_path(rel_path))
     }
 
@@ -3770,7 +3829,7 @@ impl RepoPath {
     }
 
     pub fn from_proto(proto: &str) -> Result<Self> {
-        let rel_path = RelPath::from_proto(proto)?;
+        let rel_path = RelPath::from_unix_str(proto)?.into();
         Ok(Self(rel_path))
     }
 
@@ -3789,7 +3848,7 @@ impl RepoPath {
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
+    RepoPath(RelPath::from_unix_str(s.as_ref()).unwrap().into())
 }
 
 impl AsRef<Arc<RelPath>> for RepoPath {
@@ -4131,6 +4190,107 @@ mod tests {
         assert_eq!(file.old_text.as_deref(), Some("regular contents\n"));
         assert_eq!(file.new_text.as_deref(), Some("target"));
         assert_eq!(file.status(), CommitFileStatus::Modified);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_with_gitlink_changes(cx: &mut TestAppContext) {
+        const FIRST_SUBMODULE_COMMIT: &str = "1111111111111111111111111111111111111111";
+        const SECOND_SUBMODULE_COMMIT: &str = "2222222222222222222222222222222222222222";
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().expect("failed to create temporary repository");
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("README.md"), "parent repository\n")
+            .expect("failed to write regular file");
+        git_command(repo_dir.path(), ["add", "README.md"]);
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                FIRST_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "add submodule"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that adds a gitlink");
+        assert_eq!(commit_diff.files.len(), 2);
+        let gitlink = commit_diff
+            .files
+            .iter()
+            .find(|file| file.path.as_unix_str() == "modules/example")
+            .expect("gitlink should be present alongside the regular file");
+        assert_eq!(gitlink.status(), CommitFileStatus::Added);
+        assert_eq!(gitlink.old_text, None);
+        assert_eq!(
+            gitlink.new_text.as_deref(),
+            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+        );
+        assert!(!gitlink.is_binary);
+
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                SECOND_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "update submodule"]);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that updates a gitlink");
+        let [gitlink] = commit_diff.files.as_slice() else {
+            panic!("expected one updated gitlink");
+        };
+        assert_eq!(gitlink.status(), CommitFileStatus::Modified);
+        assert_eq!(
+            gitlink.old_text.as_deref(),
+            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+        );
+        assert_eq!(
+            gitlink.new_text.as_deref(),
+            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+        );
+        assert!(!gitlink.is_binary);
+
+        git_command(repo_dir.path(), ["rm", "--cached", "modules/example"]);
+        git_command(repo_dir.path(), ["commit", "-m", "remove submodule"]);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that deletes a gitlink");
+        let [gitlink] = commit_diff.files.as_slice() else {
+            panic!("expected one deleted gitlink");
+        };
+        assert_eq!(gitlink.status(), CommitFileStatus::Deleted);
+        assert_eq!(
+            gitlink.old_text.as_deref(),
+            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+        );
+        assert_eq!(gitlink.new_text, None);
+        assert!(!gitlink.is_binary);
     }
 
     #[gpui::test]
@@ -4790,6 +4950,87 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_runs_git_hooks(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let write_hook = |name: &str, contents: &str| {
+            let path = hooks_dir.join(name);
+            fs::write(&path, contents).unwrap();
+            fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+
+        fs::write(repo_dir.path().join("file"), "one").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // Hooks must not run for untrusted repositories.
+        repo.commit(
+            "Commit in untrusted repo".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("failing pre-commit hook should be skipped in untrusted repos");
+
+        repo.set_trusted(true);
+
+        fs::write(repo_dir.path().join("file"), "two").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit blocked by hook".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect_err("failing pre-commit hook should abort the commit");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 0\n");
+        write_hook(
+            "commit-msg",
+            "#!/bin/sh\necho 'rewritten by commit-msg hook' > \"$1\"\n",
+        );
+
+        repo.commit(
+            "Original message".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "rewritten by commit-msg hook");
     }
 
     #[gpui::test]

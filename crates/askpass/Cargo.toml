@@ -22,6 +22,9 @@ tempfile.workspace = true
 util.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+which.workspace = true
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
