@@ -2,7 +2,9 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use collections::HashMap;
-use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
+use editor::actions::{
+    FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition,
+};
 use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
 use fuzzy::StringMatchCandidate;
@@ -54,10 +56,38 @@ fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<
     editor
         .register_action({
             let handle = handle.clone();
+            move |action: &GoToDeclaration, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::Declaration,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action({
+            let handle = handle.clone();
             move |action: &GoToImplementation, window, cx| {
                 handle_nav_action(
                     action.open_results_in,
                     LspPickerKind::Implementation,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action({
+            let handle = handle.clone();
+            move |action: &GoToTypeDefinition, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::TypeDefinition,
                     &handle,
                     window,
                     cx,
@@ -162,7 +192,9 @@ fn show_no_results_toast(
 pub enum LspPickerKind {
     References,
     Definition,
+    Declaration,
     Implementation,
+    TypeDefinition,
 }
 
 impl LspPickerKind {
@@ -170,7 +202,9 @@ impl LspPickerKind {
         match self {
             LspPickerKind::References => "Filter references…",
             LspPickerKind::Definition => "Filter definitions…",
+            LspPickerKind::Declaration => "Filter declarations…",
             LspPickerKind::Implementation => "Filter implementations…",
+            LspPickerKind::TypeDefinition => "Filter type definitions…",
         }
     }
 
@@ -180,7 +214,9 @@ impl LspPickerKind {
         match self {
             LspPickerKind::References => "No references found",
             LspPickerKind::Definition => "No definitions found",
+            LspPickerKind::Declaration => "No declarations found",
             LspPickerKind::Implementation => "No implementations found",
+            LspPickerKind::TypeDefinition => "No type definitions found",
         }
     }
 
@@ -197,8 +233,14 @@ impl LspPickerKind {
             LspPickerKind::Definition => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Symbol, cx)
             }
+            LspPickerKind::Declaration => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Declaration, cx)
+            }
             LspPickerKind::Implementation => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Implementation, cx)
+            }
+            LspPickerKind::TypeDefinition => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Type, cx)
             }
         }
     }
