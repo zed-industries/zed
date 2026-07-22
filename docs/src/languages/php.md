@@ -50,7 +50,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."]
+      "language_servers": [
+        "intelephense",
+        "!phpactor",
+        "!phptools",
+        "!phpantom",
+        "..."
+      ]
     }
   }
 }
@@ -82,7 +88,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["phptools", "!intelephense", "!phpactor", "!phpantom", "..."]
+      "language_servers": [
+        "phptools",
+        "!intelephense",
+        "!phpactor",
+        "!phpantom",
+        "..."
+      ]
     }
   }
 }
@@ -118,7 +130,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."]
+      "language_servers": [
+        "phpactor",
+        "!intelephense",
+        "!phptools",
+        "!phpantom",
+        "..."
+      ]
     }
   }
 }
@@ -132,7 +150,13 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 {
   "languages": {
     "PHP": {
-      "language_servers": ["phpantom", "!phpactor", "!intelephense", "!phptools", "..."]
+      "language_servers": [
+        "phpantom",
+        "!phpactor",
+        "!intelephense",
+        "!phptools",
+        "..."
+      ]
     }
   }
 }
