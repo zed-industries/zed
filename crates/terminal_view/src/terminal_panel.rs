@@ -1172,6 +1172,46 @@ impl TerminalPanel {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl TerminalPanel {
+    pub fn test_new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let project = workspace.project();
+        let pane = cx.new(|cx| {
+            let mut pane = Pane::new(
+                workspace.weak_handle(),
+                project.clone(),
+                Default::default(),
+                None,
+                workspace::NewTerminal::default().boxed_clone(),
+                false,
+                window,
+                cx,
+            );
+            pane.set_zoomed(false, cx);
+            pane.set_can_navigate(false, cx);
+            pane.display_nav_history_buttons(None);
+            pane.set_should_display_tab_bar(|_, _| true);
+            pane.set_zoom_out_on_close(false);
+            pane
+        });
+        let center = PaneGroup::new(pane.clone());
+        let terminal_panel = Self {
+            center,
+            active_pane: pane,
+            fs: workspace.app_state().fs.clone(),
+            workspace: workspace.weak_handle(),
+            pending_serialization: Task::ready(None),
+            pending_terminals_to_add: 0,
+            deferred_tasks: HashMap::default(),
+            assistant_enabled: false,
+            assistant_tab_bar_button: None,
+            active: false,
+        };
+        terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
+        terminal_panel
+    }
+}
+
 /// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
 /// based on the shell configuration. This is a pure function that can be tested
 /// without spawning actual terminals.
