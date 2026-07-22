@@ -2235,6 +2235,11 @@ impl App {
         self.actions.documentation()
     }
 
+    /// Get a map from an action name to the keywords.
+    pub fn action_keywords(&self) -> &HashMap<&'static str, &'static [&'static str]> {
+        self.actions.keywords()
+    }
+
     /// Register a callback to be invoked when the application is about to quit.
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(

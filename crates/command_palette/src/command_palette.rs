@@ -110,6 +110,7 @@ impl CommandPalette {
         cx: &mut Context<Self>,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
+        let action_keywords = cx.action_keywords();
 
         let commands = window
             .available_actions(cx)
@@ -121,6 +122,12 @@ impl CommandPalette {
 
                 Some(Command {
                     name: humanize_action_name(action.name()),
+                    keywords: action_keywords
+                        .get(action.name())
+                        .map(|keywords| {
+                            keywords.iter().map(|keyword| keyword.to_string()).collect()
+                        })
+                        .unwrap_or_default(),
                     action,
                 })
             })
@@ -185,6 +192,7 @@ pub struct CommandPaletteDelegate {
 struct Command {
     name: String,
     action: Box<dyn Action>,
+    keywords: Vec<String>,
 }
 
 #[derive(Default)]
@@ -277,6 +285,7 @@ impl Clone for Command {
         Self {
             name: self.name.clone(),
             action: self.action.boxed_clone(),
+            keywords: self.keywords.clone(),
         }
     }
 }
@@ -330,6 +339,7 @@ impl CommandPaletteDelegate {
             commands.push(Command {
                 name: string.clone(),
                 action,
+                keywords: Vec::new(),
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
@@ -485,7 +495,14 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| {
+                        let searchable = if command.keywords.is_empty() {
+                            command.name.clone()
+                        } else {
+                            format!("{} {}", command.name, command.keywords.join(" "))
+                        };
+                        StringMatchCandidate::new(ix, &searchable)
+                    })
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy_nucleo::match_strings_async(
@@ -632,6 +649,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
 
+        let name_positions = matching_command
+            .positions
+            .iter()
+            .copied()
+            .filter(|position| *position < command.name.len())
+            .collect();
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -642,10 +666,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .w_full()
                         .py_px()
                         .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            matching_command.positions.clone(),
-                        ))
+                        .child(HighlightedLabel::new(command.name.clone(), name_positions))
                         .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
@@ -934,6 +955,59 @@ mod tests {
         });
         palette.read_with(cx, |palette, _| {
             assert!(palette.delegate.matches.is_empty())
+        });
+    }
+
+    #[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+    #[action(namespace = test, keywords = "lsp")]
+    struct TestKeywordAction;
+
+    #[gpui::test]
+    async fn test_keyword_surfaces_action(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let editor = cx.new_window_entity(|window, cx| Editor::single_line(window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
+        });
+
+        cx.update(|_window, cx| {
+            cx.on_action::<TestKeywordAction>(|_, _| {});
+        });
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("lsp");
+        palette.read_with(cx, |palette, _| {
+            assert!(
+                palette
+                    .delegate
+                    .matches
+                    .iter()
+                    .any(|string_match| string_match
+                        .string
+                        .starts_with("test: test keyword action")),
+                "expected the \"lsp\" keyword to surface \"test: test keyword action\", got: {:?}",
+                palette
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|string_match| &string_match.string)
+                    .collect::<Vec<_>>(),
+            );
         });
     }
 
