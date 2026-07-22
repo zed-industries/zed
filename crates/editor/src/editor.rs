@@ -4151,6 +4151,7 @@ impl Editor {
     fn gutter_context_menu(
         &self,
         anchor: Anchor,
+        display_row: DisplayRow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -4213,6 +4214,15 @@ impl Editor {
         };
         let has_bookmark = bookmark.as_ref().is_some();
 
+        let clear_runnable_task_status = self
+            .runnable_task_key_for_display_row(display_row, window, cx)
+            .filter(|(buffer_id, buffer_row)| {
+                matches!(
+                    self.runnable_task_status(*buffer_id, *buffer_row),
+                    Some(RunnableTaskStatus::Passed | RunnableTaskStatus::Failed)
+                )
+            });
+
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
@@ -4231,6 +4241,22 @@ impl Editor {
         ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when_some(
+                    clear_runnable_task_status,
+                    |this, (buffer_id, buffer_row)| {
+                        this.entry("Clear Run Status", None, {
+                            let weak_editor = weak_editor.clone();
+                            move |_window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.clear_runnable_task_status(buffer_id, buffer_row, cx);
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .separator()
+                    },
+                )
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
                     this.entry(
@@ -5847,7 +5873,7 @@ impl Editor {
             return;
         }
 
-        let context_menu = self.gutter_context_menu(anchor, window, cx);
+        let context_menu = self.gutter_context_menu(anchor, display_row, window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
