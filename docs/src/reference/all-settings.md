@@ -5472,7 +5472,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "scrollbar": {
       "show": null
     },
-    "starts_open": false
+    "starts_open": false,
+    "signedoff_by_default": false
   }
 }
 ```
@@ -5489,6 +5490,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `signoff_by_default`: Whether the commit should be signed-off by default
 
 ## Git Worktree Directory
 

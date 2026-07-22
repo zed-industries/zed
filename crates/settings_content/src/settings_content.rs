@@ -748,6 +748,10 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 0
     pub commit_title_max_length: Option<usize>,
+    /// Whether the commit should be signed-off by default
+    ///
+    /// Default: false
+    pub signoff_by_default: Option<bool>,
 
     /// Default action when clicking a changed file in the Git panel.
     ///
