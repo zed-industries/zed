@@ -11,7 +11,10 @@ use gpui::{App, AppContext as _, AsyncApp, Task};
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
-use smol::fs;
+use smol::{
+    fs,
+    io::{self, AsyncWriteExt as _},
+};
 use std::{
     ffi::OsStr,
     fmt::Write as _,
@@ -297,6 +300,26 @@ impl WslRemoteConnection {
             size / 1024
         );
 
+        match self.copy_via_wslpath_and_cp(src_path, dst_path).await {
+            Ok(()) => {}
+            Err(cp_err) => {
+                log::warn!(
+                    "failed to upload remote server via /mnt, falling back to wsl.exe stdin: {cp_err:#}"
+                );
+                delegate.set_status(Some("Streaming remote server into WSL"), cx);
+                self.stream_file_into_wsl(src_path, dst_path)
+                    .await
+                    .with_context(|| {
+                        format!("failed to stream file into WSL after /mnt copy failed: {cp_err:#}")
+                    })?;
+            }
+        }
+
+        log::info!("uploaded remote server in {:?}", t0.elapsed());
+        Ok(())
+    }
+
+    async fn copy_via_wslpath_and_cp(&self, src_path: &Path, dst_path: &RelPath) -> Result<()> {
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
         let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
@@ -312,9 +335,57 @@ impl WslRemoteConnection {
                 dst_path,
                 e
             )
+        })
+    }
+
+    async fn stream_file_into_wsl(&self, src_path: &Path, dst_path: &RelPath) -> Result<()> {
+        let mut file = fs::File::open(src_path).await.with_context(|| {
+            format!(
+                "failed to open {} for streaming into WSL",
+                src_path.display()
+            )
         })?;
 
-        log::info!("uploaded remote server in {:?}", t0.elapsed());
+        let dst_posix = dst_path.display(PathStyle::Posix);
+        let mut command = wsl_command_impl(
+            &self.connection_options,
+            "sh",
+            &["-c", "cat > \"$1\"", "zed-upload", dst_posix.as_ref()],
+            true,
+        );
+        command.kill_on_drop(true);
+
+        let mut child = command
+            .spawn()
+            .context("failed to spawn wsl.exe for stdin upload")?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("wsl.exe child did not expose stdin")?;
+
+        let copy_result = io::copy(&mut file, &mut stdin).await;
+        let flush_result = stdin.flush().await;
+        drop(stdin);
+
+        let output = child
+            .output()
+            .await
+            .context("failed to await wsl.exe stdin-upload child")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "wsl.exe stdin upload failed (status {:?}): {}",
+                output.status.code(),
+                stderr.trim()
+            );
+        }
+
+        copy_result.with_context(|| {
+            format!("failed to write {} into wsl.exe stdin", src_path.display())
+        })?;
+        flush_result.context("failed to flush wsl.exe stdin")?;
+
         Ok(())
     }
 
