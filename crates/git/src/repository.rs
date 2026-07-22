@@ -641,20 +641,44 @@ pub enum ResetMode {
 pub enum FetchOptions {
     All,
     Remote(Remote),
+    Refspec {
+        remote: Remote,
+        source: SharedString,
+        destination: SharedString,
+    },
 }
 
 impl FetchOptions {
-    pub fn to_proto(&self) -> Option<String> {
+    pub fn to_proto(&self) -> (Option<String>, Option<String>, Option<String>) {
         match self {
-            FetchOptions::All => None,
-            FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
+            FetchOptions::All => (None, None, None),
+            FetchOptions::Remote(remote) => (Some(remote.clone().name.into()), None, None),
+            FetchOptions::Refspec {
+                remote,
+                source,
+                destination,
+            } => (
+                Some(remote.clone().name.into()),
+                Some(source.to_string()),
+                Some(destination.to_string()),
+            ),
         }
     }
 
-    pub fn from_proto(remote_name: Option<String>) -> Self {
-        match remote_name {
-            Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
-            None => FetchOptions::All,
+    pub fn from_proto(
+        remote_name: Option<String>,
+        source: Option<String>,
+        destination: Option<String>,
+    ) -> Result<Self> {
+        match (remote_name, source, destination) {
+            (None, None, None) => Ok(FetchOptions::All),
+            (Some(name), None, None) => Ok(FetchOptions::Remote(Remote { name: name.into() })),
+            (Some(name), Some(source), Some(destination)) => Ok(FetchOptions::Refspec {
+                remote: Remote { name: name.into() },
+                source: source.into(),
+                destination: destination.into(),
+            }),
+            _ => bail!("invalid fetch options"),
         }
     }
 
@@ -662,6 +686,7 @@ impl FetchOptions {
         match self {
             Self::All => "Fetch all remotes".into(),
             Self::Remote(remote) => remote.name.clone(),
+            Self::Refspec { remote, .. } => remote.name.clone(),
         }
     }
 }
@@ -671,6 +696,11 @@ impl std::fmt::Display for FetchOptions {
         match self {
             FetchOptions::All => write!(f, "--all"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
+            FetchOptions::Refspec {
+                remote,
+                source,
+                destination,
+            } => write!(f, "{} {source}:{destination}", remote.name),
         }
     }
 }
@@ -2687,7 +2717,6 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.command_directory();
         let git_directory = self.path();
-        let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
         let is_trusted = self.is_trusted();
@@ -2702,7 +2731,24 @@ impl GitRepository for RealGitRepository {
                 executor.clone(),
                 is_trusted,
             );
-            let mut command = git.build_command(&["fetch", &remote_name]);
+            let mut command = git.build_command(&["fetch"]);
+            match fetch_options {
+                FetchOptions::All => {
+                    command.arg("--all");
+                }
+                FetchOptions::Remote(remote) => {
+                    command.arg(remote.name.as_ref());
+                }
+                FetchOptions::Refspec {
+                    remote,
+                    source,
+                    destination,
+                } => {
+                    command
+                        .arg(remote.name.as_ref())
+                        .arg(format!("+{source}:{destination}"));
+                }
+            }
             command
                 .envs(env.iter())
                 .stdout(Stdio::piped())
@@ -3996,6 +4042,34 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn fetch_refspec_round_trips_through_protocol_fields() {
+        let options = FetchOptions::Refspec {
+            remote: Remote {
+                name: "upstream".into(),
+            },
+            source: "refs/pull/42/head".into(),
+            destination: "refs/zed/pull-requests/owner/repository/42/head".into(),
+        };
+        let (remote, source, destination) = options.to_proto();
+        assert_eq!(
+            FetchOptions::from_proto(remote, source, destination).expect("valid refspec"),
+            options
+        );
+    }
+
+    #[test]
+    fn fetch_refspec_rejects_partial_protocol_fields() {
+        assert!(
+            FetchOptions::from_proto(
+                Some("origin".to_string()),
+                Some("refs/pull/42/head".to_string()),
+                None,
+            )
+            .is_err()
+        );
+    }
 
     fn disable_git_global_config() {
         unsafe {

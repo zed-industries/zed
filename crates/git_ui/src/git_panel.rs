@@ -3572,6 +3572,7 @@ impl GitPanel {
                     let action = match fetch_options {
                         FetchOptions::All => RemoteAction::Fetch(None),
                         FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
+                        FetchOptions::Refspec { remote, .. } => RemoteAction::Fetch(Some(remote)),
                     };
                     match remote_message {
                         Ok(remote_message) => this.show_remote_output(action, remote_message, cx),

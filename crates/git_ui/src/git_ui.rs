@@ -52,8 +52,10 @@ mod git_runtime_diagnostics;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
+pub mod pull_requests_panel;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+mod review_comment_modal;
 pub mod solo_diff_view;
 pub mod staged_diff;
 pub mod stash_picker;
@@ -97,6 +99,7 @@ pub fn init(cx: &mut App) {
         branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
+        pull_requests_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
 
