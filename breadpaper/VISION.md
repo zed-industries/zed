@@ -55,7 +55,7 @@ These are the invariants. Design and engineering decisions should be checkable a
 BreadPaper looks like a focused, three-pane writing environment. Zed's speed and editing quality are the foundation; the chrome around it is re-conceived for life-management rather than code.
 
 ### 5.1 Left rail A — **Timeline** (the "now" navigator)
-A small, always-present list of the files you almost always want: **Today**, **Yesterday**, **This Week**, **Last Week**. One click (or keystroke) opens the right note. It resolves the app's naming conventions for the user (daily = `YYYYMMDD_MMM-DDD.md`, weekly = `YYYY_WW_MMM.md`) so they never think about filenames. Creating today's note if it doesn't exist yet is a single action — replacing the current "open Obsidian just to trigger a plugin" workaround.
+A small, always-present list of the files you almost always want: **Today**, **Yesterday**, **This Week**, **Last Week**. One click (or keystroke) opens the right note. It resolves the app's naming conventions for the user (daily = `YYYY-MM-DD.md`, weekly = ISO week `YYYY-Www.md`, e.g. `2026-W30.md`) so they never think about filenames. Creating today's note if it doesn't exist yet is a single action — replacing the current "open Obsidian just to trigger a plugin" workaround.
 
 ### 5.2 Left rail B — **Areas** (the modular navigator)
 A switchable list of the life-domains the user has enabled: _Daily & Weekly_, _Finance_, _Journaling_, _Team_, etc. Each Area is a bundle of folders, templates, a right-pane context view, and skills. Users add or remove Areas from a gallery. Beneath the Areas view, the full file tree remains available for people who want to roam freely.
@@ -181,7 +181,7 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - [x] **Fork Zed, isolate BreadPaper delta** — `/breadpaper/` docs + `crates/breadpaper/`, `upstream` remote for rebases. _(shipped)_
 - [x] **Vault model** — folder + `.breadpaper` marker + config, naming conventions encoded. _(shipped)_
 - [x] **Timeline panel** — Today / Yesterday / This Week / Last Week GPUI dock panel. _(shipped)_
-- [x] **Daily & weekly note creation** — resolve `YYYYMMDD_MMM-DDD.md` / `YYYY_WW_MMM.md`, create-if-missing. _(shipped)_
+- [x] **Daily & weekly note creation** — resolve `YYYY-MM-DD.md` / ISO week `YYYY-Www.md`, create-if-missing. _(shipped)_
 - [ ] **Invisible git — checkpoint service** — background snapshots to hidden `.breadpaper/history` git-dir. _(in progress)_
 
 ### Milestone 1 — The core loop (thinnest thing that proves it)
