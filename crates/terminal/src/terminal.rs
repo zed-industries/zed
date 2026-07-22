@@ -2830,6 +2830,29 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn has_running_process(&self) -> bool {
+        if self
+            .task()
+            .is_some_and(|task| task.status == TaskStatus::Running)
+        {
+            return true;
+        }
+
+        if self.child_exited.is_some() {
+            return false;
+        }
+
+        // TODO: Detect remote terminal subprocesses on the remote host.
+        if self.is_remote_terminal {
+            return false;
+        }
+
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info.has_foreground_or_descendant_process(),
+            TerminalType::DisplayOnly => false,
+        }
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {

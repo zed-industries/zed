@@ -894,6 +894,11 @@ impl VsCodeSettings {
                 }),
             button: None,
             copy_on_select: self.read_bool("terminal.integrated.copyOnSelection"),
+            confirm_on_kill: self.read_enum("terminal.integrated.confirmOnKill", |s| match s {
+                "never" => Some(TerminalConfirmOnKill::Never),
+                "editor" | "panel" | "always" => Some(TerminalConfirmOnKill::Always),
+                _ => None,
+            }),
             cursor_shape: self.read_enum("terminal.integrated.cursorStyle", |s| match s {
                 "block" => Some(CursorShapeContent::Block),
                 "line" => Some(CursorShapeContent::Bar),

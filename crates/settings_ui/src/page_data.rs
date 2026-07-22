@@ -7208,6 +7208,24 @@ fn terminal_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Confirm On Kill",
+                description: "Whether to confirm killing terminals when they have child processes.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.confirm_on_kill"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.confirm_on_kill.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .confirm_on_kill = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Keep Selection On Copy",
                 description: "Whether to keep the text selection after copying it to the clipboard.",
                 field: Box::new(SettingField {

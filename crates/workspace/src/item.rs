@@ -12,8 +12,8 @@ use client::{Client, proto};
 use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, PromptLevel, Render, SharedString,
+    Task, TaskExt, WeakEntity, Window,
 };
 use language::Capability;
 pub use language::HighlightedText;
@@ -35,6 +35,15 @@ use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
+
+#[derive(Clone, Debug)]
+pub struct CloseConfirmation {
+    pub level: PromptLevel,
+    pub message: SharedString,
+    pub detail: Option<SharedString>,
+    pub confirm_button: SharedString,
+    pub cancel_button: SharedString,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct SaveOptions {
@@ -215,6 +224,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
+    fn close_confirmation(&self, _cx: &App) -> Option<CloseConfirmation> {
+        None
+    }
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
     fn navigate(
@@ -522,6 +534,7 @@ pub trait ItemHandle: 'static + Send {
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &mut App);
+    fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation>;
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -1020,6 +1033,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |item, cx| item.on_removed(cx));
     }
 
+    fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation> {
+        self.read(cx).close_confirmation(cx)
+    }
+
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
     }
@@ -1426,7 +1443,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent, SerializableItem, TabContentParams};
+    use super::{CloseConfirmation, Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{
         ItemId, ItemNavHistory, Workspace, WorkspaceId,
         item::{ItemBufferKind, SaveOptions},
@@ -1461,6 +1478,7 @@ pub mod test {
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
+        pub close_confirmation: Option<CloseConfirmation>,
         serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
         pub child_focus_handles: Vec<gpui::FocusHandle>,
@@ -1552,6 +1570,7 @@ pub mod test {
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
+                close_confirmation: None,
                 workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
                 serialize: None,
@@ -1586,6 +1605,11 @@ pub mod test {
 
         pub fn with_conflict(mut self, has_conflict: bool) -> Self {
             self.has_conflict = has_conflict;
+            self
+        }
+
+        pub fn with_close_confirmation(mut self, close_confirmation: CloseConfirmation) -> Self {
+            self.close_confirmation = Some(close_confirmation);
             self
         }
 
@@ -1740,6 +1764,7 @@ pub mod test {
                     nav_history: None,
                     tab_descriptions: None,
                     tab_detail: Default::default(),
+                    close_confirmation: self.close_confirmation.clone(),
                     workspace_id: self.workspace_id,
                     focus_handle: cx.focus_handle(),
                     serialize: None,
@@ -1762,6 +1787,10 @@ pub mod test {
 
         fn has_deleted_file(&self, _: &App) -> bool {
             self.has_deleted_file
+        }
+
+        fn close_confirmation(&self, _cx: &App) -> Option<CloseConfirmation> {
+            self.close_confirmation.clone()
         }
 
         fn can_save(&self, cx: &App) -> bool {

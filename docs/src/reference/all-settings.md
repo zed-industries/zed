@@ -4201,6 +4201,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "confirm_on_kill": "never",
     "keep_selection_on_copy": true,
     "open_links_in_mouse_mode": true,
     "dock": "bottom",
@@ -4325,6 +4326,34 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Confirm On Kill
+
+- Description: Whether to confirm killing terminals when they have child processes.
+- Setting: `confirm_on_kill`
+- Default: `never`
+
+**Options**
+
+1. Never confirm
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": "never"
+  }
+}
+```
+
+2. Always confirm
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": "always"
   }
 }
 ```

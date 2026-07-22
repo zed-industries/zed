@@ -5,9 +5,9 @@ use crate::{
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
-        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, CloseConfirmation, ClosePosition, Item, ItemBufferKind, ItemHandle,
+        ItemSettings, PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -20,9 +20,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
-    anchored, deferred, prelude::*,
+    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptButton,
+    PromptLevel, Render, ScrollHandle, SharedString, Subscription, Task, TaskExt, WeakEntity,
+    WeakFocusHandle, Window, actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -1883,6 +1883,14 @@ impl Pane {
                 continue;
             }
 
+            if self
+                .items
+                .get(index)
+                .is_some_and(|item| item.close_confirmation(cx).is_some())
+            {
+                continue;
+            }
+
             index_list.push(index);
             items_len -= 1;
         }
@@ -2011,9 +2019,77 @@ impl Pane {
                 }
             }
 
+            struct ConfirmationGroup {
+                level: PromptLevel,
+                message: SharedString,
+                details: Vec<SharedString>,
+                confirm_button: SharedString,
+                cancel_button: SharedString,
+                item_ids: Vec<EntityId>,
+            }
+
+            let mut groups: Vec<ConfirmationGroup> = Vec::new();
+
+            for item_to_close in &items_to_close {
+                let confirmation =
+                    pane.update_in(cx, |_, _, cx| item_to_close.close_confirmation(cx))?;
+
+                let Some(confirmation) = confirmation else {
+                    continue;
+                };
+
+                if let Some(group) = groups.iter_mut().find(|group| {
+                    group.level == confirmation.level && group.message == confirmation.message
+                }) {
+                    group.details.extend(confirmation.detail);
+                    group.item_ids.push(item_to_close.item_id());
+                } else {
+                    let CloseConfirmation {
+                        level,
+                        message,
+                        detail,
+                        confirm_button,
+                        cancel_button,
+                    } = confirmation;
+                    groups.push(ConfirmationGroup {
+                        level,
+                        message,
+                        details: detail.into_iter().collect(),
+                        confirm_button,
+                        cancel_button,
+                        item_ids: vec![item_to_close.item_id()],
+                    });
+                }
+            }
+
+            let mut items_to_keep_open = HashSet::default();
+
+            for group in groups {
+                let detail = (!group.details.is_empty()).then(|| {
+                    group
+                        .details
+                        .iter()
+                        .map(|detail| detail.as_ref())
+                        .join("\n")
+                });
+
+                let answer = pane.update_in(cx, |_, window, cx| {
+                    let buttons = [
+                        PromptButton::ok(group.confirm_button),
+                        PromptButton::cancel(group.cancel_button),
+                    ];
+
+                    window.prompt(group.level, &group.message, detail.as_deref(), &buttons, cx)
+                })?;
+
+                if !matches!(answer.await, Ok(0)) {
+                    items_to_keep_open.extend(group.item_ids);
+                }
+            }
+
             for item_to_close in items_to_close {
-                let mut should_close = true;
-                let mut should_save = true;
+                let mut should_close = !items_to_keep_open.contains(&item_to_close.item_id());
+                let mut should_save = should_close;
                 if save_intent == SaveIntent::Close {
                     workspace.update(cx, |workspace, cx| {
                         if Self::skip_save_on_close(item_to_close.as_ref(), workspace, cx) {
@@ -5080,6 +5156,43 @@ mod tests {
             ],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_max_tabs_keeps_items_with_close_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(2));
+
+        pane.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_label("foo")
+                    .with_close_confirmation(CloseConfirmation {
+                        level: PromptLevel::Warning,
+                        message: "foo".into(),
+                        detail: None,
+                        confirm_button: "foo".into(),
+                        cancel_button: "bar".into(),
+                    })
+            }));
+
+            pane.add_item(item, false, false, None, window, cx);
+        });
+
+        add_labeled_item(&pane, "bar", false, cx);
+        add_labeled_item(&pane, "baz", false, cx);
+
+        assert_item_labels(&pane, ["foo", "baz*"], cx);
     }
 
     #[gpui::test]
