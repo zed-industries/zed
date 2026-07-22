@@ -685,10 +685,7 @@ pub async fn list_models(
                     .into_iter()
                     .rev()
                     .collect(),
-                default_effort: entry
-                    .reasoning
-                    .as_ref()
-                    .and_then(|r| r.default_effort.clone()),
+                default_effort: entry.reasoning.as_ref().and_then(|r| r.default_effort),
                 supports_max_tokens: entry
                     .reasoning
                     .as_ref()
