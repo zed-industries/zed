@@ -1169,17 +1169,22 @@ impl SshRemoteConnection {
         &self,
         src_path: &Path,
         dest_path_str: &str,
-        args: Option<&[&str]>,
+        additional_args: Option<&[&str]>,
     ) -> util::command::Command {
+        /// These arguments exist for `ssh` but don't exist / don't have the same semantic for `scp`.
+        const SSH_DENY_ARGS_FOR_SCP: &[&str] = &["-X", "-Y"];
+
         let mut command = util::command::new_command("scp");
-        self.socket.ssh_options(&mut command, false).args(
-            self.socket
-                .connection_options
-                .port
-                .map(|port| vec!["-P".to_string(), port.to_string()])
-                .unwrap_or_default(),
-        );
-        if let Some(args) = args {
+        self.socket
+            .ssh_options(&mut command, false, Some(SSH_DENY_ARGS_FOR_SCP))
+            .args(
+                self.socket
+                    .connection_options
+                    .port
+                    .map(|port| vec!["-P".to_string(), port.to_string()])
+                    .unwrap_or_default(),
+            );
+        if let Some(args) = additional_args {
             command.args(args);
         }
         command.arg(src_path).arg(format!(
@@ -1191,14 +1196,19 @@ impl SshRemoteConnection {
     }
 
     fn build_sftp_command(&self) -> util::command::Command {
+        // these arguments exist for "ssh" but don't exist / don't have the same semantic for "sftp"
+        const SSH_DENY_ARGS_FOR_SFTP: &[&str] = &["-X", "-Y"];
+
         let mut command = util::command::new_command("sftp");
-        self.socket.ssh_options(&mut command, false).args(
-            self.socket
-                .connection_options
-                .port
-                .map(|port| vec!["-P".to_string(), port.to_string()])
-                .unwrap_or_default(),
-        );
+        self.socket
+            .ssh_options(&mut command, false, Some(SSH_DENY_ARGS_FOR_SFTP))
+            .args(
+                self.socket
+                    .connection_options
+                    .port
+                    .map(|port| vec!["-P".to_string(), port.to_string()])
+                    .unwrap_or_default(),
+            );
         command.arg("-b").arg("-");
         command.arg(self.socket.connection_options.scp_destination());
         command.stdin(Stdio::piped());
@@ -1337,7 +1347,7 @@ impl SshSocket {
             let separator = shell_kind.sequential_commands_separator();
             format!("cd{separator} {to_run}")
         };
-        self.ssh_options(&mut command, true)
+        self.ssh_options(&mut command, true, None)
             .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
             command.arg("-T");
@@ -1369,12 +1379,18 @@ impl SshSocket {
         &self,
         command: &'a mut util::command::Command,
         include_port_forwards: bool,
+        deny_args: Option<&[&str]>,
     ) -> &'a mut util::command::Command {
-        let args = if include_port_forwards {
+        let mut args = if include_port_forwards {
             self.connection_options.additional_args()
         } else {
             self.connection_options.additional_args_for_scp()
         };
+
+        // draining all arguments that are explicitely denied
+        if let Some(deny_args) = deny_args {
+            args.retain(|x| !deny_args.contains(&x.as_str()));
+        }
 
         let cmd = command
             .stdin(Stdio::piped())
