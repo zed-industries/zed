@@ -1306,4 +1306,40 @@ mod test {
             Mode::Normal,
         );
     }
+
+    #[gpui::test]
+    async fn test_paste_marks_unicode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇxy", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("é".to_string()));
+
+        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("` ]");
+
+        cx.assert_state("xˇéy", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_normalize_line_endings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇxy", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+
+        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("` ]");
+
+        cx.assert_state("xa\nˇby", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_read_only(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇx", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("long text".to_string()));
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("ˇx", Mode::Normal);
+    }
 }
