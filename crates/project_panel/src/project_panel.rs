@@ -3902,27 +3902,92 @@ impl ProjectPanel {
         }
     }
 
-    fn move_worktree_root(
+    fn reorder_worktree_roots(
         &mut self,
-        entry_to_move: ProjectEntryId,
+        source_entries: &[ProjectEntryId],
         destination: ProjectEntryId,
+        active_entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
-            let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
+            // Only reorder when the destination resolves to a worktree root.
+            // Nested entries are rejected; the empty area below the panel
+            // resolves to the last worktree's root, which still satisfies
+            // this check.
+            if !project.entry_is_worktree_root(destination, cx) {
                 return;
-            };
+            }
             let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
                 return;
             };
-
-            let worktree_id = worktree_to_move.read(cx).id();
             let destination_id = destination_worktree.read(cx).id();
 
+            let source_ids: Vec<WorktreeId> = source_entries
+                .iter()
+                .filter_map(|entry_id| {
+                    project
+                        .worktree_for_entry(*entry_id, cx)
+                        .map(|wt| wt.read(cx).id())
+                })
+                .collect();
+            if source_ids.is_empty() {
+                return;
+            }
+
+            let active_source = project
+                .worktree_for_entry(active_entry_id, cx)
+                .map(|wt| wt.read(cx).id());
+
             project
-                .move_worktree(worktree_id, destination_id, cx)
+                .move_worktrees(&source_ids, destination_id, active_source, cx)
                 .log_err();
         });
+    }
+
+    /// Moves all root-only entries in the drag to the end of the worktree
+    /// list. Used by the blank-area drop handler so dropping a multi-root
+    /// selection that already contains the last worktree (e.g. `[A, D]` in
+    /// `[A, B, C, D]`) settles the group at the end instead of falling on
+    /// the self-drop guard in `move_worktrees`.
+    fn reorder_worktree_roots_to_end(
+        &mut self,
+        selections: &DraggedSelection,
+        cx: &mut Context<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            let source_ids: Vec<WorktreeId> = selections
+                .items()
+                .filter_map(|entry| {
+                    project
+                        .worktree_for_entry(entry.entry_id, cx)
+                        .map(|wt| wt.read(cx).id())
+                })
+                .collect();
+            if source_ids.is_empty() {
+                return;
+            }
+            project.move_worktrees_to_end(&source_ids, cx).log_err();
+        });
+    }
+
+    fn drag_includes_last_worktree(&self, selections: &DraggedSelection, cx: &App) -> bool {
+        let project = self.project.read(cx);
+        let drag_is_root_only = selections
+            .items()
+            .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
+        if !drag_is_root_only {
+            return false;
+        }
+        let Some(last_worktree_id) = project
+            .visible_worktrees(cx)
+            .next_back()
+            .map(|wt| wt.read(cx).id())
+        else {
+            return false;
+        };
+        selections
+            .items()
+            .any(|entry| entry.worktree_id == last_worktree_id)
     }
 
     fn move_worktree_entry(
@@ -4005,21 +4070,25 @@ impl ProjectPanel {
         }
 
         let project = self.project.read(cx);
-        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
-            .into_iter()
-            .fold(HashMap::default(), |mut map, entry| {
-                map.entry(entry.worktree_id).or_default().push(entry);
-                map
-            });
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> =
+            entries
+                .into_iter()
+                .fold(HashMap::default(), |mut map, entry| {
+                    map.entry(entry.worktree_id).or_default().push(entry);
+                    map
+                });
 
         for (worktree_id, worktree_entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
+                // Skip the worktree root: its empty path would consume every
+                // other selected entry in the same worktree as "nested inside
+                // a selected directory" and silently drop them.
                 let dir_paths = worktree_entries
                     .iter()
                     .filter_map(|entry| {
                         worktree.entry_for_id(entry.entry_id).and_then(|entry| {
-                            if entry.is_dir() {
+                            if entry.is_dir() && !entry.path.is_empty() {
                                 Some(entry.path.as_ref())
                             } else {
                                 None
@@ -4717,6 +4786,22 @@ impl ProjectPanel {
         .detach();
     }
 
+    fn handle_drag_modifiers_changed(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_drag_cursor_style(modifiers, window, cx);
+        // The copy modifier flips highlight semantics for worktree-root
+        // drags. Drop the cached target so the next drag-move event
+        // recomputes under the new mode — otherwise the on_drag_move
+        // fast path skips the recomputation while the pointer stays put.
+        if self.drag_target_entry.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn refresh_drag_cursor_style(
         &self,
         modifiers: &Modifiers,
@@ -4768,22 +4853,19 @@ impl ProjectPanel {
             .collect::<BTreeSet<SelectedEntry>>();
         let entries = self.disjoint_entries(resolved_selections, cx);
 
-        let root_entries: Vec<ProjectEntryId> = {
-            let project = self.project.read(cx);
-            entries
-                .iter()
-                .filter(|entry| project.entry_is_worktree_root(entry.entry_id, cx))
-                .map(|entry| entry.entry_id)
-                .collect()
-        };
-        if !root_entries.is_empty() {
-            for entry_id in root_entries {
-                self.move_worktree_root(entry_id, target_entry_id, cx);
-            }
-            return;
-        }
-
         if Self::is_copy_modifier_set(&window.modifiers()) {
+            // Worktree roots can't be copied — leaving them in would make
+            // `create_paste_path` return None and `?` would abort the whole copy.
+            let entries: BTreeSet<SelectedEntry> = {
+                let project = self.project.read(cx);
+                entries
+                    .into_iter()
+                    .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+                    .collect()
+            };
+            if entries.is_empty() {
+                return;
+            }
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
@@ -4844,6 +4926,40 @@ impl ProjectPanel {
         } else {
             let update_marks = !self.marked_entries.is_empty();
             let active_selection = selections.active_selection;
+            let active_entry_id = self.resolve_entry(active_selection.entry_id);
+            let active_is_worktree_root = self
+                .project
+                .read(cx)
+                .entry_is_worktree_root(active_entry_id, cx);
+
+            // Reorder marked worktree roots together so their relative order is
+            // preserved; non-roots fall through to the normal per-entry move flow.
+            let (root_entry_ids, entries) = {
+                let project = self.project.read(cx);
+                let mut roots = Vec::new();
+                let mut non_roots = BTreeSet::new();
+                for entry in entries {
+                    if project.entry_is_worktree_root(entry.entry_id, cx) {
+                        roots.push(entry.entry_id);
+                    } else {
+                        non_roots.insert(entry);
+                    }
+                }
+                (roots, non_roots)
+            };
+
+            if !root_entry_ids.is_empty() {
+                self.reorder_worktree_roots(&root_entry_ids, target_entry_id, active_entry_id, cx);
+            }
+
+            // A drag whose active selection is a worktree root is a reorder
+            // gesture: reorder the roots (above) and don't also move any
+            // non-root entries that happen to be marked in the same drag.
+            // Moving files is only intended when the drag is initiated from a
+            // non-root entry (see `test_drag_mixed_root_and_file_with_non_root_active`).
+            if active_is_worktree_root {
+                return;
+            }
 
             // For folded selections, track the leaf suffix relative to the resolved
             // entry so we can refresh it after the move completes.
@@ -5516,8 +5632,36 @@ impl ProjectPanel {
         target_entry: &Entry,
         target_worktree: &Worktree,
         drag_state: &DraggedSelection,
+        is_copy_mode: bool,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
+        // Pure worktree-root drags are only meaningful when dropped on
+        // another worktree's root; suppress highlights elsewhere. Mixed drags
+        // (e.g. a root with a marked file) fall through so the file portion
+        // can still receive feedback on directory targets.
+        let project = self.project.read(cx);
+        let drag_is_root_only = drag_state
+            .items()
+            .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
+        if drag_is_root_only {
+            // Worktree roots can't be copied; in copy mode the drop is a
+            // guaranteed no-op, so don't highlight any target.
+            if is_copy_mode {
+                return None;
+            }
+            let root_id = target_worktree.root_entry()?.id;
+            // Hovering any worktree that's part of the drag (active or just
+            // marked) is a no-op in `move_worktrees`, so don't highlight it.
+            let target_worktree_id = target_worktree.id();
+            let target_in_drag = drag_state
+                .items()
+                .any(|entry| entry.worktree_id == target_worktree_id);
+            if target_entry.id == root_id && !target_in_drag {
+                return Some(root_id);
+            }
+            return None;
+        }
+
         let target_parent_path = target_entry.path.parent();
 
         // In case of single item drag, we do not highlight existing
@@ -5557,19 +5701,28 @@ impl ProjectPanel {
         &self,
         drag_state: &DraggedSelection,
         last_root_id: ProjectEntryId,
+        is_copy_mode: bool,
         cx: &App,
     ) -> bool {
+        let project = self.project.read(cx);
+
+        // Worktree roots can't be copied, so a pure-root copy drag is a
+        // guaranteed no-op — don't advertise the background as a target.
+        if is_copy_mode
+            && drag_state
+                .items()
+                .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx))
+        {
+            return false;
+        }
+
         // Always highlight for multiple entries
         if drag_state.items().count() > 1 {
             return true;
         }
 
         // Since root will always have empty relative path
-        if let Some(entry_path) = self
-            .project
-            .read(cx)
-            .path_for_entry(drag_state.active_selection.entry_id, cx)
-        {
+        if let Some(entry_path) = project.path_for_entry(drag_state.active_selection.entry_id, cx) {
             if let Some(parent_path) = entry_path.path.parent() {
                 if !parent_path.is_empty() {
                     return true;
@@ -5578,11 +5731,7 @@ impl ProjectPanel {
         }
 
         // If parent is empty, check if different worktree
-        if let Some(last_root_worktree_id) = self
-            .project
-            .read(cx)
-            .worktree_id_for_entry(last_root_id, cx)
-        {
+        if let Some(last_root_worktree_id) = project.worktree_id_for_entry(last_root_id, cx) {
             if drag_state.active_selection.worktree_id != last_root_worktree_id {
                 return true;
             }
@@ -5845,6 +5994,7 @@ impl ProjectPanel {
                                 this.marked_entries.push(drag_state.active_selection);
                             }
 
+                            let is_copy_mode = Self::is_copy_modifier_set(&window.modifiers());
                             let Some((entry_id, highlight_entry_id)) = maybe!({
                                 let target_worktree = this
                                     .project
@@ -5857,6 +6007,7 @@ impl ProjectPanel {
                                     target_entry,
                                     target_worktree,
                                     drag_state,
+                                    is_copy_mode,
                                     cx,
                                 )?;
                                 Some((target_entry.id, highlight_entry_id))
@@ -6984,7 +7135,7 @@ impl Render for ProjectPanel {
                 .relative()
                 .on_modifiers_changed(cx.listener(
                     |this, event: &ModifiersChangedEvent, window, cx| {
-                        this.refresh_drag_cursor_style(&event.modifiers, window, cx);
+                        this.handle_drag_modifiers_changed(&event.modifiers, window, cx);
                     },
                 ))
                 .key_context(self.dispatch_context(window, cx))
@@ -7346,16 +7497,23 @@ impl Render for ProjectPanel {
                                     },
                                 ))
                                 .on_drag_move::<DraggedSelection>(cx.listener(
-                                    move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
+                                    move |this,
+                                          event: &DragMoveEvent<DraggedSelection>,
+                                          window,
+                                          cx| {
                                         let Some(last_root_id) = this.state.last_worktree_root_id
                                         else {
                                             return;
                                         };
                                         if event.bounds.contains(&event.event.position) {
                                             let drag_state = event.drag(cx);
+                                            let is_copy_mode = Self::is_copy_modifier_set(
+                                                &window.modifiers(),
+                                            );
                                             if this.should_highlight_background_for_selection_drag(
                                                 &drag_state,
                                                 last_root_id,
+                                                is_copy_mode,
                                                 cx,
                                             ) {
                                                 this.drag_target_entry =
@@ -7387,7 +7545,20 @@ impl Render for ProjectPanel {
                                 .on_drop(cx.listener(
                                     move |this, selections: &DraggedSelection, window, cx| {
                                         this.clear_drag_state(cx);
-                                        if let Some(entry_id) = this.state.last_worktree_root_id {
+                                        let is_copy_mode =
+                                            Self::is_copy_modifier_set(&window.modifiers());
+                                        // For move drags whose root group includes the last
+                                        // worktree, route to the move-to-end path so we don't
+                                        // hit the self-drop guard in `move_worktrees`. Copy
+                                        // drags fall through to `drag_onto`, which will
+                                        // filter the roots out as a no-op.
+                                        if !is_copy_mode
+                                            && this.drag_includes_last_worktree(selections, cx)
+                                        {
+                                            this.reorder_worktree_roots_to_end(selections, cx);
+                                        } else if let Some(entry_id) =
+                                            this.state.last_worktree_root_id
+                                        {
                                             this.drag_onto(selections, entry_id, false, window, cx);
                                         }
                                         cx.stop_propagation();
