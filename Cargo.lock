@@ -15270,6 +15270,7 @@ dependencies = [
  "task",
  "telemetry",
  "tempfile",
+ "terminal",
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
