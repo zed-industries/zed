@@ -372,6 +372,7 @@ craneLib.buildPackage (
             export APP_CLI="zed"
             export APP_ICON="zed"
             export APP_NAME="Zed Nightly"
+            export APP_ID="dev.zed.Zed-Nightly"
             export APP_ARGS="%U"
             mkdir -p "$out/share/applications"
             ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
