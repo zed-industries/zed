@@ -3847,26 +3847,12 @@ impl GitPanel {
         let load_template = self.load_commit_template(cx);
 
         cx.spawn_in(window, async move |git_panel, cx| {
+            // Set up the buffer before awaiting the commit template as the
+            // request may never resolve (for example, a collab host that
+            // doesn't know about `LoadCommitTemplate`) and must not block the
+            // commit editor from attaching to the shared buffer.
             let buffer = load_buffer.await?;
-            let template = load_template.await?;
-
             git_panel.update_in(cx, |git_panel, window, cx| {
-                git_panel.commit_template = template;
-                if buffer.read(cx).text().trim().is_empty() {
-                    let template_text = git_panel
-                        .commit_template
-                        .as_ref()
-                        .map(|t| t.template.clone())
-                        .unwrap_or_default();
-                    if !template_text.is_empty() {
-                        buffer.update(cx, |buffer, cx| {
-                            let start = buffer.anchor_before(0);
-                            let end = buffer.anchor_after(buffer.len());
-                            buffer.edit([(start..end, template_text)], None, cx);
-                        });
-                    }
-                }
-
                 if git_panel
                     .commit_editor
                     .read(cx)
@@ -3878,13 +3864,30 @@ impl GitPanel {
                 {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
-                            buffer,
+                            buffer.clone(),
                             git_panel.suggest_commit_message(cx).map(SharedString::from),
                             git_panel.project.clone(),
                             true,
                             window,
                             cx,
                         )
+                    });
+                }
+            })?;
+
+            // Only apply the template if it's non-empty and the buffer has no
+            // content, so we never override a commit message that was already
+            // in progress.
+            let commit_template = load_template.await?;
+            git_panel.update(cx, |git_panel, cx| {
+                git_panel.commit_template = commit_template;
+
+                if let Some(commit_template) = git_panel.commit_template.as_ref()
+                    && !commit_template.template.is_empty()
+                    && buffer.read(cx).text().trim().is_empty()
+                {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(commit_template.template.clone(), cx);
                     });
                 }
             })
