@@ -6617,10 +6617,19 @@ impl GitPanel {
                                         )
                                         .when(!has_context_menu, |this| {
                                             this.tooltip(move |_, cx| {
+                                                let description = if is_unpushed {
+                                                    SharedString::from(format!(
+                                                        "Contains Unpushed Changes — {}",
+                                                        short_sha.clone(),
+                                                    ))
+                                                } else {
+                                                    SharedString::from(short_sha.clone())
+                                                };
+
                                                 Tooltip::with_meta(
-                                                    "View Commit",
+                                                    "View Commit Diff",
                                                     None,
-                                                    short_sha.clone(),
+                                                    description,
                                                     cx,
                                                 )
                                             })
