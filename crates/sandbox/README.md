@@ -398,15 +398,3 @@ already-granted host files at a different in-sandbox path.
 [bubblewrap]: https://github.com/containers/bubblewrap
 [namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces
 [renameat2]: https://man.archlinux.org/man/renameat2.2.en
-
-
-write: /project
-agent asks: i need /project/foo
-user clicks: "allow for this thread"
-insert into thread db: `allowed_paths: /project/foo`
-agent does `ln -s /project/foo /secret`
-
-agent does `echo pwned > /project/foo/passwd.txt`
-  - `--ro-bind / /`
-  - `--bind /project /project`
-  - `--bind /project/foo /project/foo`

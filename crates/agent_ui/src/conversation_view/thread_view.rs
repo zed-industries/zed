@@ -9115,10 +9115,11 @@ impl ThreadView {
         show_border: bool,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        // The path that is actually granted is the resolved canonical target;
-        // display and emphasize that. When the request went through a symlink to
-        // a different target, also surface the raw request so the user gives
-        // informed consent to the real location.
+        // The path that is actually granted is the resolved canonical target.
+        // When the request went through a symlink to a *different* target, both
+        // paths are shown, each explicitly captioned, so it's unmistakable which
+        // string was requested and which location write access is really granted
+        // to.
         let granted_path = granted.canonical_or_requested();
         let requested_path = granted.requested.clone();
         let is_redirected = granted
@@ -9126,20 +9127,71 @@ impl ThreadView {
             .as_deref()
             .is_some_and(|resolved| resolved != requested_path.as_path());
 
-        let display_path = granted_path.display().to_string();
-        let file_name = granted_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| display_path.clone());
-        let parent_path = granted_path.parent().and_then(|parent| {
-            let parent = parent.display().to_string();
-            (!parent.is_empty()).then_some(parent)
-        });
+        let granted_display = granted_path.display().to_string();
         let requested_display = requested_path.display().to_string();
         let tooltip_text = if is_redirected {
-            format!("Requested {requested_display}\nGrants write to {display_path}")
+            format!("Requested: {requested_display}\nGrants write to: {granted_display}")
         } else {
-            display_path
+            granted_display.clone()
+        };
+
+        // A small caption above a monospace path value, so the two are never
+        // confused for each other.
+        let captioned_path =
+            |caption: SharedString, path: String, value_color: Color, cx: &Context<Self>| {
+                v_flex()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        Label::new(caption)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(path)
+                            .size(LabelSize::XSmall)
+                            .color(value_color)
+                            .buffer_font(cx),
+                    )
+            };
+
+        let body = if is_redirected {
+            v_flex()
+                .min_w_0()
+                .gap_2()
+                .child(captioned_path(
+                    "Requested".into(),
+                    requested_display,
+                    Color::Muted,
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .gap_0p5()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .color(Color::Warning)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(
+                                    Label::new("Grants write to — resolved through a symlink")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Warning),
+                                ),
+                        )
+                        .child(
+                            Label::new(granted_display)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning)
+                                .buffer_font(cx),
+                        ),
+                )
+        } else {
+            captioned_path("Write path".into(), granted_display, Color::Default, cx)
         };
 
         h_flex()
@@ -9153,62 +9205,10 @@ impl ThreadView {
             .when(show_border, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .child(
-                v_flex()
-                    .min_w_0()
-                    .gap_0p5()
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!(
-                                "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
-                            )))
-                            .min_w_0()
-                            .gap_0p5()
-                            .child(
-                                Label::new(file_name)
-                                    .size(LabelSize::XSmall)
-                                    .buffer_font(cx),
-                            )
-                            .when_some(parent_path, |this, parent_path| {
-                                this.child(
-                                    Label::new(format!(" {parent_path}"))
-                                        .color(Color::Muted)
-                                        .size(LabelSize::XSmall)
-                                        .buffer_font(cx),
-                                )
-                            })
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Write path",
-                                    None,
-                                    tooltip_text.clone(),
-                                    cx,
-                                )
-                            }),
-                    )
-                    .when(is_redirected, |this| {
-                        // A symlink redirect: warn that the requested path
-                        // resolves elsewhere, and show what is really granted.
-                        this.child(
-                            h_flex()
-                                .min_w_0()
-                                .gap_0p5()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .color(Color::Warning)
-                                        .size(IconSize::XSmall),
-                                )
-                                .child(
-                                    Label::new(format!(
-                                        "requested {requested_display} \u{2192} resolves here"
-                                    ))
-                                    .color(Color::Warning)
-                                    .size(LabelSize::XSmall)
-                                    .buffer_font(cx),
-                                ),
-                        )
-                    }),
-            )
+            .child(body)
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta("Write path", None, tooltip_text.clone(), cx)
+            })
     }
 
     fn render_permission_buttons(
