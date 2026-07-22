@@ -43,7 +43,12 @@ pub struct SandboxWrap {
     /// to make the trust boundary explicit: these originate from
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
-    pub extra_write_paths: Vec<PathBuf>,
+    ///
+    /// Each grant carries the canonical target it resolved to at approval
+    /// time; enforcement rebuilds the location via a verifying reopen (see
+    /// [`granted_write_path_to_location`]) rather than re-resolving the bare
+    /// requested path, which closes a symlink TOCTOU.
+    pub extra_write_paths: Vec<settings::GrantedWritePath>,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
     /// Additional paths that should remain readable but not writable, even when
@@ -156,6 +161,45 @@ impl LinuxWslSandboxError {
     }
 }
 
+/// Rebuild a user-approved write grant into an enforceable
+/// [`sandbox::HostFilesystemLocation`].
+///
+/// When the grant carries a resolved canonical (the normal case, established at
+/// approval time), the location is rebuilt via a verifying
+/// [`sandbox::HostFilesystemLocation::reopen`] — the load-bearing step of the
+/// TOCTOU fix. A legacy bare-string grant (no resolved canonical) falls back to
+/// a fresh [`sandbox::HostFilesystemLocation::capture`].
+pub fn granted_write_path_to_location(
+    granted: &settings::GrantedWritePath,
+) -> std::io::Result<sandbox::HostFilesystemLocation> {
+    match &granted.resolved {
+        Some(resolved) => sandbox::HostFilesystemLocation::reopen(&granted.requested, resolved),
+        None => sandbox::HostFilesystemLocation::capture(&granted.requested),
+    }
+}
+
+/// Rebuild a grant for enforcement, or log and drop it (fail-closed) if it
+/// can't be verified.
+///
+/// A failure here is frequently the symlink-TOCTOU defense firing: the grant's
+/// canonical was redirected or replaced by a symlink since approval, so
+/// [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
+/// security-relevant event, so it must be logged rather than silently
+/// swallowed. The grant is dropped (the command runs without it) rather than
+/// bound unverified.
+pub fn granted_write_path_to_location_or_log(
+    granted: &settings::GrantedWritePath,
+) -> Option<sandbox::HostFilesystemLocation> {
+    granted_write_path_to_location(granted)
+        .inspect_err(|error| {
+            log::warn!(
+                "dropping sandbox write grant {}: {error}",
+                granted.requested.display()
+            );
+        })
+        .ok()
+}
+
 impl SandboxWrap {
     /// Whether the OS sandbox for this request can actually be created right now,
     /// returning a structured [`LinuxWslSandboxError`] when it can't.
@@ -189,21 +233,32 @@ impl SandboxWrap {
         let protected_paths = self
             .protected_paths
             .iter()
-            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
+            .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
             .collect();
         let fs = if self.allow_fs_write {
             sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
-            let writable_paths = self
-                .writable_paths
-                .iter()
-                .chain(self.extra_write_paths.iter())
-                // Capture only — never create anything here (see the doc comment):
-                // materializing an approved-but-missing grant is deferred to
-                // `Sandbox::new` so it can never happen during the `can_create`
-                // probe, before the user has approved the grant.
-                .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
-                .collect();
+            // Project worktree paths are captured fresh; user-approved grants are
+            // rebuilt via the verifying reopen (or captured when legacy bare
+            // strings) through `granted_write_path_to_location`.
+            //
+            // Capture only — never create anything here (see the doc comment):
+            // materializing an approved-but-missing grant is deferred to
+            // `Sandbox::new` so it can never happen during the `can_create`
+            // probe, before the user has approved the grant.
+            // Dedupe to a minimal cover on the captured canonical paths, so a
+            // grant nested under a worktree root (or another grant) is dropped
+            // rather than bound redundantly.
+            let writable_paths = sandbox::normalize_host_filesystem_locations(
+                self.writable_paths
+                    .iter()
+                    .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
+                    .chain(
+                        self.extra_write_paths
+                            .iter()
+                            .filter_map(granted_write_path_to_location_or_log),
+                    ),
+            );
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,

@@ -182,7 +182,7 @@ pub struct SandboxAuthorizationDetails {
     #[serde(default)]
     pub unsandboxed: bool,
     #[serde(default)]
-    pub write_paths: Vec<PathBuf>,
+    pub write_paths: Vec<settings::GrantedWritePath>,
     /// The agent-provided justification for requesting these permissions,
     /// shown to the user (attributed to the agent) in the approval prompt.
     #[serde(default)]

@@ -393,9 +393,18 @@ fn raw_sandbox_lists(cx: &App) -> (Vec<String>, Vec<PathBuf>) {
         .and_then(|permissions| permissions.network_hosts.as_ref())
         .map(|hosts| hosts.0.clone())
         .unwrap_or_default();
+    // Display and match on the requested path of each entry (the literal a
+    // hand-edit types); Zed-written "allow always" grants also carry a resolved
+    // canonical, but the settings row still keys off the requested path.
     let write_paths = permissions
         .and_then(|permissions| permissions.write_paths.as_ref())
-        .map(|paths| paths.0.clone())
+        .map(|paths| {
+            paths
+                .0
+                .iter()
+                .map(|entry| entry.requested.clone())
+                .collect()
+        })
         .unwrap_or_default();
 
     (network_hosts, write_paths)
@@ -493,17 +502,32 @@ fn remove_network_host(host: String, cx: &mut App) {
     });
 }
 
+/// Insert a hand-authored write-path entry (no resolved canonical) into the
+/// settings list as a minimal subtree, mirroring `util::paths::insert_subtree`
+/// but over [`settings::GrantedWritePathContent`] keyed on the requested path.
+fn insert_write_path_subtree(paths: &mut Vec<settings::GrantedWritePathContent>, path: PathBuf) {
+    if paths.iter().any(|entry| path.starts_with(&entry.requested)) {
+        return;
+    }
+    paths.retain(|entry| !entry.requested.starts_with(&path));
+    paths.push(settings::GrantedWritePathContent {
+        requested: path,
+        resolved: None,
+    });
+}
+
 fn add_write_path(path: PathBuf, cx: &mut App) {
     // Normalize away `.`/`..` so the stored entry matches the form the runtime
     // uses for coverage checks (see `compile_sandbox_permissions`) and the form
-    // persisted by the in-thread "Allow always" grant.
+    // persisted by the in-thread "Allow always" grant. A hand-authored entry
+    // records no resolved canonical, so enforcement resolves it fresh (see
+    // `granted_write_path_to_location`).
     let Ok(path) = util::paths::normalize_lexically(&path) else {
         return;
     };
     update_sandbox_permissions(cx, move |permissions| {
         let paths = &mut permissions.write_paths.get_or_insert_default().0;
-        // Store minimal subtrees so a parent path subsumes its descendants.
-        util::paths::insert_subtree(paths, path);
+        insert_write_path_subtree(paths, path);
     });
 }
 
@@ -513,8 +537,8 @@ fn update_write_path(old_path: PathBuf, new_path: PathBuf, cx: &mut App) {
     };
     update_sandbox_permissions(cx, move |permissions| {
         if let Some(paths) = permissions.write_paths.as_mut() {
-            paths.0.retain(|entry| *entry != old_path);
-            util::paths::insert_subtree(&mut paths.0, new_path);
+            paths.0.retain(|entry| entry.requested != old_path);
+            insert_write_path_subtree(&mut paths.0, new_path);
         }
     });
 }
@@ -522,7 +546,7 @@ fn update_write_path(old_path: PathBuf, new_path: PathBuf, cx: &mut App) {
 fn remove_write_path(path: PathBuf, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         if let Some(paths) = permissions.write_paths.as_mut() {
-            paths.0.retain(|entry| *entry != path);
+            paths.0.retain(|entry| entry.requested != path);
         }
     });
 }

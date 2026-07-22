@@ -228,6 +228,50 @@ If the attacker managed to change a path to point to a different inode to when
 the FD was captured, the check will fail, and we don't run the untrusted
 command.
 
+#### The subtle flaw: capturing is circular
+
+The scheme above closes the swap-*after*-capture window, but the original
+capture step had a hidden circularity. It opened a fresh `O_PATH` FD each run
+(following symlinks), then *re-derived* the bind path from that same FD via
+`readlink(/proc/self/fd/N)`. Both the pinned inode and the bind path therefore
+came from one open of an attacker-influenced path.
+
+That means a symlink swapped in **before** the capture is silently followed: the
+open pins the attacker's inode and the readlink reports the attacker's path. The
+in-sandbox validator then compares `fstat(fd)` against `lstat(mount)` — but both
+sides now agree on the same wrong, attacker-chosen inode, so the check passes.
+The validator can only prove the FD and the mount name the same object; it
+cannot prove that object is the one the user approved.
+
+#### The complete fix: persist the approval-time canonical path
+
+The fix pins the identity at *approval* time and re-proves it at *enforcement*
+time, rather than re-deriving it from the FD every run:
+
+- At approval, we resolve the requested path to its canonical (symlink-free)
+  target and persist that canonical path alongside the request.
+- At enforcement, we open the persisted canonical path with `O_PATH | O_NOFOLLOW`,
+  reject a symlink leaf (an `S_IFLNK` check, since `readlink` of an
+  `O_NOFOLLOW` symlink FD returns the symlink's own path and would spuriously
+  match), and require `readlink(/proc/self/fd/N) == persisted canonical`. If any
+  component became a symlink after approval, the FD resolves elsewhere and this
+  diverges, so we fail closed.
+
+This host-side, **pre-mount** readlink check composes with the existing
+in-sandbox, **post-mount** `fstat(fd) == lstat(mount)` check to cover every
+window:
+- a swap *before* the host open is caught by the readlink check;
+- a swap *between* the host check and the mount is caught in-sandbox.
+
+The readlink half must run host-side: once the FD is bound, its inode is
+remapped to the mount destination inside the sandbox, so an in-sandbox readlink
+would just report the mount path and prove nothing.
+
+Grants are persisted as `(requested, resolved-canonical)` pairs. FDs cannot
+survive a process restart, so even transient "allow for this thread" grants are
+rebuilt from these strings and re-verified. The `requested` path is retained for
+display and provenance only — it is never fed back into enforcement.
+
 #### Blocking IPC-socket escapes (seccomp)
 
 A read-only bind mount does **not** stop a process from `connect()`-ing to a
@@ -309,14 +353,40 @@ want to revisit this.
 
 As mentioned above, TOCTOUs are a real issue. MacOS is not vulnerable to the
 TOCTOU that affected Linux, but there is still a risk if we canonicalize paths
-twice with a time delay between. 
+twice with a time delay between.
 
-To mitigate this, sensitive APIs take a `HostFilesystemLocation`. This is:
-- an `Arc<OwnedFd>` on Linux
-- a `PathBuf` on MacOS
+To mitigate this, sensitive APIs take a `HostFilesystemLocation`. It wraps a
+fully `cfg`-ed, per-OS inner struct so each platform carries exactly the captured
+identity its enforcement layer needs:
+- Linux: `{ O_PATH fd, canonical_path, untrusted_raw_path }`
+- macOS: `{ canonical_path, untrusted_raw_path }`
+- other platforms: `{ untrusted_raw_path }` (the real capture happens WSL-side)
 
-This type does not expose its inner value, and so this encourages the developer
-to capture and validate the path once, before passing it into this type.
+The type is opaque: it does not `Deref`, and its paths are readable only through
+a display view, never as a value that can be re-fed into a constructor by string.
+Equality reflects the actual filesystem object (the inode behind the FD on Linux,
+the canonical path on macOS), not the textual raw path.
+
+There are two constructors:
+- `capture(raw)` resolves `raw` to its canonical target, **following** symlinks
+  (Linux: `O_PATH` open, then `readlink(/proc/self/fd/N)`; macOS: canonicalize).
+  Use it for locations that are *not* re-established from persisted state — the
+  project's own worktree roots and protected paths (whose parents a sandboxed
+  command can't tamper with) — and to resolve a user-requested path at approval
+  time so the true target can be shown and persisted.
+- `reopen(raw, canonical)` rebuilds a persisted grant and **proves** the object
+  now at `canonical` is the one that was approved. On Linux it opens `canonical`
+  with `O_PATH | O_CLOEXEC | O_NOFOLLOW`, rejects a symlink leaf (`S_IFLNK`
+  check), and requires `readlink(/proc/self/fd/N) == canonical`, failing closed
+  otherwise. On macOS the persisted canonical is trusted verbatim, because
+  Seatbelt matches the *resolved* access path: a post-approval component swap is
+  denied at syscall time rather than redirecting, so no FD/readlink check is
+  needed.
+
+`display()` returns a `HostFilesystemLocationDisplay` exposing both the raw
+request and the canonical target (plus whether the request was redirected
+through a symlink) so the approval UI can render an informed "requested →
+granted" disclosure. The raw path is display/provenance only.
 
 ### `SandboxFilesystemLocation`
 
@@ -328,3 +398,15 @@ already-granted host files at a different in-sandbox path.
 [bubblewrap]: https://github.com/containers/bubblewrap
 [namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces
 [renameat2]: https://man.archlinux.org/man/renameat2.2.en
+
+
+write: /project
+agent asks: i need /project/foo
+user clicks: "allow for this thread"
+insert into thread db: `allowed_paths: /project/foo`
+agent does `ln -s /project/foo /secret`
+
+agent does `echo pwned > /project/foo/passwd.txt`
+  - `--ro-bind / /`
+  - `--bind /project /project`
+  - `--bind /project/foo /project/foo`

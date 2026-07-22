@@ -8761,7 +8761,9 @@ impl ThreadView {
                 .collapsed_sandbox_authorization_details
                 .contains(tool_call_id);
             let mut paths = details.write_paths.clone();
-            paths.sort();
+            // Sort by the path that is actually granted (the resolved canonical
+            // when present, else the requested path).
+            paths.sort_by(|a, b| a.canonical_or_requested().cmp(b.canonical_or_requested()));
 
             v_flex()
                 .child(
@@ -8912,11 +8914,20 @@ impl ThreadView {
                 findings.push((decoded, suspicious));
             }
         }
-        for path in &details.write_paths {
-            let display = path.display().to_string();
-            let suspicious = unicode_confusables::scan(&display);
-            if !suspicious.is_empty() {
-                findings.push((display, suspicious));
+        for granted in &details.write_paths {
+            // Scan both the requested path and the resolved target (when they
+            // differ), so a confusable in either the shown request or the real
+            // grant destination is surfaced.
+            let requested = granted.requested.display().to_string();
+            let resolved = granted.canonical_or_requested().display().to_string();
+            for display in [requested, resolved]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+            {
+                let suspicious = unicode_confusables::scan(&display);
+                if !suspicious.is_empty() {
+                    findings.push((display, suspicious));
+                }
             }
         }
         findings
@@ -9100,19 +9111,36 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         path_ix: usize,
-        path: &Path,
+        granted: &settings::GrantedWritePath,
         show_border: bool,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let display_path = path.display().to_string();
-        let file_name = path
+        // The path that is actually granted is the resolved canonical target;
+        // display and emphasize that. When the request went through a symlink to
+        // a different target, also surface the raw request so the user gives
+        // informed consent to the real location.
+        let granted_path = granted.canonical_or_requested();
+        let requested_path = granted.requested.clone();
+        let is_redirected = granted
+            .resolved
+            .as_deref()
+            .is_some_and(|resolved| resolved != requested_path.as_path());
+
+        let display_path = granted_path.display().to_string();
+        let file_name = granted_path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| display_path.clone());
-        let parent_path = path.parent().and_then(|parent| {
+        let parent_path = granted_path.parent().and_then(|parent| {
             let parent = parent.display().to_string();
             (!parent.is_empty()).then_some(parent)
         });
+        let requested_display = requested_path.display().to_string();
+        let tooltip_text = if is_redirected {
+            format!("Requested {requested_display}\nGrants write to {display_path}")
+        } else {
+            display_path
+        };
 
         h_flex()
             .id(SharedString::from(format!(
@@ -9126,27 +9154,59 @@ impl ThreadView {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
             .child(
-                h_flex()
-                    .id(SharedString::from(format!(
-                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
-                    )))
+                v_flex()
                     .min_w_0()
                     .gap_0p5()
                     .child(
-                        Label::new(file_name)
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
+                        h_flex()
+                            .id(SharedString::from(format!(
+                                "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                            )))
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                Label::new(file_name)
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx),
+                            )
+                            .when_some(parent_path, |this, parent_path| {
+                                this.child(
+                                    Label::new(format!(" {parent_path}"))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                )
+                            })
+                            .tooltip(move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Write path",
+                                    None,
+                                    tooltip_text.clone(),
+                                    cx,
+                                )
+                            }),
                     )
-                    .when_some(parent_path, |this, parent_path| {
+                    .when(is_redirected, |this| {
+                        // A symlink redirect: warn that the requested path
+                        // resolves elsewhere, and show what is really granted.
                         this.child(
-                            Label::new(format!(" {parent_path}"))
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall)
-                                .buffer_font(cx),
+                            h_flex()
+                                .min_w_0()
+                                .gap_0p5()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .color(Color::Warning)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "requested {requested_display} \u{2192} resolves here"
+                                    ))
+                                    .color(Color::Warning)
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx),
+                                ),
                         )
-                    })
-                    .tooltip(move |_window, cx| {
-                        Tooltip::with_meta("Requested write path", None, display_path.clone(), cx)
                     }),
             )
     }

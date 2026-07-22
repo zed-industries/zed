@@ -3,7 +3,10 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use crate::ExtendingVec;
 
@@ -492,7 +495,7 @@ impl AgentSettingsContent {
             .allow_unsandboxed = Some(true);
     }
 
-    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+    pub fn add_sandbox_write_path(&mut self, granted: GrantedWritePathContent) {
         let write_paths = &mut self
             .sandbox_permissions
             .get_or_insert_default()
@@ -500,7 +503,17 @@ impl AgentSettingsContent {
             .get_or_insert_default()
             .0;
 
-        util::paths::insert_subtree(write_paths, path);
+        // Mirror `util::paths::insert_subtree`, keeping the grant set minimal,
+        // but compare by each entry's canonical (resolved) grant path.
+        let canonical = granted.canonical_or_requested().to_path_buf();
+        if write_paths
+            .iter()
+            .any(|existing| canonical.starts_with(existing.canonical_or_requested()))
+        {
+            return;
+        }
+        write_paths.retain(|existing| !existing.canonical_or_requested().starts_with(&canonical));
+        write_paths.push(granted);
     }
 }
 
@@ -780,6 +793,98 @@ pub enum CustomAgentServerSettings {
     },
 }
 
+/// A persisted sandbox writable-path grant. Deserializes from either a bare
+/// path string (`"/tmp/x"`, a legacy/hand-authored entry with no resolved
+/// target) or an object (`{ "requested": "/tmp/x", "resolved": "/tmp/real" }`).
+/// Serializes back as a bare string when `resolved` is `None` and as an object
+/// otherwise, so hand-authored bare strings round-trip and Zed-written grants
+/// are objects.
+#[derive(Clone, Debug, Default, PartialEq, MergeFrom)]
+pub struct GrantedWritePathContent {
+    /// The path exactly as the user/model requested it.
+    pub requested: PathBuf,
+    /// The canonical, symlink-resolved target established when the grant was
+    /// approved. Absent for a bare-string entry.
+    pub resolved: Option<PathBuf>,
+}
+
+impl GrantedWritePathContent {
+    /// The path used for lexical subtree/coverage/dedup logic: the resolved
+    /// canonical target when known, otherwise the requested path.
+    fn canonical_or_requested(&self) -> &Path {
+        self.resolved.as_deref().unwrap_or(&self.requested)
+    }
+}
+
+impl Serialize for GrantedWritePathContent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.resolved {
+            None => self.requested.serialize(serializer),
+            Some(resolved) => {
+                use serde::ser::SerializeStruct as _;
+                let mut state = serializer.serialize_struct("GrantedWritePathContent", 2)?;
+                state.serialize_field("requested", &self.requested)?;
+                state.serialize_field("resolved", resolved)?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantedWritePathContent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Object {
+            requested: PathBuf,
+            #[serde(default)]
+            resolved: Option<PathBuf>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrObject {
+            String(PathBuf),
+            Object(Object),
+        }
+
+        Ok(match StringOrObject::deserialize(deserializer)? {
+            StringOrObject::String(requested) => Self {
+                requested,
+                resolved: None,
+            },
+            StringOrObject::Object(Object {
+                requested,
+                resolved,
+            }) => Self {
+                requested,
+                resolved,
+            },
+        })
+    }
+}
+
+impl JsonSchema for GrantedWritePathContent {
+    fn schema_name() -> Cow<'static, str> {
+        "GrantedWritePathContent".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                { "type": "string" },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requested": { "type": "string" },
+                        "resolved": { "type": ["string", "null"] }
+                    },
+                    "required": ["requested"]
+                }
+            ]
+        })
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SandboxPermissionsContent {
@@ -809,9 +914,13 @@ pub struct SandboxPermissionsContent {
     pub allow_unsandboxed: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
-    /// to without prompting. Paths written by Zed are absolute.
+    /// to without prompting. Each entry is either a bare path string or an
+    /// object `{requested, resolved}`; Zed writes objects (the canonical,
+    /// symlink-resolved target established at approval time), while
+    /// hand-authored entries may be bare path strings. Paths written by Zed
+    /// are absolute.
     /// Default: []
-    pub write_paths: Option<ExtendingVec<PathBuf>>,
+    pub write_paths: Option<ExtendingVec<GrantedWritePathContent>>,
 
     /// Whether to warn when a sandbox escalation prompt requests a domain or
     /// write path that contains potentially confusable Unicode characters
@@ -1143,7 +1252,10 @@ mod tests {
         );
         settings.allow_sandbox_fs_write_all();
         settings.allow_sandbox_unsandboxed();
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+        });
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
         assert_eq!(sandbox_permissions.allow_all_hosts, Some(true));
@@ -1165,7 +1277,10 @@ mod tests {
                 .unwrap()
                 .0
                 .as_slice(),
-            &[PathBuf::from("/tmp/build")]
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+            }]
         );
     }
 
@@ -1173,9 +1288,18 @@ mod tests {
     fn test_add_sandbox_write_path_prunes_redundant_paths() {
         let mut settings = AgentSettingsContent::default();
 
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/cache"),
+            resolved: None,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/output"),
+            resolved: None,
+        });
 
         let write_paths = settings
             .sandbox_permissions
@@ -1186,6 +1310,72 @@ mod tests {
             .unwrap()
             .0
             .as_slice();
-        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            write_paths,
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_deserializes_string_or_object() {
+        let from_string: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!("/tmp/x")).unwrap();
+        assert_eq!(
+            from_string,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+            }
+        );
+
+        let from_object: GrantedWritePathContent = serde_json::from_value(
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" }),
+        )
+        .unwrap();
+        assert_eq!(
+            from_object,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: Some(PathBuf::from("/tmp/real")),
+            }
+        );
+
+        // `resolved` is optional in the object form.
+        let object_without_resolved: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!({ "requested": "/tmp/x" })).unwrap();
+        assert_eq!(
+            object_without_resolved,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_serializes_string_or_object() {
+        // No resolved target serializes as a bare string, so hand-authored
+        // bare strings round-trip.
+        let bare = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!("/tmp/x")
+        );
+
+        // A resolved target serializes as an object.
+        let resolved = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: Some(PathBuf::from("/tmp/real")),
+        };
+        assert_eq!(
+            serde_json::to_value(&resolved).unwrap(),
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" })
+        );
     }
 }

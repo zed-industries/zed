@@ -23,6 +23,46 @@
 //!   into WSL, or a request mixing distros. These are ordinary `anyhow` errors
 //!   *without* [`WslSandboxUnavailable`], and are reported back to the model,
 //!   which can fix the request and retry.
+//!
+//! ## Writable-path grant integrity (symlink TOCTOU) — not yet implemented here
+//!
+//! A writable grant names a directory the user approved the agent to modify.
+//! Binding it by *re-resolving a path string* at command time is a
+//! time-of-check-to-time-of-use hole: a symlink swapped into a component of the
+//! granted path redirects the bind to an unapproved location. bwrap's in-sandbox
+//! check (`fstat` of a captured `O_PATH` fd vs `lstat` of the mount) only catches
+//! a swap that happens *after* the fd is captured; a symlink already present when
+//! the path is first opened (e.g. planted before approval) is silently followed,
+//! so the captured fd — and the mount — both point at the attacker's target and
+//! agree.
+//!
+//! The fix (already implemented for native Linux/macOS — see `CanonicalPathBuf`
+//! in `crate::util::canonical_path` and `README.md`) persists each grant as a
+//! `(requested, canonical)` pair, where `canonical` is the fully symlink-free
+//! path resolved *once* at approval time. At enforcement the grant is rebuilt
+//! from `canonical` with a verifying open — `O_PATH | O_NOFOLLOW`, reject a
+//! symlink leaf (`S_IFLNK`), and require `readlink(/proc/self/fd/N) == canonical`
+//! — pinning the inode of the real directory *currently* at the approved path and
+//! failing closed on any symlink trickery. The existing in-sandbox
+//! `fstat == lstat` then confirms bwrap mounted that same inode.
+//!
+//! Adopting this on WSL takes two halves:
+//!
+//! * **Resolve at approval, inside WSL.** A Windows process can't compute a Linux
+//!   realpath, so the canonical must be resolved in the distro (a WSL round-trip
+//!   calling `CanonicalPathBuf::resolve`), persisted as the `(requested,
+//!   canonical)` pair, and the resolved target shown to the user for consent.
+//! * **Verify at enforcement, inside WSL.** Pass the persisted `canonical` into
+//!   WSL, forward it through [`wrap_invocation`], and switch the helper
+//!   (`linux_bubblewrap::run_wsl_helper`) from the current follow-and-capture
+//!   `open_o_path_fd` to `CanonicalPathBuf::from_canonical`. `wrap_windows` must
+//!   also hand the helper the canonical rather than the raw requested path
+//!   (today `HostFilesystemLocation::windows_path` returns the raw one).
+//!
+//! Both halves must land together: the enforcement half alone would reject
+//! legitimately-symlinked grants (which the current follow-and-capture accepts).
+//! Until then, WSL keeps only the post-capture `fstat == lstat` guarantee — the
+//! pre-capture symlink swap is **not yet closed on Windows/WSL**.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

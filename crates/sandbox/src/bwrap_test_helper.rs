@@ -199,7 +199,7 @@ mod imp {
                     std::fs::create_dir_all(path)
                         .with_context(|| format!("failed to create writable path {path}"))?;
                     writable_paths.push(
-                        HostFilesystemLocation::new(path)
+                        HostFilesystemLocation::capture(path)
                             .with_context(|| format!("failed to capture writable path {path}"))?,
                     );
                 }
@@ -221,14 +221,14 @@ mod imp {
     }
 
     /// Capture each already-existing protected path, mirroring production's
-    /// fail-closed `filter_map(HostFilesystemLocation::new(..).ok())`: a path
+    /// fail-closed `filter_map(HostFilesystemLocation::capture(..).ok())`: a path
     /// that does not yet exist can't be pinned and is simply skipped. Unlike
     /// writable paths, these are never created here — whether one exists is
     /// exactly what several checks turn on.
     fn capture_protected_paths(paths: &[String]) -> Vec<HostFilesystemLocation> {
         paths
             .iter()
-            .filter_map(|path| HostFilesystemLocation::new(path).ok())
+            .filter_map(|path| HostFilesystemLocation::capture(path).ok())
             .collect()
     }
 

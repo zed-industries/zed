@@ -16,8 +16,6 @@ use std::{
 use http_proxy::ProxyHandle;
 #[cfg(not(target_os = "windows"))]
 use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd as _;
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
@@ -28,217 +26,19 @@ mod macos_seatbelt;
 #[cfg(target_os = "windows")]
 mod windows_wsl;
 
+mod util;
+
+pub use util::{
+    HostFilesystemLocation, HostFilesystemLocationDisplay, normalize_host_filesystem_locations,
+    resolve_canonical,
+};
+#[cfg(target_os = "linux")]
+use util::{CanonicalPathBuf, linux_fd_identity};
+#[cfg(target_os = "macos")]
+use util::canonicalize_allowing_missing_leaf;
+
 #[cfg(target_os = "windows")]
 pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
-
-/// An opaque handle to a location on the **host** filesystem the sandbox may
-/// grant access to or protect (for example, a writable or protected subtree).
-///
-/// The entire purpose of this type is to capture the *security-relevant identity*
-/// of a host location once, up front, in a form the enforcement layer can use
-/// without re-resolving a path string later. Re-resolving a path at enforcement
-/// time is the classic time-of-check-to-time-of-use hole: a path that was
-/// verified as safe can be swapped for a symlink before the sandbox actually
-/// binds/allows it, redirecting the grant to an arbitrary host location.
-///
-/// What is captured is platform-specific:
-/// - **macOS**: the fully-canonicalized path, used verbatim as the Seatbelt rule
-///   literal. Seatbelt matches the *resolved* access path against this literal,
-///   so a post-capture swap of a path component fails closed (denied) rather
-///   than redirecting the grant.
-/// - **Linux**: an `O_PATH` file descriptor pinned to the target inode. bwrap is
-///   launched by a PTY that can't inherit extra fds, so we can't use bwrap's own
-///   `--bind-fd`; instead the bind uses an ordinary `--bind <path>` and an
-///   in-sandbox validator compares `fstat` of this descriptor against `lstat` of
-///   the mounted path after the mounts, failing closed on a post-capture swap
-///   (see `linux_bubblewrap::validate_binds` and `README.md`).
-/// - **Windows**: nothing — a Windows process holds no Linux fds, so the real
-///   capture-at-validation happens inside WSL (in the `--wsl-sandbox-helper`),
-///   and the value here carries only the requested path as untrusted intent.
-///
-/// The type is deliberately **opaque**: it does not `Deref`, and it never hands
-/// back its trusted value. The only thing readable is a *display-only* path via
-/// [`HostFilesystemLocation::untrusted_path_display`], suitable for showing a
-/// human but which must never be passed back into a sandbox API as the
-/// location's identity. Equality reflects the actual filesystem object (same
-/// inode), not the textual path.
-#[derive(Clone)]
-pub struct HostFilesystemLocation {
-    /// macOS: the canonicalized path, resolved exactly once at capture time and
-    /// used directly as the Seatbelt rule literal.
-    #[cfg(target_os = "macos")]
-    canonical_path: PathBuf,
-    /// Linux: an `O_PATH` descriptor pinned to the captured inode. Wrapped in an
-    /// `Arc` only so the surrounding policy types can stay `Clone`; cloning
-    /// shares the same underlying descriptor.
-    #[cfg(target_os = "linux")]
-    fd: std::sync::Arc<std::os::fd::OwnedFd>,
-    /// The path exactly as the caller requested it. Kept **only** so the UI can
-    /// show the user which location is being granted. This is never consulted by
-    /// any enforcement path — treat it as untrusted, attacker-influenced text.
-    untrusted_path_for_display: PathBuf,
-}
-
-impl HostFilesystemLocation {
-    /// Capture `path` as a host sandbox location, resolving its identity up front.
-    ///
-    /// On macOS this canonicalizes the path; on Linux it opens an `O_PATH`
-    /// descriptor to it; on Windows it records nothing. The caller is
-    /// responsible for having already *validated* `path` (e.g. confirmed it is
-    /// inside the project, or safe to treat as a protected path) — capturing it here
-    /// pins that decision against later tampering. To be race-free, capture
-    /// should happen as part of, or immediately after, that validation, and the
-    /// resulting value should be passed around unchanged from then on (never
-    /// re-derived from a path).
-    pub fn new(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        let path = path.as_ref();
-        let untrusted_path_for_display = path.to_path_buf();
-
-        #[cfg(target_os = "macos")]
-        {
-            // `canonicalize_allowing_missing_leaf` resolves through the existing
-            // parent so a not-yet-created leaf still yields the real path
-            // Seatbelt will match against.
-            let canonical_path = canonicalize_allowing_missing_leaf(path);
-            Ok(Self {
-                canonical_path,
-                untrusted_path_for_display,
-            })
-        }
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            // `O_PATH` opens a handle that refers to the inode without granting
-            // read/write on its contents, which is exactly what a bind source
-            // needs. `O_CLOEXEC` keeps the descriptor from leaking into
-            // unrelated children; the bind step re-publishes it deliberately
-            // when launching bwrap.
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
-                .open(path)?;
-            Ok(Self {
-                fd: std::sync::Arc::new(std::os::fd::OwnedFd::from(file)),
-                untrusted_path_for_display,
-            })
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            Ok(Self {
-                untrusted_path_for_display,
-            })
-        }
-    }
-
-    /// The requested path, for **display only** (e.g. the permission-request UI).
-    ///
-    /// This intentionally returns the untrusted, as-requested path — never the
-    /// captured trusted identity. Do not feed the result back into any sandbox
-    /// API as if it identified this location.
-    pub fn untrusted_path_display(&self) -> std::path::Display<'_> {
-        self.untrusted_path_for_display.display()
-    }
-
-    /// macOS: the canonical path captured once at construction, used verbatim as
-    /// the Seatbelt rule literal. Trusted — never re-resolved. Falls back to the
-    /// requested path for a display-only location (which must never reach
-    /// enforcement).
-    #[cfg(target_os = "macos")]
-    pub(crate) fn macos_canonical_path(&self) -> &Path {
-        &self.canonical_path
-    }
-
-    /// Linux: a borrowed handle to the pinned inode, for deriving a bind source
-    /// path and for `fstat`-based identity checks.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn linux_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        use std::os::fd::AsFd as _;
-        self.fd.as_fd()
-    }
-
-    /// Linux: an independent `O_PATH` descriptor to the same pinned inode,
-    /// duplicated (with `O_CLOEXEC`) so the validation server can own and send it
-    /// over `SCM_RIGHTS` without affecting this location's descriptor.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn linux_dup_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
-        use std::os::fd::AsFd as _;
-        self.fd.as_fd().try_clone_to_owned()
-    }
-
-    /// Windows: the requested path, to be mapped into WSL and handed to the
-    /// in-WSL helper. Windows captures no identity itself (it holds no Linux
-    /// fds); the real capture-at-validation happens WSL-side in the helper, so
-    /// here the requested path *is* the location.
-    #[cfg(target_os = "windows")]
-    pub(crate) fn windows_path(&self) -> &Path {
-        &self.untrusted_path_for_display
-    }
-}
-
-impl fmt::Debug for HostFilesystemLocation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Only the display path is shown; the trusted identity stays opaque.
-        formatter
-            .debug_struct("HostFilesystemLocation")
-            .field(
-                "untrusted_path_for_display",
-                &self.untrusted_path_for_display,
-            )
-            .finish_non_exhaustive()
-    }
-}
-
-impl PartialEq for HostFilesystemLocation {
-    /// Two locations are equal when they refer to the **same filesystem object**,
-    /// determined from the captured identity (the inode behind the `O_PATH` fd on
-    /// Linux, the canonical path on macOS) — never from the textual
-    /// display path. This is what lets policy bookkeeping dedupe "the same
-    /// location named two different ways," and refuse to treat "two different
-    /// objects that happen to share a path string" as one.
-    fn eq(&self, other: &Self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            match (
-                linux_fd_identity(self.fd.as_raw_fd()),
-                linux_fd_identity(other.fd.as_raw_fd()),
-            ) {
-                (Some(a), Some(b)) => a == b,
-                // An `fstat` on an `O_PATH` fd we own should never fail; if it
-                // somehow does we can't prove identity, so report "not equal"
-                // (the safe answer) and leave a trace.
-                _ => {
-                    log::error!(
-                        "failed to fstat an O_PATH descriptor while comparing sandbox locations"
-                    );
-                    false
-                }
-            }
-        }
-        #[cfg(target_os = "macos")]
-        {
-            // Canonicalization is a bijection on real paths, so equal canonical
-            // paths mean the same directory/file.
-            self.canonical_path == other.canonical_path
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            // No enforcement and no captured identity on these platforms; fall
-            // back to the requested path purely so the type can still be used in
-            // collections.
-            self.untrusted_path_for_display == other.untrusted_path_for_display
-        }
-    }
-}
-
-impl Eq for HostFilesystemLocation {}
-
-/// The `(device, inode)` pair behind an `O_PATH` descriptor, used to decide
-/// whether two [`HostFilesystemLocation`]s refer to the same filesystem object.
-#[cfg(target_os = "linux")]
-fn linux_fd_identity(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
-    let stat = nix::sys::stat::fstat(fd).ok()?;
-    Some((stat.st_dev as u64, stat.st_ino as u64))
-}
 
 /// A path *inside the sandbox* — i.e. where a host location is exposed in the
 /// sandboxed process's view of the filesystem (for example, a bind-mount
@@ -351,15 +151,12 @@ impl SandboxPolicy {
 }
 
 fn merge_locations(
-    mut locations: Vec<HostFilesystemLocation>,
+    locations: Vec<HostFilesystemLocation>,
     other: Vec<HostFilesystemLocation>,
 ) -> Vec<HostFilesystemLocation> {
-    for location in other {
-        if !locations.contains(&location) {
-            locations.push(location);
-        }
-    }
-    locations
+    // Union the two sets and reduce to a minimal cover, so a location nested
+    // under another (in either input) is dropped rather than bound redundantly.
+    normalize_host_filesystem_locations(locations.into_iter().chain(other))
 }
 
 fn validate_writable_paths_do_not_overlap_protected_paths(
@@ -404,8 +201,8 @@ fn writable_path_overlaps_protected_path(
     protected_path: &HostFilesystemLocation,
 ) -> bool {
     writable_path
-        .untrusted_path_for_display
-        .starts_with(&protected_path.untrusted_path_for_display)
+        .untrusted_raw_path()
+        .starts_with(protected_path.untrusted_raw_path())
 }
 
 #[cfg(target_os = "linux")]
@@ -897,17 +694,17 @@ impl Sandbox {
         };
         let protected_paths = self.protected_paths();
         // Build the writable binds as (captured fd, bind path) pairs in lockstep.
-        // The bind *path* is derived from the pinned inode (readlink of the
-        // captured `O_PATH` fd), never from an attacker-influenceable string; the
-        // *fd* is what the in-sandbox validator compares the mounted inode
-        // against. The two lists stay in the same order so each fd lines up with
-        // its path on the validator side.
+        // The bind *path* is the verified canonical path of each location — for a
+        // persisted grant, `HostFilesystemLocation::reopen` already proved this
+        // path's current inode is the approved one (`readlink(fd) == canonical`)
+        // and holds the fd open pinning it. The *fd* is what the in-sandbox
+        // validator compares the mounted inode against, catching any swap between
+        // that host-side check and the mount. The two lists stay in the same
+        // order so each fd lines up with its path on the validator side.
         let mut writable_owned: Vec<PathBuf> = Vec::new();
         let mut writable_fds: Vec<std::os::fd::OwnedFd> = Vec::new();
         for location in &self.fs.writable_paths {
-            let Some(path) = linux_location_path(location) else {
-                continue;
-            };
+            let path = location.linux_canonical_path().to_path_buf();
             match location.linux_dup_fd() {
                 Ok(fd) => {
                     writable_owned.push(path);
@@ -926,7 +723,7 @@ impl Sandbox {
         let writable: Vec<&Path> = writable_owned.iter().map(PathBuf::as_path).collect();
         let protected_owned: Vec<PathBuf> = protected_paths
             .iter()
-            .filter_map(linux_location_path)
+            .map(|location| location.linux_canonical_path().to_path_buf())
             .collect();
         let protected_paths: Vec<&Path> = protected_owned.iter().map(PathBuf::as_path).collect();
 
@@ -1129,15 +926,7 @@ pub fn run_sandbox_launcher_if_invoked() {
 // with no writable binds rather than re-deriving paths from the opaque
 // locations.
 
-/// The current path of the inode pinned by a [`HostFilesystemLocation`]'s
-/// `O_PATH` fd, via `/proc/self/fd`. This resolves to the *pinned inode*, so it
-/// reflects the object captured at validation even if its name was changed,
-/// rather than re-resolving an attacker-influenceable path string.
-#[cfg(target_os = "linux")]
-fn linux_location_path(location: &HostFilesystemLocation) -> Option<PathBuf> {
-    use std::os::fd::AsRawFd as _;
-    std::fs::read_link(format!("/proc/self/fd/{}", location.linux_fd().as_raw_fd())).ok()
-}
+
 
 #[cfg(not(target_os = "windows"))]
 fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
@@ -1318,9 +1107,9 @@ mod tests {
         let hooks_dir = git_dir.join("hooks");
         std::fs::create_dir_all(&hooks_dir).expect("create git hooks dir");
 
-        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
-        let writable_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
-        let writable_hooks = HostFilesystemLocation::new(&hooks_dir).expect("capture hooks dir");
+        let protected_git = HostFilesystemLocation::capture(&git_dir).expect("capture git dir");
+        let writable_git = HostFilesystemLocation::capture(&git_dir).expect("capture git dir");
+        let writable_hooks = HostFilesystemLocation::capture(&hooks_dir).expect("capture hooks dir");
 
         for writable_path in [writable_git, writable_hooks] {
             let result = Sandbox::new(SandboxPolicy {
@@ -1349,11 +1138,11 @@ mod tests {
         std::fs::create_dir_all(&git_dir).expect("create git dir");
         std::fs::create_dir_all(&outside_hooks_dir).expect("create outside hooks dir");
 
-        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        let protected_git = HostFilesystemLocation::capture(&git_dir).expect("capture git dir");
         std::fs::rename(&git_dir, &real_git_dir).expect("move git dir aside");
         unix_fs::symlink(&outside_dir, &git_dir).expect("replace git dir with symlink");
         let writable_displayed_inside_git =
-            HostFilesystemLocation::new(git_dir.join("hooks")).expect("capture symlink target");
+            HostFilesystemLocation::capture(git_dir.join("hooks")).expect("capture symlink target");
 
         Sandbox::new(SandboxPolicy {
             fs: SandboxFsPolicy::Restricted {
@@ -1374,7 +1163,7 @@ mod tests {
         let dir_c = tempfile::tempdir().expect("create temp dir c");
         let dir_d = tempfile::tempdir().expect("create temp dir d");
         let location = |dir: &tempfile::TempDir| {
-            HostFilesystemLocation::new(dir.path()).expect("capture temp dir")
+            HostFilesystemLocation::capture(dir.path()).expect("capture temp dir")
         };
 
         let a = SandboxFsPolicy::Restricted {
@@ -1508,6 +1297,9 @@ mod tests {
 /// (`HostFilesystemLocation`), which re-pins the inode when the command runs.
 pub struct GrantableWriteDir {
     canonical_path: PathBuf,
+    /// The path exactly as requested, carried so the caller can persist and
+    /// display the `(raw, canonical)` pair (see [`HostFilesystemLocation`]).
+    untrusted_raw_path: PathBuf,
     /// Directories created eagerly to pin the inode, shallowest-first. Empty on
     /// platforms that defer creation to [`Self::finalize`].
     eagerly_created: Vec<PathBuf>,
@@ -1516,6 +1308,7 @@ pub struct GrantableWriteDir {
 impl GrantableWriteDir {
     /// Prepare `path` for use as a sandbox write grant. `path` must be absolute.
     pub fn prepare(path: &Path) -> std::io::Result<Self> {
+        let untrusted_raw_path = path.to_path_buf();
         #[cfg(target_os = "linux")]
         {
             let mut eagerly_created = Vec::new();
@@ -1529,6 +1322,7 @@ impl GrantableWriteDir {
             let canonical_path = pinned_canonical_path(path)?;
             Ok(Self {
                 canonical_path,
+                untrusted_raw_path,
                 eagerly_created,
             })
         }
@@ -1536,12 +1330,13 @@ impl GrantableWriteDir {
         {
             Ok(Self {
                 canonical_path: canonicalize_allowing_missing_leaf(path),
+                untrusted_raw_path,
                 eagerly_created: Vec::new(),
             })
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = path;
+            let _ = untrusted_raw_path;
             Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "granting a not-yet-existing write directory is not supported on this platform",
@@ -1553,6 +1348,12 @@ impl GrantableWriteDir {
     /// grant.
     pub fn canonical_path(&self) -> &Path {
         &self.canonical_path
+    }
+
+    /// The path exactly as requested, for persisting alongside the canonical
+    /// path and for the "requested → granted" approval disclosure.
+    pub fn untrusted_raw_path(&self) -> &Path {
+        &self.untrusted_raw_path
     }
 
     /// Materialize the directory once the grant is approved. A no-op on platforms
@@ -1598,13 +1399,7 @@ fn create_missing_dirs(path: &Path, created: &mut Vec<PathBuf>) -> std::io::Resu
 /// when a component is a symlink.
 #[cfg(target_os = "linux")]
 fn pinned_canonical_path(path: &Path) -> std::io::Result<PathBuf> {
-    use std::os::fd::AsRawFd as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let handle = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
-        .open(path)?;
-    std::fs::read_link(format!("/proc/self/fd/{}", handle.as_raw_fd()))
+    Ok(CanonicalPathBuf::resolve(path)?.into_path())
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1662,65 +1457,5 @@ mod grantable_write_dir_tests {
 
         prepared.discard();
         assert!(!real.join("child").exists());
-    }
-}
-
-/// Canonicalize `path`, resolving symlinks, even when its final component
-/// doesn't exist yet.
-///
-/// `std::fs::canonicalize` fails if any component is missing, which would leave
-/// a not-yet-created path in a non-canonical form. The sandbox layers
-/// canonicalize the writable parent
-/// (the worktree root) but, with a plain `canonicalize`, fall back to the raw
-/// path for a missing child; the two then disagree when a component is a
-/// symlink (`/tmp` -> `/private/tmp` on macOS), and the protection rule for the
-/// child misses the real path the command ends up writing. Canonicalizing the
-/// existing parent and re-appending the final component keeps the child
-/// consistent with its parent. If neither the path nor its parent can be
-/// canonicalized, the path is returned unchanged.
-//
-// Only the macOS Seatbelt layer uses this (Linux skips not-yet-existing
-// protected paths rather than emitting a rule for them), so it's gated to macOS
-// to avoid a dead-code warning elsewhere.
-#[cfg(target_os = "macos")]
-pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
-    }
-    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
-        && let Ok(canonical_parent) = parent.canonicalize()
-    {
-        return canonical_parent.join(file_name);
-    }
-    path.to_path_buf()
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod macos_tests {
-    use super::canonicalize_allowing_missing_leaf;
-
-    #[test]
-    fn canonicalize_allowing_missing_leaf_resolves_existing_parent() {
-        let dir = tempfile::tempdir().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
-
-        // A fully existing path is canonicalized outright.
-        assert_eq!(
-            canonicalize_allowing_missing_leaf(dir.path()),
-            canonical_dir
-        );
-
-        // A path whose leaf doesn't exist yet still resolves through its parent,
-        // so it stays consistent with how the parent directory canonicalizes
-        // (for example, when protecting a not-yet-created child path).
-        let missing = dir.path().join("not-created-yet");
-        assert_eq!(
-            canonicalize_allowing_missing_leaf(&missing),
-            canonical_dir.join("not-created-yet"),
-        );
-
-        // A path whose parent also doesn't exist is returned unchanged.
-        let deeper = missing.join(".git");
-        assert_eq!(canonicalize_allowing_missing_leaf(&deeper), deeper);
     }
 }

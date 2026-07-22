@@ -262,8 +262,14 @@ async fn create_out_of_project_directory(
         .map_err(|error| format!("Creating directory {}: {error}", input.path))?;
 
     let canonical = prepared.canonical_path().to_path_buf();
+    // The directory was just created and its inode pinned, so persist the
+    // resolved canonical alongside the raw request: enforcement rebuilds the
+    // grant from the vetted canonical via a verifying reopen.
     let request = crate::sandboxing::SandboxRequest {
-        write_paths: vec![canonical.clone()],
+        write_paths: vec![settings::GrantedWritePath::resolved(
+            prepared.untrusted_raw_path().to_path_buf(),
+            canonical.clone(),
+        )],
         ..Default::default()
     };
 
@@ -727,10 +733,13 @@ mod tests {
         let auth = event_rx.expect_authorization().await;
         let details = acp_thread::sandbox_authorization_details_from_meta(&auth.tool_call.meta)
             .expect("out-of-project create should request a sandbox write grant");
-        // The grant is for exactly the new directory, not its parent.
+        // The grant is for exactly the new directory, not its parent, and
+        // carries the resolved canonical established when it was created.
+        let expected_canonical = scratch.path().canonicalize().unwrap().join("new_grant_dir");
+        assert_eq!(details.write_paths.len(), 1);
         assert_eq!(
-            details.write_paths,
-            vec![scratch.path().canonicalize().unwrap().join("new_grant_dir")]
+            details.write_paths[0].canonical_or_requested(),
+            expected_canonical
         );
 
         auth.response

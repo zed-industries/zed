@@ -568,6 +568,25 @@ async fn run_terminal_tool(
         }
     }
 
+    // Resolve each requested path to its canonical target now, at approval
+    // intake, and carry the pair forward. Persisting the resolved canonical is
+    // what lets enforcement rebuild the grant via a verifying reopen rather than
+    // re-resolving the requested path by string (closing a symlink TOCTOU). A
+    // path that can't be resolved is dropped — fail-closed.
+    let write_paths: Vec<settings::GrantedWritePath> = write_paths
+        .into_iter()
+        .filter_map(|requested| match sandbox::resolve_canonical(&requested) {
+            Ok(resolved) => Some(settings::GrantedWritePath::resolved(requested, resolved)),
+            Err(error) => {
+                log::warn!(
+                    "could not resolve sandbox write path {}: {error}",
+                    requested.display()
+                );
+                None
+            }
+        })
+        .collect();
+
     let request = crate::sandboxing::SandboxRequest {
         network,
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
