@@ -159,6 +159,14 @@ To disable this behavior use:
     "inactive_opacity": 1.0
   },
 
+  // Styling settings applied to the focused dock panel.
+  "active_panel_modifiers": {
+    // Inset border size of the focused panel, in pixels.
+    "border_size": 0.0,
+    // Opacity of unfocused panels. 0 means transparent, 1 means opaque.
+    "inactive_opacity": 1.0
+  },
+
   // Layout mode of the bottom dock: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
 

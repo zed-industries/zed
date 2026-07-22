@@ -4911,6 +4911,62 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
+    fn panel_modifiers_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Panel Modifiers"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inactive Opacity",
+                description: "Opacity of unfocused dock panels (0.0 - 1.0).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("active_panel_modifiers.inactive_opacity"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .active_panel_modifiers
+                            .as_ref()?
+                            .inactive_opacity
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .active_panel_modifiers
+                            .get_or_insert_default()
+                            .inactive_opacity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Border Size",
+                description: "Size of the border surrounding the focused dock panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("active_panel_modifiers.border_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .active_panel_modifiers
+                            .as_ref()?
+                            .border_size
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .active_panel_modifiers
+                            .get_or_insert_default()
+                            .border_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn pane_split_direction_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Pane Split Direction"),
@@ -4966,6 +5022,7 @@ fn window_and_layout_page() -> SettingsPage {
             layout_section(),
             window_section(),
             pane_modifiers_section(),
+            panel_modifiers_section(),
             pane_split_direction_section(),
         ],
     }
