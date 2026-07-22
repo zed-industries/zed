@@ -3753,24 +3753,23 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
-        let element_bounds = self.cover_bounds(bounds);
-        let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if shadow.inset {
                 continue;
             }
+            // Outer shadows shift and expand the shadow quad so it
+            // renders behind the element at the desired offset and spread.
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
+                offset: Point::default(),
                 bounds: self.cover_bounds(shadow_bounds),
                 content_mask,
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
-                element_bounds,
-                element_corner_radii,
                 inset: 0,
-                pad: 0,
+                spread_radius: ScaledPixels(0.),
             });
         }
     }
@@ -3789,33 +3788,24 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
-        let element_bounds = self.cover_bounds(bounds);
-        let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
             if !shadow.inset {
                 continue;
             }
-            let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
-            // Clamp at zero so a large spread can't produce negative radii, which would
-            // break the SDF in the shader.
-            let zero = Pixels::ZERO;
-            let hole_corner_radii = Corners {
-                top_left: (corner_radii.top_left - shadow.spread_radius).max(zero),
-                top_right: (corner_radii.top_right - shadow.spread_radius).max(zero),
-                bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
-                bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
-            };
+            // Inset shadows can't apply offset to bounds because the SDF
+            // mask uses bounds to clip the shadow to the element's rounded
+            // rect. Instead, pass the offset to the shader to shift only
+            // the blur center.
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(hole),
+                offset: shadow.offset.scale(scale_factor),
+                bounds: self.cover_bounds(bounds),
                 content_mask,
-                corner_radii: hole_corner_radii.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
-                element_bounds,
-                element_corner_radii,
                 inset: 1,
-                pad: 0,
+                spread_radius: shadow.spread_radius.scale(scale_factor),
             });
         }
     }

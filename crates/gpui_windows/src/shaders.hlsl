@@ -850,14 +850,19 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 struct Shadow {
     uint order;
     float blur_radius;
+    // Only used for inset shadows: shifts the blur center in the shader so
+    // the shadow is heavier on one side. Outer shadows apply their offset
+    // to bounds before reaching the shader, so this is zero for them.
+    float2 offset;
     Bounds bounds;
     Corners corner_radii;
     Bounds content_mask;
     Hsla color;
-    Bounds element_bounds;
-    Corners element_corner_radii;
     uint inset;
-    uint pad; // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    float spread_radius;
 };
 
 struct ShadowVertexOutput {
@@ -879,13 +884,11 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Shadow shadow = shadows[shadow_id];
 
-    Bounds bounds;
-    if (shadow.inset != 0u) {
-        bounds = shadow.element_bounds;
-    } else {
-        // Leave room for the gaussian tail outside the shadow rect.
+    // Outer shadows need expanded bounds so the blur extends beyond the element.
+    // Inset shadows are clipped to the element bounds, so no expansion needed.
+    Bounds bounds = shadow.bounds;
+    if (shadow.inset == 0u) {
         float margin = 3.0 * shadow.blur_radius;
-        bounds = shadow.bounds;
         bounds.origin -= margin;
         bounds.size += 2.0 * margin;
     }
@@ -909,6 +912,12 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     float2 half_size = shadow.bounds.size / 2.;
     float2 center = shadow.bounds.origin + half_size;
     float2 point0 = input.position.xy - center;
+    if (shadow.inset != 0u) {
+        // Shift the blur center by the offset so the shadow is heavier on one side.
+        point0 -= shadow.offset;
+        // Shrink the virtual rect so the shadow reaches further inward.
+        half_size -= float2(shadow.spread_radius, shadow.spread_radius);
+    }
     float corner_radius = pick_corner_radius(point0, shadow.corner_radii);
 
     float alpha;
@@ -935,11 +944,10 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     }
 
     if (shadow.inset != 0u) {
-        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+        // The inset shadow is the complement of the blurred rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
-        float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                          shadow.element_corner_radii);
+        float element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha *= saturate(0.5 - element_distance);
     }
 
