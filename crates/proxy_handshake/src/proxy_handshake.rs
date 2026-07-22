@@ -38,7 +38,14 @@ use std::net::SocketAddr;
 pub use handshake::{Handshake, Step};
 pub use url::Url;
 
-/// How to reach and authenticate with a proxy, parsed from a proxy URL.
+/// How to reach and authenticate with a proxy: the validated interpretation
+/// of a proxy [`Url`].
+///
+/// A raw [`Url`] can hold any scheme, leaves default ports implicit, and
+/// carries credentials percent-encoded. Parsing into a `ProxySpec` settles
+/// all of that once — unsupported schemes are rejected, scheme-specific
+/// default ports are applied, and credentials are decoded — so the handshake
+/// and its callers never re-derive them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxySpec {
     pub scheme: ProxyScheme,
@@ -178,8 +185,8 @@ impl ProxySpec {
             None
         } else {
             Some(Credentials {
-                username: percent_decode(url.username())?,
-                password: percent_decode(url.password().unwrap_or_default())?,
+                username: decode_userinfo(url.username())?,
+                password: decode_userinfo(url.password().unwrap_or_default())?,
             })
         };
 
@@ -209,8 +216,11 @@ impl ProxySpec {
     }
 }
 
-fn percent_decode(value: &str) -> Result<String, ProxyError> {
-    percent_encoding::percent_decode_str(value)
+/// Decodes one component (username or password) of a URL's userinfo, which
+/// RFC 3986 §3.2.1 defines as percent-encoded: the proxy must be sent the
+/// decoded form.
+fn decode_userinfo(component: &str) -> Result<String, ProxyError> {
+    percent_encoding::percent_decode_str(component)
         .decode_utf8()
         .map(|decoded| decoded.into_owned())
         .map_err(|_| ProxyError::InvalidCredentials)
@@ -248,6 +258,8 @@ pub fn no_proxy_matches(no_proxy: &str, host: &str) -> bool {
         })
 }
 
+/// Human-readable descriptions of the SOCKS5 reply field's error codes,
+/// verbatim from RFC 1928 §6.
 fn socks5_refusal_message(code: u8) -> String {
     match code {
         0x01 => "general SOCKS server failure".to_string(),

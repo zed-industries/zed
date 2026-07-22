@@ -70,6 +70,10 @@ impl<S: AsyncRead + Unpin> AsyncRead for Tunneled<S> {
             let length = remaining.len().min(buf.len());
             buf[..length].copy_from_slice(&remaining[..length]);
             this.offset += length;
+            if this.offset == this.leftover.len() {
+                this.leftover = Vec::new();
+                this.offset = 0;
+            }
             return Poll::Ready(Ok(length));
         }
         Pin::new(&mut this.stream).poll_read(cx, buf)
