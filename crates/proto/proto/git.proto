@@ -459,6 +459,7 @@ message GetRemotesResponse {
 
   message Remote {
     string name = 1;
+    optional string url = 2;
   }
 }
 
@@ -571,6 +572,15 @@ message GetBlobContent {
 
 message GetBlobContentResponse {
   string content = 1;
+}
+
+message LoadCommitTemplate {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message LoadCommitTemplateResponse {
+  optional string template = 1;
 }
 
 message GitGetWorktrees {

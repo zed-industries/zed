@@ -500,10 +500,12 @@ message Envelope {
     RestoreProjectEntryResponse restore_project_entry_response = 469;
     GitAddPathToGitignore git_add_path_to_gitignore = 470;
     GitAddPathToGitInfoExclude git_add_path_to_git_info_exclude = 471;
-    RefreshDocumentColors refresh_document_colors = 472;
-    RefreshDocumentLinks refresh_document_links = 473;
-    RefreshFoldingRanges refresh_folding_ranges = 474;
-    RefreshDocumentSymbols refresh_document_symbols = 475; // current max
+    LoadCommitTemplate load_commit_template = 472;
+    LoadCommitTemplateResponse load_commit_template_response = 473;
+    RefreshDocumentColors refresh_document_colors = 474;
+    RefreshDocumentLinks refresh_document_links = 475;
+    RefreshFoldingRanges refresh_folding_ranges = 476;
+    RefreshDocumentSymbols refresh_document_symbols = 477; // current max
   }
 
   reserved 87 to 88;

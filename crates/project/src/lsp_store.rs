@@ -1602,12 +1602,19 @@ impl LocalLspStore {
         let (adapters_and_servers, settings, request_timeout) =
             lsp_store.update(cx, |lsp_store, cx| {
                 buffer.handle.update(cx, |buffer, cx| {
-                    let adapters_and_servers = lsp_store
-                        .as_local()
-                        .unwrap()
-                        .language_servers_for_buffer(buffer, cx)
-                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                        .collect::<Vec<_>>();
+                    let adapters_and_servers =
+                        if LocalLspStore::language_server_line_length_limit_exceeded(buffer, cx)
+                            .is_some()
+                        {
+                            Vec::new()
+                        } else {
+                            lsp_store
+                                .as_local()
+                                .unwrap()
+                                .language_servers_for_buffer(buffer, cx)
+                                .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                                .collect::<Vec<_>>()
+                        };
                     let settings = LanguageSettings::for_buffer(buffer, cx).into_owned();
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
@@ -2858,6 +2865,15 @@ impl LocalLspStore {
             });
     }
 
+    fn language_server_line_length_limit_exceeded(buffer: &Buffer, cx: &App) -> Option<(u32, u32)> {
+        let maximum_line_length = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .max_buffer_line_length;
+        let longest_line_length = buffer.text_snapshot().text_summary().longest_row_chars;
+        (longest_line_length > maximum_line_length)
+            .then_some((longest_line_length, maximum_line_length))
+    }
+
     fn register_buffer_with_language_servers(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -2878,6 +2894,17 @@ impl LocalLspStore {
         }
 
         let abs_path = file.abs_path(cx);
+        if let Some((longest_line_length, maximum_line_length)) =
+            Self::language_server_line_length_limit_exceeded(buffer, cx)
+        {
+            log::debug!(
+                "not registering {} with language servers because its longest line has {} characters, exceeding the configured limit of {}",
+                abs_path.display(),
+                longest_line_length,
+                maximum_line_length,
+            );
+            return;
+        }
         let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
             return;
         };
@@ -12357,6 +12384,9 @@ impl LspStore {
                     Some(language) => language,
                     None => continue,
                 };
+                if LocalLspStore::language_server_line_length_limit_exceeded(buffer, cx).is_some() {
+                    continue;
+                }
 
                 if !worktrees_using_server.contains(&file.worktree.read(cx).id())
                     || !lsp_adapters
@@ -14213,8 +14243,13 @@ impl PartialEq for LanguageServerPromptRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace { verbose_info: Option<String> },
-    Rpc { received: bool },
+    Trace {
+        verbose_info: Option<String>,
+    },
+    Rpc {
+        received: bool,
+        elapsed: Option<Duration>,
+    },
 }
 
 impl LanguageServerLogType {
@@ -14241,14 +14276,19 @@ impl LanguageServerLogType {
                     verbose_info: verbose_info.to_owned(),
                 })
             }
-            Self::Rpc { received } => {
+            Self::Rpc { received, elapsed } => {
                 let kind = if *received {
                     proto::rpc_message::Kind::Received
                 } else {
                     proto::rpc_message::Kind::Sent
                 };
                 let kind = kind as i32;
-                proto::language_server_log::LogType::Rpc(proto::RpcMessage { kind })
+                let elapsed_nanos =
+                    elapsed.map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+                proto::language_server_log::LogType::Rpc(proto::RpcMessage {
+                    kind,
+                    elapsed_nanos,
+                })
             }
         }
     }
@@ -14275,6 +14315,7 @@ impl LanguageServerLogType {
                     rpc_message::Kind::Received => true,
                     rpc_message::Kind::Sent => false,
                 },
+                elapsed: message.elapsed_nanos.map(Duration::from_nanos),
             },
         }
     }
