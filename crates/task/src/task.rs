@@ -195,6 +195,8 @@ pub enum VariableName {
     GitRepositoryPath,
     /// Name of the Git ref (branch, remote ref, or tag) associated with the task context.
     GitRef,
+    /// Absolute path of the Zed extensions work directory
+    ExtensionWorkDir,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -236,6 +238,7 @@ impl FromStr for VariableName {
             "GIT_REPOSITORY_NAME" => Self::GitRepositoryName,
             "GIT_REPOSITORY_PATH" => Self::GitRepositoryPath,
             "GIT_REF" => Self::GitRef,
+            "EXTENSION_WORK_DIR" => Self::ExtensionWorkDir,
             _ => {
                 if let Some(custom_name) =
                     without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
@@ -277,6 +280,7 @@ impl std::fmt::Display for VariableName {
             Self::GitRepositoryName => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_NAME"),
             Self::GitRepositoryPath => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_PATH"),
             Self::GitRef => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REF"),
+            Self::ExtensionWorkDir => write!(f, "{ZED_VARIABLE_NAME_PREFIX}EXTENSION_WORK_DIR"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"

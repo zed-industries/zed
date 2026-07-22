@@ -18,7 +18,7 @@ use language::{
     language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use paths::{debug_task_file_name, task_file_name};
+use paths::{debug_task_file_name, extensions_dir, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
@@ -1124,6 +1124,11 @@ impl ContextProvider for BasicContextProvider {
         if let Some(language) = buffer.language() {
             task_variables.insert(VariableName::Language, language.name().to_string());
         }
+
+        task_variables.insert(
+            VariableName::ExtensionWorkDir,
+            extensions_dir().join("work").to_string_lossy().into_owned(),
+        );
 
         Task::ready(Ok(task_variables))
     }
