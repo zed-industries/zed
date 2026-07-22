@@ -45,14 +45,14 @@ fn possible_hover_target(
     let file_to_open_task = possible_open_target(
         workspace,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
     );
     #[cfg(test)]
     let file_to_open_task = possible_open_target_with_fs_checks(
         workspace,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
         background_path_checks,
     );
@@ -122,7 +122,7 @@ fn possibly_open_target(
                     possible_open_target(
                         &workspace,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                     )
                 }
@@ -131,7 +131,7 @@ fn possibly_open_target(
                     possible_open_target_with_fs_checks(
                         &workspace,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                         background_path_checks,
                     )
@@ -263,7 +263,7 @@ mod tests {
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
-        terminal_dir: Option<PathBuf>,
+        working_directory: Option<PathBuf>,
         background_path_checks: BackgroundPathChecks,
         open_target_found_by: OpenTargetFoundBy,
         file: &str,
@@ -277,7 +277,7 @@ mod tests {
             },
             PathLikeTarget {
                 maybe_path: maybe_path.to_string(),
-                terminal_dir,
+                working_directory,
             },
             background_path_checks,
         )
