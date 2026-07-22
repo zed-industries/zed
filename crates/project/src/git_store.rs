@@ -810,6 +810,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_diff);
         client.add_entity_request_handler(Self::handle_tree_diff);
         client.add_entity_request_handler(Self::handle_get_blob_content);
+        client.add_entity_request_handler(Self::handle_load_commit_template);
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
@@ -4124,6 +4125,24 @@ impl GitStore {
         Ok(proto::GetBlobContentResponse { content })
     }
 
+    async fn handle_load_commit_template(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::LoadCommitTemplate>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::LoadCommitTemplateResponse> {
+        let repository_id = RepositoryId(request.payload.repository_id);
+        let rx = this
+            .update(&mut cx, |this, cx| {
+                let repository = this.repositories().get(&repository_id)?;
+                Some(repository.update(cx, |repo, _| repo.load_commit_template_text()))
+            })
+            .context("missing repository")?;
+        let template = rx.await??;
+        Ok(proto::LoadCommitTemplateResponse {
+            template: template.map(|t| t.template),
+        })
+    }
+
     async fn handle_open_unstaged_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::OpenUnstagedDiff>,
@@ -6134,11 +6153,11 @@ impl Repository {
         &mut self,
         commit: String,
         reset_mode: ResetMode,
-        _cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
 
-        self.send_job("reset", None, move |git_repo, _| async move {
+        let receiver = self.send_job("reset", None, move |git_repo, _| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
                     backend,
@@ -6161,7 +6180,23 @@ impl Repository {
                     Ok(())
                 }
             }
-        })
+        });
+
+        let scan_updates_tx =
+            self.git_store()
+                .and_then(|git_store| match &git_store.read(cx).state {
+                    GitStoreState::Local { downstream, .. } => Some(
+                        downstream
+                            .as_ref()
+                            .map(|downstream| downstream.updates_tx.clone()),
+                    ),
+                    _ => None,
+                });
+        if let Some(updates_tx) = scan_updates_tx {
+            self.schedule_scan(updates_tx, cx);
+        }
+
+        receiver
     }
 
     pub fn show(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
@@ -7541,26 +7576,78 @@ impl Repository {
         )
     }
 
+    async fn refresh_branch_list(
+        this: &WeakEntity<Self>,
+        backend: Arc<dyn GitRepository>,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let branches_scan = backend.branches().await?;
+        let branch_list_error = branches_scan.error;
+        let branch_list: Arc<[Branch]> = branches_scan.branches.into();
+        let branch = branch_list.iter().find(|branch| branch.is_head).cloned();
+        log::info!("head branch after scan is {branch:?}");
+        let snapshot = this.update(cx, |this, cx| {
+            let head_changed = branch != this.snapshot.branch;
+            let branch_list_changed = *branch_list != *this.snapshot.branch_list;
+            let branch_list_error_changed = this.snapshot.branch_list_error != branch_list_error;
+            this.snapshot.branch = branch;
+            this.snapshot.branch_list = branch_list;
+            this.snapshot.branch_list_error = branch_list_error;
+            if head_changed {
+                cx.emit(RepositoryEvent::HeadChanged);
+            }
+            if branch_list_changed || branch_list_error_changed {
+                cx.emit(RepositoryEvent::BranchListChanged);
+            }
+            this.snapshot.clone()
+        })?;
+        if let Some(updates_tx) = updates_tx {
+            updates_tx
+                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                .ok();
+        }
+        Ok(())
+    }
+
     pub fn fetch(
         &mut self,
         fetch_options: FetchOptions,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+
+        let this = cx.weak_entity();
         self.send_job(
             "fetch",
             Some("git fetch".into()),
-            move |git_repo, cx| async move {
+            move |git_repo, mut cx| async move {
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
                         environment,
                         ..
-                    }) => backend.fetch(fetch_options, askpass, environment, cx).await,
+                    }) => {
+                        let result = backend
+                            .fetch(fetch_options, askpass, environment, cx.clone())
+                            .await;
+                        if result.is_ok() {
+                            Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
+                        }
+                        result
+                    }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         askpass_delegates.lock().insert(askpass_id, askpass);
                         let _defer = util::defer(|| {
@@ -7640,30 +7727,7 @@ impl Repository {
                             .await;
                         // TODO would be nice to not have to do this manually
                         if result.is_ok() {
-                            let branches_scan = backend.branches().await?;
-                            let branch_list_error = branches_scan.error;
-                            let branch_list: Arc<[Branch]> = branches_scan.branches.into();
-                            let branch = branch_list.iter().find(|branch| branch.is_head).cloned();
-                            log::info!("head branch after scan is {branch:?}");
-                            let snapshot = this.update(&mut cx, |this, cx| {
-                                let branch_list_changed =
-                                    *branch_list != *this.snapshot.branch_list;
-                                let branch_list_error_changed =
-                                    this.snapshot.branch_list_error != branch_list_error;
-                                this.snapshot.branch = branch;
-                                this.snapshot.branch_list = branch_list;
-                                this.snapshot.branch_list_error = branch_list_error;
-                                cx.emit(RepositoryEvent::HeadChanged);
-                                if branch_list_changed || branch_list_error_changed {
-                                    cx.emit(RepositoryEvent::BranchListChanged);
-                                }
-                                this.snapshot.clone()
-                            })?;
-                            if let Some(updates_tx) = updates_tx {
-                                updates_tx
-                                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                    .ok();
-                            }
+                            Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
                         }
                         result
                     }
@@ -9169,6 +9233,7 @@ impl Repository {
     pub fn load_commit_template_text(
         &mut self,
     ) -> oneshot::Receiver<Result<Option<GitCommitTemplate>>> {
+        let repository_id = self.snapshot.id;
         self.send_job(
             "load_commit_template_text",
             None,
@@ -9177,7 +9242,17 @@ impl Repository {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         backend.load_commit_template().await
                     }
-                    RepositoryState::Remote(_) => Ok(None),
+                    RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                        let response = client
+                            .request(proto::LoadCommitTemplate {
+                                project_id: project_id.to_proto(),
+                                repository_id: repository_id.0,
+                            })
+                            .await?;
+                        Ok(response
+                            .template
+                            .map(|template| GitCommitTemplate { template }))
+                    }
                 }
             },
         )

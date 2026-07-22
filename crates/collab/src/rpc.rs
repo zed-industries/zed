@@ -519,7 +519,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
-            .add_request_handler(forward_project_search_chunk);
+            .add_request_handler(forward_project_search_chunk)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
 
         Arc::new(server)
     }
