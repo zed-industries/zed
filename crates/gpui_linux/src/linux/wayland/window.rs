@@ -124,6 +124,10 @@ pub struct WaylandWindowState {
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
+    /// Set when the frame-callback render loop has stalled because the window is
+    /// fullscreen and idle (see `completed_frame`). The event loop re-ignites such
+    /// windows after each dispatch (see `WaylandClientStatePtr::restart_stalled_render_loops`).
+    render_loop_stalled: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -622,6 +626,7 @@ impl WaylandWindowState {
             hovered: false,
             force_render_after_recovery: false,
             renderer_presented: false,
+            render_loop_stalled: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -681,6 +686,14 @@ impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
+
+        // The window is being torn down: its GPUI window is already gone and the surface is
+        // destroyed below, but the window lingers in `WaylandClientState::windows` until the
+        // deferred `drop_window` runs. Clear the stall flag so `restart_stalled_render_loops`
+        // doesn't kick `frame()` on it in that gap, which would request a frame on the destroyed
+        // surface and log "window not found" from the now-orphaned request_frame handler.
+        state.render_loop_stalled = false;
+
         if let Some(parent) = state.parent.as_ref() {
             parent.state.borrow_mut().children.remove(&surface_id);
         }
@@ -836,6 +849,12 @@ impl WaylandWindowStatePtr {
     pub fn is_blocked(&self) -> bool {
         let state = self.state.borrow();
         state.children.values().any(|&blocking| blocking)
+    }
+
+    /// Whether this window's frame-callback render loop has stalled while fullscreen and
+    /// idle, and needs to be re-ignited from the event loop (see `completed_frame`).
+    pub fn render_loop_stalled(&self) -> bool {
+        self.state.borrow().render_loop_stalled
     }
 
     pub fn frame(&self) {
@@ -1744,6 +1763,20 @@ impl PlatformWindow for WaylandWindow {
         if !state.renderer_presented {
             state.surface.commit();
         }
+
+        // The render loop is driven by wl_surface frame callbacks: each callback draws the
+        // next frame and requests another. The compositor only delivers a callback after it
+        // repaints an output that includes this surface, and it only repaints on damage.
+        // While idle the bufferless commit above produces no damage, so the callback only
+        // keeps coming as long as something else keeps the output repainting.
+        //
+        // Fullscreen, this surface is the entire output and obscures everything else, so an
+        // idle window produces no damage anywhere, the output never repaints, and the next
+        // callback never arrives — the loop stalls until external damage (moving the cursor
+        // or the window) wakes the compositor. Flag the stall so the event loop re-ignites
+        // the loop on its next iteration (see `WaylandClientStatePtr::restart_stalled_render_loops`),
+        // letting content dirtied while stalled be drawn without waiting on the compositor.
+        state.render_loop_stalled = state.fullscreen && !state.renderer_presented;
 
         state.renderer_presented = false;
     }

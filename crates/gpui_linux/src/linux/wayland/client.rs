@@ -411,6 +411,34 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
+    /// Restart the render loop of any window whose frame-callback loop has stalled.
+    ///
+    /// Drawing only happens in response to wl_surface frame callbacks, and a fullscreen
+    /// idle window stops receiving them (see `WaylandWindowStatePtr::completed_frame`),
+    /// which freezes the UI until external damage arrives. Called after each event-loop
+    /// dispatch, this kicks a single frame for every stalled window so content dirtied by
+    /// the just-processed events (input, timers, language-server updates) is drawn; a
+    /// window with nothing new to draw simply re-stalls.
+    pub fn restart_stalled_render_loops(&self) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        // Collect into an owned Vec so the client borrow is released (at this statement's
+        // `;`) before `frame()` runs: `frame()` re-enters GPUI and can borrow the client
+        // again (e.g. IME enable/disable in `update_ime_enabled`), which would be a RefCell
+        // double-borrow panic if the borrow were held across the loop.
+        let stalled_windows: Vec<WaylandWindowStatePtr> = client
+            .borrow()
+            .windows
+            .values()
+            .filter(|window| window.render_loop_stalled())
+            .cloned()
+            .collect();
+        for window in stalled_windows {
+            window.frame();
+        }
+    }
+
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
@@ -1076,7 +1104,12 @@ impl LinuxClient for WaylandClient {
             .run(
                 None,
                 &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
+                |client| {
+                    // Drive any window whose frame-callback render loop stalled while
+                    // fullscreen and idle, so content dirtied by the events just dispatched
+                    // is drawn instead of waiting for a compositor callback that won't come.
+                    client.restart_stalled_render_loops();
+                },
             )
             .log_err();
     }
