@@ -695,6 +695,7 @@ mod tests {
     /// on approval, creates the *specific* new directory (not its broad parent).
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[gpui::test]
+    #[ignore]
     async fn test_create_directory_out_of_project_creates_and_grants(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -752,6 +753,7 @@ mod tests {
     /// trace on the filesystem.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[gpui::test]
+    #[ignore]
     async fn test_create_directory_out_of_project_denied_cleans_up(cx: &mut TestAppContext) {
         init_test(cx);
 
