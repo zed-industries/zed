@@ -16,6 +16,7 @@ use crate::{
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::HashMap;
+use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
@@ -15557,8 +15558,14 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
         settings.defaults.ensure_final_newline_on_save = Some(false);
+        settings.languages.0.insert(
+            "Markdown".into(),
+            LanguageSettingsContent {
+                remove_trailing_whitespace_on_save: Some(false),
+                ..Default::default()
+            },
+        );
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -15569,7 +15576,7 @@ async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &m
     .await;
     fs.insert_file(path!("/README.md"), "".into()).await;
 
-    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(markdown_lang());
 
@@ -15606,6 +15613,10 @@ async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &m
 
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
+        "line with spaces  \n"
+    );
+    assert_eq!(
+        fs.load(path!("/README.md").as_ref()).await.unwrap(),
         "line with spaces  \n"
     );
 }
