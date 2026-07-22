@@ -348,8 +348,10 @@ pub(crate) struct WaylandClientState {
     cursor_style: Option<CursorStyle>,
     cursor_hidden_window: Option<WaylandWindowStatePtr>,
     clipboard: Clipboard,
+    clipboard_data_source: Option<wl_data_source::WlDataSource>,
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
+    primary_selection_source: Option<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1>,
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     startup_activation_token: Option<String>,
@@ -837,8 +839,10 @@ impl WaylandClient {
             cursor_style: None,
             cursor_hidden_window: None,
             clipboard: Clipboard::new(conn.clone(), handle.clone()),
+            clipboard_data_source: None,
             data_offers: Vec::new(),
             primary_data_offer: None,
+            primary_selection_source: None,
             cursor,
             pending_activation: None,
             startup_activation_token,
@@ -1098,6 +1102,9 @@ impl LinuxClient for WaylandClient {
             }
             data_source.offer(state.clipboard.self_mime());
             primary_selection.set_selection(Some(&data_source), serial);
+            if let Some(old_source) = state.primary_selection_source.replace(data_source) {
+                old_source.destroy();
+            }
         }
     }
 
@@ -1118,6 +1125,9 @@ impl LinuxClient for WaylandClient {
             }
             data_source.offer(state.clipboard.self_mime());
             data_device.set_selection(Some(&data_source), serial);
+            if let Some(old_source) = state.clipboard_data_source.replace(data_source) {
+                old_source.destroy();
+            }
         }
     }
 
@@ -2610,14 +2620,24 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
         _: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
-        let state = client.borrow_mut();
+        let mut state = client.borrow_mut();
 
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
                 state.clipboard.send(mime_type, fd);
             }
             wl_data_source::Event::Cancelled => {
-                data_source.destroy();
+                if state
+                    .clipboard_data_source
+                    .as_ref()
+                    .is_some_and(|source| source.id() == data_source.id())
+                {
+                    if let Some(source) = state.clipboard_data_source.take() {
+                        source.destroy();
+                    }
+                } else {
+                    data_source.destroy();
+                }
             }
             _ => {}
         }
@@ -2696,14 +2716,24 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
         _: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
-        let state = client.borrow_mut();
+        let mut state = client.borrow_mut();
 
         match event {
             zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
                 state.clipboard.send_primary(mime_type, fd);
             }
             zwp_primary_selection_source_v1::Event::Cancelled => {
-                selection_source.destroy();
+                if state
+                    .primary_selection_source
+                    .as_ref()
+                    .is_some_and(|source| source.id() == selection_source.id())
+                {
+                    if let Some(source) = state.primary_selection_source.take() {
+                        source.destroy();
+                    }
+                } else {
+                    selection_source.destroy();
+                }
             }
             _ => {}
         }
