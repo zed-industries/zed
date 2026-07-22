@@ -252,7 +252,9 @@ use std::{
     time::{Duration, Instant},
 };
 use task::TaskVariables;
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
+use text::{
+    BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _,
+};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
 };
@@ -4701,6 +4703,11 @@ impl Editor {
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
+            let snapshot_before_edit = buffer.snapshot(cx);
+            let insertion_points = insertion_ranges
+                .iter()
+                .map(|range| snapshot_before_edit.anchor_before(range.start))
+                .collect::<Vec<_>>();
             let edits = insertion_ranges
                 .iter()
                 .cloned()
@@ -4710,8 +4717,14 @@ impl Editor {
             };
             buffer.edit(edits, Some(autoindent_mode), cx);
 
-            let snapshot = &*buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let snapshot = &snapshot;
             let snippet = &snippet;
+            let snippet_rope = Rope::from(snippet.text.as_str());
+            let snippet_rope = &snippet_rope;
+            let snippet_point = |offset: isize| {
+                snippet_rope.offset_to_point((offset.max(0) as usize).min(snippet.text.len()))
+            };
             snippet
                 .tabstops
                 .iter()
@@ -4723,16 +4736,43 @@ impl Editor {
                         .ranges
                         .iter()
                         .flat_map(|tabstop_range| {
-                            let mut delta = 0_isize;
-                            insertion_ranges.iter().map(move |insertion_range| {
-                                let insertion_start = insertion_range.start + delta;
-                                delta += snippet.text.len() as isize
-                                    - (insertion_range.end - insertion_range.start) as isize;
-
-                                let start =
-                                    (insertion_start + tabstop_range.start).min(snapshot.len());
-                                let end = (insertion_start + tabstop_range.end).min(snapshot.len());
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
+                            let start = snippet_point(tabstop_range.start);
+                            let end = snippet_point(tabstop_range.end);
+                            insertion_points.iter().map(move |insertion_point| {
+                                let base = insertion_point.to_point(&snapshot);
+                                // Inserting multi-line text only prepends the insertion
+                                // point's column to the snippet's first line; every
+                                // subsequent line replaces its own line entirely, so its
+                                // column is relative to that line's own start rather than
+                                // `base.column`. By the time this snapshot is read,
+                                // `AutoindentMode::Block` has already re-indented that
+                                // line relative to how it was authored in the snippet
+                                // text, so the tabstop's column must be shifted by the
+                                // same delta rather than assumed to start at 0.
+                                let to_offset = |offset: Point| {
+                                    let point = if offset.row == 0 {
+                                        Point::new(base.row, base.column + offset.column)
+                                    } else {
+                                        let actual_row = base.row + offset.row;
+                                        let raw_line_start =
+                                            snippet_rope.point_to_offset(Point::new(offset.row, 0));
+                                        let raw_indent = snippet_rope
+                                            .chars_at(raw_line_start)
+                                            .take_while(|c| *c == ' ' || *c == '\t')
+                                            .count() as i64;
+                                        let actual_indent = snapshot
+                                            .indent_size_for_line(MultiBufferRow(actual_row))
+                                            .len as i64;
+                                        let column = (offset.column as i64 + actual_indent
+                                            - raw_indent)
+                                            .max(0) as u32;
+                                        Point::new(actual_row, column)
+                                    };
+                                    let point = snapshot.clip_point(point, Bias::Left);
+                                    snapshot.point_to_offset(point)
+                                };
+                                snapshot.anchor_before(to_offset(start))
+                                    ..snapshot.anchor_after(to_offset(end))
                             })
                         })
                         .collect::<Vec<_>>();
@@ -11030,7 +11070,7 @@ fn process_completion_for_edit(
 ) -> CompletionEdit {
     let buffer = buffer.read(cx);
     let buffer_snapshot = buffer.snapshot();
-    let (snippet, new_text) = if completion.is_snippet() {
+    let (snippet, new_text, snippet_source) = if completion.is_snippet() {
         let mut snippet_source = completion.new_text.clone();
         // Workaround for typescript language server issues so that methods don't expand within
         // strings and functions with type expressions. The previous point is used because the query
@@ -11052,11 +11092,15 @@ fn process_completion_for_edit(
             snippet_source = label;
         }
         match Snippet::parse(&snippet_source).log_err() {
-            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
-            None => (None, completion.new_text.clone()),
+            Some(parsed_snippet) => (
+                Some(parsed_snippet.clone()),
+                parsed_snippet.text,
+                Some(snippet_source),
+            ),
+            None => (None, completion.new_text.clone(), None),
         }
     } else {
-        (None, completion.new_text.clone())
+        (None, completion.new_text.clone(), None)
     };
 
     let mut range_to_replace = {
@@ -11159,6 +11203,7 @@ fn process_completion_for_edit(
         new_text,
         replace_range: range_to_replace,
         snippet,
+        snippet_source,
     }
 }
 
@@ -11166,6 +11211,7 @@ struct CompletionEdit {
     new_text: String,
     replace_range: Range<text::Anchor>,
     snippet: Option<Snippet>,
+    snippet_source: Option<String>,
 }
 
 pub trait CollaborationHub {
@@ -11782,6 +11828,10 @@ pub enum EditorEvent {
     InputHandled {
         utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
+    },
+    SnippetInsertion {
+        snippet_source: Arc<str>,
+        utf16_range_to_replace: Option<Range<isize>>,
     },
     BufferRangesUpdated {
         buffer: Entity<Buffer>,

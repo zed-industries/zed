@@ -1643,6 +1643,169 @@ async fn test_lsp_completions_with_additional_edits_undo(cx: &mut gpui::TestAppC
     cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
 }
 
+#[gpui::test]
+async fn test_snippet_with_count_insert(cx: &mut gpui::TestAppContext) {
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
+    VimTestContext::init(cx);
+    let mut cx = VimTestContext::new_with_lsp(
+        EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await,
+        true,
+    );
+
+    cx.set_state("ˇ", Mode::Normal);
+
+    cx.simulate_keystrokes("3 i");
+    cx.simulate_keystrokes("f n");
+    cx.assert_state("fnˇ", Mode::Insert);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+    });
+
+    let completion_item = lsp::CompletionItem {
+        label: "fn".into(),
+        kind: Some(lsp::CompletionItemKind::SNIPPET),
+        filter_text: Some("fn".to_string()),
+        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            new_text: "fn ${1:name}() {\n    ${0}\n}".to_string(),
+        })),
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx)
+            .unwrap()
+            .detach();
+    });
+    cx.assert_editor_state("fn «nameˇ»() {\n    \n}");
+
+    cx.simulate_keystrokes("f o o");
+    cx.simulate_keystrokes("down down right enter");
+    cx.simulate_keystrokes("escape");
+
+    cx.assert_editor_state("fn foo() {\n    \n}\nfn foo() {\n    \n}\nfn foo() {\n    \n}\nˇ");
+}
+
+#[gpui::test]
+async fn test_snippet_with_count_insert_nested(cx: &mut gpui::TestAppContext) {
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
+    VimTestContext::init(cx);
+    let mut cx = VimTestContext::new_with_lsp(
+        EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await,
+        true,
+    );
+
+    cx.set_state("ˇ", Mode::Normal);
+
+    cx.simulate_keystrokes("3 i");
+    cx.simulate_keystrokes("f n");
+    cx.assert_state("fnˇ", Mode::Insert);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&editor::actions::ShowCompletions, window, cx);
+    });
+
+    let completion_item = lsp::CompletionItem {
+        label: "fn".into(),
+        kind: Some(lsp::CompletionItemKind::SNIPPET),
+        filter_text: Some("fn".to_string()),
+        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            new_text: "fn ${1:name}() {\n    ${0}\n}".to_string(),
+        })),
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx)
+            .unwrap()
+            .detach();
+    });
+
+    cx.assert_editor_state("fn «nameˇ»() {\n    \n}");
+
+    cx.simulate_keystrokes("f o o");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_keystrokes("escape");
+    cx.assert_editor_state(indoc! {"
+        fn foo() {
+            fn foo() {
+                fn foo() {
+                \x20\x20\x20ˇ\x20
+                }
+            }
+        }"});
+}
+
 #[perf]
 #[gpui::test]
 async fn test_mouse_selection(cx: &mut TestAppContext) {

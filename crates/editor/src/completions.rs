@@ -810,6 +810,7 @@ impl Editor {
             new_text,
             snippet,
             replace_range,
+            snippet_source,
         } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
 
         let buffer = buffer_handle.read(cx).snapshot();
@@ -830,7 +831,9 @@ impl Editor {
         let old_text = buffer
             .text_for_range(replace_range.clone())
             .collect::<String>();
-        let (lookbehind, lookahead) = if buffer.remote_id() == buffer_snapshot.remote_id() {
+        let (lookbehind, lookahead, lookbehind_utf16, lookahead_utf16) = if buffer.remote_id()
+            == buffer_snapshot.remote_id()
+        {
             let lookbehind = newest_range_buffer
                 .start
                 .to_offset(&buffer)
@@ -839,9 +842,19 @@ impl Editor {
                 .end
                 .to_offset(&buffer)
                 .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
-            (lookbehind, lookahead)
+            let lookbehind_utf16 = newest_range_buffer
+                .start
+                .to_offset_utf16(&buffer)
+                .0
+                .saturating_sub(replace_range.start.to_offset_utf16(&buffer).0);
+            let lookahead_utf16 = replace_range
+                .end
+                .to_offset_utf16(&buffer)
+                .0
+                .saturating_sub(newest_range_buffer.end.to_offset_utf16(&buffer).0);
+            (lookbehind, lookahead, lookbehind_utf16, lookahead_utf16)
         } else {
-            (0, 0)
+            (0, 0, 0, 0)
         };
         let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
         let suffix = &old_text[lookbehind.min(old_text.len())..];
@@ -899,10 +912,19 @@ impl Editor {
             .map(|(a, _)| a.len_utf8())
             .sum::<usize>();
 
-        cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: None,
-            text: new_text[common_prefix_len..].into(),
-        });
+        if let Some(snippet_source) = &snippet_source {
+            cx.emit(EditorEvent::SnippetInsertion {
+                snippet_source: snippet_source.as_str().into(),
+                utf16_range_to_replace: Some(
+                    -(lookbehind_utf16 as isize)..(lookahead_utf16 as isize),
+                ),
+            });
+        } else {
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: None,
+                text: new_text[common_prefix_len..].into(),
+            });
+        }
 
         let tx_id = self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {

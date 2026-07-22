@@ -1135,6 +1135,12 @@ impl Vim {
                 text,
                 utf16_range_to_replace: range_to_replace,
             } => Vim::globals(cx).observe_insertion(text, range_to_replace.clone()),
+            EditorEvent::SnippetInsertion {
+                snippet_source,
+                utf16_range_to_replace: range_to_replace,
+            } => {
+                Vim::globals(cx).observe_snippet_insertion(snippet_source, range_to_replace.clone())
+            }
             EditorEvent::TransactionBegun { transaction_id } => {
                 self.transaction_begun(*transaction_id, window, cx)
             }
