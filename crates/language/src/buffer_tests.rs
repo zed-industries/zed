@@ -1457,6 +1457,36 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
 }
 
 #[gpui::test]
+fn test_enclosing_bracket_ranges_for_large_spans(cx: &mut App) {
+    // Regression test: enclosing_bracket_ranges must find bracket pairs that span more
+    // than MAX_BYTES_TO_QUERY (16 KiB), e.g. a large struct body.
+    let field = "    field: usize,\n";
+    // ~1 000 fields × 18 bytes ≈ 18 000 bytes — well beyond the 16 KiB query limit.
+    let fields = field.repeat(1000);
+    let text = format!("struct S {{\n{}}}", fields);
+
+    let buffer = cx.new(|cx| {
+        Buffer::local(text.clone(), cx).with_language(rust_lang(), cx)
+    });
+    let snapshot = buffer.read(cx).snapshot();
+
+    let open_pos = text.find('{').unwrap();
+    let close_pos = text.rfind('}').unwrap();
+
+    let enclosing: Vec<_> = snapshot
+        .enclosing_bracket_ranges(open_pos..open_pos)
+        .collect();
+
+    assert_eq!(
+        enclosing.len(),
+        1,
+        "Expected exactly one enclosing bracket pair for large content"
+    );
+    assert_eq!(enclosing[0].open_range.start, open_pos);
+    assert_eq!(enclosing[0].close_range.end, close_pos + 1);
+}
+
+#[gpui::test]
 fn test_range_for_syntax_ancestor(cx: &mut App) {
     cx.new(|cx| {
         let text = "fn a() { b(|c| {}) }";

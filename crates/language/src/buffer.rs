@@ -4820,6 +4820,25 @@ impl BufferSnapshot {
         range: Range<usize>,
         known_chunks: Option<&HashSet<Range<BufferRow>>>,
     ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
+        self.fetch_bracket_ranges_impl(range, known_chunks, Some(MAX_BYTES_TO_QUERY))
+    }
+
+    /// Like [`fetch_bracket_ranges`] but queries tree-sitter without a byte range limit,
+    /// bypassing the cache. Use this when bracket pairs may span more than `MAX_BYTES_TO_QUERY`.
+    fn fetch_bracket_ranges_unlimited(
+        &self,
+        range: Range<usize>,
+    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
+        self.fetch_bracket_ranges_impl(range, None, None)
+    }
+
+    fn fetch_bracket_ranges_impl(
+        &self,
+        range: Range<usize>,
+        known_chunks: Option<&HashSet<Range<BufferRow>>>,
+        max_bytes_to_query: Option<usize>,
+    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
+        let use_cache = max_bytes_to_query.is_some();
         let mut all_bracket_matches = HashMap::default();
 
         for chunk in self
@@ -4833,11 +4852,13 @@ impl BufferSnapshot {
             let chunk_range = chunk.anchor_range();
             let chunk_range = chunk_range.to_offset(&self);
 
-            if let Some(cached_brackets) =
-                &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
-                continue;
+            if use_cache {
+                if let Some(cached_brackets) =
+                    &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
+                {
+                    all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
+                    continue;
+                }
             }
 
             let mut all_brackets = Vec::new();
@@ -4848,7 +4869,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
+                    max_bytes_to_query,
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
@@ -5061,10 +5082,12 @@ impl BufferSnapshot {
                 (bracket_match.open_range.start, bracket_match.open_range.end)
             });
 
-            if let empty_slot @ None =
-                &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                *empty_slot = Some(all_brackets.clone());
+            if use_cache {
+                if let empty_slot @ None =
+                    &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
+                {
+                    *empty_slot = Some(all_brackets.clone());
+                }
             }
             all_bracket_matches.insert(chunk.row_range(), all_brackets);
         }
@@ -5231,14 +5254,28 @@ impl BufferSnapshot {
         })
     }
 
-    /// Returns enclosing bracket ranges containing the given range
+    /// Returns enclosing bracket ranges containing the given range.
+    ///
+    /// Uses an unlimited tree-sitter query so bracket pairs spanning more than
+    /// [`MAX_BYTES_TO_QUERY`] bytes are found correctly.
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let expanded =
+            range.start.to_previous_offset(self)..range.end.to_next_offset(self);
 
-        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
+        let result: Vec<_> = self
+            .fetch_bracket_ranges_unlimited(expanded.clone())
+            .into_values()
+            .flatten()
+            .filter(|pair| !pair.newline_only)
+            .filter(|pair| {
+                let bracket_range = pair.open_range.start..pair.close_range.end;
+                bracket_range.overlaps(&expanded)
+            })
+            .collect();
         let max_depth = result
             .iter()
             .map(|mat| mat.syntax_layer_depth)

@@ -1266,10 +1266,26 @@ impl Editor {
                 let position = display_map
                     .clip_point(position, Bias::Left)
                     .to_offset(&display_map, Bias::Left);
-                let (range, _) = buffer.surrounding_word(position, None);
-                start = buffer.anchor_before(range.start);
-                end = buffer.anchor_before(range.end);
-                mode = SelectMode::Word(start..end);
+                let bracket_pair = buffer
+                    .enclosing_bracket_ranges(position..position)
+                    .and_then(|iter| {
+                        iter.filter(|(open, close)| {
+                            open.contains(&position)
+                                || close.contains(&position)
+                                || open.end == position
+                        })
+                        .min_by_key(|(open, close)| close.end.0 - open.start.0)
+                    });
+                if let Some((open, close)) = bracket_pair {
+                    start = buffer.anchor_before(open.end);
+                    end = buffer.anchor_before(close.start);
+                    mode = SelectMode::Character;
+                } else {
+                    let (range, _) = buffer.surrounding_word(position, None);
+                    start = buffer.anchor_before(range.start);
+                    end = buffer.anchor_before(range.end);
+                    mode = SelectMode::Word(start..end);
+                }
                 auto_scroll = true;
             }
             3 => {

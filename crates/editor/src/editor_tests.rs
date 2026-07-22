@@ -37898,6 +37898,116 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_double_click_on_bracket_selects_inner_content(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state("fn main() { let _ = bar(baz, qux); }ˇ");
+    cx.run_until_parked();
+
+    // Double-click on the opening `(` after `bar` selects the inner content.
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 23), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { let _ = bar(«baz, quxˇ»); }");
+
+    // Double-click on the closing `)` selects the same inner content.
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 32), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { let _ = bar(«baz, quxˇ»); }");
+
+    // Double-click on `[` selects inner content of a square-bracket pair.
+    cx.set_state("fn main() { let _ = [1, 2, 3]; }ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 20), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { let _ = [«1, 2, 3ˇ»]; }");
+
+    // Nested: double-click on the inner `(` selects only the innermost content.
+    cx.set_state("fn main() { let _ = ((a)); }ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 21), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { let _ = ((«aˇ»)); }");
+
+    // Empty `()`: double-click on `(` places a zero-length selection between the parens.
+    cx.set_state("fn main() { foo(); }ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 15), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { foo(ˇ); }");
+
+    // Non-bracket double-click still performs word selection.
+    cx.set_state("fn main() { let baz = 1; }ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 17), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() { let «bazˇ» = 1; }");
+
+    // Double-click at the position immediately after `{` (e.g. the newline at end of the
+    // line) selects the block content, as if the click landed on `{` itself.
+    cx.set_state("fn main() { let x = 1; }ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 11), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("fn main() {« let x = 1; ˇ»}");
+
+    // Double-click on `]` in `#[derive(Error, Debug)]` selects the inner content.
+    // Previously this fell through to surrounding_word and selected `)]` due to an
+    // off-by-one: the `(...)` pair's close.end equalled the clicked position, so it
+    // was incorrectly treated as "enclosing" and won the innermost contest.
+    cx.set_state("#[derive(Error, Debug)]ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 22), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("#[«derive(Error, Debug)ˇ»]");
+
+    // Double-click on `)` in `#[error("Regex compilation error: {0}")]` selects the
+    // string argument. The `{0}` inside the string literal must not be mistaken for a
+    // bracket pair that could shadow the outer `(...)`.
+    cx.set_state("#[error(\"Regex compilation error: {0}\")]ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 38), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("#[error(«\"Regex compilation error: {0}\"ˇ»)]");
+}
+
+#[gpui::test]
+async fn test_double_click_on_bracket_in_plain_text_falls_back_to_word(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("(foo)ˇ");
+    cx.run_until_parked();
+
+    // No language is set, so there is no tree-sitter bracket query. Double-clicking on `(`
+    // should fall back to the classic per-character word selection, selecting just `(`.
+    cx.update_editor(|editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 0), false, 2, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.assert_editor_state("«(ˇ»foo)");
+}
+
+#[gpui::test]
 async fn test_next_prev_reference(cx: &mut TestAppContext) {
     const CYCLE_POSITIONS: &[&'static str] = &[
         indoc! {"
