@@ -1629,6 +1629,15 @@ impl App {
                 }
 
                 if self.pending_effects.is_empty() {
+                    // Wake dirtied windows whose demand-driven render loop (Wayland) is parked.
+                    for window in self.windows.values() {
+                        if let Some(window) = window.as_deref()
+                            && window.invalidator.is_dirty()
+                        {
+                            window.platform_window.schedule_frame();
+                        }
+                    }
+
                     self.event_arena.clear();
                     break;
                 }

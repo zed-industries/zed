@@ -33,6 +33,8 @@ pub(crate) struct TestWindowState {
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    frame_scheduled: bool,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
 }
@@ -85,9 +87,32 @@ impl TestWindow {
             hover_status_change_callback: None,
             resize_callback: None,
             moved_callback: None,
+            request_frame_callback: None,
+            frame_scheduled: false,
             input_handler: None,
             is_fullscreen: false,
         })))
+    }
+    pub fn simulate_scheduled_frame(&self) -> bool {
+        let callback = {
+            let mut state = self.0.lock();
+            if !std::mem::take(&mut state.frame_scheduled) {
+                return false;
+            }
+            state.request_frame_callback.take()
+        };
+        let Some(mut callback) = callback else {
+            self.0.lock().frame_scheduled = true;
+            return false;
+        };
+
+        callback(RequestFrameOptions::default());
+        self.0.lock().request_frame_callback = Some(callback);
+        true
+    }
+
+    pub fn frame_scheduled(&self) -> bool {
+        self.0.lock().frame_scheduled
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -258,7 +283,13 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.0.lock().request_frame_callback = Some(callback);
+    }
+
+    fn schedule_frame(&self) {
+        self.0.lock().frame_scheduled = true;
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
