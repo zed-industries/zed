@@ -44,7 +44,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
+    pub file_types: Option<FileTypeMap>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -1143,6 +1143,20 @@ pub struct LanguageTaskSettingsContent {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
+
+/// Map from language name to file patterns.
+#[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct FileTypeMap(pub HashMap<Arc<str>, ExtendingVec<String>>);
+
+impl<'a> IntoIterator for &'a FileTypeMap {
+    type Item = (&'a Arc<str>, &'a ExtendingVec<String>);
+    type IntoIter = std::collections::hash_map::Iter<'a, Arc<str>, ExtendingVec<String>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 /// Determines how indent guides are colored.
 #[derive(

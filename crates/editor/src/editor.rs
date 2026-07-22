@@ -4151,6 +4151,7 @@ impl Editor {
     fn gutter_context_menu(
         &self,
         anchor: Anchor,
+        display_row: DisplayRow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -4213,6 +4214,15 @@ impl Editor {
         };
         let has_bookmark = bookmark.as_ref().is_some();
 
+        let clear_runnable_task_status = self
+            .runnable_task_key_for_display_row(display_row, window, cx)
+            .filter(|(buffer_id, buffer_row)| {
+                matches!(
+                    self.runnable_task_status(*buffer_id, *buffer_row),
+                    Some(RunnableTaskStatus::Passed | RunnableTaskStatus::Failed)
+                )
+            });
+
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
@@ -4231,6 +4241,22 @@ impl Editor {
         ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when_some(
+                    clear_runnable_task_status,
+                    |this, (buffer_id, buffer_row)| {
+                        this.entry("Clear Run Status", None, {
+                            let weak_editor = weak_editor.clone();
+                            move |_window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.clear_runnable_task_status(buffer_id, buffer_row, cx);
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .separator()
+                    },
+                )
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
                     this.entry(
@@ -5831,13 +5857,23 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let source = self
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .anchor_before(Point::new(display_row.0, 0u32));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        let anchor = position.unwrap_or(source);
 
-        let context_menu = self.gutter_context_menu(position.unwrap_or(source), window, cx);
+        // Every entry in this menu either requires a worktree-file-backed buffer
+        // (breakpoints, bookmarks, run to cursor) or is meaningless without one
+        // (git blame), so don't open it for e.g. untitled buffers.
+        if !snapshot
+            .anchor_to_buffer_anchor(anchor)
+            .is_some_and(|(_, buffer_snapshot)| {
+                project::File::from_dyn(buffer_snapshot.file()).is_some()
+            })
+        {
+            return;
+        }
+
+        let context_menu = self.gutter_context_menu(anchor, display_row, window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -10793,7 +10829,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    fn lsp_data_enabled(&self) -> bool {
+    pub(crate) fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
