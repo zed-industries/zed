@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekly Review</title>
+<style>
+  /* Zed One-Dark inspired palette */
+  :root {
+    --bg: #0d0f13;
+    --panel: #15181f;
+    --panel2: #1c202a;
+    --border: #262b36;
+    --text: #d7dce5;
+    --muted: #828b9c;
+    --accent: #61afef;
+    --green: #98c379;
+    --amber: #e5c07b;
+    --red: #e06c75;
+    --purple: #c678dd;
+    --cyan: #56b6c2;
+    --focus: #61afef;
+    --radius: 12px;
+    --font: "Inter", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --panel2: #eef0f4;
+      --border: #e0e3ea;
+      --text: #1f2329;
+      --muted: #6a7280;
+      --accent: #3b7edd;
+      --green: #4a9c3f;
+      --amber: #b0851f;
+      --red: #d0475a;
+      --purple: #9450c4;
+      --cyan: #2b96a3;
+      --focus: #3b7edd;
+    }
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 500px at 50% -200px, color-mix(in srgb, var(--accent) 6%, transparent), transparent),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    padding: 26px 22px 90px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+  /* ── header / nav (titlebar) ──────────────── */
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin-bottom: 18px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand .logo {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    background: linear-gradient(140deg, var(--accent), var(--purple));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 6px 18px -6px var(--accent);
+  }
+  header h1 { font-size: 19px; font-weight: 600; letter-spacing: -.2px; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .weeknav { display: flex; align-items: center; gap: 8px; }
+  .weeknav button {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    width: 36px; height: 36px; border-radius: 9px; font-size: 17px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: .12s;
+  }
+  .weeknav button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel2)); }
+  .weeknav button:disabled { opacity: .3; cursor: default; }
+  .weeknav .current { text-align: center; min-width: 220px; }
+  .weeknav .current .wk { font-weight: 650; font-size: 17px; letter-spacing: -.2px; }
+  .weeknav .current .rng { color: var(--muted); font-size: 13px; font-family: var(--mono); }
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 8px;
+    border-radius: 20px; vertical-align: 2px; margin-left: 8px; letter-spacing: .2px;
+  }
+  .badge.inprogress { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+
+  /* ── timeline strip ───────────────────────── */
+  .timeline { display: flex; gap: 6px; margin: 14px 0 22px; }
+  .timeline .tw {
+    flex: 1; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 6px 6px; cursor: pointer; text-align: center;
+  }
+  .timeline .tw:hover { border-color: var(--accent); }
+  .timeline .tw.active { border-color: var(--accent); background: var(--panel2); }
+  .timeline .tw .bars { display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 34px; margin-bottom: 5px; }
+  .timeline .tw .bars i { display: block; width: 9px; border-radius: 2px 2px 0 0; min-height: 2px; }
+  .timeline .tw .bars .b-tasks { background: var(--accent); }
+  .timeline .tw .bars .b-prs { background: var(--purple); }
+  .timeline .tw .lbl { font-size: 11.5px; color: var(--muted); }
+  .timeline .tw.active .lbl { color: var(--text); font-weight: 600; }
+  .legend { display: flex; gap: 14px; justify-content: flex-end; font-size: 11.5px; color: var(--muted); margin: -14px 0 18px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+
+  /* ── stat cards (sparkline dashboard) ─────── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 13px; margin-bottom: 22px; }
+  .stat {
+    --c: var(--accent);
+    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--c) 7%, var(--panel)), var(--panel));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 13px 15px 8px;
+    transition: .15s;
+  }
+  .stat::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--c); opacity: .9;
+  }
+  .stat:hover { border-color: color-mix(in srgb, var(--c) 45%, var(--border)); transform: translateY(-1px); }
+  .stat .caprow { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .stat .cap {
+    color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .7px; font-family: var(--mono);
+  }
+  .stat .num { font-size: 32px; font-weight: 700; line-height: 1.05; margin-top: 3px; letter-spacing: -1px; color: var(--text); }
+  .stat .num small { font-size: 16px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
+  .stat .spark { display: block; width: 100%; height: auto; margin-top: 6px; overflow: visible; }
+  .stat .spark .area { fill: color-mix(in srgb, var(--c) 16%, transparent); }
+  .stat .spark .line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .stat .spark .dot { fill: var(--c); }
+  .stat .spark .dot-ring { fill: var(--panel); stroke: var(--c); stroke-width: 2; }
+  .stat .delta { font-size: 11px; font-weight: 600; font-family: var(--mono); }
+  .stat .delta.up { color: var(--green); }
+  .stat .delta.down { color: var(--red); }
+  .stat .delta.flat { color: var(--muted); }
+
+  /* ── panels ───────────────────────────────── */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid .full { grid-column: 1 / -1; }
+  @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 14px; font-weight: 650; }
+
+  /* goals */
+  .goalbar { height: 8px; border-radius: 6px; background: var(--panel2); overflow: hidden; margin-bottom: 14px; }
+  .goalbar i { display: block; height: 100%; background: var(--green); border-radius: 6px; transition: width .4s; }
+  .goal { display: flex; gap: 10px; padding: 5px 0; align-items: baseline; }
+  .goal .box { flex: none; width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--muted); position: relative; top: 2px; }
+  .goal.done .box { background: var(--green); border-color: var(--green); }
+  .goal.done .box::after { content: "✓"; color: #fff; font-size: 11px; position: absolute; top: -1.5px; left: 2.5px; }
+  .goal.done .txt { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent); }
+  .goal-group { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 12px 0 2px; }
+  .empty { color: var(--muted); font-style: italic; }
+
+  /* project bars */
+  .proj { margin-bottom: 4px; }
+  .proj .row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; cursor: pointer; border-radius: 6px; }
+  .proj .row:hover { background: var(--panel2); }
+  .proj .name { flex: 0 0 190px; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj .track { flex: 1; height: 16px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
+  .proj .track i { display: block; height: 100%; border-radius: 4px; }
+  .proj .count { flex: 0 0 24px; text-align: right; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .proj .caret { flex: 0 0 14px; color: var(--muted); font-size: 11px; transition: transform .15s; }
+  .proj.open .caret { transform: rotate(90deg); }
+  .proj ul { display: none; margin: 2px 0 10px 14px; padding-left: 14px; color: var(--muted); font-size: 13.5px; }
+  .proj.open ul { display: block; }
+  .proj ul li { margin: 3px 0; }
+
+  /* PRs */
+  .prsplit { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin-bottom: 6px; background: var(--panel2); }
+  .prsplit i { display: block; height: 100%; }
+  .prkey { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 14px; flex-wrap: wrap; }
+  .prkey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+  .prlist { max-height: 300px; overflow-y: auto; }
+  .pr { display: flex; gap: 8px; padding: 4px 0; font-size: 13px; align-items: baseline; }
+  .pr .src { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .3px; width: 20px; text-align: center; padding: 1px 0; border-radius: 3px; }
+  .pr .src.github { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--muted); }
+  .pr .src.gitlab { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--amber); }
+  .pr .ref { color: var(--accent); font-weight: 600; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 12px; }
+  a.ref { text-decoration: none; }
+  a.ref:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .pr .t { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .pr .t .draft { color: var(--amber); font-size: 10px; font-weight: 700; text-transform: uppercase; margin-right: 5px; letter-spacing: .3px; }
+  .pr .st { font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 20px; white-space: nowrap; }
+  .st.merged { background: color-mix(in srgb, var(--purple) 16%, transparent); color: var(--purple); }
+  .st.open { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+  .st.closed { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+  .st.reviewed { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .prmore { margin-top: 6px; font-size: 12.5px; color: var(--accent); cursor: pointer; background: none; border: none; padding: 0; }
+  .srcsplit { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: -4px 0 12px; }
+  .srcsplit b { color: var(--text); font-weight: 600; }
+
+  /* warnings */
+  .warn {
+    display: flex; gap: 12px; align-items: baseline;
+    padding: 10px 14px; margin-bottom: 8px; border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+    background: color-mix(in srgb, var(--amber) 7%, transparent);
+    font-size: 13.5px;
+  }
+  .warn .tag {
+    flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .6px;
+    padding: 1px 8px; border-radius: 20px; text-transform: uppercase;
+    background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber);
+  }
+  .warn.sink .tag { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+  .warn.sink { border-color: color-mix(in srgb, var(--red) 28%, var(--border)); background: color-mix(in srgb, var(--red) 6%, transparent); }
+  .allclear { color: var(--muted); font-size: 13.5px; }
+  .allclear b { color: var(--green); }
+  .goalchip {
+    font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    padding: 0 6px; border-radius: 20px; margin-left: 6px; vertical-align: 1px;
+    background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green);
+  }
+
+  /* highlights */
+  .hl { display: flex; gap: 10px; padding: 6px 0; }
+  .hl .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); position: relative; top: 8px; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 28px; }
+
+  /* ── vim navigation ───────────────────────── */
+  .vfocus {
+    outline: 2px solid var(--focus) !important;
+    outline-offset: 1px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--focus) 12%, transparent) !important;
+    scroll-margin: 90px;
+  }
+  .timeline .tw.vfocus { outline-offset: 2px; }
+
+  /* status bar (Zed-style) */
+  .statusbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    display: flex; align-items: center; gap: 18px;
+    padding: 7px 16px;
+    background: color-mix(in srgb, var(--panel) 85%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .statusbar .mode { color: var(--bg); background: var(--green); font-weight: 700; padding: 1px 9px; border-radius: 5px; letter-spacing: .5px; }
+  .statusbar .hint { display: flex; gap: 6px; align-items: center; }
+  .statusbar kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 5px; min-width: 16px; text-align: center;
+  }
+  .statusbar .spacer { flex: 1; }
+  .statusbar .pos { color: var(--text); }
+  .statusbar .help-open { cursor: pointer; }
+  .statusbar .help-open:hover { color: var(--accent); }
+  @media (max-width: 720px) { .statusbar .hint.opt { display: none; } }
+
+  /* help overlay */
+  .overlay {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    align-items: center; justify-content: center;
+    background: color-mix(in srgb, #000 55%, transparent);
+    backdrop-filter: blur(3px);
+  }
+  .overlay.show { display: flex; }
+  .help {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 26px; width: min(440px, 90vw);
+    box-shadow: 0 24px 60px -20px #000;
+  }
+  .help h3 { font-size: 15px; margin-bottom: 4px; letter-spacing: -.2px; }
+  .help .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; font-family: var(--mono); }
+  .help .krow { display: flex; align-items: center; gap: 12px; padding: 6px 0; font-size: 13.5px; }
+  .help .krow .keys { display: flex; gap: 5px; flex: 0 0 96px; }
+  .help kbd {
+    font-family: var(--mono); font-size: 12px; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 7px; min-width: 20px; text-align: center;
+  }
+  .help .krow .desc { color: var(--muted); }
+  .help .close { margin-top: 16px; text-align: center; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <span class="logo"></span>
+      <h1>Weekly Review <span>· dashboard</span></h1>
+    </div>
+    <div class="weeknav">
+      <button id="prev" title="Previous week (h)">‹</button>
+      <div class="current">
+        <div class="wk" id="wkLabel"></div>
+        <div class="rng" id="wkRange"></div>
+      </div>
+      <button id="next" title="Next week (l)">›</button>
+    </div>
+  </header>
+
+  <div class="timeline" id="timeline"></div>
+  <div class="legend">
+    <span><i style="background:var(--accent)"></i>tasks</span>
+    <span><i style="background:var(--purple)"></i>PRs + MRs</span>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="grid">
+    <div class="panel" id="goalsPanel">
+      <h2>Week Goals</h2>
+      <div id="goals"></div>
+    </div>
+    <div class="panel" id="hlPanel">
+      <h2>Highlights</h2>
+      <div id="highlights"></div>
+    </div>
+    <div class="panel full" id="warnPanel">
+      <h2>Warnings</h2>
+      <div id="warnings"></div>
+    </div>
+    <div class="panel full" id="projPanel">
+      <h2>Work by Project</h2>
+      <div id="projects"></div>
+    </div>
+    <div class="panel full" id="prPanel">
+      <h2>Pull &amp; Merge Requests</h2>
+      <div id="prs"></div>
+    </div>
+  </div>
+
+  <footer>Generated from <code>_weekly/</code> notes · data in <code>data.js</code></footer>
+</div>
+
+<div class="statusbar">
+  <span class="mode">NORMAL</span>
+  <span class="hint"><kbd>h</kbd><kbd>l</kbd> week</span>
+  <span class="hint"><kbd>j</kbd><kbd>k</kbd> move</span>
+  <span class="hint opt"><kbd>o</kbd> expand</span>
+  <span class="hint opt"><kbd>g</kbd><kbd>g</kbd>/<kbd>G</kbd> ends</span>
+  <span class="spacer"></span>
+  <span class="pos" id="statusPos"></span>
+  <span class="help-open" id="helpOpen">? help</span>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="help">
+    <h3>Keyboard navigation</h3>
+    <div class="sub">vim motions · press ? or Esc to close</div>
+    <div class="krow"><span class="keys"><kbd>h</kbd><kbd>l</kbd></span><span class="desc">previous / next week</span></div>
+    <div class="krow"><span class="keys"><kbd>j</kbd><kbd>k</kbd></span><span class="desc">move focus down / up</span></div>
+    <div class="krow"><span class="keys"><kbd>o</kbd><kbd>↵</kbd></span><span class="desc">expand / collapse focused row</span></div>
+    <div class="krow"><span class="keys"><kbd>g</kbd><kbd>g</kbd></span><span class="desc">jump to first week</span></div>
+    <div class="krow"><span class="keys"><kbd>G</kbd></span><span class="desc">jump to last week</span></div>
+    <div class="krow"><span class="keys"><kbd>0</kbd><kbd>$</kbd></span><span class="desc">first / last focus item</span></div>
+    <div class="krow"><span class="keys"><kbd>Esc</kbd></span><span class="desc">clear focus / close</span></div>
+    <div class="close">? or Esc to dismiss</div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  const W = window.WEEKS;
+  // Empty-feed guard: the seed data.js ships with no weeks; the first Week
+  // Review appends one. Without this the page throws on an empty WEEKS array.
+  if (!Array.isArray(W) || W.length === 0) {
+    document.querySelector(".wrap").innerHTML =
+      '<header><div class="brand"><span class="logo"></span>' +
+      '<h1>Weekly Review <span>\u00b7 dashboard</span></h1></div></header>' +
+      '<p class="empty" style="margin-top:20px">No weeks recorded yet. ' +
+      'Run the Week Review skill to append the first entry to <code>data.js</code>, then reload this page.</p>';
+    const statusbar = document.querySelector(".statusbar");
+    if (statusbar) statusbar.remove();
+    return;
+  }
+  const PROJ_COLORS = ["#5eb0ef","#b58ef0","#4ec97a","#e5b454","#e06c75","#56c8d8","#d98cc4","#9db35e","#e08f5a","#7f9cf5"];
+  const $ = id => document.getElementById(id);
+
+  // Ref → web URL resolution. Refs look like "OpenCue#2486" (GitHub, "#")
+  // or "argocd!57" (GitLab MR, "!"). Repo short-names map to full paths below;
+  // add a row here when a new repo shows up in the data.
+  const GH_REPO = {
+    OpenCue: "AcademySoftwareFoundation/OpenCue",
+    reader: "DiegoTavares/reader",
+    "faire-sync": "DiegoTavares/faire-sync"
+  };
+  const GL_HOST = "https://gitlab.spimageworks.com";
+  const GL_PATH = {
+    argocd: "spi/dev/infrastructure/api/opencue_group/argocd",
+    shottree3: "spi/dev/infrastructure/api/shottree3",
+    opencue_spi: "spi/dev/infrastructure/api/opencue_group/opencue_spi",
+    OpenCue: "spi/dev/infrastructure/api/opencue_group/OpenCue",
+    "spi-centos": "spi/dev/infrastructure/api/docker/spi-centos",
+    "sbt-zeroc-ice": "spi/dev/infrastructure/api/sbt-zeroc-ice",
+    "scala-ice-server": "spi/dev/infrastructure/api/scala-ice-server",
+    "k8s-config": "spi/systems/k8s-config",
+    "middle-tier-server": "spi/dev/infrastructure/api/vnp3/middle-tier-server",
+    vfo: "spi/dev/infrastructure/api/vfo"
+  };
+  function refUrl(p) {
+    if ((p.src || "github") === "gitlab") {
+      const [name, num] = p.ref.split("!");
+      const path = GL_PATH[name];
+      return path && num ? `${GL_HOST}/${path}/-/merge_requests/${num}` : null;
+    }
+    const [name, num] = p.ref.split("#");
+    const repo = GH_REPO[name];
+    return repo && num ? `https://github.com/${repo}/pull/${num}` : null;
+  }
+
+  const taskCount = w => w.projects.reduce((n,p) => n + p.tasks.length, 0);
+  const prCount = w => w.prs.created.length + w.prs.reviewed.length;
+  const allGoals = w => [...w.goals, ...w.tentative, ...w.personal];
+
+  // Canonical project names, so lingering detection survives naming drift
+  // ("st3 / Infrastructure" vs "ST3 / ShotTree3"). First match wins.
+  const CANON = [
+    [/shottree|st3/i, "ST3"],
+    [/scheduler/i, "Scheduler"],
+    [/cuebot/i, "Cuebot"],
+    [/qlite|opencue.?lite/i, "Qlite"],
+    [/web team|shotgun/i, "Web Team"],
+    [/bom/i, "BOM"],
+    [/cueweb/i, "CueWeb"],
+    [/governance/i, "Governance"],
+    [/team|people/i, "Team"],
+    [/vfo/i, "VFO"],
+    [/personal|finance|faire/i, "Personal"]
+  ];
+  const canon = name => { for (const [re, c] of CANON) if (re.test(name)) return c; return name; };
+  const normGoal = t => t.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  const ord = n => n + (["th","st","nd","rd"][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]);
+
+  // Projects that are ongoing by nature and shouldn't count as "lingering"
+  const LINGER_EXEMPT = ["Personal", "Team"];
+
+  function computeWarnings(i) {
+    const w = W[i], out = [];
+
+    // 1. Carried-over goals: same goal text, unfinished, in consecutive prior weeks
+    for (const g of allGoals(w)) {
+      if (g.done) continue;
+      let streak = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        const prior = allGoals(W[j]).find(p => normGoal(p.text) === normGoal(g.text));
+        if (prior && !prior.done) streak++; else break;
+      }
+      if (streak >= 1) out.push({ cls: "carry", tag: "carry-over",
+        html: `<b>${esc(g.text)}</b> is on its <b>${ord(streak + 1)} week</b> as an unfinished goal.` });
+    }
+
+    // 2. Time sinks: share of the week's tasks in projects unrelated to any goal
+    const total = taskCount(w);
+    if (total) {
+      const goals = allGoals(w);
+      if (!goals.length) {
+        out.push({ cls: "sink", tag: "time sink",
+          html: `No goals were set this week — all <b>${total} logged tasks</b> were unplanned work.` });
+      } else {
+        const off = w.projects.filter(p => !p.goal);
+        const offTasks = off.reduce((n, p) => n + p.tasks.length, 0);
+        const share = Math.round(offTasks / total * 100);
+        if (share >= 50) {
+          const top = off.slice().sort((a, b) => b.tasks.length - a.tasks.length).slice(0, 3)
+            .map(p => `${esc(p.name)} (${p.tasks.length})`).join(", ");
+          out.push({ cls: "sink", tag: "time sink",
+            html: `<b>${share}%</b> of logged work went to projects outside your week goals. Biggest sinks: ${top}.` });
+        } else {
+          const big = off.find(p => p.tasks.length / total >= 0.3);
+          if (big) out.push({ cls: "sink", tag: "time sink",
+            html: `<b>${esc(big.name)}</b> consumed <b>${Math.round(big.tasks.length / total * 100)}%</b> of your week but wasn't a goal.` });
+        }
+      }
+    }
+
+    // 3. Lingering projects: active in >=3 of the last 4 reviewed weeks,
+    //    ~<=2 tasks/week, never elevated to a week goal
+    const span = W.slice(Math.max(0, i - 3), i + 1).filter(x => x.projects.length);
+    if (span.length >= 3) {
+      const agg = {};
+      for (const x of span) for (const p of x.projects) {
+        const c = canon(p.name);
+        const a = agg[c] = agg[c] || { weeks: 0, tasks: 0, goal: false };
+        a.weeks++; a.tasks += p.tasks.length; a.goal = a.goal || !!p.goal;
+      }
+      for (const [name, a] of Object.entries(agg)) {
+        if (LINGER_EXEMPT.includes(name) || a.goal) continue;
+        if (a.weeks >= 3 && a.tasks / a.weeks <= 2)
+          out.push({ cls: "linger", tag: "lingering",
+            html: `<b>${esc(name)}</b> has dragged through <b>${a.weeks} of the last ${span.length} reviewed weeks</b> with minimal progress (${a.tasks} tasks total) and was never a week goal. Finish it, schedule it, or drop it.` });
+      }
+    }
+
+    return out;
+  }
+
+  let idx = W.length - 1;
+  const fromHash = W.findIndex(w => "#" + w.id === location.hash);
+  if (fromHash >= 0) idx = fromHash;
+
+  function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+
+  function renderTimeline() {
+    const maxT = Math.max(...W.map(taskCount), 1);
+    const maxP = Math.max(...W.map(prCount), 1);
+    $("timeline").innerHTML = W.map((w,i) => `
+      <div class="tw ${i===idx?"active":""}" data-i="${i}" title="${w.label} · ${w.range}">
+        <div class="bars">
+          <i class="b-tasks" style="height:${Math.round(taskCount(w)/maxT*100)}%"></i>
+          <i class="b-prs" style="height:${Math.round(prCount(w)/maxP*100)}%"></i>
+        </div>
+        <div class="lbl">W${w.week}</div>
+      </div>`).join("");
+    $("timeline").querySelectorAll(".tw").forEach(el =>
+      el.addEventListener("click", () => go(+el.dataset.i)));
+  }
+
+  // Metric definitions — each renders a stat card with a cross-week sparkline.
+  const goalsPct = w => { const g = allGoals(w); return g.length ? Math.round(g.filter(x => x.done).length / g.length * 100) : 0; };
+  const mergedCount = w => w.prs.created.filter(p => p.status === "merged").length;
+  const METRICS = [
+    { cap: "goals done",  color: "--green",  val: goalsPct,                    unit: "%",
+      fmt: w => { const g = allGoals(w); return g.length ? `${g.filter(x => x.done).length}<small>/${g.length}</small>` : "–"; } },
+    { cap: "tasks",       color: "--accent", val: taskCount,                   fmt: w => taskCount(w) || "–" },
+    { cap: "created",     color: "--purple", val: w => w.prs.created.length,   fmt: w => w.prs.created.length || "–" },
+    { cap: "merged",      color: "--cyan",   val: mergedCount,                 fmt: w => w.prs.created.length ? `${mergedCount(w)}<small>/${w.prs.created.length}</small>` : "–" },
+    { cap: "reviewed",    color: "--amber",  val: w => w.prs.reviewed.length,  fmt: w => w.prs.reviewed.length || "–" },
+    { cap: "projects",    color: "--red",    val: w => w.projects.length,      fmt: w => w.projects.length || "–" }
+  ];
+
+  function sparkline(series, cur) {
+    const vw = 150, vh = 30, pad = 4;
+    const max = Math.max(...series, 1), min = Math.min(...series, 0);
+    const span = (max - min) || 1, n = series.length;
+    const X = i => n === 1 ? vw / 2 : pad + i * (vw - 2 * pad) / (n - 1);
+    const Y = v => vh - pad - (v - min) / span * (vh - 2 * pad);
+    const pts = series.map((v, i) => [X(i), Y(v)]);
+    const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const area = `M${pts[0][0].toFixed(1)} ${vh - pad} ` +
+      pts.map(p => "L" + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ") +
+      ` L${pts[n - 1][0].toFixed(1)} ${vh - pad} Z`;
+    const cx = X(cur).toFixed(1), cy = Y(series[cur]).toFixed(1);
+    return `<svg class="spark" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">
+      <path class="area" d="${area}"/>
+      <path class="line" d="${line}" vector-effect="non-scaling-stroke"/>
+      <circle class="dot-ring" cx="${cx}" cy="${cy}" r="3.2" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+  }
+
+  function statCard(m) {
+    const series = W.map(m.val);
+    const cur = series[idx], prev = idx > 0 ? series[idx - 1] : null;
+    let delta = "";
+    if (prev !== null) {
+      const d = cur - prev, cls = d > 0 ? "up" : d < 0 ? "down" : "flat";
+      const arrow = d > 0 ? "▲" : d < 0 ? "▼" : "–";
+      delta = `<span class="delta ${cls}">${arrow}${d === 0 ? "" : Math.abs(d) + (m.unit || "")}</span>`;
+    }
+    return `<div class="stat" style="--c: var(${m.color})">
+      <div class="caprow"><span class="cap">${m.cap}</span>${delta}</div>
+      <div class="num">${m.fmt(W[idx])}</div>
+      ${sparkline(series, idx)}
+    </div>`;
+  }
+
+  function render() {
+    const w = W[idx];
+    history.replaceState(null, "", "#" + w.id);
+
+    $("wkLabel").innerHTML = esc(w.label) +
+      (w.status === "in-progress" ? '<span class="badge inprogress">in progress</span>' : "");
+    $("wkRange").textContent = w.range;
+    $("prev").disabled = idx === 0;
+    $("next").disabled = idx === W.length - 1;
+
+    // stats (sparkline cards)
+    const goals = allGoals(w);
+    const done = goals.filter(g => g.done).length;
+    const created = w.prs.created.length;
+    const merged = w.prs.created.filter(p => p.status === "merged").length;
+    $("stats").innerHTML = METRICS.map(statCard).join("");
+
+    // goals
+    let gh = "";
+    if (goals.length) {
+      const pct = Math.round(done / goals.length * 100);
+      gh += `<div class="goalbar"><i style="width:${pct}%"></i></div>`;
+      const group = (list, name) => list.length
+        ? (name ? `<div class="goal-group">${name}</div>` : "") + list.map(g =>
+            `<div class="goal ${g.done?"done":""}"><span class="box"></span><span class="txt">${esc(g.text)}</span></div>`).join("")
+        : "";
+      gh += group(w.goals, w.tentative.length || w.personal.length ? "Work" : "");
+      gh += group(w.tentative, "Tentative");
+      gh += group(w.personal, "Personal");
+    } else {
+      gh = `<div class="empty">No goals were set this week.</div>`;
+    }
+    $("goals").innerHTML = gh;
+
+    // highlights
+    $("highlights").innerHTML = w.highlights.length
+      ? w.highlights.map(h => `<div class="hl"><span class="dot"></span><span>${esc(h)}</span></div>`).join("")
+      : `<div class="empty">${w.status==="in-progress" ? "Week in progress — review not written yet." : "No highlights recorded."}</div>`;
+
+    // warnings
+    const warns = computeWarnings(idx);
+    $("warnings").innerHTML = warns.length
+      ? warns.map(x => `<div class="warn ${x.cls}"><span class="tag">${x.tag}</span><span>${x.html}</span></div>`).join("")
+      : `<div class="allclear"><b>All clear.</b> No lingering projects, carried-over goals, or off-goal time sinks detected.</div>`;
+
+    // projects
+    if (w.projects.length) {
+      const max = Math.max(...w.projects.map(p => p.tasks.length));
+      $("projects").innerHTML = w.projects.map((p,i) => `
+        <div class="proj" data-i="${i}">
+          <div class="row">
+            <span class="caret">▶</span>
+            <span class="name">${esc(p.name)}${p.goal ? '<span class="goalchip">goal</span>' : ""}</span>
+            <span class="track"><i style="width:${Math.round(p.tasks.length/max*100)}%;background:${PROJ_COLORS[i%PROJ_COLORS.length]}"></i></span>
+            <span class="count">${p.tasks.length}</span>
+          </div>
+          <ul>${p.tasks.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+        </div>`).join("");
+      $("projects").querySelectorAll(".proj .row").forEach(row =>
+        row.addEventListener("click", () => row.parentElement.classList.toggle("open")));
+    } else {
+      $("projects").innerHTML = `<div class="empty">No work logged yet.</div>`;
+    }
+
+    // PRs + MRs
+    const revd = w.prs.reviewed.length;
+    const closed = w.prs.created.filter(p => p.status === "closed").length;
+    const open = created - merged - closed;
+    const total = created + revd;
+    if (total) {
+      const srcCount = (arr, s) => arr.filter(p => (p.src || "github") === s).length;
+      const gh = srcCount(w.prs.created, "github") + srcCount(w.prs.reviewed, "github");
+      const gl = srcCount(w.prs.created, "gitlab") + srcCount(w.prs.reviewed, "gitlab");
+      const seg = (n, c) => n ? `<i style="width:${n/total*100}%;background:${c}"></i>` : "";
+      let html = `<div class="prsplit">
+          ${seg(merged, "var(--purple)")}${seg(open, "var(--green)")}${seg(closed, "var(--red)")}${seg(revd, "var(--accent)")}
+        </div>
+        <div class="prkey">
+          <span><i style="background:var(--purple)"></i>merged (${merged})</span>
+          <span><i style="background:var(--green)"></i>open (${open})</span>
+          ${closed ? `<span><i style="background:var(--red)"></i>closed (${closed})</span>` : ""}
+          <span><i style="background:var(--accent)"></i>reviewed (${revd})</span>
+        </div>
+        <div class="srcsplit">
+          <span><b>${gh}</b> GitHub</span><span><b>${gl}</b> GitLab (SPI)</span>
+        </div>`;
+      const badge = p => `<span class="src ${p.src || "github"}">${(p.src || "github") === "gitlab" ? "GL" : "GH"}</span>`;
+      const draftTag = p => p.draft ? `<span class="draft">draft</span>` : "";
+      const refEl = p => { const u = refUrl(p); return u
+        ? `<a class="ref" href="${u}" target="_blank" rel="noopener">${esc(p.ref)}</a>`
+        : `<span class="ref">${esc(p.ref)}</span>`; };
+      const pr = (p, st) => `<div class="pr">${badge(p)}${refEl(p)}<span class="t">${draftTag(p)}${esc(p.title)}</span><span class="st ${st||p.status}">${st||p.status}</span></div>`;
+      const revShown = w.prs.reviewed.slice(0, 8);
+      html += `<div class="prlist" id="prlist">`
+        + w.prs.created.map(p => pr(p)).join("")
+        + revShown.map(p => pr(p, "reviewed")).join("")
+        + `</div>`;
+      if (revd > 8) html += `<button class="prmore" id="prmore">show ${revd - 8} more reviewed</button>`;
+      $("prs").innerHTML = html;
+      const more = $("prmore");
+      if (more) more.addEventListener("click", () => {
+        $("prlist").insertAdjacentHTML("beforeend",
+          w.prs.reviewed.slice(8).map(p => pr(p, "reviewed")).join(""));
+        more.remove();
+      });
+    } else {
+      $("prs").innerHTML = `<div class="empty">No PR or MR activity recorded.</div>`;
+    }
+
+    renderTimeline();
+  }
+
+  // ── vim navigation ─────────────────────────
+  let navItems = [], focusIdx = -1, gPending = false;
+
+  function buildNav() {
+    navItems = Array.from(document.querySelectorAll(".proj .row, #prmore"));
+    focusIdx = -1;
+    $("statusPos").textContent = `W${W[idx].week} · ${idx + 1}/${W.length}`;
+  }
+  function paintFocus() {
+    navItems.forEach((el, i) => el.classList.toggle("vfocus", i === focusIdx));
+    if (focusIdx >= 0) navItems[focusIdx].scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function moveFocus(d) {
+    if (!navItems.length) return;
+    focusIdx = focusIdx < 0
+      ? (d > 0 ? 0 : navItems.length - 1)
+      : Math.max(0, Math.min(navItems.length - 1, focusIdx + d));
+    paintFocus();
+  }
+  function focusEdge(end) { if (navItems.length) { focusIdx = end ? navItems.length - 1 : 0; paintFocus(); } }
+  function activate() {
+    if (focusIdx < 0) return;
+    const el = navItems[focusIdx];
+    el.click();
+    if (el.id === "prmore") setTimeout(() => { buildNav(); }, 0); // prmore removes itself
+  }
+  function clearFocus() { focusIdx = -1; paintFocus(); }
+
+  function go(i) { idx = Math.max(0, Math.min(W.length - 1, i)); render(); buildNav(); }
+  $("prev").addEventListener("click", () => go(idx - 1));
+  $("next").addEventListener("click", () => go(idx + 1));
+
+  // help overlay
+  const overlay = $("overlay");
+  const toggleHelp = () => overlay.classList.toggle("show");
+  $("helpOpen").addEventListener("click", toggleHelp);
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.classList.remove("show"); });
+
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+
+    if (overlay.classList.contains("show")) {
+      if (k === "Escape" || k === "?") { overlay.classList.remove("show"); e.preventDefault(); }
+      return;
+    }
+    if (k === "g") { if (gPending) { gPending = false; go(0); } else { gPending = true; setTimeout(() => gPending = false, 500); } e.preventDefault(); return; }
+    if (gPending && k !== "g") gPending = false;
+
+    switch (k) {
+      case "h": case "ArrowLeft":  go(idx - 1); break;
+      case "l": case "ArrowRight": go(idx + 1); break;
+      case "j": case "ArrowDown":  moveFocus(1); e.preventDefault(); break;
+      case "k": case "ArrowUp":    moveFocus(-1); e.preventDefault(); break;
+      case "o": case "Enter": case " ": activate(); e.preventDefault(); break;
+      case "G": go(W.length - 1); break;
+      case "0": case "^": focusEdge(false); break;
+      case "$": focusEdge(true); break;
+      case "?": toggleHelp(); e.preventDefault(); break;
+      case "Escape": clearFocus(); break;
+    }
+  });
+
+  render();
+  buildNav();
+})();
+</script>
+</body>
+</html>

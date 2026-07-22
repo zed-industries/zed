@@ -2458,10 +2458,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "editor",
  "fs",
  "git",
  "gpui",
  "log",
+ "markdown_preview",
  "menu",
  "project",
  "serde",

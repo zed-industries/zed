@@ -1,0 +1,34 @@
+schema  = 1
+id      = "timeline"
+name    = "Daily & Weekly"
+version = 1
+summary = "Daily & weekly rhythm — weekly review and a progress dashboard."
+doc     = "areas/Timeline.md"
+
+# Folders/files created in the vault on install. create-if-missing; never clobber.
+[[scaffold]]
+kind = "dir"
+path = "_weekly/site"
+
+[[scaffold]]
+kind   = "file"
+path   = "_weekly/site/index.html"
+source = "assets/index.html"
+
+[[scaffold]]
+kind   = "file"
+path   = "_weekly/site/data.js"
+source = "assets/data.seed.js"
+
+[[skill]]
+id      = "week-review"
+name    = "Week Review"
+file    = "skills/timeline/week-review.md"
+summary = "Aggregate the week's notes + PRs/MRs, append a review, feed the dashboard."
+reads   = ["daily/**", "weekly/**", "mcp:github", "mcp:gitlab"]
+writes  = ["weekly/<week>.md (append)", "_weekly/site/data.js (append)"]
+
+[[surface]]
+kind = "dashboard"
+name = "Weekly Dashboard"
+open = "_weekly/site/index.html"
