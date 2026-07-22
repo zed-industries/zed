@@ -66,6 +66,7 @@ web-sys = { version = "0.3", features = [
     "VisualViewport",
     "Headers",
     "Request",
+    "RequestCredentials",
     "RequestInit",
     "RequestRedirect",
     "Response",
