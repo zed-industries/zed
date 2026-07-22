@@ -2456,17 +2456,16 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
-        let compaction_model_for_telemetry = model.clone();
         let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
             self.advance_prompt_id();
             let request = self.build_compaction_request(request_end_ix, &model, cx);
             self.current_request_token_usage = TokenUsage::default();
-            (model, request)
+            (model.clone(), request)
         });
 
         if compaction.is_some() {
             self.pending_compaction_telemetry =
-                self.build_compaction_telemetry("manual", &compaction_model_for_telemetry, cx);
+                self.build_compaction_telemetry("manual", &model, cx);
         }
 
         self.clear_summary();
@@ -4160,25 +4159,16 @@ impl Thread {
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
     }
 
-    /// Captures the data for an `"Agent Compaction Completed"` telemetry event
-    /// at the moment a compaction starts. `compaction_model` is the model that
-    /// will actually stream the request; `self.model()` (when present) drives
-    /// the threshold-related fields, since those describe the thread's
-    /// primary model rather than the one used for compaction.
     fn build_compaction_telemetry(
         &self,
         trigger: &'static str,
         compaction_model: &Arc<dyn LanguageModel>,
         cx: &App,
     ) -> Option<CompactionTelemetry> {
+        let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
-        // Prefer the thread model for context-window fields. Fall back to the
-        // compaction model only when no thread model is configured (rare —
-        // DB-loaded thread awaiting model resolution).
-        let threshold_source = self.model().unwrap_or(compaction_model);
-        let max_tokens = threshold_source.max_token_count();
-        let max_input_tokens =
-            max_tokens.saturating_sub(threshold_source.max_output_tokens().unwrap_or(0));
+        let max_tokens = model.max_token_count();
+        let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
         let tokens_before = self
             .latest_request_token_usage()
             .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
@@ -4187,8 +4177,10 @@ impl Thread {
             thread_id: self.id.to_string(),
             parent_thread_id: self.parent_thread_id().map(|id| id.to_string()),
             prompt_id: self.prompt_id.to_string(),
-            model: compaction_model.telemetry_id(),
-            model_provider: compaction_model.provider_id().to_string(),
+            model: model.telemetry_id(),
+            model_provider: model.provider_id().to_string(),
+            compaction_model: compaction_model.telemetry_id(),
+            compaction_model_provider: compaction_model.provider_id().to_string(),
             thinking_effort: self.thinking_effort.clone(),
             max_tokens,
             tokens_before,
@@ -4282,27 +4274,11 @@ impl Thread {
         Some(self.messages.len())
     }
 
-    /// Resolves the model used for context compaction. Returns the configured
-    /// `agent.compaction_model` if it resolved at config time, otherwise falls
-    /// back to the thread's currently selected model.
-    ///
-    /// Logs a warning when `compaction_model` is configured but didn't resolve,
-    /// so silent fallback to the (potentially much more expensive) thread
-    /// model is observable.
-    ///
-    /// NOTE: distinct from `summarization_model` (thread summaries / titles).
     fn compaction_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let registry = LanguageModelRegistry::read_global(cx);
-        if let Some(configured) = registry.compaction_model() {
-            return Some(configured.model);
-        }
-        if AgentSettings::get_global(cx).compaction_model.is_some() {
-            log::warn!(
-                "agent.compaction_model is configured but could not be resolved; \
-                         falling back to the thread's model"
-            );
-        }
-        self.model().cloned()
+        LanguageModelRegistry::read_global(cx)
+            .compaction_model()
+            .map(|m| m.model)
+            .or_else(|| self.model().cloned())
     }
 
     fn build_compaction_request(
@@ -4518,6 +4494,8 @@ struct CompactionTelemetry {
     prompt_id: String,
     model: String,
     model_provider: String,
+    compaction_model: String,
+    compaction_model_provider: String,
     thinking_effort: Option<String>,
     max_tokens: u64,
     /// Tokens in the context window immediately before compaction.
@@ -4542,6 +4520,8 @@ impl CompactionTelemetry {
             prompt_id = self.prompt_id,
             model = self.model,
             model_provider = self.model_provider,
+            compaction_model = self.compaction_model,
+            compaction_model_provider = self.compaction_model_provider,
             thinking_effort = self.thinking_effort,
             max_tokens = self.max_tokens,
             tokens_before = self.tokens_before,
@@ -6498,10 +6478,6 @@ mod tests {
         AgentSettings::override_global(settings, cx);
     }
 
-    /// Overrides the global `LanguageModelRegistry.compaction_model` slot used
-    /// by `Thread::compaction_model`. Unlike the settings-driven path, this
-    /// bypasses `select_compaction_model`'s provider/model validation, so it
-    /// works in tests without first registering a provider.
     fn set_registry_compaction_model(cx: &mut App, model: Option<Arc<dyn LanguageModel>>) {
         use language_model::fake_provider::FakeLanguageModelProvider;
         use language_model::{ConfiguredModel, LanguageModelProvider};

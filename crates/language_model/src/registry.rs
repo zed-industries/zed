@@ -110,6 +110,7 @@ pub enum Event {
     DefaultModelChanged,
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
+    CompactionModelChanged,
     ThreadSummaryModelChanged,
     ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
@@ -421,13 +422,12 @@ impl LanguageModelRegistry {
         self.thread_summary_model = model;
     }
 
-    pub fn set_compaction_model(
-        &mut self,
-        model: Option<ConfiguredModel>,
-        _cx: &mut Context<Self>,
-    ) {
-        // v1: no event emission. Callers read `compaction_model()` lazily at
-        // compaction time, so we don't need to push updates.
+    pub fn set_compaction_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        match (self.compaction_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::CompactionModelChanged),
+        }
         self.compaction_model = model;
     }
 

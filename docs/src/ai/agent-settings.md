@@ -102,11 +102,8 @@ By default, context compaction (both `/compact` and auto-compaction) uses the th
 }
 ```
 
-If the configured model is unavailable at config time (for example, the provider isn't registered or the model id isn't found), compaction falls back to the thread's current model and logs a warning.
-
 **Notes:**
 
-- Only manual `/compact` runs when the thread has no primary model. Auto-compaction still requires the thread to have a model selected, because `agent.auto_compact.threshold` is measured against the thread model's context window.
 - The configured model should have a context window at least as large as the thread's primary model for predictable behavior.
 
 ## External Agents {#external-agents}
