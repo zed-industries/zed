@@ -1563,8 +1563,18 @@ impl PlatformWindow for MacWindow {
                 } else if this.blurred_view.is_none() {
                     let content_view = this.native_window.contentView();
                     let frame = NSView::bounds(content_view);
-                    let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
-                    blur_view = NSView::initWithFrame_(blur_view, frame);
+                    // On macOS 26+ use the native Liquid Glass material
+                    // (`NSGlassEffectView`), which refracts the window's
+                    // backdrop with edge lensing and highlights instead of the
+                    // plain frosted blur of `NSVisualEffectView`. Fall back to
+                    // the blurred view when the class isn't available.
+                    let blur_view: id = if let Some(glass_class) = Class::get("NSGlassEffectView") {
+                        let view: id = msg_send![glass_class, alloc];
+                        NSView::initWithFrame_(view, frame)
+                    } else {
+                        let view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
+                        NSView::initWithFrame_(view, frame)
+                    };
                     blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
 
                     let _: () = msg_send![
@@ -2533,6 +2543,30 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             let _: () = msg_send![native_window, resignKeyWindow];
         }
         return;
+    }
+
+    // In glass mode, render inactive windows opaque (drop the blur) to match
+    // macOS and avoid the GPU cost of the effect on background windows. The
+    // user-requested appearance stays in `background_appearance`; only the
+    // effective rendering follows the active state.
+    if lock.background_appearance == WindowBackgroundAppearance::Blurred {
+        unsafe {
+            // Keep the Metal layer transparent; only hide the blur on inactive
+            // windows and fill the system window background color (adapts to
+            // light/dark). The translucent content then shows over that solid
+            // surface instead of being dimmed over the (now hidden) blur.
+            // Active windows stay near-clear so the blur shows through.
+            let background_color = if is_active {
+                // Not using `+[NSColor clearColor]` to avoid broken shadow.
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
+            } else {
+                msg_send![class!(NSColor), textBackgroundColor]
+            };
+            lock.native_window.setBackgroundColor_(background_color);
+            if let Some(blur_view) = lock.blurred_view {
+                let _: () = msg_send![blur_view, setHidden: (!is_active) as BOOL];
+            }
+        }
     }
 
     let executor = lock.foreground_executor.clone();

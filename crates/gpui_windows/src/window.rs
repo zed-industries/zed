@@ -975,10 +975,20 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        // Render inactive windows opaque so a translucent (Mica / blurred)
+        // background doesn't show through when the window isn't active,
+        // matching macOS and avoiding the GPU cost of the effect on inactive
+        // windows. The user-requested appearance is kept; only the effective
+        // rendering follows the active state.
+        let appearance = if self.is_active() {
+            self.state.background_appearance.get()
+        } else {
+            WindowBackgroundAppearance::Opaque
+        };
         self.state
             .renderer
             .borrow_mut()
-            .draw(scene, self.state.background_appearance.get())
+            .draw(scene, appearance)
             .log_err();
     }
 

@@ -85,6 +85,9 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
+    /// Alpha-preserving blend for glass-content quads, used instead of
+    /// `quad_pipeline`'s blend state for quads marked as glass content.
+    quad_glass_blend_state: ID3D11BlendState,
     path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
@@ -347,7 +350,10 @@ impl DirectXRenderer {
                 .map(|annotation| Annotation::new(annotation, HSTRING::from(batch.label())));
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
-                PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                PrimitiveBatch::Quads(range) => {
+                    let base = range.start;
+                    self.draw_quads_segmented(&scene.quads[range], base)
+                }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
@@ -500,14 +506,18 @@ impl DirectXRenderer {
             4,
             start as u32,
             len as u32,
+            None,
         )
     }
 
-    fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
+    fn draw_quads(&mut self, start: usize, len: usize, glass: bool) -> Result<()> {
         if len == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
+        // Glass-content quads use the alpha-preserving blend so their
+        // anti-aliased edges don't punch through a translucent glass surface.
+        let blend_override = glass.then_some(&self.pipelines.quad_glass_blend_state);
         self.pipelines.quad_pipeline.draw_range(
             &devices.device,
             &devices.device_context,
@@ -522,7 +532,24 @@ impl DirectXRenderer {
             4,
             start as u32,
             len as u32,
+            blend_override,
         )
+    }
+
+    /// Draw a range of quads, splitting it into runs that share the same glass
+    /// flag so glass-content quads use the alpha-preserving blend. Splitting by
+    /// run keeps draw order intact.
+    fn draw_quads_segmented(&mut self, quads: &[Quad], base: usize) -> Result<()> {
+        let mut i = 0;
+        while i < quads.len() {
+            let is_glass = quads[i].background.is_glass_content();
+            let seg_start = i;
+            while i < quads.len() && quads[i].background.is_glass_content() == is_glass {
+                i += 1;
+            }
+            self.draw_quads(base + seg_start, i - seg_start, is_glass)?;
+        }
+        Ok(())
     }
 
     fn draw_paths_to_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
@@ -650,6 +677,7 @@ impl DirectXRenderer {
             4,
             start as u32,
             len as u32,
+            None,
         )
     }
 
@@ -867,6 +895,7 @@ impl DirectXRenderPipelines {
             64,
             create_blend_state(device)?,
         )?;
+        let quad_glass_blend_state = create_glass_blend_state(device)?;
         let path_rasterization_pipeline = PipelineState::new(
             device,
             "path_rasterization_pipeline",
@@ -913,6 +942,7 @@ impl DirectXRenderPipelines {
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
+            quad_glass_blend_state,
             path_rasterization_pipeline,
             path_sprite_pipeline,
             underline_pipeline,
@@ -1125,6 +1155,7 @@ impl<T> PipelineState<T> {
         vertex_count: u32,
         first_instance: u32,
         instance_count: u32,
+        blend_override: Option<&ID3D11BlendState>,
     ) -> Result<()> {
         let view = create_buffer_view_range(device, &self.buffer, first_instance, instance_count)?;
         set_pipeline_state(
@@ -1135,7 +1166,7 @@ impl<T> PipelineState<T> {
             &self.vertex,
             &self.fragment,
             global_params,
-            &self.blend_state,
+            blend_override.unwrap_or(&self.blend_state),
         );
         unsafe {
             device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
@@ -1415,6 +1446,28 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+/// Like [`create_blend_state`] but with `SrcBlendAlpha = ZERO`, so a quad's own
+/// alpha is not accumulated into the framebuffer (the destination alpha is
+/// preserved). Used for glass-content quads so their rounded, anti-aliased
+/// edges don't punch through a translucent glass surface beneath them.
+#[inline]
+fn create_glass_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
