@@ -17,7 +17,9 @@ use settings::Settings;
 use std::{ops::Range, str::FromStr as _, sync::LazyLock};
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
-use util::{ResultExt, TryFutureExt as _, paths::PathWithPosition};
+use util::{
+    ResultExt, TryFutureExt as _, markdown::source_position_from_fragment, paths::PathWithPosition,
+};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -85,7 +87,8 @@ pub fn document_link_target_to_hover_link(target: &str, server_id: LanguageServe
     {
         let position = url
             .fragment()
-            .and_then(parse_uri_fragment_position)
+            .and_then(source_position_from_fragment)
+            .map(|(line, character)| lsp::Position { line, character })
             .unwrap_or_default();
         return HoverLink::LspLocation(
             lsp::Location {
@@ -96,24 +99,6 @@ pub fn document_link_target_to_hover_link(target: &str, server_id: LanguageServe
         );
     }
     HoverLink::Url(target.to_string())
-}
-
-/// Parse a URI fragment such as `9,16`, `9:16`, `L9`, or `L9:16` into an
-/// LSP position (1-based input, 0-based output). Servers like the JSON
-/// language server attach this fragment to `file://` document link
-/// targets to point at a specific row/column inside the file.
-fn parse_uri_fragment_position(fragment: &str) -> Option<lsp::Position> {
-    let stripped = fragment.strip_prefix('L').unwrap_or(fragment);
-    let (line_str, column_str) = match stripped.split_once([',', ':']) {
-        Some((line, column)) => (line, Some(column)),
-        None => (stripped, None),
-    };
-    let line = line_str.parse::<u32>().ok()?.checked_sub(1)?;
-    let character = column_str
-        .and_then(|column| column.parse::<u32>().ok())
-        .and_then(|column| column.checked_sub(1))
-        .unwrap_or(0);
-    Some(lsp::Position { line, character })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -335,7 +320,7 @@ impl Editor {
                 }
                 (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
+                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))
@@ -1089,55 +1074,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use util::{assert_set_eq, path};
     use workspace::item::Item;
-
-    #[test]
-    fn test_parse_uri_fragment_position() {
-        // json-language-server style: 1-based `line,column`.
-        assert_eq!(
-            parse_uri_fragment_position("9,16"),
-            Some(lsp::Position {
-                line: 8,
-                character: 15,
-            })
-        );
-        assert_eq!(
-            parse_uri_fragment_position("33,33"),
-            Some(lsp::Position {
-                line: 32,
-                character: 32,
-            })
-        );
-
-        // GitHub-style `L<line>` and `L<line>:<col>`.
-        assert_eq!(
-            parse_uri_fragment_position("L42"),
-            Some(lsp::Position {
-                line: 41,
-                character: 0,
-            })
-        );
-        assert_eq!(
-            parse_uri_fragment_position("L42:7"),
-            Some(lsp::Position {
-                line: 41,
-                character: 6,
-            })
-        );
-
-        // Bare line number, no column.
-        assert_eq!(
-            parse_uri_fragment_position("5"),
-            Some(lsp::Position {
-                line: 4,
-                character: 0,
-            })
-        );
-
-        // Garbage / unparseable / 0-based fragments are rejected.
-        assert_eq!(parse_uri_fragment_position(""), None);
-        assert_eq!(parse_uri_fragment_position("section-name"), None);
-        assert_eq!(parse_uri_fragment_position("0,0"), None);
-    }
 
     #[test]
     fn test_document_link_target_to_hover_link_file_uri_with_fragment() {

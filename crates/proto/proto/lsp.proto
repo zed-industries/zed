@@ -8,11 +8,29 @@ message GetDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
-  bool workspace_only = 5;
+  reserved 5;
 }
 
 message GetDefinitionResponse {
   repeated LocationLink links = 1;
+}
+
+message GetEditPredictionDefinition {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetEditPredictionDefinitionResponse {
+  repeated EditPredictionDefinition definitions = 1;
+}
+
+message EditPredictionDefinition {
+  uint64 worktree_id = 1;
+  string path = 2;
+  PointUtf16 start = 3;
+  PointUtf16 end = 4;
 }
 
 message GetDeclaration {
@@ -31,12 +49,24 @@ message GetTypeDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
-  bool workspace_only = 5;
+  reserved 5;
 }
 
 message GetTypeDefinitionResponse {
   repeated LocationLink links = 1;
 }
+
+message GetEditPredictionTypeDefinition {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetEditPredictionTypeDefinitionResponse {
+  repeated EditPredictionDefinition definitions = 1;
+}
+
 message GetImplementation {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
@@ -378,6 +408,16 @@ message ApplyCodeAction {
   CodeAction action = 3;
 }
 
+message ResolveCodeAction {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CodeAction action = 3;
+}
+
+message ResolveCodeActionResponse {
+  CodeAction action = 1;
+}
+
 message ApplyCodeActionResponse {
   ProjectTransaction transaction = 1;
 }
@@ -717,6 +757,7 @@ message TraceMessage {
 
 message RpcMessage {
   Kind kind = 1;
+  optional uint64 elapsed_nanos = 2;
 
   enum Kind {
     RECEIVED = 0;
@@ -887,6 +928,8 @@ message LspQuery {
     GetFoldingRanges get_folding_ranges = 17;
     GetDocumentSymbols get_document_symbols = 18;
     GetDocumentLinks get_document_links = 19;
+    GetEditPredictionDefinition get_edit_prediction_definition = 20;
+    GetEditPredictionTypeDefinition get_edit_prediction_type_definition = 21;
   }
 }
 
@@ -914,6 +957,8 @@ message LspResponse {
     GetFoldingRangesResponse get_folding_ranges_response = 15;
     GetDocumentSymbolsResponse get_document_symbols_response = 16;
     GetDocumentLinksResponse get_document_links_response = 17;
+    GetEditPredictionDefinitionResponse get_edit_prediction_definition_response = 18;
+    GetEditPredictionTypeDefinitionResponse get_edit_prediction_type_definition_response = 19;
   }
   uint64 server_id = 7;
 }

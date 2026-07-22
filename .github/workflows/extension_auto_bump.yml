@@ -10,6 +10,8 @@ on:
     - '!extensions/test-extension/**'
     - '!extensions/workflows/**'
     - '!extensions/*.md'
+permissions:
+  contents: read
 jobs:
   detect_changed_extensions:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

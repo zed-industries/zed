@@ -62,7 +62,7 @@
     },
     {
       "name": "GPUI & Input",
-      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui"]
+      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui", "area:gpui/graphics"]
     },
     {
       "name": "Auth & Zed.dev",
@@ -97,6 +97,7 @@
         "area:outline",
         "area:project panel",
         "area:scanning",
+        "area:text finder",
         "area:workspace"
       ]
     },
@@ -119,6 +120,7 @@
       "labels": [
         "area:keymap editor",
         "area:popovers",
+        "area:pickers",
         "area:preview/images",
         "area:settings",
         "area:settings/ui",
@@ -142,6 +144,7 @@
         "area:ai",
         "area:ai/acp",
         "area:ai/agent thread",
+        "area:ai/agent thread/sandbox",
         "area:ai/agent thread/skills",
         "area:ai/anthropic",
         "area:ai/assistant",

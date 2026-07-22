@@ -8,8 +8,8 @@ use crate::tasks::workflows::{
     run_tests::run_platform_tests_no_filter,
     runners::{Arch, Platform, ReleaseChannel},
     steps::{
-        CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, GitRef, NamedJob,
-        RefSha, RepositoryTarget, TokenPermissions,
+        CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder,
+        GitRef, NamedJob, RefSha, RepositoryTarget, TokenPermissions,
     },
 };
 
@@ -47,6 +47,7 @@ pub fn release_nightly() -> Workflow {
     let notify_on_failure = notify_on_failure(&bundle.jobs());
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             // Fire 6 times a day
             .schedule([Schedule::new("0 */4 * * *")])

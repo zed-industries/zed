@@ -6,17 +6,14 @@ use std::{rc::Rc, sync::LazyLock};
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects, Size,
-    display_map::{
-        Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
-        ToDisplayPoint,
-    },
+    display_map::{Block, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot, ToDisplayPoint},
 };
 use collections::HashMap;
 use gpui::{
     AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight, Pixels,
     VisualTestContext, Window, font, size,
 };
-use multi_buffer::{MultiBufferOffset, ToPoint};
+use multi_buffer::MultiBufferOffset;
 use pretty_assertions::assert_eq;
 use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, IntoElement, px};
@@ -207,11 +204,6 @@ pub fn editor_content_with_blocks_and_size(
     for (row, block) in blocks {
         match block {
             Block::Custom(custom_block) => {
-                if let BlockPlacement::Near(x) = &custom_block.placement
-                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot()))
-                {
-                    continue;
-                };
                 let content = block_content_for_tests(editor, custom_block.id, cx)
                     .expect("block content not found");
                 // 2: "related info 1 for diagnostic 0"

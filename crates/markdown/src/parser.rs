@@ -149,6 +149,12 @@ fn build_heading_slugs(
                 }
                 heading_text.push_str(&source[range.clone()]);
             }
+            MarkdownEvent::SubstitutedCode(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
             MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
                 if heading_source_start.is_none() {
                     heading_source_start = Some(range.start);
@@ -236,6 +242,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_link = false;
     let mut within_code_block = false;
     let mut within_metadata = false;
+    let mut within_table = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
     let parse_options = if parse_metadata_blocks {
@@ -402,7 +409,10 @@ pub(crate) fn parse_markdown_with_options(
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
                         MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
                     }
-                    pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+                    pulldown_cmark::Tag::Table(alignments) => {
+                        within_table = true;
+                        MarkdownTag::Table(alignments)
+                    }
                     pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
                     pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
                     pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
@@ -455,6 +465,8 @@ pub(crate) fn parse_markdown_with_options(
                     if !parse_metadata_blocks {
                         continue;
                     }
+                } else if let pulldown_cmark::TagEnd::Table = tag {
+                    within_table = false;
                 }
                 state.push_event(range, MarkdownEvent::End(tag));
             }
@@ -624,11 +636,17 @@ pub(crate) fn parse_markdown_with_options(
                     state.push_event(range, event);
                 }
             }
-            pulldown_cmark::Event::Code(_) => {
+            pulldown_cmark::Event::Code(parsed) => {
                 let content_range = extract_code_content_range(&text[range.clone()]);
                 let content_range =
                     content_range.start + range.start..content_range.end + range.start;
-                state.push_event(content_range, MarkdownEvent::Code)
+                let source = &text[content_range.clone()];
+                let event = if within_table && source.contains(r"\|") {
+                    MarkdownEvent::SubstitutedCode(parsed.to_string())
+                } else {
+                    MarkdownEvent::Code
+                };
+                state.push_event(content_range, event)
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
             pulldown_cmark::Event::InlineHtml(html) => {
@@ -751,6 +769,8 @@ pub enum MarkdownEvent {
     SubstitutedText(String),
     /// An inline code node.
     Code,
+    /// An inline code node that differs from the markdown source due to escape decoding.
+    SubstitutedCode(String),
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -1471,6 +1491,43 @@ mod tests {
 
         let input = "``let x = 5;`";
         assert_eq!(extract_code_content_range(input), 0..13);
+    }
+
+    #[test]
+    fn test_inline_code_substitutes_escaped_pipes() {
+        let markdown = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let parsed = parse_markdown_with_options(markdown, false, false, false);
+        let code_range = {
+            let start = markdown.find(r"a\|b").expect("inline code source");
+            start..start + r"a\|b".len()
+        };
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &code_range
+                    && event == &SubstitutedCode("a|b".into())),
+            "expected escaped pipe in table inline code to render as decoded inline code: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
+    fn test_inline_code_keeps_escaped_pipes_outside_tables() {
+        let markdown = r"`a\|b`";
+        let parsed = parse_markdown_with_options(markdown, false, false, false);
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &(1..5) && event == &Code),
+            "expected escaped pipe outside a table to remain normal inline code: {:?}",
+            parsed.events
+        );
     }
 
     #[test]
