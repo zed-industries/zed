@@ -191,8 +191,14 @@ impl LanguageServerKind {
 #[derive(Debug)]
 pub struct LanguageServerRpcState {
     pub rpc_messages: VecDeque<RpcMessage>,
-    last_message_kind: Option<MessageKind>,
+    header_state: RpcLogHeaderState,
     request_tracker: RpcRequestTracker,
+}
+
+#[derive(Debug, Default)]
+struct RpcLogHeaderState {
+    last_message_kind: Option<MessageKind>,
+    last_message_had_elapsed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -224,6 +230,56 @@ impl MessageKind {
             Self::Send => Self::Receive,
             Self::Receive => Self::Send,
         }
+    }
+}
+
+impl RpcLogHeaderState {
+    fn header_for_message(
+        &mut self,
+        kind: MessageKind,
+        elapsed: Option<Duration>,
+    ) -> Option<String> {
+        let starts_new_group = self.last_message_kind != Some(kind)
+            || self.last_message_had_elapsed
+            || elapsed.is_some();
+        self.last_message_kind = Some(kind);
+        self.last_message_had_elapsed = elapsed.is_some();
+
+        starts_new_group.then(|| {
+            let direction = if kind == MessageKind::Receive {
+                "Receive"
+            } else {
+                "Send"
+            };
+            match elapsed {
+                Some(elapsed) => format!("\n// {direction} (took {}):", format_duration(elapsed)),
+                None => format!("\n// {direction}:"),
+            }
+        })
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+pub struct TestRpcLogHeaderState(RpcLogHeaderState);
+
+#[cfg(feature = "test-support")]
+impl TestRpcLogHeaderState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn header_for_message(
+        &mut self,
+        received: bool,
+        elapsed: Option<Duration>,
+    ) -> Option<String> {
+        let kind = if received {
+            MessageKind::Receive
+        } else {
+            MessageKind::Send
+        };
+        self.0.header_for_message(kind, elapsed)
     }
 }
 
@@ -662,15 +718,7 @@ impl LogStore {
         };
 
         let received = kind == MessageKind::Receive;
-        let direction = if received { "Receive" } else { "Send" };
-        let mut header = None;
-        if state.last_message_kind != Some(kind) || elapsed.is_some() {
-            header = Some(match elapsed {
-                Some(elapsed) => format!("\n// {direction} (took {}):", format_duration(elapsed)),
-                None => format!("\n// {direction}:"),
-            });
-        }
-        state.last_message_kind = Some(kind);
+        let header = state.header_state.header_for_message(kind, elapsed);
 
         if store_logs {
             let rpc_log_lines = &mut state.rpc_messages;
@@ -749,7 +797,7 @@ impl LogStore {
             .rpc_state
             .get_or_insert_with(|| LanguageServerRpcState {
                 rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
-                last_message_kind: None,
+                header_state: RpcLogHeaderState::default(),
                 request_tracker: RpcRequestTracker::default(),
             });
         Some(rpc_state)

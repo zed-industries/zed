@@ -10,7 +10,10 @@ use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
 use lsp::Uri;
 use project::{
     Project,
-    lsp_store::{log_store::TestRpcRequestTracker, *},
+    lsp_store::{
+        log_store::{TestRpcLogHeaderState, TestRpcRequestTracker},
+        *,
+    },
 };
 use serde_json::json;
 use util::path;
@@ -94,6 +97,28 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
         );
         assert!(!lsp_store.has_language_server_seed_for_worktree(invisible_worktree_id));
     });
+}
+
+#[test]
+fn test_rpc_log_grouping_separates_timed_messages() {
+    for (received, direction) in [(false, "Send"), (true, "Receive")] {
+        let mut header_state = TestRpcLogHeaderState::new();
+
+        assert_eq!(
+            header_state.header_for_message(received, None),
+            Some(format!("\n// {direction}:"))
+        );
+        assert_eq!(header_state.header_for_message(received, None), None);
+        assert_eq!(
+            header_state.header_for_message(received, Some(Duration::from_millis(53))),
+            Some(format!("\n// {direction} (took 53.0ms):"))
+        );
+        assert_eq!(
+            header_state.header_for_message(received, None),
+            Some(format!("\n// {direction}:"))
+        );
+        assert_eq!(header_state.header_for_message(received, None), None);
+    }
 }
 
 #[test]
