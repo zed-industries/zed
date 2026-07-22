@@ -1102,9 +1102,8 @@ pub struct Editor {
     /// width available to buffer headers.
     last_right_margin: Pixels,
     /// Whether the horizontal scrollbar was laid out as visible during the last
-    /// prepaint.
-    /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
-    /// paint over the scrollbar.
+    /// prepaint, accounting for auto-hide. Used by `SplitBufferHeadersElement`
+    /// to position sticky buffer headers above the scrollbar.
     last_horizontal_scrollbar_visible: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,

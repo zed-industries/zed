@@ -2,8 +2,8 @@ use std::cmp;
 
 use collections::{HashMap, HashSet};
 use gpui::{
-    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, DragMoveEvent, Element,
-    Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DragMoveEvent,
+    Element, Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
     linear_color_stop, linear_gradient, point, px, size,
 };
@@ -12,8 +12,6 @@ use smallvec::smallvec;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{h_flex, prelude::*, v_flex};
-
-use gpui::ContentMask;
 
 use crate::{
     DisplayRow, Editor, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
@@ -256,7 +254,6 @@ struct BufferHeaderLayout {
 }
 
 struct SplitBufferHeadersPrepaintState {
-    content_bounds: Bounds<Pixels>,
     sticky_header: Option<AnyElement>,
     non_sticky_headers: Vec<BufferHeaderLayout>,
 }
@@ -309,7 +306,6 @@ impl Element for SplitBufferHeadersElement {
     ) -> Self::PrepaintState {
         if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
             return SplitBufferHeadersPrepaintState {
-                content_bounds: bounds,
                 sticky_header: None,
                 non_sticky_headers: Vec::new(),
             };
@@ -333,7 +329,7 @@ impl Element for SplitBufferHeadersElement {
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
@@ -348,20 +344,15 @@ impl Element for SplitBufferHeadersElement {
 
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(
-                    Some(ContentMask {
-                        bounds: prepaint.content_bounds,
-                    }),
-                    |window| {
-                        for header_layout in &mut prepaint.non_sticky_headers {
-                            header_layout.element.paint(window, cx);
-                        }
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    for header_layout in &mut prepaint.non_sticky_headers {
+                        header_layout.element.paint(window, cx);
+                    }
 
-                        if let Some(mut sticky_header) = prepaint.sticky_header.take() {
-                            sticky_header.paint(window, cx);
-                        }
-                    },
-                );
+                    if let Some(mut sticky_header) = prepaint.sticky_header.take() {
+                        sticky_header.paint(window, cx);
+                    }
+                });
             });
         });
     }
@@ -457,7 +448,6 @@ impl SplitBufferHeadersElement {
         );
 
         SplitBufferHeadersPrepaintState {
-            content_bounds,
             sticky_header,
             non_sticky_headers,
         }
