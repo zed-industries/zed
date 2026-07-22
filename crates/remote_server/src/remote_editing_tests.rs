@@ -22,7 +22,7 @@ use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
-    repository::{CommitData, RepoPath, Worktree as GitWorktree},
+    repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
 };
 use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, VisualContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
@@ -3611,6 +3611,48 @@ async fn test_remote_restore_unstaged_hunk_clears_diff(
             .collect();
         assert!(hunks.is_empty(), "should have no diff hunks after restore");
     });
+}
+
+#[gpui::test]
+async fn test_remote_load_commit_template(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "README.md": "# Project's README"
+            }
+        }),
+    )
+    .await;
+
+    fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+        state.commit_template = Some(GitCommitTemplate {
+            template: "chore: commit template".to_string(),
+        })
+    })
+    .expect("Should successfully update repository state");
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/root/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+    let commit_template = repository
+        .update(cx, |repository, _| repository.load_commit_template_text())
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("Loading commit template in remote should work");
+
+    assert_eq!(commit_template.template, "chore: commit template");
 }
 
 #[gpui::test]
