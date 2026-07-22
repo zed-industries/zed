@@ -32,7 +32,9 @@ use std::{
     cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
+use super::{
+    X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES, get_monitor_scale_at_bounds,
+};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
@@ -268,6 +270,8 @@ pub struct X11WindowState {
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
+    scale_locked: bool,
+    randr_monitor_support: bool,
     renderer: WgpuRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
@@ -423,6 +427,8 @@ impl X11WindowState {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        scale_locked: bool,
+        randr_monitor_support: bool,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
@@ -790,6 +796,8 @@ impl X11WindowState {
                 visual_id: visual.id,
                 bounds: bounds.to_pixels(scale_factor),
                 scale_factor,
+                scale_locked,
+                randr_monitor_support,
                 renderer,
                 atoms: *atoms,
                 input_handler: None,
@@ -891,6 +899,8 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
+        scale_locked: bool,
+        randr_monitor_support: bool,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
@@ -910,6 +920,8 @@ impl X11Window {
                 x_window,
                 atoms,
                 scale_factor,
+                scale_locked,
+                randr_monitor_support,
                 appearance,
                 parent_window,
                 supports_xinput_gestures,
@@ -1242,17 +1254,55 @@ impl X11WindowStatePtr {
     pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
         let (is_resize, content_size, scale_factor) = {
             let mut state = self.state.borrow_mut();
-            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
 
-            let is_resize = bounds.size.width != state.bounds.size.width
-                || bounds.size.height != state.bounds.size.height;
+            let scale_changed = if !state.scale_locked && state.randr_monitor_support {
+                // Only query RandR when origin changes. A pure resize cannot move
+                // the window to a different monitor.
+                let cur_px_x = (f32::from(state.bounds.origin.x) * state.scale_factor) as i32;
+                let cur_px_y = (f32::from(state.bounds.origin.y) * state.scale_factor) as i32;
+                let origin_moved = bounds.origin.x != cur_px_x || bounds.origin.y != cur_px_y;
+                if origin_moved {
+                    if let Some(new_scale) =
+                        get_monitor_scale_at_bounds(&self.xcb, state.x_root_window, bounds)
+                    {
+                        if (new_scale - state.scale_factor).abs() > 0.001 {
+                            state.scale_factor = new_scale;
+                            if let Ok(display) =
+                                X11Display::new(&self.xcb, new_scale, state.x_screen_index)
+                            {
+                                state.display = Rc::new(display);
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let bounds_logical = bounds.map(|f| px(f as f32 / state.scale_factor));
+
+            // When scale changes the window moved to a different monitor. Treat as a full
+            // bounds update not a resize.
+            let is_resize = if scale_changed {
+                false
+            } else {
+                bounds_logical.size.width != state.bounds.size.width
+                    || bounds_logical.size.height != state.bounds.size.height
+            };
 
             // If it's a resize event (only width/height changed), we ignore `bounds.origin`
             // because it contains wrong values.
             if is_resize {
-                state.bounds.size = bounds.size;
+                state.bounds.size = bounds_logical.size;
             } else {
-                state.bounds = bounds;
+                state.bounds = bounds_logical;
             }
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
@@ -1277,6 +1327,59 @@ impl X11WindowStatePtr {
         }
 
         Ok(())
+    }
+
+    pub fn update_scale_from_randr(&self) {
+        let (root, pixel_bounds) = {
+            let state = self.state.borrow();
+            if state.scale_locked || !state.randr_monitor_support {
+                return;
+            }
+            let scale = state.scale_factor;
+            let logical = state.bounds;
+            let pixel_bounds = Bounds {
+                origin: Point {
+                    x: (f32::from(logical.origin.x) * scale) as i32,
+                    y: (f32::from(logical.origin.y) * scale) as i32,
+                },
+                size: Size {
+                    width: (f32::from(logical.size.width) * scale) as i32,
+                    height: (f32::from(logical.size.height) * scale) as i32,
+                },
+            };
+            (state.x_root_window, pixel_bounds)
+        };
+
+        let Some(new_scale) = get_monitor_scale_at_bounds(&self.xcb, root, pixel_bounds) else {
+            return;
+        };
+
+        let (content_size, scale_factor) = {
+            let mut state = self.state.borrow_mut();
+            if (new_scale - state.scale_factor).abs() <= 0.001 {
+                return;
+            }
+            state.scale_factor = new_scale;
+            state.bounds = Bounds {
+                origin: Point {
+                    x: px(pixel_bounds.origin.x as f32 / new_scale),
+                    y: px(pixel_bounds.origin.y as f32 / new_scale),
+                },
+                size: Size {
+                    width: px(pixel_bounds.size.width as f32 / new_scale),
+                    height: px(pixel_bounds.size.height as f32 / new_scale),
+                },
+            };
+            if let Ok(display) = X11Display::new(&self.xcb, new_scale, state.x_screen_index) {
+                state.display = Rc::new(display);
+            }
+            (state.content_size(), state.scale_factor)
+        };
+
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.resize {
+            fun(content_size, scale_factor);
+        }
     }
 
     pub fn set_active(&self, focus: bool) {
