@@ -250,20 +250,8 @@ impl Vim {
                         buffer_snapshot.anchor_after(end)
                     })
                     .collect();
-                vim.set_mark(
-                    "[".to_string(),
-                    start_anchors,
-                    editor.buffer(),
-                    window,
-                    cx,
-                );
-                vim.set_mark(
-                    "]".to_string(),
-                    end_anchors,
-                    editor.buffer(),
-                    window,
-                    cx,
-                );
+                vim.set_mark("[".to_string(), start_anchors, editor.buffer(), window, cx);
+                vim.set_mark("]".to_string(), end_anchors, editor.buffer(), window, cx);
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
