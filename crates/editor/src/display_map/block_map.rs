@@ -963,9 +963,14 @@ impl BlockMap {
             // Ensure the edit starts at a transform boundary.
             // If the edit starts within an isomorphic transform, preserve its prefix
             // If the edit lands within a replacement block, expand the edit to include the start of the replaced input range
-            let transform = cursor.item().unwrap();
+            // The cursor can sit past the end of the tree when a companion edit
+            // is anchored at the new end-of-file and maps to `old_start` at the
+            // very end of the old transforms; in that case there is no transform
+            // preceding the edit and nothing to preserve.
             let transform_rows_before_edit = old_start - *cursor.start();
-            if transform_rows_before_edit > RowDelta(0) {
+            if transform_rows_before_edit > RowDelta(0)
+                && let Some(transform) = cursor.item()
+            {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
                     push_isomorphic(
@@ -5017,6 +5022,61 @@ mod tests {
             "aaa\nbbb\nccc\nddd\n\n\n\nddd\nddd\n\n\n\neee\n",
             "LHS should have 3 more spacer lines to balance the insertion"
         );
+    }
+
+    // Regression test for ZED-9V4: `BlockMap::sync` walks the (old) transform
+    // tree with a `WrapRow` cursor and used to `cursor.item().unwrap()` for
+    // every edit, assuming each edit's `old.start` lands strictly inside the
+    // tree. The companion (split-diff) branch of `sync` can compose an edit
+    // anchored at the trailing boundary of the old transforms
+    // (`old.start == input_rows`), at which point the cursor is past the end of
+    // the tree and `item()` is `None`. That used to abort the process.
+    #[gpui::test]
+    fn test_sync_edit_anchored_at_end_of_transforms(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple("aaa\nbbb\nccc\n", cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (wrap_map, old_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
+        let block_map = BlockMap::new(old_wrap_snapshot.clone(), 0, 0);
+
+        // The tree now spans exactly `old_end` input rows.
+        let old_end = old_wrap_snapshot.max_point().row() + RowDelta(1);
+
+        // Grow the buffer so the new snapshot is larger than the old transforms.
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(Point::new(3, 0)..Point::new(3, 0), "ddd\neee\n")],
+                None,
+                cx,
+            );
+            buffer.snapshot(cx)
+        });
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+        let (new_wrap_snapshot, _) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let new_end = new_wrap_snapshot.max_point().row() + RowDelta(1);
+
+        // An edit anchored exactly at the end of the old transforms, of the shape
+        // the companion branch of `sync` can produce.
+        let edits = Patch::new(vec![text::Edit {
+            old: old_end..old_end,
+            new: old_end..new_end,
+        }]);
+
+        let snapshot = block_map.read(new_wrap_snapshot, edits, None);
+        assert_eq!(snapshot.snapshot.text(), "aaa\nbbb\nccc\nddd\neee\n");
     }
 
     fn init_test(cx: &mut gpui::App) {

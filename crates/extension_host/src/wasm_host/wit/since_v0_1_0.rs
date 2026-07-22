@@ -432,7 +432,7 @@ impl ExtensionImports for WasmState {
         self.on_main_thread(|cx| {
             async move {
                 let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
                 });
                 let location = path
                     .as_ref()

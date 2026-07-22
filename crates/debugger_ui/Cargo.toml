@@ -68,8 +68,6 @@ terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }
