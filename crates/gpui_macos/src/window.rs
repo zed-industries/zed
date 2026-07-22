@@ -2118,6 +2118,22 @@ unsafe fn is_ime_input_source_active() -> bool {
     }
 }
 
+unsafe fn is_input_method_mode_switch_key(native_event: id, key_down_event: &KeyDownEvent) -> bool {
+    unsafe {
+        let modifiers = native_event.modifierFlags();
+        let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+        let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+        let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+        let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+
+        control
+            && shift
+            && !alt
+            && !command
+            && matches!(key_down_event.keystroke.key.as_str(), "j" | ":")
+    }
+}
+
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -2143,16 +2159,25 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     match event {
         PlatformInput::KeyDown(key_down_event) => {
             // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
-            // If that event isn't handled, it will then dispatch a "key down" event. GPUI
-            // makes no distinction between these two types of events, so we need to ignore
-            // the "key down" event if we've already just processed its "key equivalent" version.
-            if key_equivalent {
-                lock.last_key_equivalent = Some(key_down_event.clone());
-            } else if lock.last_key_equivalent.take().as_ref() == Some(&key_down_event) {
+            // If that event is handled, macOS may still dispatch a "key down" event. GPUI
+            // makes no distinction between these two types of events, so ignore the
+            // "key down" event only if the "key equivalent" version was actually handled.
+            if !key_equivalent && lock.last_key_equivalent.take().as_ref() == Some(&key_down_event)
+            {
                 return NO;
             }
 
             drop(lock);
+
+            let key_equivalent_to_remember = key_equivalent.then(|| key_down_event.clone());
+            let remember_handled_key_equivalent = |handled: BOOL| -> BOOL {
+                if handled == YES
+                    && let Some(key_down_event) = key_equivalent_to_remember.as_ref()
+                {
+                    window_state.as_ref().lock().last_key_equivalent = Some(key_down_event.clone());
+                }
+                handled
+            };
 
             let is_composing =
                 with_input_handler(this, |input_handler| input_handler.marked_text_range())
@@ -2189,8 +2214,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 })
                 .unwrap_or(false);
 
+            let is_input_method_mode_switch =
+                unsafe { is_input_method_mode_switch_key(native_event, &key_down_event) };
+
             if is_composing
                 || is_ime_printable_key
+                || is_input_method_mode_switch
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
                     && !key_down_event.keystroke.modifiers.function
@@ -2209,18 +2238,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 };
                 window_state.as_ref().lock().keystroke_for_do_command.take();
                 if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
-                    return handled as BOOL;
+                    return remember_handled_key_equivalent(handled as BOOL);
                 } else if handled == YES {
-                    return YES;
+                    return remember_handled_key_equivalent(YES);
                 }
 
                 let handled = run_callback(PlatformInput::KeyDown(key_down_event));
-                return handled;
+                return remember_handled_key_equivalent(handled);
             }
 
             let handled = run_callback(PlatformInput::KeyDown(key_down_event.clone()));
             if handled == YES {
-                return YES;
+                return remember_handled_key_equivalent(YES);
             }
 
             if key_down_event.is_held
@@ -2234,7 +2263,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     NO
                 });
                 if handled == Some(YES) {
-                    return YES;
+                    return remember_handled_key_equivalent(YES);
                 }
             }
 
@@ -2244,10 +2273,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 return NO;
             }
 
-            unsafe {
+            let handled = unsafe {
                 let input_context: id = msg_send![this, inputContext];
                 msg_send![input_context, handleEvent: native_event]
-            }
+            };
+            remember_handled_key_equivalent(handled)
         }
 
         PlatformInput::KeyUp(_) => {
