@@ -177,6 +177,8 @@ pub enum Model {
     Qwen3_7Plus,
     #[serde(rename = "qwen3.7-max")]
     Qwen3_7Max,
+    #[serde(rename = "hy3")]
+    Hy3,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -232,7 +234,8 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::Qwen3_7Plus
-            | Self::Qwen3_7Max => &[OpenCodeSubscription::Go],
+            | Self::Qwen3_7Max
+            | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
             Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
@@ -309,6 +312,7 @@ impl Model {
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
+            Self::Hy3 => "hy3",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3UltraFree => "nemotron-3-ultra-free",
 
@@ -375,6 +379,7 @@ impl Model {
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
+            Self::Hy3 => "Hy3",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3UltraFree => "Nemotron 3 Ultra Free",
 
@@ -447,6 +452,7 @@ impl Model {
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::Hy3
             | Self::BigPickle
             | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
 
@@ -547,6 +553,7 @@ impl Model {
                 }
             }
             Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Hy3 => 256_000,
             Self::BigPickle => 200_000,
             Self::Nemotron3UltraFree => 1_000_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
@@ -629,6 +636,7 @@ impl Model {
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3UltraFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
+            Self::Hy3 => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -705,6 +713,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
+            | Self::Hy3
             | Self::BigPickle
             | Self::Nemotron3UltraFree => false,
 
@@ -844,6 +853,13 @@ impl Model {
 
             // Z AI models
             Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
+
+            // Tencent models
+            Self::Hy3 => Some(vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+            ]),
 
             // SpaceXAI models
             Self::Grok4_5 => Some(vec![
