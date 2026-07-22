@@ -185,25 +185,25 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - [ ] **Invisible git — checkpoint service** — background snapshots to hidden `.breadpaper/history` git-dir. _(in progress)_
 
 ### Milestone 1 — The core loop (thinnest thing that proves it)
-- [ ] **Daily & Weekly Area** — first packaged Area (folders + templates + context view). _(planned)_
+- [x] **Daily & Weekly Area** — first packaged Area, shipped as the installable **Timeline Area** (scaffolded folders + weekly dashboard + Week Review skill; page-aware context view still pending). _(shipped)_
 - [ ] **Daily Closure skill** — reads tasks + commits, appends a review to the day's note. _(planned)_
 - [ ] **Invisible git — restore UI** — human "history / restore this version" surface; no git vocabulary. _(planned)_
 - [ ] **Checkpoint triggers** — autosave / idle / pre-AI-write commit points. _(planned)_
 - [ ] **BYO-LLM connection** — ride Zed's existing agent/console rails; user brings their own key. _(planned)_
 
 ### Milestone 2 — Areas & Skills framework
-- [ ] **Area package format** — declarative bundle spec (folders + view + skills + README). _(planned)_
-- [ ] **Areas left rail + gallery** — switchable enabled domains; add/remove from a gallery. _(planned)_
-- [ ] **Skills view** — rituals as inspectable, editable objects with declared read/write scope. _(planned)_
-- [ ] **Skill contract & write sandbox** — enforce inputs/outputs so writes are previewable and scoped. _(planned)_
+- [x] **Area package format** — declarative `manifest.toml` bundle (folder/file scaffold + skills + surfaces + doc), materialized create-if-missing and recorded in a per-vault `[[areas.installed]]` registry. _(shipped)_
+- [x] **Areas left rail + gallery** — an Areas section in the Timeline panel: enabled Areas with their skills/surfaces, **Add Area** from the app catalog, and remove-with-confirmation that preserves user-modified files. A standalone gallery UI is still to come. _(shipped)_
+- [x] **Skills view** — an Area's skills are inspectable, openable Markdown files with a plain-language summary; read/write scopes are declared in the manifest. Surfacing those scopes in the UI is still pending. _(shipped)_
+- [ ] **Skill contract & write sandbox** — enforce inputs/outputs so writes are previewable and scoped. Scopes are now _declared_ in the manifest but not yet enforced. _(planned)_
 
 ### Milestone 3 — Context rail & connectors
 - [ ] **Page-aware Context right rail** — day-planner / week calendar / finance dashboard per open doc. _(planned)_
 - [ ] **MCP connector onboarding** — Monarch, GitHub/GitLab, calendar as a guided step, not hand-edited JSON. _(planned)_
-- [ ] **Week Review skill** — aggregate daily notes + PRs/MRs, append review, feed dashboard. _(planned)_
+- [x] **Week Review skill** — ships with the Timeline Area: aggregate daily/weekly notes + GitHub PRs (`gh`) / GitLab MRs (`glab`), append an AI review to the weekly note, and feed the dashboard. Rides the `gh`/`glab` CLIs; guided MCP connectors still pending. _(shipped)_
 - [ ] **Friday Finance skill** — live Monarch pull, credit-card sweep + LoC residual, action list, log outcome. _(planned)_
 - [ ] **Journaling Topic skill** — detect avoidance/momentum, surface a neglected topic. Read-only. _(planned)_
-- [ ] **Dashboard output type** — `data.js → static HTML that computes its own analytics`, generalized. _(planned)_
+- [x] **Dashboard output type** — `data.js → static HTML that computes its own analytics`, shipped as the Timeline Area's Weekly Dashboard and generalized into the Area format as an openable **surface**. _(shipped)_
 
 ### Milestone 4 — Onboarding & de-Zed-ification
 - [ ] **First-run onboarding** — point at a folder, connect an LLM, pick Areas, run first ritual in <10 min. _(planned)_
