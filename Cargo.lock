@@ -11562,6 +11562,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
  "util",
  "watch",
  "which 6.0.3",

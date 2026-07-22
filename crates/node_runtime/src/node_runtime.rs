@@ -24,6 +24,8 @@ use util::ResultExt;
 use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
+const NPM_CACHE_MIGRATION_MARKER: &str = ".zed-cache-v2";
+const NPM_PACKAGE_SPEC_MARKER: &str = ".zed-npm-package-spec";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
@@ -221,10 +223,21 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
+        self.run_npm_subcommand_with_cache(directory, None, subcommand, args)
+            .await
+    }
+
+    async fn run_npm_subcommand_with_cache(
+        &self,
+        directory: Option<&Path>,
+        cache_dir: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
+            .run_npm_subcommand(directory, cache_dir, http.proxy(), subcommand, args)
             .await
     }
 
@@ -248,7 +261,7 @@ impl NodeRuntime {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .npm_command(prefix_dir, http.proxy(), subcommand, args)
+            .npm_command(prefix_dir, None, http.proxy(), subcommand, args)
             .await
     }
 
@@ -266,6 +279,7 @@ impl NodeRuntime {
         let instance = self.instance().await;
         let output = instance
             .run_npm_subcommand(
+                None,
                 None,
                 http.proxy(),
                 "info",
@@ -316,11 +330,65 @@ impl NodeRuntime {
             directory.display()
         );
 
-        let packages: Vec<_> = packages
+        let packages = packages
             .iter()
             .map(|(name, version)| format!("{name}@{version}"))
-            .collect();
+            .collect::<Vec<_>>();
 
+        self.npm_install_package_specs(directory, &packages, None)
+            .await
+    }
+
+    /// Installs a long-lived npm executable into a stable prefix while keeping npm's download
+    /// cache temporary. Reusing the prefix avoids creating a new `_npx` dependency tree whenever
+    /// the registry publishes a new package version.
+    pub async fn npm_install_package_for_exec(
+        &self,
+        directory: &Path,
+        package: &str,
+    ) -> Result<String> {
+        let package_name = npm_package_name(package)?;
+        let node_modules = directory.join("node_modules");
+        let marker = directory.join(NPM_PACKAGE_SPEC_MARKER);
+        if fs::read_to_string(&marker)
+            .await
+            .is_ok_and(|installed_package| installed_package == package)
+            && let Ok(bin_name) = read_package_bin_name(&node_modules, package_name).await
+        {
+            return Ok(bin_name);
+        }
+
+        let cache_dir = tempfile::Builder::new()
+            .prefix("zed-npm-cache-")
+            .tempdir()
+            .context("creating temporary npm cache")?
+            .keep();
+        let install_result = self
+            .npm_install_package_specs(directory, &[package.to_string()], Some(&cache_dir))
+            .await;
+        if let Err(error) = fs::remove_dir_all(&cache_dir).await
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            log::warn!(
+                "failed to remove temporary npm cache {}: {error}",
+                cache_dir.display()
+            );
+        }
+        install_result?;
+
+        let bin_name = read_package_bin_name(&node_modules, package_name).await?;
+        fs::write(marker, package)
+            .await
+            .context("writing installed npm package marker")?;
+        Ok(bin_name)
+    }
+
+    async fn npm_install_package_specs(
+        &self,
+        directory: &Path,
+        packages: &[String],
+        cache_dir: Option<&Path>,
+    ) -> Result<()> {
         let arguments: Vec<_> = packages
             .iter()
             .map(|p| p.as_str())
@@ -335,8 +403,7 @@ impl NodeRuntime {
             ])
             .collect();
 
-        // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(Some(directory), "install", &arguments)
+        self.run_npm_subcommand_with_cache(Some(directory), cache_dir, "install", &arguments)
             .await?;
         Ok(())
     }
@@ -479,7 +546,7 @@ async fn npm_config_before(
     // `npm config get before` renders Date values for display. The JSON config output keeps the
     // computed cutoff in the same ISO format used by `npm info --json` release times.
     let output = node_runtime
-        .run_npm_subcommand(None, proxy, "config", &["list", "--json"])
+        .run_npm_subcommand(None, None, proxy, "config", &["list", "--json"])
         .await?;
     let config: NpmConfig = serde_json::from_slice(&output.stdout)?;
     Ok(config
@@ -577,6 +644,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
@@ -585,6 +653,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn npm_command(
         &self,
         prefix_dir: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
@@ -718,7 +787,17 @@ impl ManagedNodeRuntime {
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
-        _ = fs::create_dir(node_dir.join("cache")).await;
+        let cache_dir = node_dir.join("cache");
+        _ = fs::create_dir(&cache_dir).await;
+        if let Err(error) = migrate_legacy_npm_cache(&cache_dir).await {
+            log::warn!("failed to migrate managed npm cache: {error:#}");
+        }
+        let legacy_cache_dir = node_containing_dir.join("cache");
+        if fs::metadata(&legacy_cache_dir).await.is_ok()
+            && let Err(error) = migrate_legacy_npm_cache(&legacy_cache_dir).await
+        {
+            log::warn!("failed to migrate legacy managed npm cache: {error:#}");
+        }
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
@@ -762,12 +841,15 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async {
-            let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
+            let npm_command = self
+                .npm_command(directory, cache_dir, proxy, subcommand, args)
+                .await?;
             let mut command = util::command::new_command(npm_command.path);
             command.args(npm_command.args);
             command.envs(npm_command.env);
@@ -802,6 +884,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn npm_command(
         &self,
         prefix_dir: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
@@ -818,10 +901,11 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             "missing npm file"
         );
 
+        let default_cache_dir = self.installation_path.join("cache");
         let command_args = build_npm_command_args(
             Some(&npm_file),
             prefix_dir,
-            &self.installation_path.join("cache"),
+            cache_dir.unwrap_or(&default_cache_dir),
             Some(&self.installation_path.join("blank_user_npmrc")),
             Some(&self.installation_path.join("blank_global_npmrc")),
             proxy,
@@ -881,7 +965,11 @@ impl SystemNodeRuntime {
 
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
-        fs::create_dir(scratch_dir.join("cache")).await.ok();
+        let cache_dir = scratch_dir.join("cache");
+        fs::create_dir(&cache_dir).await.ok();
+        if let Err(error) = migrate_legacy_npm_cache(&cache_dir).await {
+            log::warn!("failed to migrate system npm cache: {error:#}");
+        }
 
         Ok(Self {
             node,
@@ -928,11 +1016,14 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
+        let npm_command = self
+            .npm_command(directory, cache_dir, proxy, subcommand, args)
+            .await?;
         let mut command = util::command::new_command(npm_command.path);
         command.args(npm_command.args);
         command.envs(npm_command.env);
@@ -952,14 +1043,16 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn npm_command(
         &self,
         prefix_dir: Option<&Path>,
+        cache_dir: Option<&Path>,
         proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
+        let default_cache_dir = self.scratch_dir.join("cache");
         let command_args = build_npm_command_args(
             None,
             prefix_dir,
-            &self.scratch_dir.join("cache"),
+            cache_dir.unwrap_or(&default_cache_dir),
             None,
             None,
             proxy,
@@ -1013,6 +1106,92 @@ pub async fn read_package_installed_version(
     Ok(Some(package_json.version))
 }
 
+fn npm_package_name(package_spec: &str) -> Result<&str> {
+    let package_name = package_spec
+        .rsplit_once('@')
+        .and_then(|(name, _)| (!name.is_empty()).then_some(name))
+        .unwrap_or(package_spec);
+    let is_valid_component = |component: &str| {
+        !component.is_empty()
+            && component != "."
+            && component != ".."
+            && !component.contains(['/', '\\', '\0'])
+    };
+    let valid = if let Some(scoped_name) = package_name.strip_prefix('@') {
+        let mut components = scoped_name.split('/');
+        components.next().is_some_and(is_valid_component)
+            && components.next().is_some_and(is_valid_component)
+            && components.next().is_none()
+    } else {
+        is_valid_component(package_name)
+    };
+    anyhow::ensure!(valid, "invalid npm package name: {package_name}");
+    Ok(package_name)
+}
+
+async fn read_package_bin_name(node_module_directory: &Path, package_name: &str) -> Result<String> {
+    let package_json_path = node_module_directory
+        .join(package_name)
+        .join("package.json");
+    let contents = fs::read_to_string(&package_json_path)
+        .await
+        .with_context(|| format!("reading {}", package_json_path.display()))?;
+    let package_json: serde_json::Value = serde_json::from_str(&contents)
+        .with_context(|| format!("parsing {}", package_json_path.display()))?;
+    let manifest_name = package_json
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .with_context(|| format!("missing package name in {}", package_json_path.display()))?;
+    let unscoped_name = manifest_name.rsplit('/').next().unwrap_or(manifest_name);
+
+    let Some(bin) = package_json.get("bin") else {
+        bail!("package {manifest_name} does not define a binary");
+    };
+    if bin.is_string() {
+        return Ok(unscoped_name.to_string());
+    }
+
+    let bin = bin
+        .as_object()
+        .with_context(|| format!("invalid bin field for package {manifest_name}"))?;
+    let mut entries = bin
+        .iter()
+        .filter_map(|(name, path)| path.as_str().map(|path| (name, path)));
+    let Some((first_name, first_path)) = entries.next() else {
+        bail!("package {manifest_name} does not define a binary");
+    };
+    if entries.all(|(_, path)| path == first_path) {
+        return Ok(first_name.clone());
+    }
+    if bin.contains_key(unscoped_name) {
+        return Ok(unscoped_name.to_string());
+    }
+
+    bail!("could not determine executable for package {manifest_name}")
+}
+
+async fn migrate_legacy_npm_cache(cache_dir: &Path) -> Result<()> {
+    let marker = cache_dir.join(NPM_CACHE_MIGRATION_MARKER);
+    if fs::metadata(&marker).await.is_ok() {
+        return Ok(());
+    }
+
+    for directory in ["_npx", "_cacache"] {
+        match fs::remove_dir_all(cache_dir.join(directory)).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("removing legacy npm cache directory {directory}"));
+            }
+        }
+    }
+
+    fs::write(marker, [])
+        .await
+        .context("writing npm cache migration marker")
+}
+
 #[derive(Clone)]
 pub struct UnavailableNodeRuntime {
     error_message: Arc<String>,
@@ -1030,6 +1209,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
+        _: Option<&Path>,
         _: Option<&Url>,
         _: &str,
         _: &[&str],
@@ -1039,6 +1219,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
 
     async fn npm_command(
         &self,
+        _: Option<&Path>,
         _: Option<&Path>,
         _proxy: Option<&Url>,
         _subcommand: &str,
@@ -1141,7 +1322,7 @@ fn npm_command_env(node_binary: Option<&Path>) -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     use anyhow::{Result, bail};
     use http_client::Url;
@@ -1149,8 +1330,134 @@ mod tests {
 
     use super::{
         NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
-        proxy_argument, select_npm_package_version, should_install_npm_package_version,
+        migrate_legacy_npm_cache, npm_package_name, proxy_argument, read_package_bin_name,
+        select_npm_package_version, should_install_npm_package_version,
     };
+
+    #[test]
+    fn test_npm_package_name_from_specs() {
+        assert_eq!(
+            npm_package_name("agent-package@1.2.3").unwrap(),
+            "agent-package"
+        );
+        assert_eq!(
+            npm_package_name("@scope/agent-package@0.0.0 - 1.2.3").unwrap(),
+            "@scope/agent-package"
+        );
+        assert_eq!(
+            npm_package_name("@scope/agent-package").unwrap(),
+            "@scope/agent-package"
+        );
+        assert!(npm_package_name("../agent-package@1.2.3").is_err());
+        assert!(npm_package_name("@scope/../agent-package@1.2.3").is_err());
+        assert!(npm_package_name("/agent-package@1.2.3").is_err());
+    }
+
+    #[test]
+    fn test_installed_exec_package_is_reused_without_npm() -> Result<()> {
+        smol::block_on(async {
+            let temp_dir = tempfile::tempdir()?;
+            let package_dir = temp_dir.path().join("node_modules/agent-package");
+            fs::create_dir_all(&package_dir)?;
+            fs::write(
+                package_dir.join("package.json"),
+                r#"{"name":"agent-package","bin":{"agent":"cli.js"}}"#,
+            )?;
+            fs::write(
+                temp_dir.path().join(super::NPM_PACKAGE_SPEC_MARKER),
+                "agent-package@1.2.3",
+            )?;
+
+            let bin_name = super::NodeRuntime::unavailable()
+                .npm_install_package_for_exec(temp_dir.path(), "agent-package@1.2.3")
+                .await?;
+
+            assert_eq!(bin_name, "agent");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_read_package_bin_name_matches_npm_exec_resolution() -> Result<()> {
+        smol::block_on(async {
+            let temp_dir = tempfile::tempdir()?;
+            let node_modules = temp_dir.path().join("node_modules");
+
+            let string_bin_dir = node_modules.join("string-bin");
+            fs::create_dir_all(&string_bin_dir)?;
+            fs::write(
+                string_bin_dir.join("package.json"),
+                r#"{"name":"string-bin","bin":"cli.js"}"#,
+            )?;
+            assert_eq!(
+                read_package_bin_name(&node_modules, "string-bin").await?,
+                "string-bin"
+            );
+
+            let scoped_dir = node_modules.join("@scope/multi-bin");
+            fs::create_dir_all(&scoped_dir)?;
+            fs::write(
+                scoped_dir.join("package.json"),
+                r#"{"name":"@scope/multi-bin","bin":{"other":"other.js","multi-bin":"cli.js"}}"#,
+            )?;
+            assert_eq!(
+                read_package_bin_name(&node_modules, "@scope/multi-bin").await?,
+                "multi-bin"
+            );
+
+            let aliases_dir = node_modules.join("aliases");
+            fs::create_dir_all(&aliases_dir)?;
+            fs::write(
+                aliases_dir.join("package.json"),
+                r#"{"name":"aliases","bin":{"first":"cli.js","second":"cli.js"}}"#,
+            )?;
+            assert_eq!(
+                read_package_bin_name(&node_modules, "aliases").await?,
+                "first"
+            );
+
+            let ambiguous_dir = node_modules.join("ambiguous");
+            fs::create_dir_all(&ambiguous_dir)?;
+            fs::write(
+                ambiguous_dir.join("package.json"),
+                r#"{"name":"ambiguous","bin":{"first":"first.js","second":"second.js"}}"#,
+            )?;
+            assert!(
+                read_package_bin_name(&node_modules, "ambiguous")
+                    .await
+                    .is_err()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_migrate_legacy_npm_cache_once() -> Result<()> {
+        smol::block_on(async {
+            let temp_dir = tempfile::tempdir()?;
+            let cache_dir = temp_dir.path();
+            fs::create_dir(cache_dir.join("_npx"))?;
+            fs::create_dir(cache_dir.join("_cacache"))?;
+            fs::create_dir(cache_dir.join("_logs"))?;
+            fs::write(cache_dir.join("_npx/old-agent"), b"old")?;
+            fs::write(cache_dir.join("_cacache/old-tarball"), b"old")?;
+            fs::write(cache_dir.join("_logs/current.log"), b"keep")?;
+
+            migrate_legacy_npm_cache(cache_dir).await?;
+
+            assert!(!cache_dir.join("_npx").exists());
+            assert!(!cache_dir.join("_cacache").exists());
+            assert!(cache_dir.join("_logs/current.log").exists());
+            assert!(cache_dir.join(super::NPM_CACHE_MIGRATION_MARKER).exists());
+
+            fs::create_dir(cache_dir.join("_npx"))?;
+            migrate_legacy_npm_cache(cache_dir).await?;
+            assert!(cache_dir.join("_npx").exists());
+
+            Ok(())
+        })
+    }
 
     // Map localhost to 127.0.0.1
     // NodeRuntime without environment information can not parse `localhost` correctly.
