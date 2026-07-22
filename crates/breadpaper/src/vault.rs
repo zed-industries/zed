@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,6 +21,11 @@ template = "templates/daily.md"
 dir      = "weekly"          # weekly notes dir, relative to vault root
 filename = "GGGG-[W]WW"      # ISO week year + week number, e.g. 2026-W30
 template = "templates/weekly.md"
+
+[[areas.installed]]
+id      = "timeline"
+enabled = true
+version = 1
 "#;
 
 pub const DEFAULT_DAILY_TEMPLATE: &str = r#"# {{date:dddd, MMMM D, YYYY}}
@@ -71,21 +76,32 @@ This file is just a note, too. Edit it, or delete it once you've found your feet
 "#;
 
 /// The parsed shape of `config.toml`; every field is optional so partially
-/// specified sections fall back to defaults.
-#[derive(Debug, Default, Deserialize)]
+/// specified sections fall back to defaults. Also `Serialize` so the areas
+/// registry can rewrite the file: only fields the user actually set are
+/// re-emitted (comments are not preserved).
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 struct VaultConfigContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
     schema: Option<u32>,
+    #[serde(skip_serializing_if = "NotesConfigContent::is_unset")]
     daily: NotesConfigContent,
+    #[serde(skip_serializing_if = "NotesConfigContent::is_unset")]
     weekly: NotesConfigContent,
+    #[serde(skip_serializing_if = "HistoryConfigContent::is_unset")]
     history: HistoryConfigContent,
+    #[serde(skip_serializing_if = "AreasConfigContent::is_unset")]
+    areas: AreasConfigContent,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 struct NotesConfigContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
     dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     template: Option<String>,
 }
 
@@ -97,14 +113,22 @@ impl NotesConfigContent {
             template: self.template.unwrap_or(defaults.template),
         }
     }
+
+    fn is_unset(&self) -> bool {
+        self.dir.is_none() && self.filename.is_none() && self.template.is_none()
+    }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 struct HistoryConfigContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
     enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     idle_debounce_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     heartbeat_minutes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_file_bytes: Option<u64>,
 }
 
@@ -115,6 +139,80 @@ impl HistoryConfigContent {
             idle_debounce: Duration::from_secs(self.idle_debounce_seconds.unwrap_or(20)),
             heartbeat: Duration::from_secs(self.heartbeat_minutes.unwrap_or(5) * 60),
             max_file_bytes: self.max_file_bytes.unwrap_or(2_000_000),
+        }
+    }
+
+    fn is_unset(&self) -> bool {
+        self.enabled.is_none()
+            && self.idle_debounce_seconds.is_none()
+            && self.heartbeat_minutes.is_none()
+            && self.max_file_bytes.is_none()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct AreasConfigContent {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    installed: Vec<InstalledAreaContent>,
+}
+
+impl AreasConfigContent {
+    fn resolve(self) -> AreasConfig {
+        AreasConfig {
+            installed: self
+                .installed
+                .into_iter()
+                .map(InstalledAreaContent::resolve)
+                .collect(),
+        }
+    }
+
+    fn is_unset(&self) -> bool {
+        self.installed.is_empty()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct InstalledAreaContent {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    version: Option<u32>,
+}
+
+impl InstalledAreaContent {
+    fn resolve(self) -> InstalledArea {
+        InstalledArea {
+            id: self.id,
+            enabled: self.enabled.unwrap_or(true),
+            version: self.version.unwrap_or(1),
+        }
+    }
+}
+
+/// The `[[areas.installed]]` registry (the V3 Areas spec §5.4). Array order is
+/// display order in the panel's Areas section.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AreasConfig {
+    pub installed: Vec<InstalledArea>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstalledArea {
+    pub id: String,
+    pub enabled: bool,
+    pub version: u32,
+}
+
+impl InstalledArea {
+    fn into_content(self) -> InstalledAreaContent {
+        InstalledAreaContent {
+            id: self.id,
+            enabled: Some(self.enabled),
+            version: Some(self.version),
         }
     }
 }
@@ -141,6 +239,7 @@ pub struct VaultConfig {
     pub daily: NotesConfig,
     pub weekly: NotesConfig,
     pub history: HistoryConfig,
+    pub areas: AreasConfig,
 }
 
 impl Default for VaultConfig {
@@ -156,6 +255,7 @@ impl VaultConfigContent {
             daily: self.daily.resolve(NotesConfig::daily_default()),
             weekly: self.weekly.resolve(NotesConfig::weekly_default()),
             history: self.history.resolve(),
+            areas: self.areas.resolve(),
         }
     }
 }
@@ -241,26 +341,63 @@ impl Vault {
     }
 }
 
+/// Creates `path`'s parent directories and writes `contents`, unless the file
+/// already exists — scaffolding and Area materialization never clobber user
+/// data.
+pub(crate) fn write_if_missing(path: &Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    if !path.exists() {
+        fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Rewrites `.breadpaper/config.toml` with `mutate` applied to the
+/// `[[areas.installed]]` registry. Re-serializes the known config schema, so
+/// only fields present in the file are kept and comments are dropped.
+/// Blocking I/O — call from a background thread.
+pub fn update_areas_registry(
+    root: &Path,
+    mutate: impl FnOnce(&mut Vec<InstalledArea>),
+) -> Result<()> {
+    let config_path = root.join(VAULT_MARKER_DIR).join(VAULT_CONFIG_FILE);
+    let raw = fs::read_to_string(&config_path)
+        .with_context(|| format!("reading {}", config_path.display()))?;
+    let mut content: VaultConfigContent = toml::from_str(&raw)
+        .with_context(|| format!("parsing {}", config_path.display()))?;
+
+    let mut installed: Vec<InstalledArea> = content
+        .areas
+        .installed
+        .drain(..)
+        .map(InstalledAreaContent::resolve)
+        .collect();
+    mutate(&mut installed);
+    content.areas.installed = installed
+        .into_iter()
+        .map(InstalledArea::into_content)
+        .collect();
+
+    let serialized =
+        toml::to_string_pretty(&content).context("serializing vault config")?;
+    fs::write(&config_path, serialized)
+        .with_context(|| format!("writing {}", config_path.display()))?;
+    Ok(())
+}
+
 /// Writes the default vault structure into `root`, creating it if needed.
 ///
 /// Only files that don't exist yet are written, so scaffolding into a non-empty
 /// folder (the "Create vault here" action) never clobbers user data.
 pub fn scaffold_vault(root: &Path) -> Result<()> {
-    let write_if_missing = |path: &Path, contents: &str| -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        if !path.exists() {
-            fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
-        }
-        Ok(())
-    };
-
-    write_if_missing(
-        &root.join(VAULT_MARKER_DIR).join(VAULT_CONFIG_FILE),
-        DEFAULT_CONFIG_TOML,
-    )?;
+    let config_path = root.join(VAULT_MARKER_DIR).join(VAULT_CONFIG_FILE);
+    // The Timeline Area ships pre-installed, but only when this scaffold is
+    // creating the vault: an existing config.toml wouldn't register the Area,
+    // and materializing unregistered files would clutter an existing vault.
+    let install_default_areas = !config_path.exists();
+    write_if_missing(&config_path, DEFAULT_CONFIG_TOML)?;
     fs::create_dir_all(root.join("daily")).context("creating daily dir")?;
     fs::create_dir_all(root.join("weekly")).context("creating weekly dir")?;
     write_if_missing(&root.join("templates").join("daily.md"), DEFAULT_DAILY_TEMPLATE)?;
@@ -269,6 +406,11 @@ pub fn scaffold_vault(root: &Path) -> Result<()> {
         DEFAULT_WEEKLY_TEMPLATE,
     )?;
     write_if_missing(&root.join(WELCOME_FILE), DEFAULT_WELCOME)?;
+    if install_default_areas {
+        let timeline = crate::areas::catalog_area(crate::areas::TIMELINE_AREA_ID)?
+            .context("the bundled Timeline Area is missing from the catalog")?;
+        crate::areas::materialize_area(root, &timeline)?;
+    }
     Ok(())
 }
 
@@ -308,7 +450,17 @@ mod tests {
             VaultStatus::Valid(vault) => vault,
             other => panic!("expected valid vault, got {other:?}"),
         };
-        assert_eq!(vault.config, VaultConfig::default());
+        assert_eq!(vault.config.daily, VaultConfig::default().daily);
+        assert_eq!(vault.config.weekly, VaultConfig::default().weekly);
+        assert_eq!(vault.config.history, VaultConfig::default().history);
+        assert_eq!(
+            vault.config.areas.installed,
+            vec![InstalledArea {
+                id: "timeline".to_string(),
+                enabled: true,
+                version: 1,
+            }]
+        );
         assert!(dir.path().join("daily").is_dir());
         assert!(dir.path().join("weekly").is_dir());
         assert!(dir.path().join("templates/daily.md").is_file());
@@ -357,6 +509,54 @@ mod tests {
             }
             other => panic!("expected valid vault, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn update_areas_registry_preserves_other_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n\n[daily]\ndir = \"notes/daily\"\n\n[history]\nenabled = false\n",
+        )
+        .unwrap();
+
+        update_areas_registry(dir.path(), |installed| {
+            installed.push(InstalledArea {
+                id: "timeline".to_string(),
+                enabled: true,
+                version: 1,
+            });
+        })
+        .unwrap();
+        update_areas_registry(dir.path(), |installed| {
+            if let Some(entry) = installed.first_mut() {
+                entry.enabled = false;
+            }
+        })
+        .unwrap();
+
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                assert_eq!(vault.config.daily.dir, "notes/daily");
+                // Unset fields must stay unset, not be materialized as defaults.
+                assert_eq!(vault.config.daily.filename, "YYYY-MM-DD");
+                assert!(!vault.config.history.enabled);
+                assert_eq!(vault.config.weekly, NotesConfig::weekly_default());
+                assert_eq!(
+                    vault.config.areas.installed,
+                    vec![InstalledArea {
+                        id: "timeline".to_string(),
+                        enabled: false,
+                        version: 1,
+                    }]
+                );
+            }
+            other => panic!("expected valid vault, got {other:?}"),
+        }
+        let raw = fs::read_to_string(marker.join(VAULT_CONFIG_FILE)).unwrap();
+        assert!(!raw.contains("[weekly]"), "unset section reappeared: {raw}");
     }
 
     #[test]

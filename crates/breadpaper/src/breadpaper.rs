@@ -1,15 +1,51 @@
+pub mod areas;
 pub mod history;
 pub mod notes;
 pub mod timeline_panel;
 pub mod vault;
 
-use anyhow::Result;
-use gpui::{App, AppContext as _, Task};
+use anyhow::{Context as _, Result};
+use editor::Editor;
+use gpui::{App, AppContext as _, AsyncWindowContext, Task, WeakEntity};
+use markdown_preview::markdown_preview_view::MarkdownPreviewView;
+use std::path::PathBuf;
 use std::sync::Arc;
-use workspace::AppState;
+use workspace::{AppState, OpenOptions, OpenVisible, Workspace};
 
 pub use timeline_panel::{TimelinePanel, init, show_panel_if_vault};
 pub use vault::{Vault, VaultStatus, default_vault_path, scaffold_vault};
+
+/// Opens `path` and lands the user on a rendered markdown preview of it
+/// ("viewing mode") instead of the raw buffer. There is no one-shot
+/// open-as-preview API, so this opens the file as an editor first and then
+/// attaches an independent preview item to the same pane.
+pub async fn open_abs_path_as_preview(
+    workspace: WeakEntity<Workspace>,
+    path: PathBuf,
+    cx: &mut AsyncWindowContext,
+) -> Result<()> {
+    let item = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                path.clone(),
+                OpenOptions {
+                    visible: Some(OpenVisible::All),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })?
+        .await?;
+    let editor = item
+        .downcast::<Editor>()
+        .with_context(|| format!("{} did not open as a markdown editor", path.display()))?;
+    workspace.update_in(cx, |workspace, window, cx| {
+        let pane = workspace.active_pane().clone();
+        MarkdownPreviewView::open_preview_in_pane(workspace, editor, pane, window, cx);
+    })?;
+    Ok(())
+}
 
 /// Opens the default vault as the workspace, scaffolding the sample vault
 /// first if it doesn't exist yet. On a fresh scaffold, `welcome.md` is opened

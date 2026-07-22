@@ -1,19 +1,22 @@
 use anyhow::Result;
 use chrono::Local;
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Pixels, Subscription, WeakEntity, Window, actions, px,
+    Action, App, AsyncWindowContext, Context, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, Pixels, PromptLevel, SharedString, Subscription, WeakEntity, Window,
+    actions, px,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Project;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use ui::prelude::*;
-use ui::{Button, Icon, IconSize, Label, ListHeader, ListItem};
+use ui::{Button, Icon, IconButton, IconSize, Label, ListHeader, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, OpenVisible, Toast, Workspace};
 
+use crate::areas::{self, AreaManifest};
 use crate::notes::{EnsureNoteOutcome, TimelineEntry, ensure_note};
 use crate::vault::{Vault, VaultStatus, scaffold_vault};
 
@@ -96,6 +99,14 @@ pub struct TimelinePanel {
     /// Keyboard cursor over `TIMELINE_ENTRIES`. `None` means the highlight
     /// follows whichever entry matches the active editor item.
     selected_index: Option<usize>,
+    /// Enabled Areas in registry order, loaded whenever the vault status
+    /// changes.
+    areas: Vec<AreaManifest>,
+    /// Catalog Areas without an enabled registry entry, offered by "Add Area".
+    addable_areas: Vec<AreaManifest>,
+    /// Area rows start expanded; this tracks the ones the user collapsed.
+    collapsed_areas: HashSet<String>,
+    show_add_areas: bool,
     position: DockPosition,
     _subscriptions: Vec<Subscription>,
 }
@@ -147,6 +158,10 @@ impl TimelinePanel {
                 focus_handle: cx.focus_handle(),
                 vault_status: VaultStatus::NotAVault,
                 selected_index: None,
+                areas: Vec::new(),
+                addable_areas: Vec::new(),
+                collapsed_areas: HashSet::new(),
+                show_add_areas: false,
                 position: DockPosition::Left,
                 _subscriptions: vec![project_subscription, workspace_subscription],
             };
@@ -167,8 +182,39 @@ impl TimelinePanel {
         };
         if status != self.vault_status {
             self.vault_status = status;
+            self.refresh_areas();
             cx.notify();
         }
+    }
+
+    /// Reloads the Areas section state from the vault's registry and the
+    /// app-shipped catalog. Registry changes flow through `Vault` equality in
+    /// `refresh_vault_status`, so install/remove refresh without a restart.
+    fn refresh_areas(&mut self) {
+        let VaultStatus::Valid(vault) = &self.vault_status else {
+            self.areas = Vec::new();
+            self.addable_areas = Vec::new();
+            return;
+        };
+        self.areas = areas::enabled_areas(vault);
+        self.addable_areas = match areas::catalog() {
+            Ok(catalog) => catalog
+                .into_iter()
+                .map(|area| area.manifest)
+                .filter(|manifest| {
+                    !vault
+                        .config
+                        .areas
+                        .installed
+                        .iter()
+                        .any(|entry| entry.enabled && entry.id == manifest.id)
+                })
+                .collect(),
+            Err(error) => {
+                log::error!("BreadPaper: couldn't load the Areas catalog: {error:?}");
+                Vec::new()
+            }
+        };
     }
 
     fn open_note(&mut self, entry: TimelineEntry, window: &mut Window, cx: &mut Context<Self>) {
@@ -259,6 +305,273 @@ impl TimelinePanel {
                         .update(cx, |workspace, cx| {
                             workspace
                                 .show_error(format!("Couldn't create the vault: {error}"), cx);
+                        })
+                        .log_err();
+                    Err(error)
+                }
+            }
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn vault_root(&self) -> Option<PathBuf> {
+        match &self.vault_status {
+            VaultStatus::Valid(vault) => Some(vault.root.clone()),
+            _ => None,
+        }
+    }
+
+    /// Opens an Area-shipped markdown file (explainer doc or skill) in
+    /// viewing mode. A missing file gets a toast offering to re-materialize
+    /// the Area.
+    fn open_area_file(
+        &mut self,
+        relative_path: String,
+        area_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.vault_root() else {
+            return;
+        };
+        let path = match areas::vault_file_path(&root, &relative_path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(format!("Couldn't open the file: {error}"), cx);
+                    })
+                    .log_err();
+                return;
+            }
+        };
+        if !path.is_file() {
+            self.show_missing_file_toast(relative_path, area_id, cx);
+            return;
+        }
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let open_result =
+                crate::open_abs_path_as_preview(workspace.clone(), path, cx).await;
+            if let Err(error) = &open_result {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(format!("Couldn't open the file: {error}"), cx);
+                    })
+                    .log_err();
+            }
+            open_result
+        })
+        .detach_and_log_err(cx);
+    }
+
+    /// Opens an Area surface (e.g. the weekly dashboard) with the system
+    /// handler — Zed has no web view, so HTML opens in the default browser.
+    fn open_surface(&mut self, relative_path: String, area_id: String, cx: &mut Context<Self>) {
+        let Some(root) = self.vault_root() else {
+            return;
+        };
+        let path = match areas::vault_file_path(&root, &relative_path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(format!("Couldn't open the file: {error}"), cx);
+                    })
+                    .log_err();
+                return;
+            }
+        };
+        if !path.is_file() {
+            self.show_missing_file_toast(relative_path, area_id, cx);
+            return;
+        }
+        cx.open_with_system(&path);
+    }
+
+    fn show_missing_file_toast(
+        &mut self,
+        relative_path: String,
+        area_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = cx.entity().downgrade();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                struct AreaFileMissingToast;
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<AreaFileMissingToast>(),
+                        format!("{relative_path} is missing from the vault."),
+                    )
+                    .on_click("Reinstall the Area's files", move |_window, cx| {
+                        panel
+                            .update(cx, |panel, cx| panel.install_area(area_id.clone(), cx))
+                            .log_err();
+                    }),
+                    cx,
+                );
+            })
+            .log_err();
+    }
+
+    /// Materializes a catalog Area into the vault (or re-enables a disabled
+    /// one) and registers it; the section refreshes without a restart.
+    fn install_area(&mut self, area_id: String, cx: &mut Context<Self>) {
+        let Some(root) = self.vault_root() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let install =
+            cx.background_spawn(async move { areas::install_area(&root, &area_id) });
+        cx.spawn(async move |this, cx| {
+            match install.await {
+                Ok(()) => this.update(cx, |this, cx| {
+                    this.show_add_areas = false;
+                    this.refresh_vault_status(cx);
+                }),
+                Err(error) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(format!("Couldn't add the Area: {error}"), cx);
+                        })
+                        .log_err();
+                    Err(error)
+                }
+            }
+        })
+        .detach_and_log_err(cx);
+    }
+
+    /// Removing always asks: deactivate (keep all files) or deactivate and
+    /// delete the Area-shipped files. The prompt lists exactly what would be
+    /// deleted; user notes and modified-since-install files are never deleted.
+    fn remove_area(&mut self, area_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.vault_root() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let plan = cx.background_spawn({
+            let root = root.clone();
+            let area_id = area_id.clone();
+            async move { areas::plan_removal(&root, &area_id) }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let plan = match plan.await {
+                Ok(plan) => plan,
+                Err(error) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(
+                                format!("Couldn't prepare the Area removal: {error}"),
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    return Err(error);
+                }
+            };
+
+            let mut detail = String::new();
+            if plan.delete.is_empty() {
+                detail.push_str("No Area-shipped files would be deleted.\n");
+            } else {
+                detail.push_str("Deleting the Area's files removes:\n");
+                for file in &plan.delete {
+                    detail.push_str("  - ");
+                    detail.push_str(file);
+                    detail.push('\n');
+                }
+            }
+            if !plan.keep_modified.is_empty() {
+                detail.push_str("\nModified since install, always kept:\n");
+                for file in &plan.keep_modified {
+                    detail.push_str("  - ");
+                    detail.push_str(file);
+                    detail.push('\n');
+                }
+            }
+            detail.push_str("\nYour notes are never deleted.");
+
+            let answer = cx.update(|window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &format!("Remove the {} Area?", plan.area_name),
+                    Some(&detail),
+                    &[
+                        "Deactivate, Keep All Files",
+                        "Deactivate and Delete Area Files",
+                        "Cancel",
+                    ],
+                    cx,
+                )
+            })?;
+            let Some(answer) = answer.await.log_err() else {
+                return Ok(());
+            };
+
+            let operation = match answer {
+                0 => cx
+                    .background_spawn({
+                        let root = root.clone();
+                        let area_id = area_id.clone();
+                        async move { areas::deactivate_area(&root, &area_id).map(|()| None) }
+                    })
+                    .await,
+                1 => cx
+                    .background_spawn({
+                        let root = root.clone();
+                        let area_id = area_id.clone();
+                        async move { areas::delete_area(&root, &area_id).map(Some) }
+                    })
+                    .await,
+                _ => return Ok(()),
+            };
+
+            match operation {
+                Ok(outcome) => {
+                    let message = match outcome {
+                        None => format!(
+                            "Deactivated the {} Area. All of its files were kept.",
+                            plan.area_name
+                        ),
+                        Some(outcome) => {
+                            let mut message = format!(
+                                "Removed the {} Area and deleted {} of its files.",
+                                plan.area_name,
+                                outcome.deleted.len()
+                            );
+                            if !outcome.kept_modified.is_empty() {
+                                message.push_str(&format!(
+                                    " Kept {} modified: {}.",
+                                    outcome.kept_modified.len(),
+                                    outcome.kept_modified.join(", ")
+                                ));
+                            }
+                            message
+                        }
+                    };
+                    this.update(cx, |this, cx| this.refresh_vault_status(cx))?;
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            struct AreaRemovedToast;
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<AreaRemovedToast>(),
+                                    message,
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    Ok(())
+                }
+                Err(error) => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .show_error(format!("Couldn't remove the Area: {error}"), cx);
                         })
                         .log_err();
                     Err(error)
@@ -360,6 +673,179 @@ impl TimelinePanel {
             ))
     }
 
+    fn render_areas_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_px()
+            .mt_2()
+            .child(
+                ListHeader::new("Areas").start_slot(
+                    Icon::new(IconName::Blocks)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+            .when(self.areas.is_empty(), |this| {
+                this.child(
+                    div().px_2().py_1().child(
+                        Label::new("No Areas are enabled in this vault.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+                )
+            })
+            .children(
+                self.areas
+                    .iter()
+                    .map(|manifest| self.render_area(manifest, cx)),
+            )
+            .child(self.render_add_area(cx))
+    }
+
+    fn render_area(&self, manifest: &AreaManifest, cx: &Context<Self>) -> AnyElement {
+        let area_id = manifest.id.clone();
+        let expanded = !self.collapsed_areas.contains(&manifest.id);
+        let mut section = v_flex().child(
+            ListItem::new(ElementId::Name(SharedString::from(format!(
+                "breadpaper-area-{}",
+                manifest.id
+            ))))
+            .toggle(expanded)
+            .always_show_disclosure_icon(true)
+            .on_toggle(cx.listener({
+                let area_id = area_id.clone();
+                move |this, _, _window, cx| {
+                    if !this.collapsed_areas.remove(&area_id) {
+                        this.collapsed_areas.insert(area_id.clone());
+                    }
+                    cx.notify();
+                }
+            }))
+            .child(Label::new(manifest.name.clone()))
+            .end_slot(
+                IconButton::new(
+                    ElementId::Name(SharedString::from(format!(
+                        "breadpaper-remove-area-{}",
+                        manifest.id
+                    ))),
+                    IconName::Trash,
+                )
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Remove Area…"))
+                .on_click(cx.listener({
+                    let area_id = area_id.clone();
+                    move |this, _, window, cx| {
+                        this.remove_area(area_id.clone(), window, cx);
+                    }
+                })),
+            )
+            .on_click(cx.listener({
+                let area_id = area_id.clone();
+                let doc = manifest.doc.clone();
+                move |this, _, window, cx| {
+                    this.open_area_file(doc.clone(), area_id.clone(), window, cx);
+                }
+            })),
+        );
+        if expanded {
+            section = section
+                .children(manifest.skills.iter().map(|skill| {
+                    ListItem::new(ElementId::Name(SharedString::from(format!(
+                        "breadpaper-skill-{}-{}",
+                        manifest.id, skill.id
+                    ))))
+                    .indent_level(1)
+                    .indent_step_size(px(12.))
+                    .start_slot(
+                        Icon::new(IconName::Book)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new(skill.name.clone()).size(LabelSize::Small))
+                    .when(!skill.summary.is_empty(), |item| {
+                        item.tooltip(Tooltip::text(skill.summary.clone()))
+                    })
+                    .on_click(cx.listener({
+                        let area_id = area_id.clone();
+                        let file = skill.file.clone();
+                        move |this, _, window, cx| {
+                            this.open_area_file(file.clone(), area_id.clone(), window, cx);
+                        }
+                    }))
+                }))
+                .children(manifest.surfaces.iter().enumerate().map(
+                    |(surface_index, surface)| {
+                        ListItem::new(ElementId::Name(SharedString::from(format!(
+                            "breadpaper-surface-{}-{surface_index}",
+                            manifest.id
+                        ))))
+                        .indent_level(1)
+                        .indent_step_size(px(12.))
+                        .start_slot(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(surface.name.clone()).size(LabelSize::Small))
+                        .on_click(cx.listener({
+                            let area_id = area_id.clone();
+                            let open = surface.open.clone();
+                            move |this, _, _window, cx| {
+                                this.open_surface(open.clone(), area_id.clone(), cx);
+                            }
+                        }))
+                    },
+                ));
+        }
+        section.into_any_element()
+    }
+
+    fn render_add_area(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .child(
+                ListItem::new("breadpaper-add-area")
+                    .toggle_state(self.show_add_areas)
+                    .start_slot(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new("Add Area").color(Color::Muted))
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.show_add_areas = !this.show_add_areas;
+                        cx.notify();
+                    })),
+            )
+            .when(self.show_add_areas, |this| {
+                if self.addable_areas.is_empty() {
+                    this.child(
+                        div().px_2().py_1().child(
+                            Label::new("Every catalog Area is already installed.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                } else {
+                    this.children(self.addable_areas.iter().map(|manifest| {
+                        let area_id = manifest.id.clone();
+                        ListItem::new(ElementId::Name(SharedString::from(format!(
+                            "breadpaper-install-area-{}",
+                            manifest.id
+                        ))))
+                        .indent_level(1)
+                        .indent_step_size(px(12.))
+                        .child(Label::new(manifest.name.clone()).size(LabelSize::Small))
+                        .when(!manifest.summary.is_empty(), |item| {
+                            item.tooltip(Tooltip::text(manifest.summary.clone()))
+                        })
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.install_area(area_id.clone(), cx);
+                        }))
+                    }))
+                }
+            })
+    }
+
     fn render_non_vault(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_2()
@@ -395,7 +881,10 @@ impl TimelinePanel {
 impl Render for TimelinePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.vault_status {
-            VaultStatus::Valid(_) => self.render_entries(cx).into_any_element(),
+            VaultStatus::Valid(_) => v_flex()
+                .child(self.render_entries(cx))
+                .child(self.render_areas_section(cx))
+                .into_any_element(),
             VaultStatus::NotAVault => self.render_non_vault(cx).into_any_element(),
             VaultStatus::Invalid { error } => self.render_invalid(error).into_any_element(),
         };
