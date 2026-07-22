@@ -30,36 +30,13 @@ const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
 
 macro_rules! concat_sections {
-    (@vec, $($arr:expr),+ $(,)?) => {{
-        let total_len = 0_usize $(+ $arr.len())+;
-        let mut out = Vec::with_capacity(total_len);
+    (@vec, $($arr:expr),+ $(,)?) => {
+        std::iter::empty::<SettingsPageItem>()$(.chain($arr))+.collect::<Vec<_>>()
+    };
 
-        $(
-            out.extend($arr);
-        )+
-
-        out
-    }};
-
-    ($($arr:expr),+ $(,)?) => {{
-        let total_len = 0_usize $(+ $arr.len())+;
-
-        let mut out: Box<[std::mem::MaybeUninit<_>]> = Box::new_uninit_slice(total_len);
-
-        let mut index = 0usize;
-        $(
-            let array = $arr;
-            for item in array {
-                out[index].write(item);
-                index += 1;
-            }
-        )+
-
-        debug_assert_eq!(index, total_len);
-
-        // SAFETY: we wrote exactly `total_len` elements.
-        unsafe { out.assume_init() }
-    }};
+    ($($arr:expr),+ $(,)?) => {
+        concat_sections!(@vec, $($arr),+).into_boxed_slice()
+    };
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
