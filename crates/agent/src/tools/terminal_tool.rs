@@ -29,7 +29,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
 ///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+/// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
 ///
@@ -53,7 +53,7 @@ pub struct TerminalToolInput {
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
+    /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src` or `/home/user/my-project`.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
@@ -71,7 +71,7 @@ pub struct TerminalToolInput {
 ///
 /// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
 ///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+/// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
 ///
@@ -95,7 +95,7 @@ pub struct SandboxedTerminalToolInput {
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
+    /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src` or `/home/user/my-project`.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
@@ -1249,26 +1249,150 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
             None => Ok(None),
         }
     } else {
-        let input_path = Path::new(cd);
+        let path_style = project.path_style(cx);
+        let worktree_roots = project
+            .worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.root_name_str(), worktree.abs_path().to_path_buf())
+            })
+            .collect::<Vec<_>>();
 
-        if input_path.is_absolute() {
-            if project
-                .worktrees(cx)
-                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
-            {
-                return Ok(Some(input_path.into()));
-            }
-        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
+        if let Some(dir) = resolve_cd_in_worktrees(cd, path_style, &worktree_roots) {
+            return Ok(Some(dir));
         }
 
-        anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
+        anyhow::bail!("`cd` directory {cd:?} was not in any root directory in the project.");
     }
+}
+
+/// Resolves a `cd` argument to an absolute worktree directory. `cd` may be a
+/// worktree's root name or an absolute path to a worktree or a subdirectory
+/// therein.
+///
+/// Absolute paths are classified with the project's [`PathStyle`] rather than
+/// the host's, so an absolute POSIX path resolves correctly on a Windows host
+/// driving a WSL/SSH project (#60040).
+///
+/// Paths are validated with [`RelPath`] via [`PathStyle::strip_prefix`], to
+/// ensure that `cd` cannot escape the worktree root with a `..` sequence
+/// (#60014).
+fn resolve_cd_in_worktrees(
+    cd: &str,
+    path_style: util::paths::PathStyle,
+    worktree_roots: &[(&str, PathBuf)],
+) -> Option<PathBuf> {
+    let cd_path = Path::new(cd);
+    let is_absolute = path_style.is_absolute(cd);
+
+    worktree_roots.iter().find_map(|(root_name, abs_path)| {
+        let prefix: &Path = if is_absolute {
+            abs_path
+        } else {
+            root_name.as_ref()
+        };
+        let subpath = path_style.strip_prefix(cd_path, prefix)?;
+        if subpath.is_empty() {
+            Some(abs_path.clone())
+        } else {
+            path_style
+                .join_path(abs_path, &*subpath.display(path_style))
+                .ok()
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolve_cd_uses_project_path_style() {
+        use util::paths::PathStyle::{Posix, Windows};
+
+        // Deliberately ambiguous root names to stress test path resolution.
+        let posix_roots: Vec<(&str, PathBuf)> = vec![
+            ("worktree", PathBuf::from("/a/worktree")),
+            ("worktree", PathBuf::from("/b/worktree")),
+        ];
+        let windows_roots = vec![("worktree", PathBuf::from("C:/work/worktree"))];
+
+        // absolute paths
+        assert_eq!(
+            resolve_cd_in_worktrees("/b/worktree", Posix, &posix_roots),
+            Some(PathBuf::from("/b/worktree")),
+            "a POSIX-absolute path resolves under a POSIX project path style even on a Windows host"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/src", Posix, &posix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "an absolute path inside a worktree resolves to the same path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/elsewhere", Posix, &posix_roots),
+            None,
+            "an absolute path outside every worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/src/../docs", Posix, &posix_roots),
+            Some(PathBuf::from("/a/worktree/docs")),
+            "an absolute path that stays within its worktree via `..` resolves to the same path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/../escape", Posix, &posix_roots),
+            None,
+            "an absolute path that escapes its worktree via `..` is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree/../../b/worktree", Posix, &posix_roots),
+            None,
+            "a `..` escape is rejected even when the final path lands in a different valid worktree"
+        );
+
+        // relative root names
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree", Posix, &posix_roots),
+            Some(PathBuf::from("/a/worktree")),
+            "a root-relative path to a worktree root resolves to the first matching worktree"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src", Posix, &posix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "a root-relative path to a subdirectory resolves to the absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src/../doc", Posix, &posix_roots),
+            Some(PathBuf::from("/a/worktree/doc")),
+            "a root-relative path to a subdirectory with `..` resolves to a clean absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/../escape", Posix, &posix_roots),
+            None,
+            "a root-relative path that escapes the worktree via `..` is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktreeextra", Posix, &posix_roots),
+            None,
+            "a root-relative path that is not any of the worktree roots is rejected"
+        );
+
+        // Windows paths
+        assert_eq!(
+            resolve_cd_in_worktrees("C:/work/worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:/work/worktree")),
+            "Windows-absolute paths to root directories resolve"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:/work/worktree/src", Windows, &windows_roots),
+            Some(PathBuf::from("C:/work/worktree\\src")),
+            "Windows-absolute paths to subdirectories resolve to the same path, with Windows path style"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree\\src", Windows, &windows_roots),
+            Some(PathBuf::from("C:/work/worktree\\src")),
+            "Windows-relative paths to subdirectories resolve to the same path, with Windows path style"
+        );
+    }
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
