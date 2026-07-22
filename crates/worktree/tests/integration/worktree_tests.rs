@@ -5262,6 +5262,51 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
 }
 
 #[gpui::test]
+async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "config".to_string(),
+                visible: true,
+                abs_path: "/home/user/.ssh/config".to_string(),
+                root_repo_common_dir: None,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let file = worktree::File {
+        worktree,
+        path: Arc::from(rel_path("")),
+        disk_state: language::DiskState::New,
+        entry_id: None,
+        is_local: false,
+        is_private: false,
+    };
+
+    cx.read(|cx| {
+        assert_eq!(
+            language::File::full_path(&file, cx),
+            PathBuf::from("config")
+        );
+        assert_eq!(
+            language::File::file_system_abs_path(&file, cx),
+            PathBuf::from("/home/user/.ssh/config")
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arrives(
     cx: &mut TestAppContext,
 ) {
