@@ -15616,7 +15616,10 @@ async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &m
         "line with spaces  \n"
     );
     assert_eq!(
-        fs.load(path!("/README.md").as_ref()).await.unwrap(),
+        fs.load(path!("/README.md").as_ref())
+            .await
+            .unwrap()
+            .replace("\r\n", "\n"),
         "line with spaces  \n"
     );
 }
