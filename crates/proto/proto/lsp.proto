@@ -757,6 +757,7 @@ message TraceMessage {
 
 message RpcMessage {
   Kind kind = 1;
+  optional uint64 elapsed_nanos = 2;
 
   enum Kind {
     RECEIVED = 0;

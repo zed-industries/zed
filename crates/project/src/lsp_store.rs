@@ -14703,8 +14703,13 @@ impl PartialEq for LanguageServerPromptRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageServerLogType {
     Log(MessageType),
-    Trace { verbose_info: Option<String> },
-    Rpc { received: bool },
+    Trace {
+        verbose_info: Option<String>,
+    },
+    Rpc {
+        received: bool,
+        elapsed: Option<Duration>,
+    },
 }
 
 impl LanguageServerLogType {
@@ -14731,14 +14736,19 @@ impl LanguageServerLogType {
                     verbose_info: verbose_info.to_owned(),
                 })
             }
-            Self::Rpc { received } => {
+            Self::Rpc { received, elapsed } => {
                 let kind = if *received {
                     proto::rpc_message::Kind::Received
                 } else {
                     proto::rpc_message::Kind::Sent
                 };
                 let kind = kind as i32;
-                proto::language_server_log::LogType::Rpc(proto::RpcMessage { kind })
+                let elapsed_nanos =
+                    elapsed.map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+                proto::language_server_log::LogType::Rpc(proto::RpcMessage {
+                    kind,
+                    elapsed_nanos,
+                })
             }
         }
     }
@@ -14765,6 +14775,7 @@ impl LanguageServerLogType {
                     rpc_message::Kind::Received => true,
                     rpc_message::Kind::Sent => false,
                 },
+                elapsed: message.elapsed_nanos.map(Duration::from_nanos),
             },
         }
     }

@@ -5857,14 +5857,23 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let source = self
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .anchor_before(Point::new(display_row.0, 0u32));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        let anchor = position.unwrap_or(source);
 
-        let context_menu =
-            self.gutter_context_menu(position.unwrap_or(source), display_row, window, cx);
+        // Every entry in this menu either requires a worktree-file-backed buffer
+        // (breakpoints, bookmarks, run to cursor) or is meaningless without one
+        // (git blame), so don't open it for e.g. untitled buffers.
+        if !snapshot
+            .anchor_to_buffer_anchor(anchor)
+            .is_some_and(|(_, buffer_snapshot)| {
+                project::File::from_dyn(buffer_snapshot.file()).is_some()
+            })
+        {
+            return;
+        }
+
+        let context_menu = self.gutter_context_menu(anchor, display_row, window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -10820,7 +10829,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    fn lsp_data_enabled(&self) -> bool {
+    pub(crate) fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
