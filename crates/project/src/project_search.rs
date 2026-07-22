@@ -472,10 +472,18 @@ impl Search {
                     }
                     let tx = tx.clone();
                     let results = results.clone();
+                    let query = query.clone();
 
                     cx.background_executor()
                         .spawn(async move {
                             for entry in snapshot.files(include_ignored, 0) {
+                                if entry.is_fifo || !entry.is_file() {
+                                    continue;
+                                }
+                                if !query_matches_entry_path(&query, entry, &snapshot) {
+                                    continue;
+                                }
+
                                 let (should_scan_tx, should_scan_rx) = oneshot::channel();
 
                                 let Ok(_) = tx
@@ -656,6 +664,22 @@ impl Search {
     }
 }
 
+fn query_matches_entry_path(query: &SearchQuery, entry: &Entry, snapshot: &Snapshot) -> bool {
+    if !query.filters_path() {
+        return true;
+    }
+
+    let matched_path = if query.match_full_paths() {
+        let mut full_path = snapshot.root_name().to_owned();
+        full_path.push(&entry.path);
+        query.match_path(&full_path)
+    } else {
+        query.match_path(&entry.path)
+    };
+
+    matched_path
+}
+
 struct Worker {
     query: Arc<SearchQuery>,
     open_buffers: Arc<HashSet<ProjectEntryId>>,
@@ -820,17 +844,8 @@ impl RequestHandler<'_> {
                 return Ok(());
             }
 
-            if self.query.filters_path() {
-                let matched_path = if self.query.match_full_paths() {
-                    let mut full_path = snapshot.root_name().to_owned();
-                    full_path.push(&entry.path);
-                    self.query.match_path(&full_path)
-                } else {
-                    self.query.match_path(&entry.path)
-                };
-                if !matched_path {
-                    return Ok(());
-                }
+            if !query_matches_entry_path(self.query, &entry, &snapshot) {
+                return Ok(());
             }
 
             if self.open_entries.contains(&entry.id) {
