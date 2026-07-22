@@ -65,3 +65,37 @@ impl SerialTracker {
             .unwrap_or(0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clipboard_serial_ignores_unrelated_serial_kinds() {
+        let mut serial_tracker = SerialTracker::new();
+        serial_tracker.update(SerialKind::MousePress, 3783);
+        serial_tracker.update(SerialKind::InputMethod, 5011);
+        serial_tracker.update(SerialKind::KeyPress, 3787);
+        serial_tracker.update(SerialKind::MouseEnter, 6000);
+        serial_tracker.update(SerialKind::DataDevice, 7000);
+
+        assert_eq!(serial_tracker.get_latest(), 3787);
+    }
+
+    #[test]
+    fn test_clipboard_serial_uses_mouse_press_without_key_press() {
+        let mut serial_tracker = SerialTracker::new();
+        serial_tracker.update(SerialKind::MousePress, 3783);
+
+        assert_eq!(serial_tracker.get_latest(), 3783);
+    }
+
+    #[test]
+    fn test_clipboard_serial_uses_latest_eligible_event_across_rollover() {
+        let mut serial_tracker = SerialTracker::new();
+        serial_tracker.update(SerialKind::KeyPress, 0xffff_fff0);
+        serial_tracker.update(SerialKind::MousePress, 0x0000_0010);
+
+        assert_eq!(serial_tracker.get_latest(), 0x0000_0010);
+    }
+}
