@@ -50,8 +50,8 @@ use language::{
 };
 use lsp::{
     CodeActionKind, DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticSeverity, DocumentChanges,
-    FileOperationFilter, LanguageServerId, LanguageServerName, NumberOrString, TextDocumentEdit,
-    Uri, WillRenameFiles, notification::DidRenameFiles,
+    FileOperationFilter, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    NumberOrString, TextDocumentEdit, Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
@@ -1547,6 +1547,310 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
     // There's a new language server in town.
     assert_eq!(server.server_id(), LanguageServerId(1));
+}
+
+#[gpui::test]
+async fn test_typescript_language_server_selection_is_scoped_by_buffer_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "languages": {
+                        "TypeScript": {
+                            "language_servers": ["vtsls"]
+                        }
+                    }
+                }"#
+            },
+            "src": {
+                "app.ts": "export const app = 1;"
+            },
+            "supabase": {
+                "functions": {
+                    ".zed": {
+                        "settings.json": r#"{
+                            "languages": {
+                                "TypeScript": {
+                                    "language_servers": ["deno"]
+                                }
+                            }
+                        }"#
+                    },
+                    "edge.ts": "export const edge = 1;"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let _fake_vtsls = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "vtsls",
+            ..Default::default()
+        },
+    );
+    let _fake_deno = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "deno",
+            ..Default::default()
+        },
+    );
+
+    let (root_buffer, _root_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repo/src/app.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let (supabase_buffer, _supabase_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repo/supabase/functions/edge.ts"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let root_servers = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            root_buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    let supabase_servers = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            supabase_buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+
+    assert_eq!(root_servers, vec![LanguageServerName::new_static("vtsls")],);
+    assert_eq!(
+        supabase_servers,
+        vec![LanguageServerName::new_static("deno")],
+    );
+}
+
+#[gpui::test]
+async fn test_typescript_language_server_selection_rebinds_after_local_settings_change(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "languages": {
+                        "TypeScript": {
+                            "language_servers": ["vtsls"]
+                        }
+                    }
+                }"#
+            },
+            "supabase": {
+                "functions": {
+                    "edge.ts": "export const edge = 1;"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let _fake_vtsls = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "vtsls",
+            ..Default::default()
+        },
+    );
+    let _fake_deno = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "deno",
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repo/supabase/functions/edge.ts"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let servers_before = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    assert_eq!(
+        servers_before,
+        vec![LanguageServerName::new_static("vtsls")]
+    );
+
+    fs.insert_tree(
+        path!("/repo/supabase/functions/.zed"),
+        json!({
+            "settings.json": r#"{
+                "languages": {
+                    "TypeScript": {
+                        "language_servers": ["deno"]
+                    }
+                }
+            }"#
+        }),
+    )
+    .await;
+    cx.run_until_parked();
+
+    let servers_after = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    assert_eq!(servers_after, vec![LanguageServerName::new_static("deno")]);
+}
+
+#[gpui::test]
+async fn test_restarting_subset_of_servers_keeps_other_server_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "languages": {
+                        "TypeScript": {
+                            "language_servers": ["vtsls", "deno"]
+                        }
+                    }
+                }"#
+            },
+            "src": {
+                "app.ts": "export const app = 1;"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let _fake_vtsls = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "vtsls",
+            ..Default::default()
+        },
+    );
+    let _fake_deno = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "deno",
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repo/src/app.ts"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let servers_before = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.name(), server.server_id()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    assert_eq!(servers_before.len(), 2);
+    let vtsls_server_id_before = servers_before
+        .iter()
+        .find_map(|(name, server_id)| {
+            (name == &LanguageServerName::new_static("vtsls")).then_some(*server_id)
+        })
+        .unwrap();
+    let deno_server_id_before = servers_before
+        .iter()
+        .find_map(|(name, server_id)| {
+            (name == &LanguageServerName::new_static("deno")).then_some(*server_id)
+        })
+        .unwrap();
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::from_iter([LanguageServerSelector::Name(
+                LanguageServerName::new_static("deno"),
+            )]),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let servers_after = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, server)| (adapter.name(), server.server_id()))
+                    .collect::<Vec<_>>()
+            })
+        })
+    });
+    let vtsls_server_id_after = servers_after
+        .iter()
+        .find_map(|(name, server_id)| {
+            (name == &LanguageServerName::new_static("vtsls")).then_some(*server_id)
+        })
+        .unwrap();
+    let deno_server_id_after = servers_after
+        .iter()
+        .find_map(|(name, server_id)| {
+            (name == &LanguageServerName::new_static("deno")).then_some(*server_id)
+        })
+        .unwrap();
+    assert_eq!(vtsls_server_id_after, vtsls_server_id_before);
+    assert_ne!(deno_server_id_after, deno_server_id_before);
 }
 
 #[gpui::test]

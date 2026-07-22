@@ -3023,6 +3023,22 @@ impl LocalLspStore {
                 }
             })
             .collect::<Vec<_>>();
+        // Partial registration (e.g. restart selected servers) must not drop
+        // existing bindings for non-targeted servers.
+        if only_register_servers.is_empty() {
+            let desired_server_ids = servers_and_adapters
+                .iter()
+                .map(|(server, _)| server.server_id())
+                .collect::<HashSet<_>>();
+            self.unregister_buffer_from_obsolete_language_servers(
+                buffer_handle,
+                buffer_id,
+                &uri,
+                &desired_server_ids,
+                cx,
+            );
+        }
+
         for (server, adapter) in servers_and_adapters {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
@@ -3080,6 +3096,58 @@ impl LocalLspStore {
                     ),
                 });
             }
+        }
+    }
+
+    fn unregister_buffer_from_obsolete_language_servers(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        buffer_id: BufferId,
+        file_url: &lsp::Uri,
+        desired_server_ids: &HashSet<LanguageServerId>,
+        cx: &mut Context<LspStore>,
+    ) {
+        let Some(opened_in_servers) = self.buffers_opened_in_servers.get(&buffer_id).cloned()
+        else {
+            return;
+        };
+        let servers_to_unregister = opened_in_servers
+            .difference(desired_server_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        for server_id in servers_to_unregister {
+            buffer_handle.update(cx, |buffer, cx| {
+                buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
+                buffer.set_completion_triggers(server_id, Default::default(), cx);
+            });
+
+            let had_snapshot = self
+                .buffer_snapshots
+                .get_mut(&buffer_id)
+                .and_then(|snapshots| snapshots.remove(&server_id))
+                .is_some();
+
+            if had_snapshot
+                && let Some(LanguageServerState::Running { server, .. }) =
+                    self.language_servers.get(&server_id)
+            {
+                server.unregister_buffer(file_url.clone());
+            }
+
+            if let Some(opened_in_servers) = self.buffers_opened_in_servers.get_mut(&buffer_id) {
+                opened_in_servers.remove(&server_id);
+                if opened_in_servers.is_empty() {
+                    self.buffers_opened_in_servers.remove(&buffer_id);
+                }
+            }
+        }
+
+        if self
+            .buffer_snapshots
+            .get(&buffer_id)
+            .is_some_and(|snapshots| snapshots.is_empty())
+        {
+            self.buffer_snapshots.remove(&buffer_id);
         }
     }
 
@@ -5730,8 +5798,23 @@ impl LspStore {
         for message in messages_to_report {
             cx.emit(message);
         }
+        let servers_to_stop = to_stop.into_keys().collect::<Vec<_>>();
         local.lsp_tree = new_tree;
-        for (id, _) in to_stop {
+        let registered_buffer_ids = local
+            .registered_buffers
+            .keys()
+            .copied()
+            .collect::<HashSet<_>>();
+        let buffers_to_reconcile = buffer_store
+            .read(cx)
+            .buffers()
+            .filter(|buffer| registered_buffer_ids.contains(&buffer.read(cx).remote_id()))
+            .collect::<Vec<_>>();
+        for buffer in buffers_to_reconcile {
+            local.register_buffer_with_language_servers(&buffer, HashSet::default(), cx);
+        }
+        let _ = local;
+        for id in servers_to_stop {
             self.stop_local_language_server(id, cx).detach();
         }
     }
@@ -12570,9 +12653,13 @@ impl LspStore {
             }
         }
         for (path, _, _) in changes {
-            if let Some(file_name) = path.file_name()
-                && local.watched_manifest_filenames.contains(file_name)
-            {
+            let should_refresh_for_manifest = path
+                .file_name()
+                .is_some_and(|file_name| local.watched_manifest_filenames.contains(file_name));
+            let should_refresh_for_local_settings =
+                path.ends_with(paths::local_settings_file_relative_path());
+
+            if should_refresh_for_manifest || should_refresh_for_local_settings {
                 self.request_workspace_config_refresh();
                 break;
             }
