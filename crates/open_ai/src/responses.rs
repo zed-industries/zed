@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
@@ -110,7 +110,8 @@ pub fn provider_compaction_items(state: &ProviderCompactionState) -> Result<Opti
         ));
     }
 
-    let items = serde_json::from_str::<Vec<Value>>(state.payload())?;
+    let items = serde_json::from_str::<Vec<Value>>(state.payload())
+        .context("malformed OpenAI compaction state payload")?;
     validate_compaction_items(&items)?;
     Ok(Some(items))
 }

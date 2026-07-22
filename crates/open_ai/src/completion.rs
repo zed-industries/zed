@@ -401,6 +401,15 @@ fn append_message_to_response_items(
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
             MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
+                // OpenAI's canonical replacement window already encodes all
+                // context retained at the compaction point, so everything
+                // accumulated before it -- earlier input items, earlier parts
+                // of this same message, and replay bookkeeping -- is
+                // superseded and must not be resent. When a transcript
+                // contains multiple compactions, each later window supersedes
+                // the previous one, so the last compaction wins. State owned
+                // by another provider yields `None`, in which case we fall
+                // back to replaying the full transcript.
                 if let Some(items) = provider_compaction_items(&state)? {
                     content_parts.clear();
                     input_items.clear();
@@ -4215,7 +4224,11 @@ mod tests {
         let error =
             into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap_err();
 
-        assert!(error.to_string().contains("expected ident"));
+        assert!(
+            error
+                .to_string()
+                .contains("malformed OpenAI compaction state payload")
+        );
     }
 
     #[test]

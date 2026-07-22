@@ -442,6 +442,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
+        let model_provider = self.model.provider;
         let provider_name = provider_name(&self.model.provider);
         let supports_none_reasoning_effort =
             self.model.supported_effort_levels.iter().any(|effort| {
@@ -476,7 +477,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 CompletionBody {
                     thread_id,
                     prompt_id,
-                    provider: cloud_llm_client::LanguageModelProvider::OpenAi,
+                    provider: model_provider,
                     model: compact_request.model.clone(),
                     provider_request: serde_json::to_value(compact_request).map_err(|error| {
                         LanguageModelCompletionError::SerializeRequest {
