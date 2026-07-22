@@ -27,12 +27,18 @@ impl Connection {
         };
 
         unsafe {
-            sqlite3_open_v2(
+            let result = sqlite3_open_v2(
                 CString::new(uri)?.as_ptr(),
                 &mut connection.sqlite3,
                 flags,
                 ptr::null(),
             );
+
+            // On allocation failure `sqlite3_open_v2` leaves the handle null. Every call below
+            // dereferences it, so bail out before touching the handle.
+            if connection.sqlite3.is_null() {
+                anyhow::bail!("sqlite3_open_v2 failed to allocate a connection (code {result})");
+            }
 
             // Turn on extended error codes
             sqlite3_extended_result_codes(connection.sqlite3, 1);
@@ -87,6 +93,13 @@ impl Connection {
                 self.sqlite3,
                 CString::new("main")?.as_ptr(),
             );
+            // `sqlite3_backup_init` returns null on error (e.g. the same connection is used as
+            // both source and destination). The null check inside `sqlite3_backup_step` only
+            // exists under a SQLite build flag, so guard against the null handle ourselves.
+            if backup.is_null() {
+                destination.last_error()?;
+                anyhow::bail!("sqlite3_backup_init failed");
+            }
             sqlite3_backup_step(backup, -1);
             sqlite3_backup_finish(backup);
             destination.last_error()
@@ -191,6 +204,13 @@ impl Connection {
                 .into_owned();
 
                 return Some((err_msg, offset as usize + sub_statement_correction));
+            }
+            // Several `sqlite3_prepare_v2` failure paths (OOM, shared-cache schema lock, TOOBIG)
+            // return a code other than the plain syntax-error code while leaving `*pzTail` unset
+            // (still null). The syntax-error branch above won't fire in those cases, so guard
+            // against calling `CStr::from_ptr` on a null pointer here.
+            if remaining_sql_ptr.is_null() {
+                return None;
             }
             remaining_sql = unsafe { CStr::from_ptr(remaining_sql_ptr) };
             alter_table = None;

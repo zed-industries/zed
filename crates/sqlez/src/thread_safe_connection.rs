@@ -38,9 +38,6 @@ pub struct ThreadSafeConnection {
     connections: Arc<ThreadLocal<Connection>>,
 }
 
-unsafe impl Send for ThreadSafeConnection {}
-unsafe impl Sync for ThreadSafeConnection {}
-
 pub struct ThreadSafeConnectionBuilder<M: Migrator + 'static = ()> {
     db_initialize_query: Option<&'static str>,
     write_queue_constructor: Option<WriteQueueConstructor>,
