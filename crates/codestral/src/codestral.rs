@@ -274,11 +274,21 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
                 cursor_offset,
                 &excerpt_offset_range,
             );
+            let excerpt_start_row = excerpt_point_range.start.row;
             let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
+            let syntax_row_ranges = syntax_ranges
+                .iter()
+                .map(|range| {
+                    let row_range =
+                        zeta_prompt::offset_range_to_row_range(&excerpt_text, range.clone());
+                    excerpt_start_row + row_range.start..excerpt_start_row + row_range.end
+                })
+                .collect::<Vec<_>>();
             let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
                 &excerpt_text,
                 cursor_offset_in_excerpt,
-                &syntax_ranges,
+                &syntax_row_ranges,
+                excerpt_start_row,
                 MAX_EDITABLE_TOKENS,
                 MAX_CONTEXT_TOKENS,
             );

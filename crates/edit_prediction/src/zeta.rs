@@ -3,7 +3,9 @@ use crate::{
     EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
     EditPredictionStartedDebugEvent, EditPredictionStore, PromptHistoryBoundary,
     ZedUpdateRequiredError, buffer_path_with_id_fallback,
-    cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
+    cursor_excerpt::{
+        self, compute_cursor_excerpt, compute_syntax_ranges, compute_syntax_row_ranges,
+    },
     data_collection::CapturedPredictionContext,
     prediction::EditPredictionResult,
     udiff::prediction_edits_for_single_file_diff,
@@ -149,7 +151,7 @@ pub(crate) fn request_prediction_with_zeta(
             let request_input =
                 if allow_jump && custom_server_settings.is_none() && raw_config.is_none() {
                     let cursor_point = snapshot.offset_to_point(cursor_offset);
-                    let editable_context = editable_context
+                    let mut editable_context = editable_context
                         .context("missing editable context task")?
                         .await?;
                     let active_buffer_diagnostics = active_buffer_diagnostics(
@@ -158,8 +160,13 @@ pub(crate) fn request_prediction_with_zeta(
                         cursor_point.row,
                         ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT,
                     );
-                    let syntax_ranges =
-                        compute_syntax_ranges(&snapshot, cursor_offset, &(0..snapshot.len()));
+                    let syntax_ranges = compute_syntax_row_ranges(&snapshot, cursor_offset);
+                    if let Some(cursor_file) = editable_context
+                        .iter_mut()
+                        .find(|file| file.path == excerpt_path)
+                    {
+                        cursor_file.syntax_ranges = syntax_ranges;
+                    }
 
                     RequestInput::V4(Zeta3PromptInput {
                         cursor_path: excerpt_path,
@@ -169,7 +176,6 @@ pub(crate) fn request_prediction_with_zeta(
                         },
                         events,
                         editable_context,
-                        syntax_ranges,
                         active_buffer_diagnostics,
                         in_open_source_repo: is_open_source,
                         can_collect_data,

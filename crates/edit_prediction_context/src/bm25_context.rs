@@ -27,7 +27,8 @@ const BM25_B: f64 = 0.75;
 pub(super) struct Bm25ContextCandidate {
     pub path: PathBuf,
     pub row_range: Range<u32>,
-    pub order: usize,
+    pub rank: usize,
+    pub score: Option<f32>,
 }
 
 pub async fn collect_bm25_context(
@@ -35,7 +36,6 @@ pub async fn collect_bm25_context(
     active_buffer: Entity<Buffer>,
     cursor_position: Anchor,
     edit_history: &[EditHistoryContextEntry],
-    next_order: usize,
     cx: &mut AsyncApp,
 ) -> Vec<Bm25ContextCandidate> {
     let Some(query) = build_query(&project, &active_buffer, cursor_position, edit_history, cx)
@@ -44,7 +44,7 @@ pub async fn collect_bm25_context(
     };
 
     let result = cx
-        .background_spawn(async move { collect_bm25_context_from_disk(query, next_order).await })
+        .background_spawn(async move { collect_bm25_context_from_disk(query).await })
         .await;
 
     match result {
@@ -135,7 +135,6 @@ fn expanded_anchor_range(
 
 async fn collect_bm25_context_from_disk(
     query: Bm25ContextQuery,
-    next_order: usize,
 ) -> Result<Vec<Bm25ContextCandidate>> {
     let query_terms = query_terms(&query);
     if query_terms.is_empty() {
@@ -154,7 +153,7 @@ async fn collect_bm25_context_from_disk(
         index.stats.term_count,
     );
 
-    let candidates = index.search(&query_terms, &query.worktree_root_name, next_order);
+    let candidates = index.search(&query_terms, &query.worktree_root_name);
     log::debug!("selected {} BM25 context chunks", candidates.len());
     Ok(candidates)
 }
@@ -259,7 +258,6 @@ impl Bm25Index {
         &self,
         query_terms: &HashMap<String, f64>,
         worktree_root_name: &str,
-        next_order: usize,
     ) -> Vec<Bm25ContextCandidate> {
         if self.documents.is_empty() || self.average_document_len == 0.0 {
             return Vec::new();
@@ -316,7 +314,8 @@ impl Bm25Index {
                 ))
                 .into(),
                 row_range: document.row_range.clone(),
-                order: next_order + selected_documents.len(),
+                rank: selected_documents.len(),
+                score: Some(scored_document.score as f32),
             });
 
             if selected_documents.len() >= BM25_CONTEXT_CHUNK_COUNT {
@@ -673,10 +672,11 @@ mod tests {
         let mut query = HashMap::new();
         add_query_terms(&mut query, "PrivateNetworkRequestPolicy", 1.0);
 
-        let candidates = index.search(&query, "repo", 0);
+        let candidates = index.search(&query, "repo");
 
         assert_eq!(candidates[0].path, Path::new("repo/src/network.rs"));
         assert_eq!(candidates[0].row_range, 0..1);
-        assert_eq!(candidates[0].order, 0);
+        assert_eq!(candidates[0].rank, 0);
+        assert!(candidates[0].score.is_some());
     }
 }

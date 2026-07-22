@@ -68,12 +68,12 @@ pub fn request_prediction(
             .text_for_range(excerpt_point_range.clone())
             .collect::<String>()
             .into();
-        let syntax_ranges =
-            cursor_excerpt::compute_syntax_ranges(&snapshot, cursor_offset, &excerpt_offset_range);
+        let syntax_ranges = cursor_excerpt::compute_syntax_row_ranges(&snapshot, cursor_offset);
         let (editable_range, _) = compute_editable_and_context_ranges(
             &cursor_excerpt,
             cursor_offset_in_excerpt,
             &syntax_ranges,
+            excerpt_point_range.start.row,
             FIM_CONTEXT_TOKENS,
             0,
         );

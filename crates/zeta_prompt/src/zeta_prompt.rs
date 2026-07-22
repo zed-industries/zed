@@ -6,6 +6,7 @@ pub mod udiff;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -89,9 +90,7 @@ pub struct Zeta3PromptInput {
     pub cursor_path: Arc<Path>,
     pub cursor_position: FilePosition,
     pub events: Vec<Arc<Event>>,
-    pub editable_context: Vec<RelatedFile>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub syntax_ranges: Vec<Range<usize>>,
+    pub editable_context: Vec<ContextFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_buffer_diagnostics: Vec<ActiveBufferDiagnostic>,
     #[serde(default)]
@@ -284,6 +283,39 @@ pub struct RelatedExcerpt {
     pub context_source: ContextSource,
 }
 
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ContextFile {
+    pub path: Arc<Path>,
+    pub max_row: u32,
+    pub chunks: Vec<Chunk>,
+    pub retrievals: Vec<Retrieval>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub syntax_ranges: Vec<Range<u32>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct Chunk {
+    pub row_range: Range<u32>,
+    pub text: Arc<str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Retrieval {
+    pub source: ContextSource,
+    pub row_range: Range<u32>,
+    pub rank: usize,
+    pub score: Option<f32>,
+}
+
+impl Hash for Retrieval {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.row_range.hash(state);
+        self.rank.hash(state);
+        self.score.map(f32::to_bits).hash(state);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSource {
@@ -297,6 +329,33 @@ pub enum ContextSource {
     Bm25,
     OracleFile,
     OracleSnippet,
+}
+
+pub fn context_source_priority(context_source: ContextSource) -> usize {
+    match context_source {
+        ContextSource::Lsp => 0,
+        ContextSource::CursorExcerpt => 1,
+        ContextSource::CurrentFile => 2,
+        ContextSource::EditHistory => 3,
+        ContextSource::EditHistoryFile => 4,
+        ContextSource::GitLog => 5,
+        ContextSource::Bm25 => 6,
+        ContextSource::OracleSnippet => 7,
+        ContextSource::OracleFile => 8,
+    }
+}
+
+pub fn default_retrieval_policy_key(
+    file_index: usize,
+    retrieval_index: usize,
+    retrieval: &Retrieval,
+) -> (usize, usize, usize, usize) {
+    (
+        context_source_priority(retrieval.source),
+        retrieval.rank,
+        file_index,
+        retrieval_index,
+    )
 }
 
 pub fn prompt_input_contains_special_tokens(input: &Zeta2PromptInput, format: ZetaFormat) -> bool {
@@ -319,21 +378,42 @@ pub fn format_zeta3_prompt(input: &Zeta3PromptInput, format: ZetaFormat) -> Opti
         _ => return None,
     }
 
-    let (current_excerpt, cursor_offset_in_excerpt) = zeta3_current_file_excerpt(input)?;
+    let (cursor_file, cursor_chunk, cursor_offset_in_chunk) = zeta3_cursor_chunk(input)?;
     let (context, editable_range, context_range, cursor_offset) = resolve_zeta3_cursor_region(
-        current_excerpt.text.as_ref(),
-        cursor_offset_in_excerpt,
-        &input.syntax_ranges,
+        cursor_chunk.text.as_ref(),
+        cursor_offset_in_chunk,
+        &cursor_file.syntax_ranges,
+        cursor_chunk.row_range.start,
         format,
     );
-    let relative_row_range =
-        offset_range_to_row_range(current_excerpt.text.as_ref(), context_range);
-    let cursor_row_range = current_excerpt.row_range.start + relative_row_range.start
-        ..current_excerpt.row_range.start + relative_row_range.end;
-    let related_files = filter_redundant_excerpts(
-        zeta3_related_files(input, current_excerpt),
+    let relative_row_range = offset_range_to_row_range(cursor_chunk.text.as_ref(), context_range);
+    let cursor_row_range = cursor_chunk.row_range.start + relative_row_range.start
+        ..cursor_chunk.row_range.start + relative_row_range.end;
+    let max_tokens = max_prompt_tokens_for_format(format);
+    let mut cursor_section = String::new();
+    write_cursor_excerpt_section_for_format(
+        format,
+        &mut cursor_section,
+        input.cursor_path.as_ref(),
+        context,
+        &editable_range,
+        cursor_offset,
+    );
+    let related_files_token_budget = seed_coder::budget_before_related_files(
+        context,
+        &editable_range,
+        &cursor_section,
+        &input.events,
+        &input.active_buffer_diagnostics,
+        Some(input.cursor_position.row),
+        apply_prompt_budget_margin(max_tokens),
+    )
+    .budget_after_diagnostics;
+    let related_files = zeta3_related_files(
+        input,
         input.cursor_path.as_ref(),
         cursor_row_range,
+        related_files_token_budget,
     );
 
     format_resolved_prompt_with_budget(
@@ -346,7 +426,7 @@ pub fn format_zeta3_prompt(input: &Zeta3PromptInput, format: ZetaFormat) -> Opti
         &related_files,
         &input.active_buffer_diagnostics,
         Some(input.cursor_position.row),
-        max_prompt_tokens_for_format(format),
+        max_tokens,
     )
 }
 
@@ -374,33 +454,26 @@ fn max_prompt_tokens_for_format(format: ZetaFormat) -> usize {
     }
 }
 
-fn zeta3_current_file_excerpt(input: &Zeta3PromptInput) -> Option<(&RelatedExcerpt, usize)> {
-    input
+fn zeta3_cursor_chunk(input: &Zeta3PromptInput) -> Option<(&ContextFile, &Chunk, usize)> {
+    let file = input
         .editable_context
         .iter()
-        .filter(|file| file.path == input.cursor_path)
-        .flat_map(|file| file.excerpts.iter())
-        .find_map(|excerpt| {
-            if excerpt.context_source != ContextSource::CurrentFile {
-                return None;
-            }
-            Some((
-                excerpt,
-                offset_for_position_in_excerpt(excerpt, input.cursor_position)?,
-            ))
-        })
+        .find(|file| file.path == input.cursor_path)?;
+    let chunk = file
+        .chunks
+        .iter()
+        .find(|chunk| chunk.row_range.contains(&input.cursor_position.row))?;
+    let offset = offset_for_position_in_chunk(chunk, input.cursor_position)?;
+    Some((file, chunk, offset))
 }
 
-fn offset_for_position_in_excerpt(
-    excerpt: &RelatedExcerpt,
-    position: FilePosition,
-) -> Option<usize> {
-    if position.row < excerpt.row_range.start {
+fn offset_for_position_in_chunk(chunk: &Chunk, position: FilePosition) -> Option<usize> {
+    if position.row < chunk.row_range.start {
         return None;
     }
 
-    let relative_row = (position.row - excerpt.row_range.start) as usize;
-    let text = excerpt.text.as_ref();
+    let relative_row = (position.row - chunk.row_range.start) as usize;
+    let text = chunk.text.as_ref();
     let mut row_start = 0;
 
     for row in 0..=relative_row {
@@ -422,25 +495,22 @@ fn offset_for_position_in_excerpt(
 
 fn zeta3_related_files(
     input: &Zeta3PromptInput,
-    current_excerpt: &RelatedExcerpt,
+    cursor_path: &Path,
+    cursor_row_range: Range<u32>,
+    related_files_token_budget: usize,
 ) -> Vec<RelatedFile> {
-    input
-        .editable_context
-        .iter()
-        .filter_map(|file| {
-            let mut file = file.clone();
-            if file.path == input.cursor_path {
-                file.excerpts.retain(|excerpt| excerpt != current_excerpt);
-            }
-            (!file.excerpts.is_empty()).then_some(file)
-        })
-        .collect()
+    context_files_to_related_files_excluding_within_budget(
+        &input.editable_context,
+        Some((cursor_path, cursor_row_range)),
+        related_files_token_budget,
+    )
 }
 
 fn resolve_zeta3_cursor_region<'a>(
     cursor_excerpt: &'a str,
     cursor_offset: usize,
-    syntax_ranges: &[Range<usize>],
+    syntax_ranges: &[Range<u32>],
+    row_offset: u32,
     format: ZetaFormat,
 ) -> (&'a str, Range<usize>, Range<usize>, usize) {
     let (editable_tokens, context_tokens) = token_limits_for_format(format);
@@ -448,11 +518,457 @@ fn resolve_zeta3_cursor_region<'a>(
         cursor_excerpt,
         cursor_offset,
         syntax_ranges,
+        row_offset,
         editable_tokens,
         context_tokens,
     );
 
     adjust_cursor_region(cursor_excerpt, cursor_offset, editable_range, context_range)
+}
+
+pub fn context_files_to_related_files(context_files: &[ContextFile]) -> Vec<RelatedFile> {
+    context_files_to_related_files_excluding(context_files, None)
+}
+
+fn context_files_to_related_files_excluding(
+    context_files: &[ContextFile],
+    cursor_rows_to_subtract: Option<(&Path, Range<u32>)>,
+) -> Vec<RelatedFile> {
+    let mut candidates = context_files
+        .iter()
+        .enumerate()
+        .flat_map(|(file_index, file)| {
+            file.retrievals
+                .iter()
+                .enumerate()
+                .map(move |(retrieval_index, retrieval)| {
+                    (
+                        default_retrieval_policy_key(file_index, retrieval_index, retrieval),
+                        file_index,
+                        retrieval_index,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.0);
+
+    let mut selected_rows_by_file = vec![Vec::<Range<u32>>::new(); context_files.len()];
+    let mut retrieval_orders_by_file = context_files
+        .iter()
+        .map(|file| vec![usize::MAX; file.retrievals.len()])
+        .collect::<Vec<_>>();
+    for (order, (_, file_index, retrieval_index)) in candidates.into_iter().enumerate() {
+        if let Some(retrieval_orders) = retrieval_orders_by_file.get_mut(file_index)
+            && let Some(retrieval_order) = retrieval_orders.get_mut(retrieval_index)
+        {
+            *retrieval_order = order;
+        }
+        let file = &context_files[file_index];
+        let retrieval = &file.retrievals[retrieval_index];
+        let mut row_ranges = vec![retrieval.row_range.clone()];
+        if let Some((cursor_path, cursor_row_range)) = &cursor_rows_to_subtract
+            && file.path.as_ref() == *cursor_path
+        {
+            row_ranges = subtract_row_range(&retrieval.row_range, cursor_row_range);
+        }
+        for row_range in row_ranges {
+            push_merged_row_range(&mut selected_rows_by_file[file_index], row_range);
+        }
+    }
+
+    context_files
+        .iter()
+        .zip(selected_rows_by_file)
+        .zip(retrieval_orders_by_file)
+        .filter_map(|((file, selected_ranges), retrieval_orders)| {
+            let mut excerpts = Vec::new();
+            for selected_range in selected_ranges {
+                for chunk in &file.chunks {
+                    let start = selected_range.start.max(chunk.row_range.start);
+                    let end = selected_range.end.min(chunk.row_range.end);
+                    if start >= end {
+                        continue;
+                    }
+                    excerpts.push(RelatedExcerpt {
+                        row_range: start..end,
+                        text: text_for_chunk_rows(chunk, start..end).into(),
+                        order: best_retrieval_for_range(file, &retrieval_orders, start..end)
+                            .map_or(usize::MAX, |(order, _)| order),
+                        context_source: best_retrieval_source_for_range(file, start..end),
+                    });
+                }
+            }
+            excerpts.sort_by_key(|excerpt| (excerpt.row_range.start, excerpt.row_range.end));
+            (!excerpts.is_empty()).then(|| RelatedFile {
+                path: file.path.clone(),
+                max_row: file.max_row,
+                excerpts,
+                in_open_source_repo: false,
+            })
+        })
+        .collect()
+}
+
+/// Like [`context_files_to_related_files_excluding`], but performs token-budget
+/// selection in retrieval space, before rows from different retrievals are
+/// unioned into shared blocks.
+///
+/// Retrievals are walked in default policy order, and each is charged only for
+/// the rows it covers that no higher-priority (earlier) retrieval already
+/// covers. This ensures a low-priority retrieval whose row range happens to
+/// overlap a high-priority retrieval's rows can never cause the high-priority
+/// rows to be dropped: only rows that survive selection are unioned and handed
+/// to the renderer.
+fn context_files_to_related_files_excluding_within_budget(
+    context_files: &[ContextFile],
+    cursor_rows_to_subtract: Option<(&Path, Range<u32>)>,
+    max_tokens: usize,
+) -> Vec<RelatedFile> {
+    let mut candidates = context_files
+        .iter()
+        .enumerate()
+        .flat_map(|(file_index, file)| {
+            file.retrievals
+                .iter()
+                .enumerate()
+                .map(move |(retrieval_index, retrieval)| {
+                    (
+                        default_retrieval_policy_key(file_index, retrieval_index, retrieval),
+                        file_index,
+                        retrieval_index,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.0);
+
+    let mut selected_rows_by_file = vec![Vec::<Range<u32>>::new(); context_files.len()];
+    let mut retrieval_orders_by_file = context_files
+        .iter()
+        .map(|file| vec![usize::MAX; file.retrievals.len()])
+        .collect::<Vec<_>>();
+    let mut file_header_charged = vec![false; context_files.len()];
+    let mut remaining_budget = max_tokens;
+
+    for (order, (_, file_index, retrieval_index)) in candidates.into_iter().enumerate() {
+        let file = &context_files[file_index];
+        let retrieval = &file.retrievals[retrieval_index];
+
+        let mut row_ranges = vec![retrieval.row_range.clone()];
+        if let Some((cursor_path, cursor_row_range)) = &cursor_rows_to_subtract
+            && file.path.as_ref() == *cursor_path
+        {
+            row_ranges = row_ranges
+                .into_iter()
+                .flat_map(|row_range| subtract_row_range(&row_range, cursor_row_range))
+                .collect();
+        }
+
+        retrieval_orders_by_file[file_index][retrieval_index] = order;
+
+        let uncovered_ranges =
+            subtract_covered_row_ranges(&row_ranges, &selected_rows_by_file[file_index]);
+        if uncovered_ranges.is_empty() {
+            continue;
+        }
+
+        let header_cost = if file_header_charged[file_index] {
+            0
+        } else {
+            estimate_tokens(
+                format!(
+                    "{}{}\n",
+                    seed_coder::FILE_MARKER,
+                    file.path.to_string_lossy()
+                )
+                .len(),
+            )
+        };
+
+        let rows = uncovered_rows_with_tokens(file, &uncovered_ranges);
+        let uncovered_cost = batched_rows_cost(file, &rows);
+
+        if header_cost + uncovered_cost <= remaining_budget {
+            remaining_budget -= header_cost + uncovered_cost;
+            file_header_charged[file_index] = true;
+            for row_range in uncovered_ranges {
+                push_merged_row_range(&mut selected_rows_by_file[file_index], row_range);
+            }
+        } else {
+            if remaining_budget >= header_cost {
+                let budget_for_rows = remaining_budget - header_cost;
+                let clipped_ranges = clip_rows_to_budget_top_down(file, &rows, budget_for_rows);
+                if !clipped_ranges.is_empty() {
+                    file_header_charged[file_index] = true;
+                    for row_range in clipped_ranges {
+                        push_merged_row_range(&mut selected_rows_by_file[file_index], row_range);
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    context_files
+        .iter()
+        .zip(selected_rows_by_file)
+        .zip(retrieval_orders_by_file)
+        .filter_map(|((file, selected_ranges), retrieval_orders)| {
+            let mut excerpts = Vec::new();
+            for selected_range in selected_ranges {
+                for chunk in &file.chunks {
+                    let start = selected_range.start.max(chunk.row_range.start);
+                    let end = selected_range.end.min(chunk.row_range.end);
+                    if start >= end {
+                        continue;
+                    }
+                    excerpts.push(RelatedExcerpt {
+                        row_range: start..end,
+                        text: text_for_chunk_rows(chunk, start..end).into(),
+                        order: best_retrieval_for_range(file, &retrieval_orders, start..end)
+                            .map_or(usize::MAX, |(order, _)| order),
+                        context_source: best_retrieval_source_for_range(file, start..end),
+                    });
+                }
+            }
+            excerpts.sort_by_key(|excerpt| (excerpt.row_range.start, excerpt.row_range.end));
+            (!excerpts.is_empty()).then(|| RelatedFile {
+                path: file.path.clone(),
+                max_row: file.max_row,
+                excerpts,
+                in_open_source_repo: false,
+            })
+        })
+        .collect()
+}
+
+/// Subtracts already-`covered` (merged, non-overlapping) row ranges from
+/// `ranges`, returning the remaining uncovered pieces in ascending row order.
+fn subtract_covered_row_ranges(ranges: &[Range<u32>], covered: &[Range<u32>]) -> Vec<Range<u32>> {
+    let mut result = Vec::new();
+    for range in ranges {
+        let mut pieces = vec![range.clone()];
+        for covered_range in covered {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| subtract_row_range(&piece, covered_range))
+                .collect();
+        }
+        result.extend(pieces);
+    }
+    result.retain(|range| range.start < range.end);
+    result.sort_by_key(|range| (range.start, range.end));
+    result
+}
+
+/// Returns, in ascending row order, each row covered by `ranges` together
+/// with its raw line byte length and whether that line's text ends with a
+/// newline (false only for the very last line of a chunk that lacks a
+/// trailing newline). This is the raw material needed to charge the same
+/// *batched* cost the renderer's [`excerpt_rendered_tokens`] will charge for
+/// the eventual [`RelatedExcerpt`] — i.e. `estimate_tokens` of the summed
+/// bytes of a contiguous run plus newline/ellipsis overhead — rather than
+/// summing per-line `estimate_tokens` floors, which under-charges relative
+/// to the renderer (see [`batched_rows_cost`] and [`clip_rows_to_budget_top_down`]).
+fn uncovered_rows_with_tokens(
+    file: &ContextFile,
+    ranges: &[Range<u32>],
+) -> Vec<(u32, usize, bool)> {
+    let mut result = Vec::new();
+    for range in ranges {
+        for chunk in &file.chunks {
+            let start = range.start.max(chunk.row_range.start);
+            let end = range.end.min(chunk.row_range.end);
+            if start >= end {
+                continue;
+            }
+            for (row, line) in (chunk.row_range.start..).zip(chunk.text.split_inclusive('\n')) {
+                if row >= end {
+                    break;
+                }
+                if row >= start {
+                    result.push((row, line.len(), line.ends_with('\n')));
+                }
+            }
+        }
+    }
+    result.sort_by_key(|(row, _, _)| *row);
+    result
+}
+
+/// Charges the same units the renderer's `excerpt_rendered_tokens` will
+/// charge for a rendered excerpt spanning rows `first_row..=last_row`:
+/// `estimate_tokens` of the *summed* line bytes (floor-of-sum, not
+/// sum-of-per-line-floors) plus the trailing-newline / ellipsis overhead a
+/// `RelatedExcerpt` built from those rows would need.
+fn run_excerpt_tokens(
+    file: &ContextFile,
+    byte_sum: usize,
+    last_row: u32,
+    ends_with_newline: bool,
+) -> usize {
+    let needs_ellipsis = last_row + 1 < file.max_row;
+    let len = byte_sum
+        + if ends_with_newline { 0 } else { "\n".len() }
+        + if needs_ellipsis { "...\n".len() } else { 0 };
+    estimate_tokens(len)
+}
+
+/// Sums [`run_excerpt_tokens`] over each maximal contiguous run of rows in
+/// `rows` (rows already in ascending order, as returned by
+/// [`uncovered_rows_with_tokens`]), matching the granularity at which the
+/// renderer will actually slice these rows into separate `RelatedExcerpt`s.
+fn batched_rows_cost(file: &ContextFile, rows: &[(u32, usize, bool)]) -> usize {
+    let mut total = 0usize;
+    let mut run: Option<(u32, u32, usize, bool)> = None; // (start, last, byte_sum, last_ends_with_newline)
+    for &(row, len, ends_with_newline) in rows {
+        match &mut run {
+            Some((_, last, byte_sum, run_ends)) if *last + 1 == row => {
+                *last = row;
+                *byte_sum += len;
+                *run_ends = ends_with_newline;
+            }
+            _ => {
+                if let Some((_, last, byte_sum, run_ends)) = run.take() {
+                    total += run_excerpt_tokens(file, byte_sum, last, run_ends);
+                }
+                run = Some((row, row, len, ends_with_newline));
+            }
+        }
+    }
+    if let Some((_, last, byte_sum, run_ends)) = run {
+        total += run_excerpt_tokens(file, byte_sum, last, run_ends);
+    }
+    total
+}
+
+/// Selects a top-down (ascending row order) prefix of `rows` that fits within
+/// `budget`, merging consecutive selected rows into ranges. Charges the same
+/// batched, per-run cost as [`batched_rows_cost`] (rather than per-line
+/// floors) so that a range this function returns never costs more to render
+/// than `budget` once the renderer builds the corresponding excerpt(s).
+fn clip_rows_to_budget_top_down(
+    file: &ContextFile,
+    rows: &[(u32, usize, bool)],
+    budget: usize,
+) -> Vec<Range<u32>> {
+    let mut result = Vec::new();
+    let mut finalized_cost = 0usize;
+    let mut run: Option<(Range<u32>, usize, bool)> = None; // (row_range, byte_sum, last_ends_with_newline)
+
+    for &(row, len, ends_with_newline) in rows {
+        let contiguous = run.as_ref().is_some_and(|(range, _, _)| range.end == row);
+        let (candidate_range, candidate_byte_sum) = if contiguous {
+            let (range, byte_sum, _) = run.as_ref().expect("checked above");
+            (range.start..row + 1, byte_sum + len)
+        } else {
+            (row..row + 1, len)
+        };
+        let candidate_run_cost =
+            run_excerpt_tokens(file, candidate_byte_sum, row, ends_with_newline);
+        let other_finalized_cost = if contiguous {
+            finalized_cost
+        } else if let Some((range, byte_sum, run_ends)) = &run {
+            finalized_cost + run_excerpt_tokens(file, *byte_sum, range.end - 1, *run_ends)
+        } else {
+            finalized_cost
+        };
+
+        if other_finalized_cost + candidate_run_cost > budget {
+            break;
+        }
+
+        if !contiguous && let Some((range, byte_sum, run_ends)) = run.take() {
+            finalized_cost += run_excerpt_tokens(file, byte_sum, range.end - 1, run_ends);
+            result.push(range);
+        }
+        run = Some((candidate_range, candidate_byte_sum, ends_with_newline));
+    }
+
+    if let Some((range, _, _)) = run {
+        result.push(range);
+    }
+
+    result
+}
+
+fn subtract_row_range(row_range: &Range<u32>, subtract: &Range<u32>) -> Vec<Range<u32>> {
+    if row_range.end <= subtract.start || row_range.start >= subtract.end {
+        return vec![row_range.clone()];
+    }
+    let mut ranges = Vec::new();
+    if row_range.start < subtract.start {
+        ranges.push(row_range.start..subtract.start);
+    }
+    if subtract.end < row_range.end {
+        ranges.push(subtract.end..row_range.end);
+    }
+    ranges
+}
+
+fn push_merged_row_range(row_ranges: &mut Vec<Range<u32>>, row_range: Range<u32>) {
+    if row_range.start >= row_range.end {
+        return;
+    }
+    row_ranges.push(row_range);
+    row_ranges.sort_by_key(|range| (range.start, range.end));
+    let mut merged = Vec::<Range<u32>>::new();
+    for row_range in row_ranges.drain(..) {
+        if let Some(last) = merged.last_mut()
+            && row_range.start <= last.end
+        {
+            last.end = last.end.max(row_range.end);
+            continue;
+        }
+        merged.push(row_range);
+    }
+    *row_ranges = merged;
+}
+
+fn text_for_chunk_rows(chunk: &Chunk, row_range: Range<u32>) -> String {
+    let mut text = String::new();
+    for (row, line) in (chunk.row_range.start..).zip(chunk.text.split_inclusive('\n')) {
+        if row >= row_range.end {
+            break;
+        }
+        if row >= row_range.start {
+            text.push_str(line);
+        }
+    }
+    text
+}
+
+fn best_retrieval_for_range<'a>(
+    file: &'a ContextFile,
+    retrieval_orders: &[usize],
+    row_range: Range<u32>,
+) -> Option<(usize, &'a Retrieval)> {
+    file.retrievals
+        .iter()
+        .enumerate()
+        .filter(|(_, retrieval)| ranges_intersect(&retrieval.row_range, &row_range))
+        .min_by_key(|(index, _)| retrieval_orders.get(*index).copied().unwrap_or(usize::MAX))
+        .map(|(index, retrieval)| {
+            (
+                retrieval_orders.get(index).copied().unwrap_or(usize::MAX),
+                retrieval,
+            )
+        })
+}
+
+fn best_retrieval_source_for_range(file: &ContextFile, row_range: Range<u32>) -> ContextSource {
+    file.retrievals
+        .iter()
+        .enumerate()
+        .filter(|(_, retrieval)| ranges_intersect(&retrieval.row_range, &row_range))
+        .min_by_key(|(index, retrieval)| default_retrieval_policy_key(0, *index, retrieval))
+        .map_or(ContextSource::CurrentFile, |(_, retrieval)| {
+            retrieval.source
+        })
+}
+
+fn ranges_intersect<T: Ord>(left: &Range<T>, right: &Range<T>) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
 pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
@@ -988,7 +1504,7 @@ fn build_v0317_cursor_prefix(
     section
 }
 
-fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
+pub fn offset_range_to_row_range(text: &str, range: Range<usize>) -> Range<u32> {
     let start_row = text[0..range.start].matches('\n').count() as u32;
     let mut end_row = start_row + text[range.clone()].matches('\n').count() as u32;
     if !text[..range.end].ends_with('\n') {
@@ -1931,12 +2447,13 @@ pub fn parse_zeta3_model_output_as_patch(
         Some(marker) => output.strip_suffix(marker).unwrap_or(output),
         None => output,
     };
-    let (current_excerpt, cursor_offset_in_excerpt) = zeta3_current_file_excerpt(input)
+    let (cursor_file, cursor_chunk, cursor_offset_in_chunk) = zeta3_cursor_chunk(input)
         .ok_or_else(|| anyhow!("Zeta3 input is missing current-file editable context at cursor"))?;
     let (context, editable_range_in_context, context_range, _) = resolve_zeta3_cursor_region(
-        current_excerpt.text.as_ref(),
-        cursor_offset_in_excerpt,
-        &input.syntax_ranges,
+        cursor_chunk.text.as_ref(),
+        cursor_offset_in_chunk,
+        &cursor_file.syntax_ranges,
+        cursor_chunk.row_range.start,
         format,
     );
     let old_editable_region = &context[editable_range_in_context.clone()];
@@ -1949,8 +2466,8 @@ pub fn parse_zeta3_model_output_as_patch(
 
     parsed_output_to_patch_for_excerpt(
         input.cursor_path.as_ref(),
-        current_excerpt.text.as_ref(),
-        current_excerpt.row_range.start,
+        cursor_chunk.text.as_ref(),
+        cursor_chunk.row_range.start,
         parsed,
     )
 }
@@ -2066,10 +2583,15 @@ pub fn resolve_cursor_region(
         (editable_range, context_range)
     } else if let Some(syntax_ranges) = &input.syntax_ranges {
         let (editable_tokens, context_tokens) = token_limits_for_format(format);
+        let syntax_row_ranges = syntax_ranges
+            .iter()
+            .map(|range| offset_range_to_row_range(&input.cursor_excerpt, range.clone()))
+            .collect::<Vec<_>>();
         compute_editable_and_context_ranges(
             &input.cursor_excerpt,
             input.cursor_offset_in_excerpt,
-            syntax_ranges,
+            &syntax_row_ranges,
+            0,
             editable_tokens,
             context_tokens,
         )
@@ -4206,21 +4728,35 @@ pub mod seed_coder {
         )
     }
 
-    pub fn assemble_fim_prompt(
+    /// The sections and remaining token budget computed prior to selecting or
+    /// rendering related files. Shared between [`assemble_fim_prompt`] (which
+    /// needs the section strings to render the final prompt) and
+    /// `format_zeta3_prompt` (which only needs `budget_after_diagnostics`, to
+    /// select related-file rows up front, before rendering) so the two stay
+    /// in bit-identical agreement by construction rather than by hand-copied
+    /// duplication.
+    pub(crate) struct BudgetBeforeRelatedFiles {
+        pub suffix_section: String,
+        pub edit_history_section: String,
+        pub diagnostics_section: String,
+        pub budget_after_diagnostics: usize,
+    }
+
+    pub(crate) fn budget_before_related_files(
         context: &str,
         editable_range: &Range<usize>,
         cursor_prefix_section: &str,
         events: &[Arc<Event>],
-        related_files: &[RelatedFile],
         diagnostics: &[ActiveBufferDiagnostic],
         cursor_buffer_row: Option<u32>,
-        max_tokens: usize,
-    ) -> String {
+        budget_with_margin: usize,
+    ) -> BudgetBeforeRelatedFiles {
         let suffix_section = build_suffix_section(context, editable_range);
 
         let suffix_tokens = estimate_tokens(suffix_section.len() + FIM_PREFIX.len());
         let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len() + FIM_MIDDLE.len());
-        let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
+        let budget_after_cursor =
+            budget_with_margin.saturating_sub(suffix_tokens + cursor_prefix_tokens);
 
         let edit_history_section = super::format_edit_history_within_budget(
             events,
@@ -4239,6 +4775,39 @@ pub mod seed_coder {
         );
         let diagnostics_tokens = estimate_tokens(diagnostics_section.len() + "\n".len());
         let budget_after_diagnostics = budget_after_edit_history.saturating_sub(diagnostics_tokens);
+
+        BudgetBeforeRelatedFiles {
+            suffix_section,
+            edit_history_section,
+            diagnostics_section,
+            budget_after_diagnostics,
+        }
+    }
+
+    pub fn assemble_fim_prompt(
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_prefix_section: &str,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        diagnostics: &[ActiveBufferDiagnostic],
+        cursor_buffer_row: Option<u32>,
+        max_tokens: usize,
+    ) -> String {
+        let BudgetBeforeRelatedFiles {
+            suffix_section,
+            edit_history_section,
+            diagnostics_section,
+            budget_after_diagnostics,
+        } = budget_before_related_files(
+            context,
+            editable_range,
+            cursor_prefix_section,
+            events,
+            diagnostics,
+            cursor_buffer_row,
+            max_tokens,
+        );
 
         let related_files_section = super::format_related_files_within_budget(
             related_files,
@@ -6487,23 +7056,226 @@ mod tests {
     }
 
     #[test]
+    fn test_related_files_budget_selection_high_priority_not_displaced() {
+        let path: Arc<Path> = Path::new("test.rs").into();
+        let line = "xx\n";
+        let chunk_text: String = line.repeat(60); // rows 90..150
+        let context_files = vec![ContextFile {
+            path: path.clone(),
+            max_row: 150,
+            chunks: vec![Chunk {
+                row_range: 90..150,
+                text: chunk_text.into(),
+            }],
+            retrievals: vec![
+                Retrieval {
+                    source: ContextSource::GitLog,
+                    row_range: 90..150,
+                    rank: 0,
+                    score: None,
+                },
+                Retrieval {
+                    source: ContextSource::EditHistory,
+                    row_range: 100..110,
+                    rank: 0,
+                    score: None,
+                },
+            ],
+            syntax_ranges: Vec::new(),
+        }];
+
+        // Header ("<filename>test.rs\n" = 18 bytes -> 6 tokens) plus the 10
+        // EditHistory rows charged as a single batched excerpt (30 bytes +
+        // "...\n" ellipsis overhead since more of the file follows = 34 bytes
+        // -> 11 tokens) totals 17 tokens, leaving nothing for any of GitLog's
+        // remaining rows.
+        let related_files =
+            context_files_to_related_files_excluding_within_budget(&context_files, None, 17);
+
+        assert_eq!(
+            related_files,
+            vec![RelatedFile {
+                path,
+                max_row: 150,
+                excerpts: vec![RelatedExcerpt {
+                    row_range: 100..110,
+                    text: line.repeat(10).into(),
+                    order: 0,
+                    context_source: ContextSource::EditHistory,
+                }],
+                in_open_source_repo: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_related_files_budget_selection_partial_fill_uses_leftover_budget() {
+        let path: Arc<Path> = Path::new("test.rs").into();
+        let line = "xx\n";
+        let chunk_text: String = line.repeat(60); // rows 90..150
+        let context_files = vec![ContextFile {
+            path: path.clone(),
+            max_row: 150,
+            chunks: vec![Chunk {
+                row_range: 90..150,
+                text: chunk_text.into(),
+            }],
+            retrievals: vec![
+                Retrieval {
+                    source: ContextSource::GitLog,
+                    row_range: 90..150,
+                    rank: 0,
+                    score: None,
+                },
+                Retrieval {
+                    source: ContextSource::EditHistory,
+                    row_range: 100..110,
+                    rank: 0,
+                    score: None,
+                },
+            ],
+            syntax_ranges: Vec::new(),
+        }];
+
+        // 17 tokens for EditHistory (as above) plus 6 leftover tokens, which
+        // fits exactly 5 of GitLog's uncovered rows (90..95) charged as one
+        // batched excerpt (15 bytes + "...\n" overhead = 19 bytes -> 6
+        // tokens), taken top-down; a 6th row would push the batched cost to
+        // 7 tokens and be rejected.
+        let related_files =
+            context_files_to_related_files_excluding_within_budget(&context_files, None, 23);
+
+        assert_eq!(
+            related_files,
+            vec![RelatedFile {
+                path,
+                max_row: 150,
+                excerpts: vec![
+                    RelatedExcerpt {
+                        row_range: 90..95,
+                        text: line.repeat(5).into(),
+                        order: 1,
+                        context_source: ContextSource::GitLog,
+                    },
+                    RelatedExcerpt {
+                        row_range: 100..110,
+                        text: line.repeat(10).into(),
+                        order: 0,
+                        context_source: ContextSource::EditHistory,
+                    },
+                ],
+                in_open_source_repo: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_related_files_budget_selection_zero_charge_for_fully_covered_retrieval() {
+        let path: Arc<Path> = Path::new("test.rs").into();
+        let line = "xx\n";
+        let chunk_text: String = line.repeat(20); // rows 0..20
+        let base_retrieval = Retrieval {
+            source: ContextSource::CurrentFile,
+            row_range: 0..20,
+            rank: 0,
+            score: None,
+        };
+        let overlapping_retrieval = Retrieval {
+            source: ContextSource::EditHistory,
+            row_range: 5..10,
+            rank: 0,
+            score: None,
+        };
+
+        let context_files_without_overlap = vec![ContextFile {
+            path: path.clone(),
+            max_row: 20,
+            chunks: vec![Chunk {
+                row_range: 0..20,
+                text: chunk_text.clone().into(),
+            }],
+            retrievals: vec![base_retrieval.clone()],
+            syntax_ranges: Vec::new(),
+        }];
+        let context_files_with_overlap = vec![ContextFile {
+            retrievals: vec![base_retrieval, overlapping_retrieval],
+            ..context_files_without_overlap[0].clone()
+        }];
+
+        // Header ("<filename>test.rs\n" = 18 bytes -> 6 tokens) plus 20 rows
+        // (1 token each) totals exactly 26 tokens; if the fully-covered
+        // retrieval added any cost, this tight budget would be exceeded and
+        // the output would change.
+        let budget = 26;
+        let without_overlap = context_files_to_related_files_excluding_within_budget(
+            &context_files_without_overlap,
+            None,
+            budget,
+        );
+        let with_overlap = context_files_to_related_files_excluding_within_budget(
+            &context_files_with_overlap,
+            None,
+            budget,
+        );
+
+        assert_eq!(with_overlap, without_overlap);
+        assert_eq!(
+            with_overlap,
+            vec![RelatedFile {
+                path,
+                max_row: 20,
+                excerpts: vec![RelatedExcerpt {
+                    row_range: 0..20,
+                    text: chunk_text.into(),
+                    order: 0,
+                    context_source: ContextSource::CurrentFile,
+                }],
+                in_open_source_repo: false,
+            }]
+        );
+    }
+
+    #[test]
     fn test_zeta3_prompt_matches_zeta2_seed_multi_region_prompt() {
         let excerpt = "fn main() {\n    helper();\n}\n";
         let cursor_offset = excerpt.find("helper").expect("cursor text exists") + "help".len();
         let cursor_row_start = excerpt.find("    helper").expect("cursor row exists");
         let syntax_ranges = vec![0..excerpt.len()];
         let related_file = make_related_file("related.rs", "fn helper() {}\n");
+        let related_context_file = ContextFile {
+            path: related_file.path.clone(),
+            max_row: related_file.max_row,
+            chunks: related_file
+                .excerpts
+                .iter()
+                .map(|excerpt| Chunk {
+                    row_range: excerpt.row_range.clone(),
+                    text: excerpt.text.clone(),
+                })
+                .collect(),
+            retrievals: related_file
+                .excerpts
+                .iter()
+                .map(|excerpt| Retrieval {
+                    source: excerpt.context_source,
+                    row_range: excerpt.row_range.clone(),
+                    rank: excerpt.order,
+                    score: None,
+                })
+                .collect(),
+            syntax_ranges: Vec::new(),
+        };
         let mut zeta2_input = make_input(
             excerpt,
             0..excerpt.len(),
             cursor_offset,
             vec![make_event("test.rs", "-old\n+new\n")],
-            vec![related_file.clone()],
+            vec![related_file],
         );
         zeta2_input.excerpt_start_row = Some(10);
         zeta2_input.excerpt_ranges =
             compute_legacy_excerpt_ranges(excerpt, cursor_offset, &syntax_ranges);
-        zeta2_input.syntax_ranges = Some(syntax_ranges.clone());
+        zeta2_input.syntax_ranges = Some(syntax_ranges);
 
         let zeta3_input = Zeta3PromptInput {
             cursor_path: Path::new("test.rs").into(),
@@ -6513,20 +7285,23 @@ mod tests {
             },
             events: vec![Arc::new(make_event("test.rs", "-old\n+new\n"))],
             editable_context: vec![
-                RelatedFile {
+                ContextFile {
                     path: Path::new("test.rs").into(),
                     max_row: 12,
-                    excerpts: vec![RelatedExcerpt {
+                    chunks: vec![Chunk {
                         row_range: 10..12,
                         text: excerpt.into(),
-                        order: 0,
-                        context_source: ContextSource::CurrentFile,
                     }],
-                    in_open_source_repo: false,
+                    retrievals: vec![Retrieval {
+                        source: ContextSource::CurrentFile,
+                        row_range: 10..12,
+                        rank: 0,
+                        score: None,
+                    }],
+                    syntax_ranges: vec![10..12],
                 },
-                related_file,
+                related_context_file,
             ],
-            syntax_ranges,
             active_buffer_diagnostics: vec![],
             in_open_source_repo: false,
             can_collect_data: false,
@@ -6537,6 +7312,309 @@ mod tests {
             format_zeta3_prompt(&zeta3_input, ZetaFormat::V0318SeedMultiRegions),
             format_zeta_prompt(&zeta2_input, ZetaFormat::V0318SeedMultiRegions),
         );
+    }
+
+    #[test]
+    fn test_related_files_budget_selection_matches_renderer_no_op() {
+        // Realistic, non-3-byte-multiple line lengths: per-line-floor
+        // accounting (the pre-fix behavior) under-charges relative to the
+        // renderer's batched excerpt accounting whenever line lengths aren't
+        // all multiples of 3, which this line deliberately is not.
+        let line = "    let value = compute(a, b);\n";
+        assert_ne!(line.len() % 3, 0, "line length must not be a multiple of 3");
+        let chunk_text: String = line.repeat(60); // rows 0..60
+        let context_files = vec![ContextFile {
+            path: Path::new("test.rs").into(),
+            max_row: 60,
+            chunks: vec![Chunk {
+                row_range: 0..60,
+                text: chunk_text.into(),
+            }],
+            retrievals: vec![
+                Retrieval {
+                    source: ContextSource::GitLog,
+                    row_range: 0..60,
+                    rank: 0,
+                    score: None,
+                },
+                Retrieval {
+                    source: ContextSource::EditHistory,
+                    row_range: 0..20,
+                    rank: 0,
+                    score: None,
+                },
+            ],
+            syntax_ranges: Vec::new(),
+        }];
+
+        // Binds partway through GitLog's uncovered tail (which is adjacent to
+        // EditHistory's range, so the two get unioned into a single merged
+        // block/excerpt) at a budget not aligned to any row boundary.
+        let budget = 270;
+        let related_files =
+            context_files_to_related_files_excluding_within_budget(&context_files, None, budget);
+
+        // A sanity check that this budget actually binds (selection didn't
+        // just include everything, which would make the no-op check trivial).
+        let total_selected_rows: u32 = related_files
+            .iter()
+            .flat_map(|file| &file.excerpts)
+            .map(|excerpt| excerpt.row_range.end - excerpt.row_range.start)
+            .sum();
+        assert!(
+            total_selected_rows < 60,
+            "budget did not bind: {total_selected_rows} rows selected"
+        );
+        assert!(
+            total_selected_rows > 20,
+            "budget selected nothing beyond EditHistory"
+        );
+
+        // The core invariant this fix restores: rendering the selected
+        // excerpts at the very budget selection used (or a much larger one)
+        // must yield the identical string. If selection under-charged
+        // relative to the renderer, the tight-budget render would trim
+        // further than the generous-budget render.
+        let rendered_with_selection_budget =
+            format_related_files_within_budget(&related_files, "<filename>", "", budget);
+        let rendered_with_generous_budget =
+            format_related_files_within_budget(&related_files, "<filename>", "", usize::MAX / 2);
+
+        assert_eq!(
+            rendered_with_selection_budget,
+            rendered_with_generous_budget
+        );
+        assert!(!rendered_with_selection_budget.is_empty());
+    }
+
+    #[test]
+    fn test_format_zeta3_prompt_tight_budget_keeps_high_priority_drops_low_priority_tail() {
+        // Realistic (non-3-byte-multiple) line length, per the F1 review
+        // finding: 3-byte lines make per-line and per-excerpt token
+        // accounting coincide and hide the under-charge bug this guards
+        // against.
+        let related_line = "    let value_0000 = compute(a, b, c, dd);\n";
+        assert_ne!(related_line.len() % 3, 0);
+
+        // EditHistory (higher priority than GitLog, see
+        // `context_source_priority`) covers rows 0..253, which is sized (via
+        // the real `estimate_tokens`/margin arithmetic, not a hand-tuned
+        // guess) to consume nearly all of the related-files budget available
+        // under the format's fixed 4096-token cap, leaving less budget than a
+        // single additional row costs. GitLog then overlaps that entire
+        // range and extends it by 27 more rows (253..280) that must be
+        // dropped entirely: not clipped to a partial tail, absent.
+        let high_priority_row_count = 253u32;
+        let total_row_count = 280u32;
+        let related_text: String = (0..total_row_count)
+            .map(|_| related_line.to_string())
+            .collect();
+        let related_context_file = ContextFile {
+            path: Path::new("related.rs").into(),
+            max_row: total_row_count,
+            chunks: vec![Chunk {
+                row_range: 0..total_row_count,
+                text: related_text.into(),
+            }],
+            retrievals: vec![
+                Retrieval {
+                    source: ContextSource::GitLog,
+                    row_range: 0..total_row_count,
+                    rank: 0,
+                    score: None,
+                },
+                Retrieval {
+                    source: ContextSource::EditHistory,
+                    row_range: 0..high_priority_row_count,
+                    rank: 0,
+                    score: None,
+                },
+            ],
+            syntax_ranges: Vec::new(),
+        };
+
+        let cursor_excerpt = "fn main() {\n    helper();\n}\n";
+        let cursor_offset =
+            cursor_excerpt.find("helper").expect("cursor text exists") + "help".len();
+        let cursor_row_start = cursor_excerpt
+            .find("    helper")
+            .expect("cursor row exists");
+
+        let zeta3_input = Zeta3PromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: FilePosition {
+                row: 1,
+                column: (cursor_offset - cursor_row_start) as u32,
+            },
+            events: vec![],
+            editable_context: vec![
+                ContextFile {
+                    path: Path::new("test.rs").into(),
+                    max_row: 3,
+                    chunks: vec![Chunk {
+                        row_range: 0..3,
+                        text: cursor_excerpt.into(),
+                    }],
+                    retrievals: vec![Retrieval {
+                        source: ContextSource::CurrentFile,
+                        row_range: 0..3,
+                        rank: 0,
+                        score: None,
+                    }],
+                    syntax_ranges: vec![0..cursor_excerpt.len() as u32],
+                },
+                related_context_file,
+            ],
+            active_buffer_diagnostics: vec![],
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        };
+
+        let prompt = format_zeta3_prompt(&zeta3_input, ZetaFormat::V0318SeedMultiRegions)
+            .expect("prompt renders");
+
+        let expected_related_files_section = format!(
+            "<filename>related.rs\n{}...\n",
+            related_line.repeat(high_priority_row_count as usize)
+        );
+        assert!(
+            prompt.contains(&expected_related_files_section),
+            "expected exactly {high_priority_row_count} high-priority rows followed by an \
+             ellipsis; prompt:\n{prompt}"
+        );
+
+        // None of GitLog's low-priority-only tail rows survive: the renderer
+        // must emit exactly the row set selection chose, not a superset.
+        let dropped_row_line = related_line.to_string();
+        let occurrences = prompt.matches(&dropped_row_line).count();
+        assert_eq!(
+            occurrences, high_priority_row_count as usize,
+            "expected exactly the high-priority rows to appear and none of GitLog's \
+             low-priority-only tail; prompt:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn test_format_zeta3_prompt_tight_budget_accounts_for_diagnostics_in_related_files_selection() {
+        // Same fixture as
+        // `test_format_zeta3_prompt_tight_budget_keeps_high_priority_drops_low_priority_tail`,
+        // except the input now carries a diagnostic. Retrieval selection
+        // (`budget_before_related_files`, called from `format_zeta3_prompt`)
+        // must charge the diagnostics section against the related-files
+        // budget the same way the final assembly does, or selection admits
+        // more high-priority rows than actually fit once the rest of the
+        // prompt is assembled.
+        let related_line = "    let value_0000 = compute(a, b, c, dd);\n";
+        assert_ne!(related_line.len() % 3, 0);
+
+        // high_priority_row_count is derived (not hand-tuned) from the real
+        // `estimate_tokens`/margin arithmetic `budget_before_related_files`
+        // and the renderer both use:
+        //   header_cost = estimate_tokens(len("<filename>related.rs\n")) = 7
+        //   row_cost(n) = header_cost
+        //       + estimate_tokens(n * related_line.len() + "...\n".len())
+        // With this one diagnostic present, `budget_before_related_files`
+        // (computed the same way `format_zeta3_prompt` computes it) yields a
+        // related-files budget of exactly 3376 tokens; row_cost(235) == 3376
+        // exactly (0 tokens left over) while row_cost(236) == 3391 (exceeds
+        // the budget). Without the diagnostic the budget is 3644 tokens,
+        // which fits 253 rows (see the sibling test) -- so accounting for
+        // diagnostics strictly tightens the selected row count from 253 to
+        // 235, and this test pins that exact, smaller boundary.
+        let high_priority_row_count = 235u32;
+        let total_row_count = 280u32;
+        let related_text: String = (0..total_row_count)
+            .map(|_| related_line.to_string())
+            .collect();
+        let related_context_file = ContextFile {
+            path: Path::new("related.rs").into(),
+            max_row: total_row_count,
+            chunks: vec![Chunk {
+                row_range: 0..total_row_count,
+                text: related_text.into(),
+            }],
+            retrievals: vec![
+                Retrieval {
+                    source: ContextSource::GitLog,
+                    row_range: 0..total_row_count,
+                    rank: 0,
+                    score: None,
+                },
+                Retrieval {
+                    source: ContextSource::EditHistory,
+                    row_range: 0..high_priority_row_count,
+                    rank: 0,
+                    score: None,
+                },
+            ],
+            syntax_ranges: Vec::new(),
+        };
+
+        let cursor_excerpt = "fn main() {\n    helper();\n}\n";
+        let cursor_offset =
+            cursor_excerpt.find("helper").expect("cursor text exists") + "help".len();
+        let cursor_row_start = cursor_excerpt
+            .find("    helper")
+            .expect("cursor row exists");
+
+        // A realistic diagnostic snippet/message: large enough (the snippet
+        // is clamped to 256 tokens by `format_active_buffer_diagnostics_with_budget`)
+        // that its rendered section consumes a meaningful, non-trivial chunk
+        // of the related-files budget above.
+        let active_buffer_diagnostics = vec![ActiveBufferDiagnostic {
+            severity: Some(1),
+            message: "cannot find value `dd` in this scope".to_string(),
+            snippet: related_line.repeat(50),
+            snippet_buffer_row_range: 0..50,
+            diagnostic_range_in_snippet: 0..10,
+        }];
+
+        let zeta3_input = Zeta3PromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: FilePosition {
+                row: 1,
+                column: (cursor_offset - cursor_row_start) as u32,
+            },
+            events: vec![],
+            editable_context: vec![
+                ContextFile {
+                    path: Path::new("test.rs").into(),
+                    max_row: 3,
+                    chunks: vec![Chunk {
+                        row_range: 0..3,
+                        text: cursor_excerpt.into(),
+                    }],
+                    retrievals: vec![Retrieval {
+                        source: ContextSource::CurrentFile,
+                        row_range: 0..3,
+                        rank: 0,
+                        score: None,
+                    }],
+                    syntax_ranges: vec![0..cursor_excerpt.len() as u32],
+                },
+                related_context_file,
+            ],
+            active_buffer_diagnostics,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        };
+
+        let prompt = format_zeta3_prompt(&zeta3_input, ZetaFormat::V0318SeedMultiRegions)
+            .expect("prompt renders");
+
+        // The related-files section must end exactly at the row boundary
+        // selection chose (235, not the diagnostics-blind 253): the full
+        // rendered prompt is asserted so that any extra or missing row --
+        // whether from selection ignoring the diagnostics budget again, or
+        // the renderer re-trimming a merged block to a different boundary --
+        // shows up as a mismatch.
+        let expected = format!(
+            "<[fim-suffix]>\n<[fim-prefix]><filename>related.rs\n{}...\n\n<filename>test.rs\n<|marker_1|>fn main() {{\n    help<|user_cursor|>er();\n}}\n<|marker_2|>\n<[fim-middle]>",
+            related_line.repeat(high_priority_row_count as usize)
+        );
+        assert_eq!(prompt, expected);
     }
 
     #[test]
@@ -6551,18 +7629,21 @@ mod tests {
             cursor_path: Path::new("test.rs").into(),
             cursor_position: FilePosition { row: 21, column: 8 },
             events: vec![],
-            editable_context: vec![RelatedFile {
+            editable_context: vec![ContextFile {
                 path: Path::new("test.rs").into(),
                 max_row: 24,
-                excerpts: vec![RelatedExcerpt {
+                chunks: vec![Chunk {
                     row_range: 20..24,
                     text: excerpt.into(),
-                    order: 0,
-                    context_source: ContextSource::CurrentFile,
                 }],
-                in_open_source_repo: false,
+                retrievals: vec![Retrieval {
+                    source: ContextSource::CurrentFile,
+                    row_range: 20..24,
+                    rank: 0,
+                    score: None,
+                }],
+                syntax_ranges: vec![20..24],
             }],
-            syntax_ranges: vec![0..excerpt.len()],
             active_buffer_diagnostics: vec![],
             in_open_source_repo: false,
             can_collect_data: false,

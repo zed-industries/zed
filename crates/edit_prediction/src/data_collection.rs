@@ -22,7 +22,7 @@ pub(crate) struct CapturedPredictionContext {
     pub(crate) revision: Option<String>,
     pub(crate) uncommitted_diff: Option<String>,
     pub(crate) buffer_diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
-    pub(crate) editable_context: Vec<zeta_prompt::RelatedFile>,
+    pub(crate) editable_context: Vec<zeta_prompt::ContextFile>,
 }
 
 pub(crate) fn capture_prediction_context(
@@ -32,7 +32,7 @@ pub(crate) fn capture_prediction_context(
     stored_events: Vec<StoredEvent>,
     repository_url: Option<String>,
     revision: Option<String>,
-    editable_context_task: Task<Result<Vec<zeta_prompt::RelatedFile>>>,
+    editable_context_task: Task<Result<Vec<zeta_prompt::ContextFile>>>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Option<Task<Result<CapturedPredictionContext>>> {
     let snapshot = buffer.read(cx).snapshot();
@@ -211,16 +211,14 @@ pub fn compute_cursor_excerpt(
     let cursor_offset = cursor_anchor.to_offset(snapshot);
     let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
         crate::cursor_excerpt::compute_cursor_excerpt(snapshot, cursor_offset);
-    let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
-        snapshot,
-        cursor_offset,
-        &excerpt_offset_range,
-    );
+    let excerpt_start_row = excerpt_point_range.start.row;
+    let syntax_ranges = crate::cursor_excerpt::compute_syntax_row_ranges(snapshot, cursor_offset);
     let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
     let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
         &excerpt_text,
         cursor_offset_in_excerpt,
         &syntax_ranges,
+        excerpt_start_row,
         100,
         50,
     );

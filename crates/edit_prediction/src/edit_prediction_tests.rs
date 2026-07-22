@@ -3298,15 +3298,15 @@ async fn make_test_ep_store(
                             .find(|file| file.path == req.input.cursor_path)
                             .or_else(|| req.input.editable_context.first())
                             .expect("V4 requests should include editable context");
-                        let excerpt = file
-                            .excerpts
+                        let chunk = file
+                            .chunks
                             .first()
-                            .expect("V4 editable context should include an excerpt");
+                            .expect("V4 editable context should include a chunk");
                         let diff = unified_diff_with_offsets(
-                            &excerpt.text,
+                            &chunk.text,
                             &output,
-                            excerpt.row_range.start,
-                            excerpt.row_range.start,
+                            chunk.row_range.start,
+                            chunk.row_range.start,
                         );
                         let path = file.path.to_string_lossy();
                         let response = PredictEditsV4Response {
@@ -3806,16 +3806,20 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
                 snippet_buffer_row_range: 0..0,
                 diagnostic_range_in_snippet: 0..0,
             }],
-            editable_context: vec![zeta_prompt::RelatedFile {
+            editable_context: vec![zeta_prompt::ContextFile {
                 path: Path::new("foo.md").into(),
                 max_row: 60,
-                excerpts: vec![zeta_prompt::RelatedExcerpt {
+                chunks: vec![zeta_prompt::Chunk {
                     row_range: 0..2,
                     text: "line 0\nline 1\n".into(),
-                    order: 0,
-                    context_source: zeta_prompt::ContextSource::CurrentFile,
                 }],
-                in_open_source_repo: true,
+                retrievals: vec![zeta_prompt::Retrieval {
+                    source: zeta_prompt::ContextSource::CurrentFile,
+                    row_range: 0..2,
+                    rank: 0,
+                    score: None,
+                }],
+                syntax_ranges: Vec::new(),
             }],
         },
         Some(boundary),
@@ -3924,9 +3928,9 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
     assert_eq!(sample_data.editable_context.len(), 1);
     let editable_context = &sample_data.editable_context[0];
     assert_eq!(editable_context.path.as_ref(), Path::new("foo.md"));
-    assert_eq!(editable_context.excerpts.len(), 1);
+    assert_eq!(editable_context.chunks.len(), 1);
     assert_eq!(
-        editable_context.excerpts[0].context_source,
+        editable_context.retrievals[0].source,
         zeta_prompt::ContextSource::CurrentFile
     );
     assert_eq!(sample_data.future_edit_history_events.len(), 4);
