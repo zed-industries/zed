@@ -8,7 +8,7 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
-    actions::{DeleteLine, WrapSelectionsInTag},
+    actions::{DeleteLine, HandleInput, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
@@ -1443,6 +1443,74 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         ˇ1
         2
         3"});
+}
+
+#[perf]
+#[gpui::test]
+async fn test_ime_transaction_undo(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇone", Mode::Normal);
+    cx.simulate_keystrokes("i j");
+    cx.assert_state("ˇjone", Mode::Insert);
+    assert_pending_input(&mut cx, "«j»one");
+    cx.simulate_keystrokes("k");
+    cx.assert_state("ˇone", Mode::Normal);
+
+    cx.simulate_keystrokes("u");
+    cx.assert_state("ˇ", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_pending_input_mapping_output_undo(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "a b c",
+            HandleInput("d".to_string()),
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇone", Mode::Normal);
+    cx.simulate_keystrokes("i a b c");
+    cx.assert_state("dˇone", Mode::Insert);
+
+    cx.simulate_keystrokes("escape u");
+    cx.assert_state("ˇone", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_pending_input_mapping_output_undo_delay(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "a b c",
+            HandleInput("d".to_string()),
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇone", Mode::Normal);
+    cx.simulate_keystrokes("i a b");
+    cx.executor().advance_clock(Duration::from_millis(1500));
+    cx.run_until_parked();
+    cx.assert_state("abˇone", Mode::Insert);
+
+    cx.simulate_keystrokes("escape u");
+    cx.assert_state("ˇone", Mode::Normal);
 }
 
 #[perf]
