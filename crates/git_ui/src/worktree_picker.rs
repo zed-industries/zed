@@ -96,9 +96,9 @@ impl WorktreePicker {
                 .map(|branch| branch.name().to_string())
         });
 
-        let all_worktrees_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
+        let all_worktrees_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, cx| repository.worktrees_unqueued(cx))
+        });
 
         let default_branch_request = repository.clone().map(|repository| {
             repository.update(cx, |repository, _| repository.default_branch(true))
@@ -139,36 +139,50 @@ impl WorktreePicker {
 
         let mut subscriptions = Vec::new();
 
-        {
+        // Populate the worktree list as soon as `git worktree list` returns,
+        // without waiting for the default branch lookup. Gating the whole list
+        // on `default_branch` would keep it empty until that second request
+        // also completes.
+        if let Some(all_worktrees_request) = all_worktrees_request {
             let picker_handle = picker.downgrade();
             cx.spawn_in(window, async move |_this, cx| {
-                let all_worktrees: Vec<_> = match all_worktrees_request {
-                    Some(req) => match req.await {
-                        Ok(Ok(worktrees)) => {
-                            worktrees.into_iter().filter(|wt| !wt.is_bare).collect()
-                        }
-                        Ok(Err(err)) => {
-                            log::warn!("WorktreePicker: git worktree list failed: {err}");
-                            return anyhow::Ok(());
-                        }
-                        Err(_) => {
-                            log::warn!("WorktreePicker: worktree request was cancelled");
-                            return anyhow::Ok(());
-                        }
-                    },
-                    None => Vec::new(),
-                };
-
-                let default_branch = match default_branch_request {
-                    Some(req) => req.await.ok().and_then(Result::ok).flatten(),
-                    None => None,
+                let all_worktrees: Vec<_> = match all_worktrees_request.await {
+                    Ok(Ok(worktrees)) => worktrees.into_iter().filter(|wt| !wt.is_bare).collect(),
+                    Ok(Err(err)) => {
+                        log::warn!("WorktreePicker: git worktree list failed: {err}");
+                        return anyhow::Ok(());
+                    }
+                    Err(_) => {
+                        log::warn!("WorktreePicker: worktree request was cancelled");
+                        return anyhow::Ok(());
+                    }
                 };
 
                 picker_handle.update_in(cx, |picker, window, cx| {
                     picker.delegate.all_worktrees = all_worktrees;
-                    picker.delegate.default_branch =
-                        default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
                     picker.delegate.refresh_project_worktree_paths(window, cx);
+                    picker.refresh(window, cx);
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+
+        // Fill in the "create from default branch" option independently, once
+        // the default branch lookup resolves.
+        if let Some(default_branch_request) = default_branch_request {
+            let picker_handle = picker.downgrade();
+            cx.spawn_in(window, async move |_this, cx| {
+                let default_branch = default_branch_request
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten()
+                    .and_then(|branch| RemoteBranchName::parse(&branch));
+
+                picker_handle.update_in(cx, |picker, window, cx| {
+                    picker.delegate.default_branch = default_branch;
                     picker.refresh(window, cx);
                 })?;
 
@@ -184,7 +198,8 @@ impl WorktreePicker {
                 window,
                 move |_this, repo, event: &RepositoryEvent, window, cx| {
                     if matches!(event, RepositoryEvent::GitWorktreeListChanged) {
-                        let worktrees_request = repo.update(cx, |repo, _| repo.worktrees());
+                        let worktrees_request =
+                            repo.update(cx, |repo, cx| repo.worktrees_unqueued(cx));
                         let picker = picker_entity.clone();
                         cx.spawn_in(window, async move |_, cx| {
                             let all_worktrees: Vec<_> = worktrees_request

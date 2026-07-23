@@ -8137,6 +8137,52 @@ impl Repository {
         })
     }
 
+    /// Lists git worktrees without going through the serial per-repository git
+    /// job queue. `git worktree list` is read-only and independent of the
+    /// status snapshot, so it must not wait behind long-running scans (status /
+    /// diff refreshes) in a large monorepo, where queuing it makes the worktree
+    /// switcher take minutes to populate. Runs directly against the backend,
+    /// mirroring the off-queue pattern used by [`Self::search_commits`] and the
+    /// git graph data readers. The queued [`Self::worktrees`] is still used by
+    /// `compute_snapshot`, where ordering keeps the snapshot internally
+    /// consistent.
+    pub fn worktrees_unqueued(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
+        let (tx, rx) = oneshot::channel();
+        let repository_state = self.repository_state.clone();
+        let id = self.id;
+        cx.background_spawn(async move {
+            let result = match repository_state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    backend.worktrees().await
+                }
+                Ok(RepositoryState::Remote(RemoteRepositoryState { project_id, client })) => {
+                    async move {
+                        let response = client
+                            .request(proto::GitGetWorktrees {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                            })
+                            .await?;
+                        let worktrees = response
+                            .worktrees
+                            .into_iter()
+                            .map(|worktree| proto_to_worktree(&worktree))
+                            .collect();
+                        Ok(worktrees)
+                    }
+                    .await
+                }
+                Err(error) => Err(anyhow!(error)),
+            };
+            tx.send(result).ok();
+        })
+        .detach();
+        rx
+    }
+
     pub fn create_worktree(
         &mut self,
         target: CreateWorktreeTarget,
