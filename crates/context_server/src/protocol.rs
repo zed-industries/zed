@@ -16,6 +16,7 @@
 //! Connecting probes with `server/discover` first and falls back to the
 //! legacy handshake, per the spec's backward-compatibility rules.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -383,6 +384,50 @@ impl InitializedContextServerProtocol {
                     }
                 }
             }
+        }
+    }
+
+    /// Drive a long-lived `subscriptions/listen` stream for the given
+    /// notification types (MCP 2026-07-28 and later). The subscribed
+    /// notifications are dispatched to handlers registered via
+    /// [`Self::on_notification`]; the returned future resolves when the
+    /// server gracefully closes the subscription, and dropping it abandons
+    /// the subscription. On legacy connections it resolves immediately:
+    /// legacy servers push these notifications unsolicited.
+    pub fn listen_to_notifications(
+        self: &Arc<Self>,
+        filter: types::NotificationFilter,
+    ) -> impl Future<Output = Result<()>> + 'static {
+        let this = self.clone();
+        async move {
+            if !this.is_modern() {
+                return Ok(());
+            }
+            // The server acknowledges with the subset of the filter it will
+            // honor; surface disagreements in logs rather than failing.
+            let _ack_subscription = this.on_notification(
+                types::notifications::SubscriptionsAcknowledged::METHOD,
+                Box::new(|params, _cx| {
+                    match serde_json::from_value::<types::SubscriptionsAcknowledgedParams>(params) {
+                        Ok(ack) => {
+                            log::debug!("mcp subscription acknowledged: {:?}", ack.notifications)
+                        }
+                        Err(error) => {
+                            log::error!("invalid subscriptions/listen acknowledgment: {error}")
+                        }
+                    }
+                }),
+            );
+            this.request_with::<types::requests::SubscriptionsListen>(
+                types::SubscriptionsListenParams {
+                    notifications: filter,
+                    meta: None,
+                },
+                None,
+                None,
+            )
+            .await?;
+            Ok(())
         }
     }
 
@@ -934,6 +979,101 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.text_contents(), "done");
+    }
+
+    #[gpui::test]
+    async fn test_listen_to_notifications_on_modern_server(cx: &mut TestAppContext) {
+        let transport = Arc::new(
+            create_modern_fake_transport("modern-server", cx.executor()).on_raw_request(
+                requests::SubscriptionsListen::METHOD,
+                |params| async move {
+                    assert_eq!(params["notifications"]["toolsListChanged"], true);
+                    // The stream stays open: no response.
+                    Ok(None)
+                },
+            ),
+        );
+        let received_messages = transport.received_messages();
+
+        let client = Client::new(
+            ContextServerId("test-server".into()),
+            "test-server".into(),
+            transport.clone(),
+            None,
+            cx.to_async(),
+        )
+        .unwrap();
+        let protocol = Arc::new(
+            ModelContextProtocol::new(client)
+                .initialize(client_info())
+                .await
+                .unwrap(),
+        );
+
+        let notified = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _subscription = protocol.on_notification(
+            "notifications/tools/list_changed",
+            Box::new({
+                let notified = notified.clone();
+                move |_params, _cx| {
+                    notified.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }),
+        );
+
+        let _listen_task = cx
+            .foreground_executor()
+            .spawn(protocol.listen_to_notifications(types::NotificationFilter {
+                tools_list_changed: Some(true),
+                ..Default::default()
+            }));
+        cx.run_until_parked();
+
+        let messages = received_messages.lock().clone();
+        let listen_requests = messages_with_method(&messages, "subscriptions/listen");
+        assert_eq!(listen_requests.len(), 1);
+        // The listen request carries the modern `_meta` like any other.
+        assert_eq!(
+            listen_requests[0]["params"]["_meta"][types::meta_keys::PROTOCOL_VERSION],
+            types::VERSION_2026_07_28
+        );
+
+        let subscription_id = listen_requests[0]["id"].clone();
+        transport.send_notification(
+            "notifications/subscriptions/acknowledged",
+            serde_json::json!({
+                "_meta": { types::meta_keys::SUBSCRIPTION_ID: subscription_id },
+                "notifications": { "toolsListChanged": true }
+            }),
+        );
+        transport.send_notification(
+            "notifications/tools/list_changed",
+            serde_json::json!({
+                "_meta": { types::meta_keys::SUBSCRIPTION_ID: subscription_id }
+            }),
+        );
+        cx.run_until_parked();
+
+        assert_eq!(notified.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_listen_to_notifications_is_noop_on_legacy_server(cx: &mut TestAppContext) {
+        let transport = create_fake_transport("legacy-server", cx.executor());
+        let received_messages = transport.received_messages();
+        let (protocol, _) = connect(transport, cx).await;
+        let protocol = Arc::new(protocol.unwrap());
+
+        protocol
+            .listen_to_notifications(types::NotificationFilter {
+                tools_list_changed: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let messages = received_messages.lock().clone();
+        assert!(messages_with_method(&messages, "subscriptions/listen").is_empty());
     }
 
     #[gpui::test]

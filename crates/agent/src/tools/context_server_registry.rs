@@ -1,6 +1,6 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
@@ -45,6 +45,10 @@ struct RegisteredContextServer {
     load_tools: Task<Result<()>>,
     load_prompts: Task<Result<()>>,
     _tools_updated_subscription: Option<NotificationSubscription>,
+    /// Keeps the `subscriptions/listen` stream open on servers speaking MCP
+    /// 2026-07-28 or later; legacy servers push list-change notifications
+    /// unsolicited instead.
+    _listen_task: Option<Task<()>>,
 }
 
 impl ContextServerRegistry {
@@ -158,12 +162,37 @@ impl ContextServerRegistry {
                 ))
             });
 
+        let listen_task = server_store
+            .read(cx)
+            .get_running_server(server_id)
+            .and_then(|server| server.client())
+            .filter(|client| {
+                client.is_modern()
+                    && client.capable(context_server::protocol::ServerCapability::Tools)
+            })
+            .map(|client| {
+                let server_id = server_id.clone();
+                cx.spawn(async move |_, _| {
+                    client
+                        .listen_to_notifications(context_server::types::NotificationFilter {
+                            tools_list_changed: Some(true),
+                            ..Default::default()
+                        })
+                        .await
+                        .with_context(|| {
+                            format!("listening for tool changes on context server {server_id}")
+                        })
+                        .log_err();
+                })
+            });
+
         RegisteredContextServer {
             tools: BTreeMap::default(),
             prompts: BTreeMap::default(),
             load_tools: Task::ready(Ok(())),
             load_prompts: Task::ready(Ok(())),
             _tools_updated_subscription: tools_updated_subscription,
+            _listen_task: listen_task,
         }
     }
 

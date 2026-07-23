@@ -164,6 +164,17 @@ impl FakeTransport {
     pub fn received_messages(&self) -> Arc<Mutex<Vec<serde_json::Value>>> {
         self.received_messages.clone()
     }
+
+    /// Push an unsolicited server-to-client notification, as a server does
+    /// on a `subscriptions/listen` stream or a legacy connection.
+    pub fn send_notification(&self, method: &str, params: serde_json::Value) {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        self.tx.unbounded_send(message.to_string()).ok();
+    }
 }
 
 #[async_trait::async_trait]
