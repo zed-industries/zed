@@ -83,7 +83,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             diagnostics: vec![lsp::Diagnostic{
                 range: lsp::Range::new(lsp::Position::new(7, 6),lsp::Position::new(7, 7)),
                 severity:Some(lsp::DiagnosticSeverity::ERROR),
-                message: "use of moved value\nvalue used here after move".to_string(),
+                message: "use of moved value\nvalue used here after move".into(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2,8),lsp::Position::new(2,9))),
                     message: "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
@@ -98,7 +98,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             lsp::Diagnostic{
                 range: lsp::Range::new(lsp::Position::new(8, 6),lsp::Position::new(8, 7)),
                 severity:Some(lsp::DiagnosticSeverity::ERROR),
-                message: "use of moved value\nvalue used here after move".to_string(),
+                message: "use of moved value\nvalue used here after move".into(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1,8),lsp::Position::new(1,9))),
                     message: "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
@@ -180,7 +180,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             lsp::Position::new(0, 15),
                         ),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "mismatched types expected `usize`, found `char`".to_string(),
+                        message: "mismatched types expected `usize`, found `char`".into(),
                         ..Default::default()
                     }],
                     version: None,
@@ -259,7 +259,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                                 lsp::Position::new(0, 15),
                             ),
                             severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: "mismatched types expected `usize`, found `char`".to_string(),
+                            message: "mismatched types expected `usize`, found `char`".into(),
                             ..Default::default()
                         },
                         lsp::Diagnostic {
@@ -268,7 +268,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                                 lsp::Position::new(1, 15),
                             ),
                             severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: "unresolved name `c`".to_string(),
+                            message: "unresolved name `c`".into(),
                             ..Default::default()
                         },
                     ],
@@ -370,7 +370,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(4, 0), lsp::Position::new(4, 4)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "no method `tset`".to_string(),
+                        message: "no method `tset`".into(),
                         related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(
                                 lsp::Uri::from_file_path(path!("/test/main.js")).unwrap(),
@@ -480,7 +480,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "error 1".to_string(),
+                        message: "error 1".into(),
                         ..Default::default()
                     }],
                     version: None,
@@ -524,7 +524,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 1)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "warning 1".to_string(),
+                        message: "warning 1".into(),
                         ..Default::default()
                     }],
                     version: None,
@@ -567,7 +567,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "warning 2".to_string(),
+                        message: "warning 2".into(),
                         ..Default::default()
                     }],
                     version: None,
@@ -623,7 +623,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(3, 0), lsp::Position::new(3, 1)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "warning 2".to_string(),
+                        message: "warning 2".into(),
                         ..Default::default()
                     }],
                     version: None,
@@ -1019,7 +1019,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                                 lsp::Position::new(0, 12),
                             ),
                             severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: message.to_string(),
+                            message: message.to_string().into(),
                             ..Default::default()
                         }],
                     },
@@ -1275,7 +1275,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
+                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".into(),
                         ..Default::default()
                     }],
                 },
@@ -1292,6 +1292,246 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
+}
+
+#[gpui::test]
+async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn func(abˇc def: i32) -> u32 {
+        }
+    "});
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                    version: None,
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 8),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                                kind: lsp::MarkupKind::Markdown,
+                                value: "`abc` is **not** defined".to_string(),
+                            }),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 17),
+                                lsp::Position::new(0, 20),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "`i32` is **not** a type".into(),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 21),
+                                lsp::Position::new(0, 24),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            source: Some("rustc".to_string()),
+                            code: Some(lsp::NumberOrString::String("E0425".to_string())),
+                            message: lsp::MarkupContent {
+                                kind: lsp::MarkupKind::Markdown,
+                                value: "```rust\nlet x = unknown;\n```".to_string(),
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
+                    ],
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor::hover_popover::hover(editor, &Default::default(), window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()));
+
+    let buffer_id = cx.update_buffer(|buffer, _| buffer.remote_id());
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+
+        // A MarkupContent message is rendered as the markdown the server sent,
+        // while a plain string message is escaped before rendering.
+        let group = snapshot
+            .buffer_snapshot()
+            .diagnostic_group(buffer_id, 0)
+            .collect::<Vec<_>>();
+        let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+            group, buffer_id, None, None, cx,
+        );
+        assert_eq!(
+            blocks[0].markdown.read(cx).source(),
+            "`abc` is **not** defined"
+        );
+
+        let group = snapshot
+            .buffer_snapshot()
+            .diagnostic_group(buffer_id, 1)
+            .collect::<Vec<_>>();
+        let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+            group, buffer_id, None, None, cx,
+        );
+        assert_eq!(
+            blocks[0].markdown.read(cx).source(),
+            markdown::Markdown::escape("`i32` is **not** a type").as_ref(),
+        );
+
+        let group = snapshot
+            .buffer_snapshot()
+            .diagnostic_group(buffer_id, 2)
+            .collect::<Vec<_>>();
+        let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+            group, buffer_id, None, None, cx,
+        );
+        assert_eq!(
+            blocks[0].markdown.read(cx).source(),
+            "```rust\nlet x = unknown;\n```\n\n(rustc E0425)"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostics_views_update_when_only_markdown_changes(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({ "main.rs": "x\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let project_path = project::ProjectPath {
+        worktree_id: project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        }),
+        path: rel_path("main.rs").into(),
+    };
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
+    let language_server_id = LanguageServerId(0);
+
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "`x`".into(),
+                        ..Default::default()
+                    }],
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+        })
+        .unwrap();
+
+    let project_diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+    let project_editor =
+        project_diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
+    let buffer_diagnostics = window.build_entity(cx, |window, cx| {
+        BufferDiagnosticsEditor::new(
+            project_path,
+            project.clone(),
+            Some(buffer),
+            true,
+            window,
+            cx,
+        )
+    });
+    let buffer_editor =
+        buffer_diagnostics.update(cx, |diagnostics, _| diagnostics.editor().clone());
+
+    project_diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+    cx.run_until_parked();
+
+    assert!(editor_content_with_blocks(&project_editor, cx).contains("§ `x`"));
+    assert!(editor_content_with_blocks(&buffer_editor, cx).contains("§ `x`"));
+
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri,
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value: "`x`".to_string(),
+                        }
+                        .into(),
+                        ..Default::default()
+                    }],
+                },
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
+        })
+        .unwrap();
+
+    project_diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .await;
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+    cx.run_until_parked();
+
+    let project_content = editor_content_with_blocks(&project_editor, cx);
+    let buffer_content = editor_content_with_blocks(&buffer_editor, cx);
+    assert!(project_content.contains("§ x"), "{project_content}");
+    assert!(buffer_content.contains("§ x"), "{buffer_content}");
+    assert!(!project_content.contains("§ `x`"), "{project_content}");
+    assert!(!buffer_content.contains("§ `x`"), "{buffer_content}");
 }
 
 #[gpui::test]
@@ -1328,7 +1568,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
                     diagnostics: vec![lsp::Diagnostic {
                         range,
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "A test diagnostic message.".to_string(),
+                        message: "A test diagnostic message.".into(),
                         ..Default::default()
                     }],
                 },
@@ -1420,7 +1660,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
                             severity: Some(lsp::DiagnosticSeverity::WARNING),
                             code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
                             source: Some("eslint".to_string()),
-                            message: "'x' is assigned a value but never used".to_string(),
+                            message: "'x' is assigned a value but never used".into(),
                             ..Default::default()
                         },
                         lsp::Diagnostic {
@@ -1431,7 +1671,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
                             severity: Some(lsp::DiagnosticSeverity::WARNING),
                             code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
                             source: Some("eslint".to_string()),
-                            message: "'y' is assigned a value but never used".to_string(),
+                            message: "'y' is assigned a value but never used".into(),
                             ..Default::default()
                         },
                     ],
@@ -1657,7 +1897,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
-                    message: "use of moved value\nvalue used here after move".to_string(),
+                    message: "use of moved value\nvalue used here after move".into(),
                     related_information: Some(vec![
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9))),
@@ -1673,7 +1913,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
                     severity: Some(lsp::DiagnosticSeverity::ERROR),
-                    message: "use of moved value\nvalue used here after move".to_string(),
+                    message: "use of moved value\nvalue used here after move".into(),
                     related_information: Some(vec![
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9))),
@@ -1699,13 +1939,13 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 14)),
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
-                    message: "unused variable: `unused`".to_string(),
+                    message: "unused variable: `unused`".into(),
                     ..Default::default()
                 },
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 22)),
                     severity: Some(lsp::DiagnosticSeverity::ERROR),
-                    message: "cannot find function `undefined_function` in this scope".to_string(),
+                    message: "cannot find function `undefined_function` in this scope".into(),
                     ..Default::default()
                 }
             ],
@@ -1810,7 +2050,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
-                    message: "use of moved value\nvalue used here after move".to_string(),
+                    message: "use of moved value\nvalue used here after move".into(),
                     related_information: Some(vec![
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9))),
@@ -1826,7 +2066,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
                 lsp::Diagnostic{
                     range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
                     severity: Some(lsp::DiagnosticSeverity::ERROR),
-                    message: "use of moved value\nvalue used here after move".to_string(),
+                    message: "use of moved value\nvalue used here after move".into(),
                     related_information: Some(vec![
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9))),
@@ -1945,7 +2185,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(5, 6), lsp::Position::new(5, 7)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "use of moved value\nvalue used here after move".to_string(),
+                        message: "use of moved value\nvalue used here after move".into(),
                         related_information: None,
                         ..Default::default()
                     }],
@@ -1966,7 +2206,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(6, 6), lsp::Position::new(6, 7)),
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        message: "use of moved value\nvalue used here after move".to_string(),
+                        message: "use of moved value\nvalue used here after move".into(),
                         related_information: None,
                         ..Default::default()
                     }],
@@ -2145,7 +2385,7 @@ fn random_lsp_diagnostic(
     lsp::Diagnostic {
         range,
         severity,
-        message,
+        message: message.into(),
         related_information,
         data: None,
         ..Default::default()

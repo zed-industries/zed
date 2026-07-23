@@ -654,7 +654,7 @@ mod tests {
                                     lsp::Position::new(0, 15),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                message: "cannot find value `def`".to_string(),
+                                message: "cannot find value `def`".into(),
                                 ..Default::default()
                             }],
                         },

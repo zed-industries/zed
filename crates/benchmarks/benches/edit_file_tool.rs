@@ -253,7 +253,7 @@ async fn setup_editor_and_tool(cx: &mut TestAppContext, file_text: String) -> Ha
                 diagnostics: vec![lsp::Diagnostic {
                     range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
-                    message: "bench diagnostic".to_string(),
+                    message: "bench diagnostic".into(),
                     ..Default::default()
                 }],
             });
