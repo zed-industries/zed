@@ -6,11 +6,12 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCostInfo,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
@@ -229,6 +230,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 supports_images: model.supports_images,
                 mode: model.mode.unwrap_or_default(),
                 provider: model.provider.clone(),
+                pricing: None,
             });
         }
 
@@ -339,6 +341,24 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         PROVIDER_NAME
+    }
+
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        let pricing = self.model.pricing.as_ref()?;
+        let input_token_cost_per_1m = pricing.prompt.as_deref()?.parse::<f64>().ok()? * 1_000_000.0;
+        let output_token_cost_per_1m =
+            pricing.completion.as_deref()?.parse::<f64>().ok()? * 1_000_000.0;
+        if !input_token_cost_per_1m.is_finite()
+            || !output_token_cost_per_1m.is_finite()
+            || input_token_cost_per_1m < 0.0
+            || output_token_cost_per_1m < 0.0
+        {
+            return None;
+        }
+        Some(LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m,
+            output_token_cost_per_1m,
+        })
     }
 
     fn supports_tools(&self) -> bool {

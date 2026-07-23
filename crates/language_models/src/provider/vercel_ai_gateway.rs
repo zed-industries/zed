@@ -8,10 +8,11 @@ use http_client::{
 };
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, env_var,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCostInfo,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter,
+    env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
@@ -172,6 +173,8 @@ impl VercelAiGatewayLanguageModelProvider {
             max_tokens: 400_000,
             max_output_tokens: Some(128_000),
             max_completion_tokens: None,
+            input_token_cost_per_1m: None,
+            output_token_cost_per_1m: None,
             capabilities: ModelCapabilities::default(),
         }
     }
@@ -370,6 +373,11 @@ fn clean_error_message(message: &str) -> String {
     message.to_string()
 }
 
+fn price_per_token_to_per_million(price: &str) -> Option<f64> {
+    let price = price.parse::<f64>().ok()? * 1_000_000.0;
+    (price.is_finite() && price >= 0.0).then_some(price)
+}
+
 fn has_tag(tags: &[String], expected: &str) -> bool {
     tags.iter()
         .any(|tag| tag.trim().eq_ignore_ascii_case(expected))
@@ -395,6 +403,13 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         PROVIDER_NAME
+    }
+
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        Some(LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: self.model.input_token_cost_per_1m?,
+            output_token_cost_per_1m: self.model.output_token_cost_per_1m?,
+        })
     }
 
     fn supports_tools(&self) -> bool {
@@ -491,6 +506,13 @@ struct ApiModel {
     #[serde(default)]
     tags: Vec<String>,
     architecture: Option<ApiModelArchitecture>,
+    pricing: Option<ApiModelPricing>,
+}
+
+#[derive(Deserialize)]
+struct ApiModelPricing {
+    input: Option<String>,
+    output: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -589,6 +611,16 @@ async fn list_models(
             max_tokens: model.context_window.or(model.max_tokens).unwrap_or(128_000),
             max_output_tokens: model.max_tokens,
             max_completion_tokens: None,
+            input_token_cost_per_1m: model
+                .pricing
+                .as_ref()
+                .and_then(|pricing| pricing.input.as_deref())
+                .and_then(price_per_token_to_per_million),
+            output_token_cost_per_1m: model
+                .pricing
+                .as_ref()
+                .and_then(|pricing| pricing.output.as_deref())
+                .and_then(price_per_token_to_per_million),
             capabilities: ModelCapabilities {
                 tools: supports_tools,
                 images: supports_images,
@@ -602,4 +634,18 @@ async fn list_models(
     }
 
     Ok(models)
+}
+
+#[cfg(test)]
+mod pricing_tests {
+    #[test]
+    fn converts_token_pricing_to_per_million() {
+        assert_eq!(
+            super::price_per_token_to_per_million("0.0000005"),
+            Some(0.5)
+        );
+        assert_eq!(super::price_per_token_to_per_million("0"), Some(0.0));
+        assert_eq!(super::price_per_token_to_per_million("invalid"), None);
+        assert_eq!(super::price_per_token_to_per_million("-0.1"), None);
+    }
 }
