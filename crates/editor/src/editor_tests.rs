@@ -17239,10 +17239,11 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -17690,10 +17691,11 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -21133,10 +21135,11 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let typescript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
@@ -23944,10 +23947,11 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -24119,10 +24123,11 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: language_name.clone(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -25308,10 +25313,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["jsx".into()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -25423,10 +25429,11 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25513,10 +25520,11 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -25615,10 +25623,11 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25691,10 +25700,11 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -32802,10 +32812,11 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -33566,10 +33577,11 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     let html_language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33689,10 +33701,11 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "TSX".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33760,10 +33773,11 @@ async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut Test
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -35729,7 +35743,6 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
-    use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::inlays::inlay_hints::tests::{cached_hint_labels, init_test, visible_hint_labels};
     use settings::InlayHintSettingsContent;
     use std::sync::atomic::AtomicU32;
@@ -35834,16 +35847,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         })
         .unwrap();
 
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(1),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
@@ -35870,16 +35877,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             });
         });
     });
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(2),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
@@ -41532,10 +41533,11 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
         Language::new(
             LanguageConfig {
                 name: "TSX".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["tsx".to_string()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

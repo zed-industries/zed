@@ -1501,10 +1501,11 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -1523,10 +1524,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_ruby::LANGUAGE.into()),
@@ -1545,10 +1547,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),
@@ -1581,10 +1584,11 @@ fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Elixir".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_elixir::LANGUAGE.into()),
@@ -1601,10 +1605,11 @@ fn heex_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HEEx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["heex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_heex::LANGUAGE.into()),
@@ -1633,10 +1638,11 @@ fn python_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Python".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["py".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },

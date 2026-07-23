@@ -5,6 +5,7 @@ mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
+mod dynamic_registration;
 mod git_store;
 mod image_store;
 mod lsp_command;
@@ -2290,131 +2291,6 @@ async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
 }
 
 #[gpui::test]
-async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/the-root"),
-        json!({
-            "a.rs": "fn main() {}",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            name: "the-language-server",
-            // Crucially, no `semantic_tokens_provider` is advertised statically; the
-            // server only offers it through dynamic registration (as Roslyn does).
-            ..Default::default()
-        },
-    );
-
-    let _buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
-    let server_id = fake_server.server.server_id();
-    cx.executor().run_until_parked();
-
-    let semantic_tokens_provider = |cx: &mut gpui::TestAppContext| {
-        project.read_with(cx, |project, cx| {
-            project
-                .lsp_store()
-                .read(cx)
-                .lsp_server_capabilities
-                .get(&server_id)
-                .and_then(|capabilities| capabilities.semantic_tokens_provider.clone())
-        })
-    };
-
-    assert!(
-        semantic_tokens_provider(cx).is_none(),
-        "server should not advertise semantic tokens before dynamic registration"
-    );
-
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "semantic-tokens".to_string(),
-                    method: "textDocument/semanticTokens".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::SemanticTokensRegistrationOptions {
-                            text_document_registration_options:
-                                lsp::TextDocumentRegistrationOptions {
-                                    document_selector: None,
-                                },
-                            semantic_tokens_options: lsp::SemanticTokensOptions {
-                                legend: lsp::SemanticTokensLegend {
-                                    token_types: vec!["keyword".into(), "variable".into()],
-                                    token_modifiers: vec![],
-                                },
-                                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                                ..Default::default()
-                            },
-                            static_registration_options: lsp::StaticRegistrationOptions {
-                                id: None,
-                            },
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    let provider = semantic_tokens_provider(cx)
-        .expect("semantic tokens provider should be set after dynamic registration");
-    // The capability round-trips through capability-sync serialization, which may
-    // normalize the registration options into plain options; either shape is fine
-    // as long as the legend survives.
-    let legend = match provider {
-        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options.legend,
-        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
-            options.semantic_tokens_options.legend
-        }
-    };
-    assert_eq!(
-        legend.token_types,
-        vec!["keyword".into(), "variable".into()],
-    );
-
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: vec![lsp::Unregistration {
-                    id: "semantic-tokens".to_string(),
-                    method: "textDocument/semanticTokens".to_string(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert!(
-        semantic_tokens_provider(cx).is_none(),
-        "semantic tokens provider should be cleared after unregistration"
-    );
-}
-
-#[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2718,170 +2594,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 typ: lsp::FileChangeType::CHANGED,
             },
         ]
-    );
-}
-
-#[gpui::test]
-async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/root"),
-        json!({
-            "src": {
-                "a.rs": "",
-                "b.rs": "",
-            },
-            "docs": {
-                "readme.md": "",
-            },
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            name: "the-language-server",
-            ..Default::default()
-        },
-    );
-
-    cx.executor().run_until_parked();
-
-    project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/root/src/a.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
-
-    let file_changes = Arc::new(Mutex::new(Vec::new()));
-
-    // Register two separate watched file registrations.
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/src/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-2".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/docs/*.md").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-
-    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
-        let file_changes = file_changes.clone();
-        move |params, _| {
-            let mut file_changes = file_changes.lock();
-            file_changes.extend(params.changes);
-            file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
-        }
-    });
-
-    cx.executor().run_until_parked();
-
-    // Both registrations should match their respective patterns.
-    fs.create_file(path!("/root/src/c.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/guide.md").as_ref(), Default::default())
-        .await
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        &*file_changes.lock(),
-        &[
-            lsp::FileEvent {
-                uri: lsp::Uri::from_file_path(path!("/root/docs/guide.md")).unwrap(),
-                typ: lsp::FileChangeType::CREATED,
-            },
-            lsp::FileEvent {
-                uri: lsp::Uri::from_file_path(path!("/root/src/c.rs")).unwrap(),
-                typ: lsp::FileChangeType::CREATED,
-            },
-        ]
-    );
-    file_changes.lock().clear();
-
-    // Unregister the first registration.
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: vec![lsp::Unregistration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    // Only the second registration should still match.
-    fs.create_file(path!("/root/src/d.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/notes.md").as_ref(), Default::default())
-        .await
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        &*file_changes.lock(),
-        &[lsp::FileEvent {
-            uri: lsp::Uri::from_file_path(path!("/root/docs/notes.md")).unwrap(),
-            typ: lsp::FileChangeType::CREATED,
-        }]
     );
 }
 
@@ -5292,6 +5004,106 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
         }
     }
     chunks
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp_with_crlf_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "
+        fn a() {}
+        fn b() {}
+        fn c() {}
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a whole-document edit that uses
+    // CRLF line endings. FsAutoComplete does this when formatting via Fantomas
+    // on Windows. The buffer's text is always LF-normalized, so the differing
+    // line endings must not be treated as changes; otherwise the entire buffer
+    // is replaced and cursor positions are lost.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b() {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert!(edits.is_empty(), "expected no edits, got {edits:?}");
+
+    // The same whole-document CRLF edit, but with an actual change on one
+    // line, must produce an edit for just that change.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b(x: u32) {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [(Point::new(1, 5)..Point::new(1, 5), "x: u32".into())]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a() {}
+                fn b(x: u32) {}
+                fn c() {}
+            "
+            .unindent()
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -15159,10 +14971,11 @@ fn json_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JSON".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["json".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15173,10 +14986,11 @@ fn js_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15241,10 +15055,11 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Python".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["py".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None, // We're not testing Python parsing with this language.
@@ -15260,10 +15075,11 @@ fn typescript_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -15274,10 +15090,11 @@ fn tsx_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "tsx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
