@@ -7775,7 +7775,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_blame_view_section() -> [SettingsPageItem; 2] {
+    fn git_blame_view_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Blame View"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7800,6 +7800,33 @@ fn version_control_page() -> SettingsPage {
                             .blame
                             .get_or_insert_default()
                             .show_avatar = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Age Coloring",
+                description: "How to color Git blame entries based on commit age.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.blame.age_coloring"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .blame
+                            .as_ref()?
+                            .age_coloring
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .blame
+                            .get_or_insert_default()
+                            .age_coloring = value;
                     },
                 }),
                 metadata: None,
