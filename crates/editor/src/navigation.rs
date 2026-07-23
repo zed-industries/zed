@@ -2206,11 +2206,6 @@ impl Editor {
             }
         });
 
-        if allow_preview && !was_existing && PreviewTabsSettings::get_global(cx).enabled {
-            let multibuffer = editor.read(cx).buffer().clone();
-            multibuffer.update(cx, |multibuffer, cx| multibuffer.refresh_preview(cx));
-        }
-
         let item = Box::new(editor.clone());
 
         let pane = if split {
@@ -2224,6 +2219,11 @@ impl Editor {
         pane.update(cx, |pane, cx| {
             if allow_preview && !was_existing {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+                editor.update(cx, |editor, cx| {
+                    editor
+                        .buffer
+                        .update(cx, |buffer, cx| buffer.refresh_preview(cx))
+                });
             }
             if was_existing && !allow_preview {
                 pane.unpreview_item_if_preview(item.item_id());

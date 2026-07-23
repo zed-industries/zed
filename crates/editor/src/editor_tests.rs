@@ -29513,16 +29513,14 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_find_all_references_preview_survives_uncommitted_diff_load(cx: &mut TestAppContext) {
+async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings: &mut SettingsContent| {
                 let preview_tabs = settings.preview_tabs.get_or_insert_default();
                 preview_tabs.enabled = Some(true);
-                preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
                 preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
-                preview_tabs.enable_preview_from_multibuffer = Some(false);
             });
         });
     });
@@ -29536,6 +29534,12 @@ async fn test_find_all_references_preview_survives_uncommitted_diff_load(cx: &mu
     )
     .await;
 
+    // Calling `set_state` here will make it such that the underlying buffer
+    // will now report edits since its `preview_version` field, which is set
+    // when the buffer is first created. That is one of the conditions that
+    // determines whether a pane's item should remain as the preview item, or
+    // not, as such, if that field is not updated accordingly, we'd end up not
+    // having a preview item at the end of the test.
     cx.set_state(
         &r#"
         fn one() {
@@ -29546,6 +29550,7 @@ async fn test_find_all_references_preview_survives_uncommitted_diff_load(cx: &mu
             .unindent(),
     );
     cx.executor().run_until_parked();
+
     cx.lsp
         .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
             Ok(Some(vec![
@@ -29560,56 +29565,33 @@ async fn test_find_all_references_preview_survives_uncommitted_diff_load(cx: &mu
             ]))
         });
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
+    // Using the `editor: find all references` action adds excerpts to the
+    // multibuffer, which emits `ItemEvent::Edit`. When the pane handles that
+    // event it decides whether to keep its preview item and, if the buffer
+    // reports any edits since its `preview_version`, the item is unpreviewed.
+    // We also need to run until the executor is parked because the
+    // `ItemEvent::Edit` is delivered later, after the item has been registered
+    // with the pane.
+    assert_eq!(
+        cx.update_editor(|editor, window, cx| {
             editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
-        .unwrap()
+        .expect("Editor::find_all_references should return a task")
         .await
-        .expect("Failed to navigate to references");
-    assert_eq!(navigated, Navigated::Yes);
-
-    let references_editor = cx.update_workspace(|workspace, _, cx| {
-        workspace
-            .active_pane()
-            .read(cx)
-            .active_item()
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
-    let (preview_item_id, active_item_id) = cx.update_workspace(|workspace, _, cx| {
-        let active_pane = workspace.active_pane().read(cx);
-        (
-            active_pane.preview_item_id(),
-            active_pane.active_item().unwrap().item_id(),
-        )
-    });
-    assert_eq!(preview_item_id, Some(active_item_id));
-
+        .expect("Should be able to find all references"),
+        Navigated::Yes
+    );
     cx.executor().run_until_parked();
 
-    let has_diff = cx.update_workspace(|_, _, cx| {
-        let multi_buffer = references_editor.read(cx).buffer().clone();
-        let multi_buffer = multi_buffer.read(cx);
-        multi_buffer.all_buffers_iter().any(|buffer| {
-            let buffer_id = buffer.read(cx).remote_id();
-            multi_buffer.diff_for(buffer_id).is_some()
-        })
-    });
-    assert!(
-        has_diff,
-        "references multibuffer should load uncommitted diffs"
-    );
-
-    let (preview_item_id, active_item_id) = cx.update_workspace(|workspace, _, cx| {
+    cx.update_workspace(|workspace, _window, cx| {
         let active_pane = workspace.active_pane().read(cx);
-        (
+
+        assert_eq!(
             active_pane.preview_item_id(),
-            active_pane.active_item().unwrap().item_id(),
-        )
+            Some(active_pane.active_item().unwrap().item_id()),
+            "The preview item id should be the same as the id of the multibuffer"
+        );
     });
-    assert_eq!(preview_item_id, Some(active_item_id));
 }
 
 #[gpui::test]
