@@ -2907,6 +2907,16 @@ impl Pane {
                 ClosePosition::Right => ui::TabCloseSide::End,
             })
             .toggle_state(is_active)
+            // When the pane is unfocused, activate the tab on mouse-down rather
+            // than on click. Focusing the pane triggers a re-render that shifts
+            // the tab bar layout (action buttons appear), which can cause the
+            // tab's hitbox to move away from the cursor before mouse-up —
+            // GPUI would then cancel the click and the tab would never activate.
+            .on_mouse_down(MouseButton::Left, cx.listener(move |pane, _, window, cx| {
+                if !pane.has_focus(window, cx) {
+                    pane.activate_item(ix, true, true, window, cx);
+                }
+            }))
             .on_click(cx.listener({
                 let item_handle = item.boxed_clone();
                 move |pane: &mut Self, event: &ClickEvent, window, cx| {
