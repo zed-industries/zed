@@ -18,8 +18,8 @@ use windows::{
                 IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, LoadImageW, PostQuitMessage, RegisterClassW,
                 SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageW,
                 SetWindowLongPtrW, SystemParametersInfoW, WINDOW_EX_STYLE, WM_CLOSE, WM_CREATE,
-                WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST,
-                WS_POPUP, WS_VISIBLE,
+                WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD,
+                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -113,10 +113,20 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCCREATE => unsafe {
-            let create_struct = lparam.0 as *const CREATESTRUCTW;
-            let info = (*create_struct).lpCreateParams as *mut RefCell<DialogInfo>;
-            let info = Box::from_raw(info);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(info) as _);
+            // Adopt the boxed `DialogInfo` that `CreateWindowExW` passed via `lpCreateParams`,
+            // but only once: refuse to overwrite an already-stored pointer (a duplicate or
+            // forged `WM_NCCREATE` must not clobber live state), and validate both the creation
+            // struct and its payload before storing the pointer we later reclaim in
+            // `WM_NCDESTROY`.
+            if GetWindowLongPtrW(hwnd, GWLP_USERDATA) == 0 {
+                let create_struct = (lparam.0 as *const CREATESTRUCTW).as_ref();
+                if let Some(create_struct) = create_struct {
+                    let info = create_struct.lpCreateParams as *mut RefCell<DialogInfo>;
+                    if !info.is_null() {
+                        SetWindowLongPtrW(hwnd, GWLP_USERDATA, info as _);
+                    }
+                }
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         },
         WM_CREATE => unsafe {
@@ -183,16 +193,17 @@ unsafe extern "system" fn wnd_proc(
         WM_JOB_UPDATED => with_dialog_data(hwnd, |data| {
             let progress_bar = data.borrow().progress_bar;
             unsafe { SendMessageW(HWND(progress_bar as _), PBM_STEPIT, None, None) }
-        }),
+        })
+        .unwrap_or_else(|| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }),
         WM_TERMINATE => {
-            with_dialog_data(hwnd, |data| {
-                if let Ok(result) = data.borrow_mut().rx.recv()
-                    && let Err(e) = result
-                {
-                    log::error!("Failed to update Zed: {:?}", e);
-                    show_error(format!("Error: {:?}", e));
-                }
-            });
+            // Receive the update result while only briefly borrowing the state, then release
+            // the borrow before calling `show_error`: its modal message loop can re-enter this
+            // window procedure, which must not find the state already borrowed.
+            let update_result = with_dialog_data(hwnd, |data| data.borrow_mut().rx.recv());
+            if let Some(Ok(Err(e))) = update_result {
+                log::error!("Failed to update Zed: {:?}", e);
+                show_error(format!("Error: {:?}", e));
+            }
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
@@ -201,19 +212,35 @@ unsafe extern "system" fn wnd_proc(
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
+        WM_NCDESTROY => unsafe {
+            // The window is going away and no further messages will reference the state, so
+            // reclaim and drop the boxed `DialogInfo` here. This frees it at most once, and only
+            // if `WM_NCDESTROY` actually runs: the normal exit path uses `PostQuitMessage` (which
+            // unwinds the message loop without destroying the window) and simply leaks the box to
+            // process exit, as before.
+            let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
+            if !raw.is_null() {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                drop(Box::from_raw(raw));
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        },
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
 
-fn with_dialog_data<F, T>(hwnd: HWND, f: F) -> T
+fn with_dialog_data<F, T>(hwnd: HWND, f: F) -> Option<T>
 where
     F: FnOnce(&RefCell<DialogInfo>) -> T,
 {
-    let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo> };
-    let data = unsafe { Box::from_raw(raw) };
-    let result = f(data.as_ref());
-    unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as _) };
-    result
+    // Borrow the state stored in `GWLP_USERDATA` rather than taking ownership of it. The window
+    // procedure can re-enter (for instance through the modal loop that `show_error` runs), and
+    // re-`Box::from_raw`-ing the same pointer would create a second owner aliasing a live
+    // allocation. The pointer is null before `WM_NCCREATE` stores it and after `WM_NCDESTROY`
+    // clears it; `as_ref` turns that null case into `None` instead of dereferencing it.
+    let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const RefCell<DialogInfo> };
+    let data = unsafe { raw.as_ref() };
+    data.map(f)
 }
 
 fn get_system_ui_font_name() -> String {

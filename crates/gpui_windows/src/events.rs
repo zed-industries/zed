@@ -2,19 +2,16 @@ use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
-use windows::{
-    Win32::{
-        Foundation::*,
-        Graphics::Gdi::*,
-        System::SystemServices::*,
-        UI::{
-            Controls::*,
-            HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
-            WindowsAndMessaging::*,
-        },
+use windows::Win32::{
+    Foundation::*,
+    Graphics::Gdi::*,
+    System::SystemServices::*,
+    UI::{
+        Controls::*,
+        HiDpi::*,
+        Input::{Ime::*, KeyboardAndMouse::*},
+        WindowsAndMessaging::*,
     },
-    core::PCWSTR,
 };
 
 use crate::*;
@@ -156,7 +153,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(wparam, lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -1200,14 +1197,35 @@ impl WindowsWindowInner {
     }
 
     fn handle_system_theme_changed(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        // lParam is a pointer to a string that indicates the area containing the system parameter
-        // that was changed.
-        let parameter = PCWSTR::from_raw(lparam.0 as _);
-        if unsafe { !parameter.is_null() && !parameter.is_empty() }
-            && let Some(parameter_string) = unsafe { parameter.to_string() }.log_err()
-        {
+        // lParam is a pointer to a NUL-terminated wide string naming the area containing the
+        // system parameter that was changed. It comes straight off the message queue, so bound
+        // how far we walk it: the value is only ever compared against "ImmersiveColorSet", and
+        // scanning for the terminator without a limit would let a malformed message walk us off
+        // the end of the buffer.
+        let pointer = lparam.0 as *const u16;
+        if pointer.is_null() {
+            return Some(0);
+        }
+        const MAX_UNITS: usize = 64;
+        let mut units = Vec::with_capacity(MAX_UNITS);
+        for offset in 0..MAX_UNITS {
+            // SAFETY: `pointer` is non-null. For a well-formed NUL-terminated buffer we stop at
+            // the terminator and never read past the end. For a malformed, non-NUL-terminated
+            // buffer (e.g. a hostile message) `pointer.add(offset)` can still walk past the real
+            // allocation, so this is technically an over-read; the `MAX_UNITS` cap only *mitigates*
+            // that rather than eliminating it. It is nonetheless a strict improvement over the
+            // prior unbounded scan, and the cap cannot cause us to miss the only value we compare
+            // against ("ImmersiveColorSet", 17 units), which fits well within the limit.
+            let unit = unsafe { pointer.add(offset).read() };
+            if unit == 0 {
+                break;
+            }
+            units.push(unit);
+        }
+        if !units.is_empty() {
+            let parameter_string = String::from_utf16_lossy(&units);
             log::info!("System settings changed: {}", parameter_string);
-            if parameter_string.as_str() == "ImmersiveColorSet" {
+            if parameter_string == "ImmersiveColorSet" {
                 let new_appearance = system_appearance()
                     .context("unable to get system appearance when handling ImmersiveColorSet")
                     .log_err()?;
@@ -1245,7 +1263,16 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+    fn handle_device_lost(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // The `lparam` is a raw pointer into another thread's `DirectXDevices`, which we
+        // dereference and walk COM vtables through below. Only the platform's device-loss
+        // recovery posts this message, and it always tags it with our validation number.
+        // Reject anything else so a stray or hostile `WM_USER + 7` can't hand us an
+        // arbitrary pointer to dereference. This mirrors the check in `handle_gpui_events`.
+        if wparam.0 != self.validation_number {
+            log::error!("Wrong validation number while processing device lost message");
+            return None;
+        }
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
         if let Err(err) = self
@@ -1636,18 +1663,20 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if string_len >= 0 {
-            let mut buffer = vec![0u8; string_len as usize + 2];
+            let string_len = string_len as usize;
+            // `ImmGetCompositionStringW` writes UTF-16 code units but measures lengths in bytes.
+            // Read straight into a `Vec<u16>` (rather than reinterpreting a byte buffer, which is
+            // only 1-byte aligned) so the resulting `[u16]` has the 2-byte alignment it requires.
+            // `string_len / 2 + 1` code units always covers `string_len` bytes.
+            let mut buffer = vec![0u16; string_len / 2 + 1];
             ImmGetCompositionStringW(
                 ctx,
                 comp_type,
                 Some(buffer.as_mut_ptr() as _),
                 string_len as _,
             );
-            let wstring = std::slice::from_raw_parts::<u16>(
-                buffer.as_mut_ptr().cast::<u16>(),
-                string_len as usize / 2,
-            );
-            Some(wstring.to_vec())
+            buffer.truncate(string_len / 2);
+            Some(buffer)
         } else {
             None
         }
