@@ -79,6 +79,7 @@ pub struct FakeGitRepositoryState {
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
+    pub commit_template: Option<GitCommitTemplate>,
 }
 
 impl FakeGitRepositoryState {
@@ -104,6 +105,7 @@ impl FakeGitRepositoryState {
             commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
+            commit_template: None,
         }
     }
 }
@@ -163,7 +165,7 @@ impl FakeGitRepository {
 
 impl GitRepository for FakeGitRepository {
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        async { Ok(None) }.boxed()
+        self.with_state_async(false, |state| Ok(state.commit_template.clone()))
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {

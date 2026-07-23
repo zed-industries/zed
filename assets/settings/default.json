@@ -2342,7 +2342,7 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2561,6 +2561,11 @@
     //
     // Default: 120
     "request_timeout": 120,
+    // The maximum line length a buffer may contain before language server features are disabled
+    // for the entire buffer.
+    //
+    // Default: 20000
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -2693,7 +2698,7 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."],
       },
     },
   },

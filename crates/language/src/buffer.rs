@@ -3210,16 +3210,15 @@ impl Buffer {
                 if triggers.is_empty() {
                     self.completion_triggers_per_language_server
                         .remove(&server_id);
-                    self.completion_triggers = self
-                        .completion_triggers_per_language_server
-                        .values()
-                        .flat_map(|triggers| triggers.iter().cloned())
-                        .collect();
                 } else {
                     self.completion_triggers_per_language_server
-                        .insert(server_id, triggers.iter().cloned().collect());
-                    self.completion_triggers.extend(triggers);
+                        .insert(server_id, triggers.into_iter().collect());
                 }
+                self.completion_triggers = self
+                    .completion_triggers_per_language_server
+                    .values()
+                    .flat_map(|triggers| triggers.iter().cloned())
+                    .collect();
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
             Operation::UpdateLineEnding {
@@ -3391,16 +3390,15 @@ impl Buffer {
         if triggers.is_empty() {
             self.completion_triggers_per_language_server
                 .remove(&server_id);
-            self.completion_triggers = self
-                .completion_triggers_per_language_server
-                .values()
-                .flat_map(|triggers| triggers.iter().cloned())
-                .collect();
         } else {
             self.completion_triggers_per_language_server
                 .insert(server_id, triggers.clone());
-            self.completion_triggers.extend(triggers.iter().cloned());
         }
+        self.completion_triggers = self
+            .completion_triggers_per_language_server
+            .values()
+            .flat_map(|triggers| triggers.iter().cloned())
+            .collect();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
                 triggers: triggers.into_iter().collect(),
@@ -3667,7 +3665,12 @@ impl BufferSnapshot {
         let indent_configs = matches
             .grammars()
             .iter()
-            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .map(|grammar| {
+                grammar
+                    .indents_config
+                    .as_ref()
+                    .expect("grammar in indent match set has indents_config")
+            })
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();

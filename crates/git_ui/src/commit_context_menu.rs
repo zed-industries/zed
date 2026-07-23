@@ -59,7 +59,7 @@ pub(crate) fn commit_context_menu(
         context_menu
             .context(focus_handle)
             .header(header)
-            .entry("View Commit", Some(OpenCommitView.boxed_clone()), {
+            .entry("View Diff", Some(OpenCommitView.boxed_clone()), {
                 let repository = repository.clone();
                 let workspace = workspace.clone();
                 move |window, cx| {
