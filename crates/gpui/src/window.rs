@@ -1770,8 +1770,12 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, _window, cx| {
-                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    .update(&mut cx, |_, window, cx| {
+                        if let Some(tabs) = window.platform_window.tabbed_windows() {
+                            SystemWindowTabController::sync_tab_group(cx, handle.window_id(), tabs);
+                        } else {
+                            SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                        }
                     })
                     .log_err();
             })

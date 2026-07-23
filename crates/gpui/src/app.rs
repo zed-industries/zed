@@ -568,6 +568,38 @@ impl SystemWindowTabController {
         }
     }
 
+    /// Replace the tab group containing the given window with the platform-provided tabs.
+    pub fn sync_tab_group(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
+        if tabs.is_empty() || !tabs.iter().any(|tab| tab.id == id) {
+            return;
+        }
+
+        let synced_tab_ids: FxHashSet<_> = tabs.iter().map(|tab| tab.id).collect();
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+
+        let existing_group_id = controller
+            .tab_groups
+            .iter()
+            .find_map(|(group_id, group_tabs)| {
+                group_tabs
+                    .iter()
+                    .any(|tab| tab.id == id)
+                    .then_some(*group_id)
+            })
+            .unwrap_or_else(|| controller.tab_groups.keys().max().map_or(0, |id| id + 1));
+
+        controller.tab_groups.retain(|group_id, group_tabs| {
+            if *group_id == existing_group_id {
+                return true;
+            }
+
+            group_tabs.retain(|tab| !synced_tab_ids.contains(&tab.id));
+            !group_tabs.is_empty()
+        });
+
+        controller.tab_groups.insert(existing_group_id, tabs);
+    }
+
     /// Remove a tab from a tab group.
     pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
         let mut controller = cx.global_mut::<SystemWindowTabController>();

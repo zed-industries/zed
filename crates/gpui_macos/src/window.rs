@@ -751,6 +751,15 @@ unsafe impl Send for MacWindowState {}
 
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
+fn notify_windows_merged(window_state: Arc<Mutex<MacWindowState>>) {
+    let mut lock = window_state.as_ref().lock();
+    if let Some(mut callback) = lock.merge_all_windows_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().merge_all_windows_callback = Some(callback);
+    }
+}
+
 impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
@@ -3172,12 +3181,7 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
         let _: () = msg_send![super(this, class!(NSWindow)), mergeAllWindows:nil];
 
         let window_state = get_window_state(this);
-        let mut lock = window_state.as_ref().lock();
-        if let Some(mut callback) = lock.merge_all_windows_callback.take() {
-            drop(lock);
-            callback();
-            window_state.lock().merge_all_windows_callback = Some(callback);
-        }
+        notify_windows_merged(window_state);
     }
 }
 
