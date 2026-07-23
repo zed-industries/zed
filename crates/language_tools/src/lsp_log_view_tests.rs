@@ -5,7 +5,9 @@ use crate::lsp_log_view::LogMenuItem;
 use super::*;
 use futures::StreamExt;
 use gpui::{AppContext as _, TestAppContext, VisualTestContext};
-use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+use language::{
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageServerId, tree_sitter_rust,
+};
 use lsp::LanguageServerName;
 use project::{
     FakeFs, Project,
@@ -14,6 +16,116 @@ use project::{
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
+
+#[gpui::test]
+async fn test_lsp_log_view_filters_servers_from_other_projects(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/current-project"), json!({ "test.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/other-project"), json!({ "test.rs": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/current-project").as_ref()], cx).await;
+    let other_project = Project::test(fs.clone(), [path!("/other-project").as_ref()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let current_lsp_store = project
+        .read_with(cx, |project, _| project.lsp_store())
+        .downgrade();
+    let other_lsp_store = other_project
+        .read_with(cx, |project, _| project.lsp_store())
+        .downgrade();
+
+    let current_ssh_server_id = LanguageServerId(99);
+    let current_server_id = LanguageServerId(100);
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |store, cx| {
+        store.add_language_server(
+            LanguageServerKind::LocalSsh {
+                lsp_store: current_lsp_store,
+            },
+            current_ssh_server_id,
+            Some(LanguageServerName::new_static("current-ssh-server")),
+            Some(worktree_id),
+            None,
+            cx,
+        );
+        store.add_language_server(
+            LanguageServerKind::Local {
+                project: project.downgrade(),
+            },
+            current_server_id,
+            Some(LanguageServerName::new_static("current-server")),
+            Some(worktree_id),
+            None,
+            cx,
+        );
+        store.add_language_server(
+            LanguageServerKind::Remote {
+                project: other_project.downgrade(),
+            },
+            current_server_id,
+            Some(LanguageServerName::new_static("other-remote-server")),
+            None,
+            None,
+            cx,
+        );
+        store.add_language_server(
+            LanguageServerKind::Supplementary {
+                project: other_project.downgrade(),
+            },
+            current_server_id,
+            Some(LanguageServerName::new_static("other-supplementary-server")),
+            None,
+            None,
+            cx,
+        );
+        store.add_language_server(
+            LanguageServerKind::LocalSsh {
+                lsp_store: other_lsp_store,
+            },
+            current_ssh_server_id,
+            Some(LanguageServerName::new_static("other-ssh-server")),
+            None,
+            None,
+            cx,
+        );
+    });
+    assert_eq!(
+        log_store.read_with(cx, |store, _| store.language_servers.len()),
+        5
+    );
+
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store, window, cx));
+    let log_view = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    log_view.update(&mut cx, |view, cx| {
+        let visible_servers = view
+            .menu_items(cx)
+            .unwrap()
+            .into_iter()
+            .map(|item| (item.server_id, item.server_name))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            visible_servers,
+            [
+                (
+                    current_ssh_server_id,
+                    LanguageServerName::new_static("current-ssh-server"),
+                ),
+                (
+                    current_server_id,
+                    LanguageServerName::new_static("current-server"),
+                ),
+            ]
+        );
+    });
+}
 
 #[gpui::test]
 async fn test_lsp_log_view(cx: &mut TestAppContext) {
