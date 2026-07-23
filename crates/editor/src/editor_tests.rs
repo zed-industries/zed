@@ -17915,12 +17915,9 @@ async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut
     );
 
     assert!(
-        toasts
-            .borrow()
-            .iter()
-            .any(|message| message.contains("produced no output")),
-        "expected a notification explaining that the external formatter produced no output, got: {:?}",
-        toasts.borrow()
+        toasts.borrow().is_empty(),
+        "external formatters that produce no output should not show a toast, got: {:?}",
+        toasts.borrow(),
     );
 }
 

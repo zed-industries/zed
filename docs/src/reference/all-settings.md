@@ -2002,7 +2002,7 @@ Similar to `modifications`, but behaves like `on` when range formatting cannot b
 }
 ```
 
-Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer, and Zed will show a notification saying the formatter produced no output. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
