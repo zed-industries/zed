@@ -7,7 +7,7 @@ use crate::{
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
         PromptLocalCommand, SlashCommandCompletion,
     },
-    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
+    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention, is_pdf_path},
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
@@ -1665,6 +1665,77 @@ impl MessageEditor {
             .detach_and_log_err(cx);
     }
 
+    pub fn add_pdfs_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+        let project = workspace.read(cx).project().clone();
+        let workspace = self.workspace.clone();
+        let supports_images = self.session_capabilities.read().supports_images();
+
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Select PDFs".into()),
+        });
+
+        window
+            .spawn(cx, async move |cx| {
+                let paths = match paths_receiver.await {
+                    Ok(Ok(Some(paths))) => paths,
+                    _ => return Ok::<(), anyhow::Error>(()),
+                };
+
+                let pdf_paths: Vec<_> = paths
+                    .into_iter()
+                    .filter(|path| is_pdf_path(path))
+                    .collect();
+                if pdf_paths.is_empty() {
+                    return Ok(());
+                }
+
+                let mut tasks = Vec::new();
+                let mut added_worktrees = Vec::new();
+                for path in pdf_paths {
+                    let Ok(resolve_task) = cx.update({
+                        let project = project.clone();
+                        move |_, cx| Workspace::project_path_for_path(project, &path, false, cx)
+                    }) else {
+                        continue;
+                    };
+                    let Some((worktree, project_path)) = resolve_task.await.log_err() else {
+                        continue;
+                    };
+                    added_worktrees.push(worktree);
+                    let task = cx.update(|window, cx| {
+                        let workspace = workspace.upgrade()?;
+                        insert_mention_for_project_path(
+                            &project_path,
+                            &editor,
+                            &mention_set,
+                            &project,
+                            &workspace,
+                            supports_images,
+                            window,
+                            cx,
+                        )
+                    })?;
+                    if let Some(task) = task {
+                        tasks.push(task);
+                    }
+                }
+
+                futures::future::join_all(tasks).await;
+                drop(added_worktrees);
+                Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
         self.editor.update(cx, |message_editor, cx| {
             message_editor.set_read_only(read_only);
@@ -2171,10 +2242,15 @@ fn mention_to_content_block(
                     }
                 }),
         ),
-        _ => acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-            uri.name(),
-            uri.to_uri().to_string(),
-        )),
+        _ => {
+            let mut link = acp::ResourceLink::new(uri.name(), uri.to_uri().to_string());
+            if let MentionUri::File { abs_path } = uri
+                && is_pdf_path(abs_path)
+            {
+                link = link.mime_type("application/pdf");
+            }
+            acp::ContentBlock::ResourceLink(link)
+        }
     }
 }
 
@@ -5306,6 +5382,98 @@ mod tests {
                 format!("Hello [@one.txt]({first_uri}) [@two.txt]({second_uri}) world")
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_dragged_pdf_path_inserts_link_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "document.pdf": "",
+            }),
+            cx,
+        )
+        .await;
+
+        insert_dragged_project_paths(&message_editor, vec!["document.pdf"], &mut cx);
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/document.pdf").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("[@document.pdf]({expected_uri}) ")
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Link)] = contents.as_slice() else {
+            panic!("expected a single PDF link mention, got {contents:?}");
+        };
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/document.pdf").into(),
+            }
+        );
+
+        let blocks = message_editor.update(&mut cx, |message_editor, cx| {
+            message_editor.draft_content_blocks_snapshot(cx)
+        });
+        let pdf_link = blocks.iter().find_map(|block| {
+            let acp::ContentBlock::ResourceLink(link) = block else {
+                return None;
+            };
+            (link.mime_type.as_deref() == Some("application/pdf")).then_some(link)
+        });
+        let link = pdf_link.expect("expected PDF resource link in draft content blocks");
+        assert_eq!(link.name, "document.pdf");
+    }
+
+    #[gpui::test]
+    async fn test_paste_external_pdf_path_inserts_link_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "document.pdf": "",
+            }),
+            cx,
+        )
+        .await;
+
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/document.pdf"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/document.pdf").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("[@document.pdf]({expected_uri}) ")
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Link)] = contents.as_slice() else {
+            panic!("expected a single PDF link mention, got {contents:?}");
+        };
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/document.pdf").into(),
+            }
+        );
     }
 
     #[gpui::test]

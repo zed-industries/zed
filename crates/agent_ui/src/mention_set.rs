@@ -400,6 +400,10 @@ impl MentionSet {
             )));
         };
 
+        if is_pdf_path(&abs_path) {
+            return Task::ready(Ok(Mention::Link));
+        }
+
         if is_raster_image_path(&abs_path) {
             if !supports_images {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
@@ -829,6 +833,15 @@ mod tests {
     }
 
     #[test]
+    fn test_is_pdf_path_is_case_insensitive() {
+        assert!(is_pdf_path(Path::new("/tmp/document.pdf")));
+        assert!(is_pdf_path(Path::new("/tmp/document.PDF")));
+        assert!(is_pdf_path(Path::new("/tmp/document.Pdf")));
+        assert!(!is_pdf_path(Path::new("/tmp/notes.txt")));
+        assert!(!is_pdf_path(Path::new("/tmp/README")));
+    }
+
+    #[test]
     fn test_is_raster_image_path_is_case_insensitive() {
         // Regression test for #54308: drag-and-dropping a file whose extension
         // is uppercase (e.g. `.PNG`) used to be treated as a non-image file.
@@ -990,6 +1003,12 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
             None
         }
     }
+}
+
+pub(crate) fn is_pdf_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
 // Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.

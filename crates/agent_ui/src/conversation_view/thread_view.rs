@@ -5545,6 +5545,21 @@ impl ThreadView {
                         }),
                 )
                 .item(
+                    ContextMenuEntry::new("PDF")
+                        .icon(IconName::FileDoc)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.add_pdfs_from_picker(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
                     ContextMenuEntry::new("Selection")
                         .icon(IconName::CursorIBeam)
                         .icon_color(Color::Muted)
