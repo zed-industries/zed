@@ -1,11 +1,14 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt as _, Stream, StreamExt};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use std::{pin::Pin, sync::Arc};
+use std::{
+    pin::{Pin, pin},
+    sync::Arc,
+};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -68,12 +71,18 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+    /// Abort handles for in-flight SSE response streams, keyed by the
+    /// serialized request id. From MCP 2026-07-28 closing a request's
+    /// response stream is the cancellation signal, replacing the
+    /// `notifications/cancelled` POST.
+    active_streams: Arc<SyncMutex<HashMap<String, futures::channel::oneshot::Sender<()>>>>,
 }
 
 /// The fields of an outgoing JSON-RPC message that the streamable HTTP
 /// transport mirrors into headers (MCP 2026-07-28).
 #[derive(Default)]
 struct OutgoingMessage {
+    id: Option<serde_json::Value>,
     method: Option<String>,
     /// `params.name` or `params.uri` for the methods that require the
     /// `Mcp-Name` header.
@@ -81,12 +90,15 @@ struct OutgoingMessage {
     /// The protocol version stamped in the message's own `params._meta`.
     /// Present exactly when the protocol layer built a modern request.
     protocol_version: Option<String>,
+    /// `params.requestId` of a `notifications/cancelled` notification.
+    cancelled_request_id: Option<serde_json::Value>,
 }
 
 fn parse_outgoing_message(message: &str) -> OutgoingMessage {
     let Ok(message) = serde_json::from_str::<serde_json::Value>(message) else {
         return OutgoingMessage::default();
     };
+    let id = message.get("id").filter(|id| !id.is_null()).cloned();
     let method = message
         .get("method")
         .and_then(|method| method.as_str())
@@ -107,10 +119,15 @@ fn parse_outgoing_message(message: &str) -> OutgoingMessage {
         .and_then(|params| params.get("_meta")?.get(types::meta_keys::PROTOCOL_VERSION))
         .and_then(|version| version.as_str())
         .map(str::to_string);
+    let cancelled_request_id = (method.as_deref() == Some("notifications/cancelled"))
+        .then(|| params?.get("requestId").cloned())
+        .flatten();
     OutgoingMessage {
+        id,
         method,
         name,
         protocol_version,
+        cancelled_request_id,
     }
 }
 
@@ -207,6 +224,7 @@ impl HttpTransport {
             headers,
             token_provider,
             auth_challenge: SyncMutex::new(None),
+            active_streams: Arc::new(SyncMutex::new(HashMap::default())),
         }
     }
 
@@ -298,6 +316,17 @@ impl HttpTransport {
             !message.contains("\"id\":") || message.contains("notifications/initialized");
         let outgoing = parse_outgoing_message(&message);
         let is_modern = self.modern_version_for(&outgoing).is_some();
+        if is_modern {
+            // From MCP 2026-07-28 there are no client-to-server
+            // notifications over streamable HTTP: cancellation is signaled
+            // by closing the request's response stream instead.
+            if outgoing.method.as_deref() == Some("notifications/cancelled") {
+                if let Some(request_id) = &outgoing.cancelled_request_id {
+                    self.active_streams.lock().remove(&request_id.to_string());
+                }
+                return Ok(());
+            }
+        }
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -384,7 +413,7 @@ impl HttpTransport {
                     }
                     Some(ct) if ct.starts_with(EVENT_STREAM_MIME_TYPE) => {
                         // SSE stream - set up streaming
-                        self.setup_sse_stream(response).await?;
+                        self.setup_sse_stream(response, outgoing.id.as_ref()).await?;
                     }
                     _ => {
                         // For notifications, 202 Accepted with no content type is ok
@@ -431,21 +460,63 @@ impl HttpTransport {
         Ok(())
     }
 
-    /// Set up SSE streaming from the response
-    async fn setup_sse_stream(&self, mut response: Response<AsyncBody>) -> Result<()> {
+    /// Set up SSE streaming from the response. When the originating request
+    /// has an id, an abort handle is registered so the stream can be closed
+    /// to cancel the request (MCP 2026-07-28).
+    async fn setup_sse_stream(
+        &self,
+        mut response: Response<AsyncBody>,
+        request_id: Option<&serde_json::Value>,
+    ) -> Result<()> {
         let response_tx = self.response_tx.clone();
         let error_tx = self.error_tx.clone();
+        let active_streams = self.active_streams.clone();
+        let request_id = request_id.cloned();
+        let stream_key = request_id.as_ref().map(|id| id.to_string());
+        let mut abort_rx = None;
+        if let Some(key) = &stream_key {
+            let (abort_tx, rx) = futures::channel::oneshot::channel();
+            active_streams.lock().insert(key.clone(), abort_tx);
+            abort_rx = Some(rx);
+        }
 
         // Spawn a task to handle the SSE stream
         self.executor
             .spawn(async move {
+                let _remove_stream = util::defer({
+                    let active_streams = active_streams.clone();
+                    let stream_key = stream_key.clone();
+                    move || {
+                        if let Some(key) = stream_key {
+                            active_streams.lock().remove(&key);
+                        }
+                    }
+                });
+                let mut abort_rx = pin!(
+                    match abort_rx {
+                        Some(rx) => futures::future::Either::Left(rx),
+                        None => futures::future::Either::Right(futures::future::pending()),
+                    }
+                    .fuse()
+                );
+
                 let reader = futures::io::BufReader::new(response.body_mut());
                 let mut lines = futures::AsyncBufReadExt::lines(reader);
 
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
 
-                while let Some(line_result) = lines.next().await {
+                loop {
+                    let line_result = futures::select! {
+                        line = lines.next().fuse() => match line {
+                            Some(line_result) => line_result,
+                            None => break,
+                        },
+                        // The abort sender was dropped: the request was
+                        // cancelled. Dropping the response body closes the
+                        // stream, which is the cancellation signal.
+                        _ = abort_rx => break,
+                    };
                     match line_result {
                         Ok(line) => {
                             if line.is_empty() {
@@ -491,6 +562,25 @@ impl HttpTransport {
                             break;
                         }
                     }
+                }
+
+                // SSE resumability was removed in MCP 2026-07-28: a stream
+                // that ends without delivering the response loses the
+                // request, and the client must re-issue it as a new request.
+                // Resolve the request with an error promptly instead of
+                // letting it run into its timeout. If the response did
+                // arrive, no handler is waiting on this id anymore and the
+                // synthesized error is ignored.
+                if let Some(request_id) = request_id {
+                    let error_response = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32603,
+                            "message": "response stream ended before the response arrived",
+                        },
+                    });
+                    response_tx.send(error_response.to_string()).await.ok();
                 }
             })
             .detach();
@@ -981,6 +1071,139 @@ mod tests {
                 None,
             )
         );
+    }
+
+    #[gpui::test]
+    async fn test_mcp_name_header_uses_resource_uri(cx: &mut TestAppContext) {
+        let captured_name = Arc::new(SyncMutex::new(None::<String>));
+        let client = make_fake_http_client({
+            let captured_name = captured_name.clone();
+            move |req| {
+                *captured_name.lock() = req
+                    .headers()
+                    .get("Mcp-Name")
+                    .map(|value| value.to_str().unwrap().to_string());
+                Box::pin(async {
+                    json_response(200, r#"{"jsonrpc":"2.0","id":1,"result":{"contents":[]}}"#)
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "resources/read",
+                    "params": {
+                        "uri": "file:///projects/myapp/config.json",
+                        "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            captured_name.lock().as_deref(),
+            Some("file:///projects/myapp/config.json")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_modern_cancellation_is_not_posted(cx: &mut TestAppContext) {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let client = make_fake_http_client({
+            let request_count = request_count.clone();
+            move |_req| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { json_response(202, "") })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+        transport.set_protocol_version("2026-07-28");
+
+        // On a modern connection, cancellation is signaled by closing the
+        // request's response stream; the notification must not be sent.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": 7 }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        // Legacy connections keep posting it.
+        transport.set_protocol_version("2025-11-25");
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": 7 }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_broken_sse_stream_resolves_request_with_error(cx: &mut TestAppContext) {
+        // The stream delivers a notification but ends before the response:
+        // the request must fail promptly, not run into its timeout.
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from(
+                        b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":1,\"progress\":0.5}}\n\n".to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#.to_string())
+            .await
+            .unwrap();
+
+        let mut receiver = transport.receive();
+        let first: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(first["method"], "notifications/progress");
+        let second: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(second["id"], 3);
+        assert_eq!(second["error"]["code"], -32603);
     }
 
     #[gpui::test]
