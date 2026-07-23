@@ -2626,6 +2626,15 @@
     // Maximum number of columns of output to display before scaling images.
     // Set to 0 to disable output width limits.
     "output_max_width_columns": 0,
+    // Language-specific commands used to start a terminal REPL for inline execution.
+    "terminal_repl_commands": {},
+    // Specify the language name as the key and the command as the value.
+    // "terminal_repl_commands": {
+    //   "julia": "julia --project=."
+    // }
+    // Where terminal-backed inline REPL sessions are shown.
+    // Valid values: "dock", "center".
+    "terminal_repl_reveal_target": "dock",
   },
   // Vim settings
   "vim": {

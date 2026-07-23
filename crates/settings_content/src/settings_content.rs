@@ -1354,6 +1354,18 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
+    /// Language-specific commands used to start a persistent terminal REPL for inline execution.
+    ///
+    /// Keys are language names (case-insensitive), values are command lines.
+    ///
+    /// Default: `{}`
+    pub terminal_repl_commands: Option<HashMap<String, String>>,
+    /// Where to reveal terminal-backed inline REPL sessions.
+    ///
+    /// Accepted values: `"dock"`, `"center"`.
+    ///
+    /// Default: `"dock"`
+    pub terminal_repl_reveal_target: Option<String>,
 }
 
 /// Settings for configuring the which-key popup behaviour.
