@@ -156,9 +156,11 @@ impl ContextServer {
         let initialized_protocol = protocol.initialize(client_info).await?;
 
         log::debug!(
-            "context server {} initialized: {:?}",
+            "context server {} initialized: version {:?}, server info {:?}, capabilities {:?}",
             self.id,
-            initialized_protocol.initialize,
+            initialized_protocol.protocol_version,
+            initialized_protocol.server_info,
+            initialized_protocol.capabilities,
         );
 
         *self.client.write() = Some(Arc::new(initialized_protocol));

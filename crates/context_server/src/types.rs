@@ -10,7 +10,10 @@ pub const VERSION_2025_03_26: &str = "2025-03-26";
 pub const VERSION_2025_06_18: &str = "2025-06-18";
 pub const VERSION_2025_11_25: &str = "2025-11-25";
 pub const VERSION_2026_07_28: &str = "2026-07-28";
-pub const LATEST_PROTOCOL_VERSION: &str = VERSION_2025_11_25;
+pub const LATEST_PROTOCOL_VERSION: &str = VERSION_2026_07_28;
+/// The newest protocol revision that still uses the `initialize` handshake,
+/// offered when falling back to servers that predate 2026-07-28.
+pub const LATEST_LEGACY_PROTOCOL_VERSION: &str = VERSION_2025_11_25;
 
 /// Protocol versions that include the streamable HTTP transport's
 /// `MCP-Protocol-Version` header requirement on post-initialize requests.
