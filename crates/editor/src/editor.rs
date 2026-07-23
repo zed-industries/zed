@@ -8785,6 +8785,46 @@ impl Editor {
         });
     }
 
+    pub fn trim_trailing_whitespace(
+        &mut self,
+        _: &TrimTrailingWhitespace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        let buffers: Vec<_> = self.buffer.read(cx).all_buffers_iter().collect();
+        let diff_tasks: Vec<_> = buffers
+            .iter()
+            .map(|buffer| {
+                buffer.read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(None, cx))
+            })
+            .collect();
+
+        cx.spawn_in(window, async move |editor, cx| {
+            let mut diffs = Vec::with_capacity(buffers.len());
+            for (buffer, diff_task) in buffers.iter().zip(diff_tasks.into_iter()) {
+                let diff = diff_task.await;
+                diffs.push((buffer.clone(), diff));
+            }
+
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.transact(window, cx, |_, _, cx| {
+                        for (buffer, diff) in &diffs {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.apply_diff(diff.clone(), cx);
+                            });
+                        }
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     pub fn open_selections_in_multibuffer(
         &mut self,
         _: &OpenSelectionsInMultibuffer,

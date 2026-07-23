@@ -42243,3 +42243,45 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
+
+#[gpui::test]
+async fn test_trim_trailing_whitespace(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("hello   ˇ\nworld  \n  foo \nbar");
+    cx.update_editor(|e, window, cx| {
+        e.trim_trailing_whitespace(&TrimTrailingWhitespace, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.buffer_text(), "hello\nworld\n  foo\nbar");
+}
+
+#[gpui::test]
+async fn test_trim_trailing_whitespace_noop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let text = "hello\nworld\n  foo\nbar";
+    cx.set_state("helloˇ\nworld\n  foo\nbar");
+    cx.update_editor(|e, window, cx| {
+        e.trim_trailing_whitespace(&TrimTrailingWhitespace, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.buffer_text(), text);
+}
+
+#[gpui::test]
+async fn test_trim_trailing_whitespace_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let text = "hello   \nworld  \n";
+    cx.set_state("hello   ˇ\nworld  \n");
+    cx.update_editor(|e, _window, cx| e.set_read_only(true));
+    cx.update_editor(|e, window, cx| {
+        e.trim_trailing_whitespace(&TrimTrailingWhitespace, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.buffer_text(), text);
+}
