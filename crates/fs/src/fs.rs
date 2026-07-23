@@ -1339,12 +1339,9 @@ impl<T> Future for JoinHandle<T> {
             .take()
             .expect("will never be called again once poll Ready");
 
-        // Join is not blocking, we know the thread has ended since sending
-        // is the last thing it does
-        debug_assert!(thread_handle.is_finished());
         let panic = thread_handle
             .join()
-            .expect_err("if recieving failed the thread must have panicked as sending is the last thing that happens and cannot panick");
+            .expect_err("if receiving failed the thread must have panicked as sending is the last thing that happens and cannot panic");
 
         Poll::Ready(Err(Panicked(Mutex::new(panic))))
     }
