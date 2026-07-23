@@ -1464,7 +1464,7 @@ fn response_content_is_refusal(content: &serde_json::Value) -> bool {
     content_type == Some("refusal") || !refusal.is_empty()
 }
 
-fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
+pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
 
     TokenUsage {

@@ -5,7 +5,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactedContext, EnvVar,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -25,6 +25,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
+use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
@@ -544,7 +545,7 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         mut request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
         if !self.supports_explicit_compaction() {
             return async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
@@ -574,9 +575,11 @@ impl LanguageModel for OpenAiLanguageModel {
         let response = self.compact_response(request, cx);
         async move {
             let response = response.await?;
-            response
+            let usage = token_usage_from_response_usage(&response.usage);
+            let context = response
                 .into_compacted_context(OPEN_AI_PROVIDER_ID)
-                .map_err(LanguageModelCompletionError::Other)
+                .map_err(LanguageModelCompletionError::Other)?;
+            Ok(CompactionResult { context, usage })
         }
         .boxed()
     }

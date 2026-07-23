@@ -19,7 +19,7 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactedContext, DisabledReason,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
@@ -43,7 +43,7 @@ use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
-    into_open_ai_response,
+    into_open_ai_response, token_usage_from_response_usage,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
@@ -429,7 +429,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
         if !self.supports_explicit_compaction() {
             return async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
@@ -501,9 +501,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             while let Some(event) = events.next().await {
                 match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
                     CompletionEvent::Event(response) => {
-                        return response
+                        let usage = token_usage_from_response_usage(&response.usage);
+                        let context = response
                             .into_compacted_context(OPEN_AI_PROVIDER_ID)
-                            .map_err(LanguageModelCompletionError::Other);
+                            .map_err(LanguageModelCompletionError::Other)?;
+                        return Ok(CompactionResult { context, usage });
                     }
                     CompletionEvent::Status(_) => {}
                 }
@@ -1187,9 +1189,18 @@ mod tests {
         let model = cloud_test_model(http_client);
         let request = compact_test_request();
 
-        let content = model.compact(request, &cx.to_async()).await.unwrap();
+        let result = model.compact(request, &cx.to_async()).await.unwrap();
 
-        let CompactedContext::ProviderState(state) = content else {
+        assert_eq!(
+            result.usage,
+            language_model::TokenUsage {
+                input_tokens: 80,
+                output_tokens: 10,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 20,
+            }
+        );
+        let language_model::CompactedContext::ProviderState(state) = result.context else {
             panic!("expected provider compaction state");
         };
         assert_eq!(

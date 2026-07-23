@@ -35,6 +35,16 @@ impl DisabledReason {
     }
 }
 
+/// The outcome of an explicit [`LanguageModel::compact`] request.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactionResult {
+    /// The replacement context to persist and use in subsequent requests.
+    pub context: CompactedContext,
+    /// Token usage of the compaction request itself, as reported by the
+    /// provider.
+    pub usage: TokenUsage,
+}
+
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
     pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
@@ -139,7 +149,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         _request: LanguageModelRequest,
         _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CompactedContext, LanguageModelCompletionError>> {
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
         let provider = self.provider_name();
         async move {
             Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
