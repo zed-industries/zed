@@ -678,6 +678,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                         .unwrap_or(8192),
                     mode,
                     anthropic::completion::AnthropicPromptCacheMode::Automatic,
+                    &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -685,7 +686,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
-                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
+                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
                     Ok(mapper.map_stream(stream.await?).boxed())
                 }
                 .boxed()

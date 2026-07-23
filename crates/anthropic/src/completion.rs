@@ -1,15 +1,17 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelRequestToolInput,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseInput, MessageContent, Role, StopReason, TokenUsage,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseInput, MessageContent, ProviderCompactionState, Role,
+    SharedString, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
@@ -18,6 +20,46 @@ use crate::{
     ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
     completion_error_from_anthropic_api,
 };
+
+pub const COMPACTION_STATE_FORMAT: &str = "anthropic.messages.encrypted-content.v1";
+
+/// Packages a compaction block's opaque `encrypted_content` into provider
+/// state owned by `owner`.
+///
+/// Anthropic requires the metadata to be round-tripped verbatim, and only the
+/// backend whose infrastructure produced it can make sense of it. The owner
+/// recorded here is what [`provider_compaction_encrypted_content`] later
+/// compares against, so it must identify that backend, not merely the wire
+/// protocol.
+pub fn provider_compaction_state_from_encrypted_content(
+    owner: LanguageModelProviderId,
+    encrypted_content: impl Into<Arc<str>>,
+) -> ProviderCompactionState {
+    ProviderCompactionState::new(
+        owner,
+        SharedString::new_static(COMPACTION_STATE_FORMAT),
+        encrypted_content,
+    )
+}
+
+/// Recovers the `encrypted_content` to round-trip from `state` if it is owned
+/// by `owner`, or `None` when the state belongs to a different backend and the
+/// summary should be replayed without it.
+pub fn provider_compaction_encrypted_content(
+    state: &ProviderCompactionState,
+    owner: &LanguageModelProviderId,
+) -> Result<Option<Arc<str>>> {
+    if state.provider_id() != owner {
+        return Ok(None);
+    }
+    if state.format() != COMPACTION_STATE_FORMAT {
+        return Err(anyhow!(
+            "unsupported Anthropic compaction state format: {}",
+            state.format()
+        ));
+    }
+    Ok(Some(state.payload().into()))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AnthropicPromptCacheMode {
@@ -68,7 +110,10 @@ fn mark_last_cacheable_content(content: &mut [RequestContent], cache_control: Ca
     }
 }
 
-fn to_anthropic_content(content: MessageContent) -> Result<Option<RequestContent>> {
+fn to_anthropic_content(
+    content: MessageContent,
+    compaction_state_owner: &LanguageModelProviderId,
+) -> Result<Option<RequestContent>> {
     match content {
         MessageContent::Text(text) => {
             let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
@@ -159,9 +204,19 @@ fn to_anthropic_content(content: MessageContent) -> Result<Option<RequestContent
                 cache_control: None,
             }))
         }
-        MessageContent::Compaction(CompactedContext::Summary { content }) => {
+        MessageContent::Compaction(CompactedContext::Summary {
+            content,
+            provider_state,
+        }) => {
+            let encrypted_content = match &provider_state {
+                Some(state) => {
+                    provider_compaction_encrypted_content(state, compaction_state_owner)?
+                }
+                None => None,
+            };
             Ok(Some(RequestContent::Compaction {
                 content: Some(content),
+                encrypted_content,
                 cache_control: None,
             }))
         }
@@ -176,6 +231,7 @@ pub fn into_anthropic(
     max_output_tokens: u64,
     mode: AnthropicModelMode,
     cache_mode: AnthropicPromptCacheMode,
+    compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
@@ -192,7 +248,7 @@ pub fn into_anthropic(
             Role::User | Role::Assistant => {
                 let mut anthropic_message_content = Vec::new();
                 for content in message.content {
-                    if let Some(content) = to_anthropic_content(content)? {
+                    if let Some(content) = to_anthropic_content(content, compaction_state_owner)? {
                         anthropic_message_content.push(content);
                     }
                 }
@@ -354,20 +410,28 @@ pub fn into_anthropic(
 
 pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
-    compaction_summaries_by_index: HashMap<usize, String>,
+    compactions_by_index: HashMap<usize, RawCompaction>,
     usage: Usage,
     stop_reason: StopReason,
     provider_name: LanguageModelProviderName,
+    compaction_state_owner: LanguageModelProviderId,
 }
 
 impl AnthropicEventMapper {
-    pub fn new(provider_name: LanguageModelProviderName) -> Self {
+    /// `compaction_state_owner` identifies the backend whose infrastructure
+    /// produced this stream, so that any `encrypted_content` it emits is only
+    /// ever round-tripped back to that same backend.
+    pub fn new(
+        provider_name: LanguageModelProviderName,
+        compaction_state_owner: LanguageModelProviderId,
+    ) -> Self {
         Self {
             tool_uses_by_index: HashMap::default(),
-            compaction_summaries_by_index: HashMap::default(),
+            compactions_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
             provider_name,
+            compaction_state_owner,
         }
     }
 
@@ -419,15 +483,23 @@ impl AnthropicEventMapper {
                     );
                     Vec::new()
                 }
-                ResponseContent::Compaction { content } => {
+                ResponseContent::Compaction {
+                    content,
+                    encrypted_content,
+                } => {
                     let mut events = vec![Ok(LanguageModelCompletionEvent::Compaction(
                         CompactionUpdate::Started,
                     ))];
-                    let summary = self.compaction_summaries_by_index.entry(index).or_default();
+                    let compaction = self.compactions_by_index.entry(index).or_default();
+                    if let Some(encrypted_content) =
+                        encrypted_content.filter(|encrypted| !encrypted.is_empty())
+                    {
+                        compaction.encrypted_content = Some(encrypted_content);
+                    }
                     if let Some(content) = content
                         && !content.is_empty()
                     {
-                        summary.push_str(&content);
+                        compaction.summary.push_str(&content);
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
                             CompactionUpdate::SummaryDelta(content),
                         )));
@@ -451,16 +523,28 @@ impl AnthropicEventMapper {
                         signature: Some(signature),
                     })]
                 }
-                ContentDelta::CompactionDelta { content } => {
-                    let Some(content) = content.filter(|content| !content.is_empty()) else {
-                        return Vec::new();
-                    };
-                    let Some(summary) = self.compaction_summaries_by_index.get_mut(&index) else {
+                ContentDelta::CompactionDelta {
+                    content,
+                    encrypted_content,
+                } => {
+                    let Some(compaction) = self.compactions_by_index.get_mut(&index) else {
                         return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                             "Anthropic streamed a compaction delta before starting its content block"
                         )))];
                     };
-                    summary.push_str(&content);
+                    // Unlike summary text, `encrypted_content` arrives whole:
+                    // a later delta carries a complete replacement value, not
+                    // a chunk to append (Anthropic's own SDKs assign it, the
+                    // way they do thinking signatures).
+                    if let Some(encrypted_content) =
+                        encrypted_content.filter(|encrypted| !encrypted.is_empty())
+                    {
+                        compaction.encrypted_content = Some(encrypted_content);
+                    }
+                    let Some(content) = content.filter(|content| !content.is_empty()) else {
+                        return Vec::new();
+                    };
+                    compaction.summary.push_str(&content);
                     vec![Ok(LanguageModelCompletionEvent::Compaction(
                         CompactionUpdate::SummaryDelta(content),
                     ))]
@@ -492,15 +576,26 @@ impl AnthropicEventMapper {
                 }
             },
             Event::ContentBlockStop { index } => {
-                if let Some(summary) = self.compaction_summaries_by_index.remove(&index) {
-                    if summary.is_empty() {
-                        return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                            "Anthropic returned an empty compaction summary"
-                        )))];
+                if let Some(compaction) = self.compactions_by_index.remove(&index) {
+                    // A compaction block that closes without content is a
+                    // documented failed compaction, which the server treats
+                    // as a no-op: there is nothing to persist, and the
+                    // conversation continues on the uncompacted transcript.
+                    if compaction.summary.is_empty() {
+                        return vec![Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::Failed,
+                        ))];
                     }
+                    let provider_state = compaction.encrypted_content.map(|encrypted_content| {
+                        provider_compaction_state_from_encrypted_content(
+                            self.compaction_state_owner.clone(),
+                            encrypted_content,
+                        )
+                    });
                     vec![Ok(LanguageModelCompletionEvent::Compaction(
                         CompactionUpdate::Finished(CompactedContext::Summary {
-                            content: summary.into(),
+                            content: compaction.summary.into(),
+                            provider_state,
                         }),
                     ))]
                 } else if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
@@ -566,8 +661,8 @@ impl AnthropicEventMapper {
                 // was malformed and its finalized summary never arrived.
                 // Consumers would otherwise see `Started` with no terminal
                 // event and treat the compaction as still in progress.
-                if !self.compaction_summaries_by_index.is_empty() {
-                    self.compaction_summaries_by_index.clear();
+                if !self.compactions_by_index.is_empty() {
+                    self.compactions_by_index.clear();
                     return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                         "Anthropic ended the stream without finishing its compaction summary"
                     )))];
@@ -589,6 +684,12 @@ struct RawToolUse {
     id: String,
     name: String,
     input_json: String,
+}
+
+#[derive(Default)]
+struct RawCompaction {
+    summary: String,
+    encrypted_content: Option<Arc<str>>,
 }
 
 /// Updates usage data by preferring counts from `new`.
@@ -621,7 +722,8 @@ mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
     use language_model_core::{
-        ANTHROPIC_PROVIDER_NAME, LanguageModelImage, LanguageModelRequestMessage, MessageContent,
+        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelImage,
+        LanguageModelRequestMessage, MessageContent,
     };
 
     #[test]
@@ -670,6 +772,7 @@ mod tests {
             4096,
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
@@ -777,6 +880,7 @@ mod tests {
             4096,
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Legacy,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
@@ -836,6 +940,7 @@ mod tests {
             128_000,
             AnthropicModelMode::AdaptiveThinking,
             AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
@@ -889,6 +994,7 @@ mod tests {
             4096,
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
@@ -935,6 +1041,7 @@ mod tests {
                 budget_tokens: Some(10000),
             },
             AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap()
     }
@@ -1035,6 +1142,7 @@ mod tests {
             4096,
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Disabled,
+            &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
@@ -1062,6 +1170,7 @@ mod tests {
         let result = request_with_assistant_content(vec![
             MessageContent::Compaction(CompactedContext::Summary {
                 content: "Summary of the conversation so far.".into(),
+                provider_state: None,
             }),
             MessageContent::Text("Response".to_string()),
         ]);
@@ -1082,8 +1191,53 @@ mod tests {
     }
 
     #[test]
+    fn test_compaction_encrypted_content_replayed_only_for_owning_backend() {
+        let summary_owned_by = |owner: LanguageModelProviderId| {
+            MessageContent::Compaction(CompactedContext::Summary {
+                content: "Summary of the conversation so far.".into(),
+                provider_state: Some(provider_compaction_state_from_encrypted_content(
+                    owner,
+                    "opaque-compaction-payload",
+                )),
+            })
+        };
+
+        let owned = to_anthropic_content(
+            summary_owned_by(ANTHROPIC_PROVIDER_ID),
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap()
+        .expect("compaction block should be produced");
+        assert_eq!(
+            serde_json::to_value(&owned).unwrap(),
+            serde_json::json!({
+                "type": "compaction",
+                "content": "Summary of the conversation so far.",
+                "encrypted_content": "opaque-compaction-payload"
+            })
+        );
+
+        // State produced by a different Anthropic-protocol backend must not
+        // be round-tripped: the summary is still replayed, but without the
+        // foreign encrypted payload.
+        let foreign = to_anthropic_content(
+            summary_owned_by(LanguageModelProviderId::new("other-anthropic-backend")),
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap()
+        .expect("compaction block should be produced");
+        assert_eq!(
+            serde_json::to_value(&foreign).unwrap(),
+            serde_json::json!({
+                "type": "compaction",
+                "content": "Summary of the conversation so far."
+            })
+        );
+    }
+
+    #[test]
     fn test_event_mapper_maps_compaction_block_and_deltas() {
-        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
 
         let start_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_start",
@@ -1134,20 +1288,89 @@ mod tests {
                 )),
                 LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
                     CompactedContext::Summary {
-                        content: "Summary in chunks".into()
+                        content: "Summary in chunks".into(),
+                        provider_state: None,
                     }
                 )),
             ]
         );
     }
 
+    /// Mirrors the stream shape in Anthropic's SDK fixtures: the block starts
+    /// with both fields null, then a single delta carries the summary text
+    /// alongside the opaque `encrypted_content` that must be round-tripped.
     #[test]
-    fn test_event_mapper_rejects_empty_compaction_summary() {
-        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+    fn test_event_mapper_captures_encrypted_content_as_provider_state() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+
         let start_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_start",
             "index": 0,
-            "content_block": { "type": "compaction", "content": null }
+            "content_block": { "type": "compaction", "content": null, "encrypted_content": null }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "compaction_delta",
+                "content": "Earlier conversation summarized.",
+                "encrypted_content": "opaque-compaction-payload"
+            }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(stop_event));
+        let mut events = events
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all events should map successfully");
+
+        let Some(LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+            CompactedContext::Summary {
+                content,
+                provider_state: Some(state),
+            },
+        ))) = events.pop()
+        else {
+            panic!("expected a finished summary carrying provider state");
+        };
+        assert_eq!(content.as_ref(), "Earlier conversation summarized.");
+        assert_eq!(
+            provider_compaction_encrypted_content(&state, &ANTHROPIC_PROVIDER_ID)
+                .unwrap()
+                .as_deref(),
+            Some("opaque-compaction-payload")
+        );
+        assert_eq!(
+            provider_compaction_encrypted_content(
+                &state,
+                &LanguageModelProviderId::new("other-anthropic-backend")
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    /// A compaction block that closes without any content is Anthropic's
+    /// documented representation of a failed compaction, which the server
+    /// treats as a no-op. It must surface as `Failed` -- not as an error that
+    /// would kill the rest of the response.
+    #[test]
+    fn test_event_mapper_maps_null_content_compaction_to_failed() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": null, "encrypted_content": null }
         }))
         .unwrap();
         let stop_event: Event = serde_json::from_value(serde_json::json!({
@@ -1166,13 +1389,21 @@ mod tests {
                 CompactionUpdate::Started
             )]
         );
-        let error = mapper.map_event(stop_event).pop().unwrap().unwrap_err();
-        assert!(error.to_string().contains("empty compaction summary"));
+        assert_eq!(
+            mapper
+                .map_event(stop_event)
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Failed
+            )]
+        );
     }
 
     #[test]
     fn test_event_mapper_rejects_compaction_delta_before_start() {
-        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
         let delta_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_delta",
             "index": 0,
@@ -1191,7 +1422,7 @@ mod tests {
 
     #[test]
     fn test_event_mapper_rejects_stream_end_with_unfinished_compaction() {
-        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
         let start_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_start",
             "index": 0,

@@ -70,6 +70,10 @@ pub enum CompactionUpdate {
     SummaryDelta(Arc<str>),
     /// The complete context to persist and use in subsequent requests.
     Finished(CompactedContext),
+    /// The provider abandoned the compaction without producing replacement
+    /// context. This is a documented outcome, not a protocol error: the
+    /// conversation simply continues on the uncompacted transcript.
+    Failed,
 }
 
 impl LanguageModelCompletionEvent {

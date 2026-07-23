@@ -615,6 +615,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                         AnthropicModelMode::Default
                     },
                     AnthropicPromptCacheMode::Automatic,
+                    // Cloud proxies to Anthropic's own infrastructure, so
+                    // compaction state is owned by (and interchangeable with)
+                    // Anthropic proper, not by the cloud transport.
+                    &ANTHROPIC_PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -658,7 +662,8 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     )
                     .await?;
 
-                    let mut mapper = AnthropicEventMapper::new(provider_name.clone());
+                    let mut mapper =
+                        AnthropicEventMapper::new(provider_name.clone(), ANTHROPIC_PROVIDER_ID);
                     Ok(map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,

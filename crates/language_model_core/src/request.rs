@@ -268,7 +268,14 @@ pub enum MessageContent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum CompactedContext {
-    Summary { content: Arc<str> },
+    Summary {
+        content: Arc<str>,
+        /// Opaque state the producing backend needs round-tripped alongside
+        /// the summary (e.g. Anthropic's `encrypted_content`). `None` when the
+        /// summary stands alone.
+        #[serde(default)]
+        provider_state: Option<ProviderCompactionState>,
+    },
     ProviderState(ProviderCompactionState),
 }
 
