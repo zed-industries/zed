@@ -10,9 +10,9 @@
 //!  Operations                            Results
 //!  ─────────────────────────────────  ──────────────────────────────────────
 //!  Create(ProjectPath)               →  Created(ProjectPath)
-//!  Trash(ProjectPath)                →  Trashed(TrashedEntry)
+//!  Trash(ProjectPath)                →  Trashed(TrashId)
 //!  Rename(ProjectPath, ProjectPath)  →  Renamed(ProjectPath, ProjectPath)
-//!  Restore(TrashedEntry)             →  Restored(ProjectPath)
+//!  Restore(TrashId)                  →  Restored(ProjectPath)
 //!  Batch(Vec<Operation>)             →  Batch(Vec<Result>)
 //!
 //!
@@ -59,12 +59,12 @@
 //!                                  │
 //! User Operation  Undo             v
 //! Execute         Created(CONTRIBUTING.md) ────────> Trash(CONTRIBUTING.md)
-//! Record          Trashed(TrashedEntry(1))
+//! Record          Trashed(TrashId(1))
 //! History
 //! 	0 Created(src/main.rs)
 //! 	1 Renamed(README.md, readme.md) ─┐
 //!     2 +++cursor+++                   │(before the cursor)
-//! 	2 Trashed(TrashedEntry(1))       │
+//! 	2 Trashed(TrashId(1))            │
 //!                                      │
 //! User Operation  Undo                 v
 //! Execute         Renamed(README.md, readme.md) ───> Rename(readme.md, README.md)
@@ -73,7 +73,7 @@
 //! 	0 Created(src/main.rs)
 //!     1 +++cursor+++
 //! 	1 Renamed(readme.md, README.md) ─┐ (at the cursor)
-//! 	2 Trashed(TrashedEntry(1))       │
+//! 	2 Trashed(TrashId(1))            │
 //!                                      │
 //!   ┌──────────────────────────────────┴─────────────────────────────────────────┐
 //!     Redoing will take the result at the cursor position, convert that into the
@@ -90,10 +90,10 @@
 //! 	0 Created(src/main.rs)
 //! 	1 Renamed(README.md, readme.md)
 //!     2 +++cursor+++
-//! 	2 Trashed(TrashedEntry(1))────┐ (at the cursor)
-//!                                   │
-//! User Operation  Redo              v
-//! Execute         Trashed(TrashedEntry(1)) ────────> Restore(TrashedEntry(1))
+//! 	2 Trashed(TrashId(1))───────┐ (at the cursor)
+//!                                 │
+//! User Operation  Redo            v
+//! Execute         Trashed(TrashId(1)) ────────> Restore(TrashId(1))
 //! Record          Restored(ProjectPath)
 //! History
 //! 	0 Created(src/main.rs)
@@ -132,7 +132,7 @@
 
 use crate::ProjectPanel;
 use anyhow::{Context, Result, anyhow};
-use fs::TrashedEntry;
+use fs::TrashId;
 use futures::channel::mpsc;
 use gpui::{AppContext, AsyncApp, SharedString, Task, WeakEntity};
 use project::{ProjectPath, WorktreeId};
@@ -148,7 +148,7 @@ use worktree::CreatedEntry;
 enum Operation {
     Trash(ProjectPath),
     Rename(ProjectPath, ProjectPath),
-    Restore(WorktreeId, TrashedEntry),
+    Restore(WorktreeId, TrashId),
     Batch(Vec<Operation>),
 }
 
@@ -156,15 +156,15 @@ impl Operation {
     async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
         Ok(match self {
             Operation::Trash(project_path) => {
-                let trash_entry = undo_manager.trash(&project_path, cx).await?;
-                Change::Trashed(project_path.worktree_id, trash_entry)
+                let trash_id = undo_manager.trash(&project_path, cx).await?;
+                Change::Trashed(project_path.worktree_id, trash_id)
             }
             Operation::Rename(from, to) => {
                 undo_manager.rename(&from, &to, cx).await?;
                 Change::Renamed(from, to)
             }
-            Operation::Restore(worktree_id, trashed_entry) => {
-                let project_path = undo_manager.restore(worktree_id, trashed_entry, cx).await?;
+            Operation::Restore(worktree_id, trash_id) => {
+                let project_path = undo_manager.restore(worktree_id, trash_id, cx).await?;
                 Change::Restored(project_path)
             }
             Operation::Batch(operations) => {
@@ -181,7 +181,7 @@ impl Operation {
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
     Created(ProjectPath),
-    Trashed(WorktreeId, TrashedEntry),
+    Trashed(WorktreeId, TrashId),
     Renamed(ProjectPath, ProjectPath),
     Restored(ProjectPath),
     Batched(Vec<Change>),
@@ -191,9 +191,7 @@ impl Change {
     fn to_inverse(self) -> Operation {
         match self {
             Change::Created(project_path) => Operation::Trash(project_path),
-            Change::Trashed(worktree_id, trashed_entry) => {
-                Operation::Restore(worktree_id, trashed_entry)
-            }
+            Change::Trashed(worktree_id, trash_id) => Operation::Restore(worktree_id, trash_id),
             Change::Renamed(from, to) => Operation::Rename(to, from),
             Change::Restored(project_path) => Operation::Trash(project_path),
             // When inverting a batch of operations, we reverse the order of
@@ -231,6 +229,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct UndoManager {
     tx: mpsc::Sender<UndoMessage>,
+    is_via_collab: bool,
     can_undo: Arc<AtomicBool>,
     can_redo: Arc<AtomicBool>,
 }
@@ -239,6 +238,7 @@ impl UndoManager {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         panel: WeakEntity<ProjectPanel>,
+        is_via_collab: bool,
         cx: &App,
     ) -> Self {
         let (tx, rx) = mpsc::channel(1024);
@@ -246,6 +246,7 @@ impl UndoManager {
 
         let this = Self {
             tx,
+            is_via_collab,
             can_undo: Arc::clone(&inner.can_undo),
             can_redo: Arc::clone(&inner.can_redo),
         };
@@ -267,6 +268,17 @@ impl UndoManager {
             .context("Undo and redo task can not keep up")
     }
     pub fn record(&mut self, changes: impl IntoIterator<Item = Change>) -> Result<()> {
+        // In a collab session, undoing or redoing can send `TrashProjectEntry`
+        // or `RestoreProjectEntry`, for example, undoing a create or undoing a
+        // trash.
+        // Since older hosts can't decode those messages, which would
+        // silently never complete, besides disabling the `Undo`/`Redo` actions
+        // for collab, we also avoid recording history here so there's nothing
+        // that could later trigger those messages.
+        if self.is_via_collab {
+            return Ok(());
+        }
+
         self.tx
             .try_send(UndoMessage::Changed(changes.into_iter().collect()))
             .context("Undo and redo task can not keep up")
@@ -280,6 +292,11 @@ impl UndoManager {
     /// operations happening.
     pub fn can_redo(&self) -> bool {
         self.can_redo.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_is_via_collab(&mut self, is_via_collab: bool) {
+        self.is_via_collab = is_via_collab;
     }
 }
 
@@ -384,7 +401,7 @@ impl Inner {
         // 	0 Created(src/main.rs)
         // 	1 Renamed(README.md, readme.md) ─┐
         //     2 +++cursor+++                │(before the cursor)
-        // 	2 Trashed(TrashedEntry(1))       │
+        // 	2 Trashed(TrashId(1))            │
         //                                   │
         // User Operation  Undo              v
         // Failed execute  Renamed(README.md, readme.md) ───> Rename(readme.md, README.md)
@@ -392,10 +409,10 @@ impl Inner {
         // History
         // 	0 Created(src/main.rs)
         //     1 +++cursor+++
-        // 	1 Trashed(TrashedEntry(1)) -----
-        //                                  |(at the cursor)
-        // User Operation  Redo             v
-        // Execute         Trashed(TrashedEntry(1)) ────────> Restore(TrashedEntry(1))
+        // 	1 Trashed(TrashId(1)) ---------
+        //                                |(at the cursor)
+        // User Operation  Redo           v
+        // Execute         Trashed(TrashId(1)) ────────> Restore(TrashId(1))
         // Record          Restored(ProjectPath)
         // History
         // 	0 Created(src/main.rs)
@@ -494,7 +511,7 @@ impl Inner {
         res?.await
     }
 
-    async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashedEntry> {
+    async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashId> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
         };
@@ -508,20 +525,17 @@ impl Inner {
                         .ok_or_else(|| anyhow!("No entry for path."))?;
 
                     project
-                        .delete_entry(entry_id, true, cx)
+                        .trash_entry(entry_id, cx)
                         .ok_or_else(|| anyhow!("Worktree entry should exist"))
                 })
             })?
             .await
-            .and_then(|entry| {
-                entry.ok_or_else(|| anyhow!("When trashing we should always get a trashentry"))
-            })
     }
 
     async fn restore(
         &self,
         worktree_id: WorktreeId,
-        trashed_entry: TrashedEntry,
+        trash_id: TrashId,
         cx: &mut AsyncApp,
     ) -> Result<ProjectPath> {
         let Some(workspace) = self.workspace.upgrade() else {
@@ -531,7 +545,7 @@ impl Inner {
         workspace
             .update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
-                    project.restore_entry(worktree_id, trashed_entry, cx)
+                    project.restore_entry(worktree_id, trash_id, cx)
                 })
             })
             .await

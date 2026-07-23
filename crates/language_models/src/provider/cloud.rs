@@ -9,11 +9,11 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
+use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, ProviderConfigurationView, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderState, ProviderSettingsView, ZED_CLOUD_PROVIDER_ID,
     ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
@@ -360,37 +360,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         })
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|_| ConfigurationView::new(self.state.clone(), false))
-            .into()
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|_| ConfigurationView::new(self.state.clone(), true))
-                .into(),
-        }
-    }
-
-    fn inline_description(&self, cx: &App) -> Option<InlineDescription> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
         let is_zed_model_provider_enabled = user_store
             .current_organization_configuration()
             .map_or(true, |config| config.is_zed_model_provider_enabled);
-
-        Some(InlineDescription::Text(
+        let description = InlineDescription::Text(
             zed_ai_description(
                 !state.is_signed_out(cx),
                 user_store.plan(),
@@ -398,27 +374,34 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 user_store.trial_started_at().is_none(),
             )
             .into(),
-        ))
-    }
+        );
 
-    fn inline_title(&self, cx: &App) -> Option<SharedString> {
-        let state = self.state.read(cx);
-        if state.is_signed_out(cx) {
-            return None;
-        }
-        let plan_name = match state.user_store.read(cx).plan()? {
-            Plan::ZedPro => "Pro",
-            Plan::ZedProTrial => "Pro Trial",
-            Plan::ZedStudent => "Student",
-            Plan::ZedBusiness => "Business",
-            Plan::ZedVip => "VIP",
-            Plan::ZedFree => return None,
+        let title = if state.is_signed_out(cx) {
+            None
+        } else {
+            match state.user_store.read(cx).plan() {
+                Some(Plan::ZedPro) => Some("Subscribed to Pro".into()),
+                Some(Plan::ZedProTrial) => Some("Subscribed to Pro Trial".into()),
+                Some(Plan::ZedStudent) => Some("Subscribed to Student".into()),
+                Some(Plan::ZedBusiness) => Some("Subscribed to Business".into()),
+                Some(Plan::ZedVip) => Some("Subscribed to VIP".into()),
+                Some(Plan::ZedFree) | None => None,
+            }
         };
-        Some(format!("Subscribed to {plan_name}").into())
-    }
 
-    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description: Some(description),
+                create_view: Arc::new({
+                    let state = self.state.clone();
+                    move |_window, cx| {
+                        cx.new(|_| ConfigurationView::new(state.clone(), true))
+                            .into()
+                    }
+                }),
+            },
+        ))
     }
 
     fn authentication_error_message(&self) -> SharedString {

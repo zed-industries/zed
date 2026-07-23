@@ -387,8 +387,24 @@ impl Editor {
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
-                    let start_column = head.column();
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column());
+                    let row_line_len = display_map.line_len(head.row());
+                    let start_dp = selection.start.to_display_point(&display_map);
+                    let end_dp = selection.end.to_display_point(&display_map);
+
+                    let start_column = if start_dp.row() == head.row() {
+                        start_dp.column()
+                    } else {
+                        0
+                    };
+                    let end_column = cmp::min(
+                        row_line_len,
+                        if end_dp.row() == head.row() {
+                            end_dp.column()
+                        } else {
+                            row_line_len
+                        },
+                    );
+
                     target_left = target_left.min(ScrollOffset::from(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(start_column as usize)

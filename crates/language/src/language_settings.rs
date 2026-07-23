@@ -12,14 +12,15 @@ use ec4rs::{
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
-    EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
+    EditPredictionDataCollectionChoice, EditPredictionPromptFormatContent, EditPredictionProvider,
+    EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
+    LanguageSettingsContent, LineEndingSetting, LspInsertMode, REST_OF_LANGUAGE_SERVERS,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -101,7 +102,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<String>,
+    pub language_servers: Vec<ConfiguredLanguageServer>,
     /// Controls how semantic tokens from language servers are used for syntax highlighting.
     pub semantic_tokens: SemanticTokens,
     /// Controls whether folding ranges from language servers are used instead of
@@ -276,9 +277,6 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
-    /// A token representing the rest of the available language servers.
-    const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
-
     pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
@@ -357,18 +355,22 @@ impl LanguageSettings {
     }
 
     pub(crate) fn resolve_language_servers(
-        configured_language_servers: &[String],
+        configured_language_servers: &[ConfiguredLanguageServer],
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
         let (disabled_language_servers, enabled_language_servers): (
             Vec<LanguageServerName>,
             Vec<LanguageServerName>,
-        ) = configured_language_servers.iter().partition_map(
-            |language_server| match language_server.strip_prefix('!') {
-                Some(disabled) => Either::Left(LanguageServerName(disabled.to_string().into())),
-                None => Either::Right(LanguageServerName(language_server.clone().into())),
-            },
-        );
+        ) = configured_language_servers
+            .iter()
+            .partition_map(|language_server| {
+                let name = LanguageServerName(language_server.name.clone().into());
+                if language_server.disabled {
+                    itertools::Either::Left(name)
+                } else {
+                    itertools::Either::Right(name)
+                }
+            });
 
         let rest = available_language_servers
             .iter()
@@ -382,7 +384,7 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
                     vec![language_server]
@@ -697,9 +699,15 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         .merge_from_option(preferred_line_length.as_ref());
     settings.tab_size.merge_from_option(tab_size.as_ref());
     settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
-    settings
-        .remove_trailing_whitespace_on_save
-        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    // Avoid re-enabling destructive whitespace trimming when Zed settings have
+    // disabled it, e.g. for Markdown hard breaks.
+    if !matches!(remove_trailing_whitespace_on_save, Some(true))
+        || settings.remove_trailing_whitespace_on_save
+    {
+        settings
+            .remove_trailing_whitespace_on_save
+            .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    }
     settings
         .ensure_final_newline_on_save
         .merge_from_option(ensure_final_newline_on_save.as_ref());
@@ -1090,7 +1098,7 @@ mod tests {
         // A value of just `["..."]` is the same as taking all of the available language servers.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &[LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &[REST_OF_LANGUAGE_SERVERS.into()],
                 &available_language_servers,
             ),
             available_language_servers
@@ -1101,7 +1109,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
                     "deno".into()
                 ],
                 &available_language_servers
@@ -1122,7 +1130,7 @@ mod tests {
                     "deno".into(),
                     "!typescript-language-server".into(),
                     "!biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),
@@ -1134,7 +1142,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "my-cool-language-server".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),

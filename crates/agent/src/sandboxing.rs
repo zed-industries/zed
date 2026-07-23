@@ -176,12 +176,6 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     SandboxPolicy { fs, network }
 }
 
-/// Whether agent-run terminal commands should be wrapped in an OS-level
-/// sandbox for this process. See module docs for the policy.
-pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    cx.has_flag::<SandboxingFeatureFlag>()
-}
-
 /// Whether the sandboxed terminal can be exposed for this project.
 ///
 /// The persistent `allow_unsandboxed` setting turns sandboxing off for the
@@ -197,6 +191,12 @@ pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> boo
         && !AgentSettings::get_global(cx)
             .sandbox_permissions
             .allow_unsandboxed
+}
+
+/// Whether agent-run terminal commands should be wrapped in an OS-level
+/// sandbox for this process. See module docs for the policy.
+pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
+    cx.has_flag::<SandboxingFeatureFlag>()
 }
 
 /// Whether sandboxing is *applicable* for this project at all — the feature is

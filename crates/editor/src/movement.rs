@@ -265,24 +265,69 @@ pub fn line_end(
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
+    let buffer_snapshot = map.buffer_snapshot();
+    let classifier = buffer_snapshot.char_classifier_at(raw_point);
+    let cursor_offset = raw_point.to_offset(buffer_snapshot);
+    let cursor_char = buffer_snapshot.chars_at(cursor_offset).next();
 
     let mut is_first_iteration = true;
-    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, &mut |left, right| {
-        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
-        if is_first_iteration
-            && classifier.is_punctuation(right)
-            && !classifier.is_punctuation(left)
-            && left != '\n'
-        {
+    let word_start = find_preceding_boundary_display_point(
+        map,
+        point,
+        FindRange::MultiLine,
+        &mut |left, right| {
+            // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
+            if is_first_iteration
+                && classifier.is_punctuation(right)
+                && !classifier.is_punctuation(left)
+                && left != '\n'
+                && (!classifier.is_whitespace(left)
+                    || cursor_char.is_some_and(|character| {
+                        !classifier.is_whitespace(character) && character != '\n'
+                    }))
+            {
+                is_first_iteration = false;
+                return false;
+            }
             is_first_iteration = false;
-            return false;
-        }
-        is_first_iteration = false;
 
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
-            || left == '\n'
-    })
+            (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
+                || left == '\n'
+        },
+    );
+
+    let word_start_point = word_start.to_point(map);
+    let word_start_offset = word_start_point.to_offset(buffer_snapshot);
+    let mut chars_before_word = buffer_snapshot.reversed_chars_at(word_start_offset);
+    let Some(punctuation) = chars_before_word
+        .next()
+        .filter(|character| classifier.is_punctuation(*character))
+    else {
+        return word_start;
+    };
+
+    let punctuation_is_single = chars_before_word
+        .next()
+        .is_none_or(|character| !classifier.is_punctuation(character));
+    let punctuation_prefixes_word = buffer_snapshot
+        .chars_at(word_start_offset)
+        .next()
+        .is_some_and(|character| classifier.is_word(character));
+    let cursor_is_at_word_end = buffer_snapshot
+        .reversed_chars_at(cursor_offset)
+        .next()
+        .is_some_and(|character| classifier.is_word(character))
+        && cursor_char.is_none_or(|character| !classifier.is_word(character));
+
+    // Forward movement treats a single punctuation prefix as part of the following word.
+    // Include it when moving back from the word's end so `|@word` and `@word|` are symmetric.
+    if cursor_is_at_word_end && punctuation_is_single && punctuation_prefixes_word {
+        let mut punctuation_offset = word_start_offset;
+        punctuation_offset -= punctuation.len_utf8();
+        punctuation_offset.to_display_point(map)
+    } else {
+        word_start
+    }
 }
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
@@ -446,7 +491,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
         // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
         if is_first_iteration
             && classifier.is_punctuation(left)
-            && !classifier.is_punctuation(right)
+            && classifier.is_word(right)
             && right != '\n'
         {
             is_first_iteration = false;
@@ -580,6 +625,99 @@ pub fn end_of_paragraph(
     }
 
     map.max_point()
+}
+
+/// Returns whether `row` is part of a comment paragraph: a line whose first
+/// non-whitespace character lies within a comment scope and which contains at
+/// least one alphanumeric character.
+///
+/// This intentionally excludes:
+/// - blank lines and code lines,
+/// - end-of-line comments preceded by code (the first non-whitespace character
+///   is then code, not a comment),
+/// - "blank"/divider comment lines such as a bare `//` or `// -----` (no
+///   alphanumeric content), which act as paragraph separators.
+fn is_comment_paragraph_line(snapshot: &MultiBufferSnapshot, row: u32) -> bool {
+    let buffer_row = MultiBufferRow(row);
+    if snapshot.is_line_blank(buffer_row) {
+        return false;
+    }
+    let indent_len = snapshot.indent_size_for_line(buffer_row).len;
+    let indent_end = Point::new(row, indent_len);
+    let in_comment = snapshot.language_scope_at(indent_end).is_some_and(|scope| {
+        matches!(
+            scope.override_name(),
+            Some("comment") | Some("comment.inclusive")
+        )
+    });
+    if !in_comment {
+        return false;
+    }
+    let line_end = Point::new(row, snapshot.line_len(buffer_row));
+    snapshot
+        .text_for_range(indent_end..line_end)
+        .flat_map(|chunk| chunk.chars())
+        .any(|c| c.is_alphanumeric())
+}
+
+/// Returns the position of the first non-whitespace character of the next or
+/// previous comment paragraph, relative to `from`.
+///
+/// A comment paragraph is a run of consecutive comment lines (see
+/// [`is_comment_paragraph_line`]); paragraphs are separated by blank lines, code
+/// lines, and blank/divider comment lines. If no such paragraph exists in the
+/// requested direction, `from` is returned unchanged.
+///
+/// Both directions always move to a *different* paragraph than the one the
+/// caret is in: when the caret is inside a comment paragraph, the entire
+/// current paragraph is skipped, so `Prev` lands on the previous paragraph's
+/// start rather than the current paragraph's own start.
+pub fn comment_paragraph(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let snapshot = map.buffer_snapshot();
+    let from_point = from.to_point(map);
+    let max_row = snapshot.max_row().0;
+
+    let is_paragraph_start = |row: u32| {
+        is_comment_paragraph_line(snapshot, row)
+            && (row == 0 || !is_comment_paragraph_line(snapshot, row - 1))
+    };
+    let paragraph_start_point =
+        |row: u32| Point::new(row, snapshot.indent_size_for_line(MultiBufferRow(row)).len);
+
+    let target = match direction {
+        Direction::Next => (from_point.row..=max_row).find_map(|row| {
+            let point = paragraph_start_point(row);
+            (point > from_point && is_paragraph_start(row)).then_some(point)
+        }),
+        Direction::Prev => {
+            // If the caret is within a comment paragraph, skip over the whole
+            // current paragraph so we land on the *previous* paragraph rather
+            // than stopping at the current paragraph's own start.
+            let mut boundary_row = from_point.row;
+            if is_comment_paragraph_line(snapshot, boundary_row) {
+                while boundary_row > 0 && is_comment_paragraph_line(snapshot, boundary_row - 1) {
+                    boundary_row -= 1;
+                }
+                (0..boundary_row)
+                    .rev()
+                    .find_map(|row| is_paragraph_start(row).then(|| paragraph_start_point(row)))
+            } else {
+                (0..=from_point.row).rev().find_map(|row| {
+                    let point = paragraph_start_point(row);
+                    (point < from_point && is_paragraph_start(row)).then_some(point)
+                })
+            }
+        }
+    };
+
+    match target {
+        Some(point) => map.clip_point(point.to_display_point(map), Bias::Right),
+        None => from,
+    }
 }
 
 pub fn start_of_excerpt(
@@ -980,6 +1118,13 @@ mod tests {
         assert("helloˇ.---..ˇtest", cx);
         assert("test  ˇ.--ˇtest", cx);
         assert("oneˇ,;:!?ˇtwo", cx);
+        assert("foo ˇ.ˇ bar", cx);
+        assert("ˇfoo @ˇbar", cx);
+        assert("foo ˇ@barˇ baz", cx);
+        assert("foo @ˇbˇar", cx);
+        assert("foo ..ˇbarˇ baz", cx);
+        assert("ˇ.helloˇ", cx);
+        assert("[2001:4860:4860::8888ˇ] ˇ", cx);
     }
 
     #[gpui::test]
@@ -1163,6 +1308,10 @@ mod tests {
         assert("helloˇ.---..ˇtest", cx);
         assert("testˇ.--ˇ test", cx);
         assert("oneˇ,;:!?ˇtwo", cx);
+        assert("foo ˇ.ˇ bar", cx);
+        assert("fooˇ.ˇ bar", cx);
+        assert("foo ˇ@barˇ baz", cx);
+        assert("[2001:4860:4860::8888ˇ]ˇ ", cx);
     }
 
     #[gpui::test]
