@@ -299,6 +299,9 @@ impl StreamingFuzzyMatcher {
     }
 }
 
+// Aho-Corasick's overlapping search requires a contiguous haystack, while its
+// streaming search skips overlapping matches. KMP detects overlapping ambiguity
+// while scanning rope chunks without copying the buffer.
 fn find_exact_matches(snapshot: &TextBufferSnapshot, query: &str) -> Vec<Range<usize>> {
     if query.is_empty() {
         return Vec::new();
