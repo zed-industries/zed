@@ -133,7 +133,9 @@ pub enum Operator {
     Indent,
     Outdent,
     AutoIndent,
-    Rewrap,
+    Rewrap {
+        keep_cursor: bool,
+    },
     ShellCommand,
     Lowercase,
     Uppercase,
@@ -1097,7 +1099,8 @@ impl Operator {
             Operator::Indent => ">",
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
-            Operator::Rewrap => "gq",
+            Operator::Rewrap { keep_cursor: false } => "gq",
+            Operator::Rewrap { keep_cursor: true } => "gw",
             Operator::ReplaceWithRegister => "gR",
             Operator::Exchange => "cx",
             Operator::Outdent => "<",
@@ -1178,7 +1181,7 @@ impl Operator {
             Operator::Change
             | Operator::Delete
             | Operator::Yank
-            | Operator::Rewrap
+            | Operator::Rewrap { .. }
             | Operator::Indent
             | Operator::Outdent
             | Operator::AutoIndent
@@ -1219,7 +1222,7 @@ impl Operator {
             | Operator::ToggleComments
             | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
-            | Operator::Rewrap
+            | Operator::Rewrap { .. }
             | Operator::ShellCommand
             | Operator::AddSurrounds { target: None }
             | Operator::ChangeSurrounds { target: None, .. }

@@ -1726,15 +1726,22 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         )
         .range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
-        VimCommand::new(("reflow", ""), Rewrap { line_length: None })
-            .range(select_range)
-            .args(|_action, args| {
-                args.parse::<usize>().map_or(None, |length| {
-                    Some(Box::new(Rewrap {
-                        line_length: Some(length),
-                    }))
-                })
-            }),
+        VimCommand::new(
+            ("reflow", ""),
+            Rewrap {
+                line_length: None,
+                keep_cursor: false,
+            },
+        )
+        .range(select_range)
+        .args(|_action, args| {
+            args.parse::<usize>().map_or(None, |length| {
+                Some(Box::new(Rewrap {
+                    line_length: Some(length),
+                    keep_cursor: false,
+                }))
+            })
+        }),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
             .bang(editor::actions::UnfoldRecursive)

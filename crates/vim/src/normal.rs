@@ -416,7 +416,9 @@ impl Vim {
                 window,
                 cx,
             ),
-            Some(Operator::Rewrap) => self.rewrap_motion(motion, times, forced_motion, window, cx),
+            Some(Operator::Rewrap { keep_cursor }) => {
+                self.rewrap_motion(motion, times, keep_cursor, forced_motion, window, cx)
+            }
             Some(Operator::Outdent) => self.indent_motion(
                 motion,
                 times,
@@ -523,7 +525,9 @@ impl Vim {
                 Some(Operator::ShellCommand) => {
                     self.shell_command_object(object, around, window, cx);
                 }
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
+                Some(Operator::Rewrap { keep_cursor }) => {
+                    self.rewrap_object(object, around, keep_cursor, times, window, cx)
+                }
                 Some(Operator::Lowercase) => {
                     self.convert_object(object, around, ConvertTarget::LowerCase, times, window, cx)
                 }
@@ -2155,6 +2159,81 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("th th\nth th\nth th\nth th\nth th\nˇth th\n");
+    }
+
+    #[gpui::test]
+    async fn test_gw(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_neovim_option("textwidth=5").await;
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(5);
+                });
+            })
+        });
+
+        cx.set_shared_state("ˇth th th th th th\n").await;
+        cx.simulate_shared_keystrokes("g w w").await;
+        cx.shared_state().await.assert_eq("ˇth th\nth th\nth th\n");
+
+        cx.set_shared_state("th th th ˇth th th\n").await;
+        cx.simulate_shared_keystrokes("g w w").await;
+        cx.shared_state().await.assert_eq("th th\nth ˇth\nth th\n");
+
+        cx.set_shared_state("ˇth th th th th th\nth th th th th th\n")
+            .await;
+        cx.simulate_shared_keystrokes("v j g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\nth th\nth th\nˇth th\nth th\nth th\n");
+
+        cx.set_shared_state("th th th ˇth th th\nth th th th th th\n")
+            .await;
+        cx.simulate_shared_keystrokes("v j g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\nth th\nth th\nth th\nth ˇth\nth th\n");
+
+        cx.set_shared_state("th th th th th th\nth th th tˇh th th\n")
+            .await;
+        cx.simulate_shared_keystrokes("v k b g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\nth ˇth\nth th\nth th\nth th\nth th\n");
+
+        cx.set_shared_state("th «th th thˇ» th th").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state().await.assert_eq("th th\nth tˇh\nth th");
+
+        cx.set_shared_state("th ˇth th th th th\n").await;
+        cx.simulate_shared_keystrokes("v e e").await;
+        cx.shared_state().await.assert_eq("th «th thˇ» th th th\n");
+
+        cx.set_shared_state("th ˇth th th th th\n").await;
+        cx.simulate_shared_keystrokes("v e e g w").await;
+        cx.shared_state().await.assert_eq("th th\ntˇh th\nth th\n");
+
+        cx.set_shared_state("th «th thˇ» th th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state().await.assert_eq("th th\ntˇh th\nth th\n");
+
+        cx.set_shared_state("th «th \u{1f340}ˇ» th th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\n\u{1f340}ˇ th\nth th\n");
+
+        cx.set_shared_state("th «th th \u{1f340}ˇ» th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\nth ˇ\u{1f340}\nth th\n");
     }
 
     #[gpui::test]

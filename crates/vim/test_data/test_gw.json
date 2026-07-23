@@ -1,0 +1,50 @@
+{"SetOption":{"value":"textwidth=5"}}
+{"Put":{"state":"ˇth th th th th th\n"}}
+{"Key":"g"}
+{"Key":"w"}
+{"Key":"w"}
+{"Get":{"state":"ˇth th\nth th\nth th\n","mode":"Normal"}}
+{"Put":{"state":"th th th ˇth th th\n"}}
+{"Key":"g"}
+{"Key":"w"}
+{"Key":"w"}
+{"Get":{"state":"th th\nth ˇth\nth th\n","mode":"Normal"}}
+{"Put":{"state":"ˇth th th th th th\nth th th th th th\n"}}
+{"Key":"v"}
+{"Key":"j"}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\nth th\nth th\nˇth th\nth th\nth th\n","mode":"Normal"}}
+{"Put":{"state":"th th th ˇth th th\nth th th th th th\n"}}
+{"Key":"v"}
+{"Key":"j"}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\nth th\nth th\nth th\nth ˇth\nth th\n","mode":"Normal"}}
+{"Put":{"state":"th th th th th th\nth th th tˇh th th\n"}}
+{"Key":"v"}
+{"Key":"k"}
+{"Key":"b"}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\nth ˇth\nth th\nth th\nth th\nth th\n","mode":"Normal"}}
+{"Put":{"state":"th «th th thˇ» th th"}}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\nth tˇh\nth th","mode":"Normal"}}
+{"Put":{"state":"th ˇth th th th th\n"}}
+{"Key":"v"}
+{"Key":"e"}
+{"Key":"e"}
+{"Get":{"state":"th «th thˇ» th th th\n","mode":"Visual"}}
+{"Put":{"state":"th ˇth th th th th\n"}}
+{"Key":"v"}
+{"Key":"e"}
+{"Key":"e"}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\ntˇh th\nth th\n","mode":"Normal"}}
+{"Put":{"state":"th «th thˇ» th th th\n"}}
+{"Key":"g"}
+{"Key":"w"}
+{"Get":{"state":"th th\nthˇ th\nth th\n","mode":"Normal"}}
