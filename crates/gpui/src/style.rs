@@ -280,6 +280,18 @@ pub struct Style {
     /// The border style of this element
     pub border_style: BorderStyle,
 
+    /// The outline width of this element
+    pub outline_width: AbsoluteLength,
+
+    /// The outline color of this element
+    pub outline_color: Option<Hsla>,
+
+    /// The outline style of this element
+    pub outline_style: BorderStyle,
+
+    /// The outline offset of this element
+    pub outline_offset: AbsoluteLength,
+
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
@@ -751,6 +763,32 @@ impl Style {
             ));
         }
 
+        if self.is_outline_visible() {
+            let outline_width = self.outline_width.to_pixels(rem_size);
+            let outline_offset = self.outline_offset.to_pixels(rem_size);
+            let expand = outline_offset + outline_width;
+            let outline_bounds = bounds.dilate(expand);
+            // Grow each non-zero corner so the outline tracks rounded corners; square stays square.
+            let zero = px(0.);
+            let outline_radii = corner_radii.map(|radius| {
+                if *radius > zero {
+                    (*radius + expand).max(zero)
+                } else {
+                    zero
+                }
+            });
+            let mut background = self.outline_color.unwrap_or_default();
+            background.a = 0.;
+            window.paint_quad(quad(
+                outline_bounds,
+                outline_radii,
+                background,
+                Edges::all(outline_width),
+                self.outline_color.unwrap_or_default(),
+                self.outline_style,
+            ));
+        }
+
         #[cfg(debug_assertions)]
         if self.debug_below {
             cx.remove_global::<DebugBelow>();
@@ -761,6 +799,12 @@ impl Style {
         self.border_color
             .is_some_and(|color| !color.is_transparent())
             && self.border_widths.any(|length| !length.is_zero())
+    }
+
+    fn is_outline_visible(&self) -> bool {
+        self.outline_color
+            .is_some_and(|color| !color.is_transparent())
+            && !self.outline_width.is_zero()
     }
 }
 
@@ -800,6 +844,10 @@ impl Default for Style {
             background: None,
             border_color: None,
             border_style: BorderStyle::default(),
+            outline_width: AbsoluteLength::default(),
+            outline_color: None,
+            outline_style: BorderStyle::default(),
+            outline_offset: AbsoluteLength::default(),
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),

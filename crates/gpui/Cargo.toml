@@ -221,6 +221,10 @@ name = "shadow"
 path = "examples/shadow.rs"
 
 [[example]]
+name = "outline"
+path = "examples/outline.rs"
+
+[[example]]
 name = "svg"
 path = "examples/svg/svg.rs"
 
