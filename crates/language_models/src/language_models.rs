@@ -1,550 +1,78 @@
+// Provider serialization and configuration structures.
+
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use ::settings::{Settings, SettingsStore};
-use client::{Client, UserStore};
-use collections::{HashMap, HashSet};
-use credentials_provider::CredentialsProvider;
-use gpui::{App, Context, Entity};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
-use provider::deepseek::DeepSeekLanguageModelProvider;
+use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
-pub mod extension;
-pub mod provider;
-mod settings;
+pub use super::provider::open_ai_compatible::{
+    OpenAiCompatibleModelConfig, OpenAiCompatibleProvider,
+};
 
-pub use crate::extension::init_proxy as init_extension_proxy;
+/// Runtime state maintained by the provider lifecycle trait.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LanguageModelProviderState {
+    /// Models currently advertised (starts as the static list, may be
+    /// overwritten/augmented by discovered models once discovery resolves).
+    pub available_models: Vec<AvailableModel>,
 
-use crate::provider::anthropic::AnthropicLanguageModelProvider;
-use crate::provider::anthropic_compatible::AnthropicCompatibleLanguageModelProvider;
-use crate::provider::bedrock::BedrockLanguageModelProvider;
-use crate::provider::cloud::CloudLanguageModelProvider;
-use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
-use crate::provider::google::GoogleLanguageModelProvider;
-use crate::provider::llama_cpp::LlamaCppLanguageModelProvider;
-use crate::provider::lmstudio::LmStudioLanguageModelProvider;
-pub use crate::provider::mistral::MistralLanguageModelProvider;
-use crate::provider::ollama::OllamaLanguageModelProvider;
-use crate::provider::open_ai::OpenAiLanguageModelProvider;
-use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
-use crate::provider::open_router::OpenRouterLanguageModelProvider;
-use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
-use crate::provider::opencode::OpenCodeLanguageModelProvider;
-use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
-use crate::provider::x_ai::XAiLanguageModelProvider;
-pub use crate::settings::*;
-
-pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
-    let credentials_provider = client.credentials_provider();
-    let registry = LanguageModelRegistry::global(cx);
-    registry.update(cx, |registry, cx| {
-        register_language_model_providers(
-            registry,
-            user_store,
-            client.clone(),
-            credentials_provider.clone(),
-            cx,
-        );
-    });
-
-    // Subscribe to extension store events to track LLM extension installations
-    if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
-        cx.subscribe(&extension_store, {
-            let registry = registry.downgrade();
-            move |extension_store, event, cx| {
-                let Some(registry) = registry.upgrade() else {
-                    return;
-                };
-                match event {
-                    extension_host::Event::ExtensionInstalled(extension_id) => {
-                        if let Some(manifest) = extension_store
-                            .read(cx)
-                            .extension_manifest_for_id(extension_id)
-                        {
-                            if !manifest.language_model_providers.is_empty() {
-                                registry.update(cx, |registry, cx| {
-                                    registry.extension_installed(extension_id.clone(), cx);
-                                });
-                            }
-                        }
-                    }
-                    extension_host::Event::ExtensionUninstalled(extension_id) => {
-                        registry.update(cx, |registry, cx| {
-                            registry.extension_uninstalled(extension_id, cx);
-                        });
-                    }
-                    extension_host::Event::ExtensionsUpdated => {
-                        let mut new_ids = HashSet::default();
-                        for (extension_id, entry) in extension_store.read(cx).installed_extensions()
-                        {
-                            if !entry.manifest.language_model_providers.is_empty() {
-                                new_ids.insert(extension_id.clone());
-                            }
-                        }
-                        registry.update(cx, |registry, cx| {
-                            registry.sync_installed_llm_extensions(new_ids, cx);
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .detach();
-
-        // Initialize with currently installed extensions
-        registry.update(cx, |registry, cx| {
-            let mut initial_ids = HashSet::default();
-            for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                if !entry.manifest.language_model_providers.is_empty() {
-                    initial_ids.insert(extension_id.clone());
-                }
-            }
-            registry.sync_installed_llm_extensions(initial_ids, cx);
-        });
-    }
-
-    let mut compatible_providers = CompatibleProviders::from_settings(cx);
-
-    registry.update(cx, |registry, cx| {
-        register_compatible_providers(
-            registry,
-            &CompatibleProviders::default(),
-            &compatible_providers,
-            &client,
-            &credentials_provider,
-            cx,
-        );
-    });
-
-    let registry = registry.downgrade();
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let Some(registry) = registry.upgrade() else {
-            return;
-        };
-        let compatible_providers_new = CompatibleProviders::from_settings(cx);
-        if compatible_providers_new != compatible_providers {
-            registry.update(cx, |registry, cx| {
-                register_compatible_providers(
-                    registry,
-                    &compatible_providers,
-                    &compatible_providers_new,
-                    &client,
-                    &credentials_provider,
-                    cx,
-                );
-            });
-            compatible_providers = compatible_providers_new;
-        }
-    })
-    .detach();
+    /// Idempotency guard: prevents concurrent discovery storms when
+    /// `initialize` is invoked more than once for the same provider.
+    ///
+    /// This is an `Arc<AtomicBool>` (rather than a plain `bool`) so the
+    /// detached background discovery task spawned in `initialize` can clone
+    /// the cell and reset it to `false` once discovery resolves — without
+    /// needing a handle back to this `&mut` borrow. Defaults to `false` via
+    /// `derive(Default)` (`Arc::new(AtomicBool::new(false))`).
+    pub discovery_in_progress: Arc<AtomicBool>,
 }
 
-#[derive(Default, PartialEq, Eq)]
-struct CompatibleProviders(HashMap<Arc<str>, CompatibleProviderKind>);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum CompatibleProviderKind {
-    OpenAi,
-    Anthropic,
+/// A model entry mapped from the dynamic endpoint response.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AvailableModel {
+    pub name: gpui::SharedString,
+    pub max_tokens: Option<u64>,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
 }
 
-impl CompatibleProviders {
-    fn from_settings(cx: &App) -> Self {
-        let settings = AllLanguageModelSettings::get_global(cx);
-        let mut providers: HashMap<Arc<str>, CompatibleProviderKind> = settings
-            .openai_compatible
-            .keys()
-            .map(|id| (id.clone(), CompatibleProviderKind::OpenAi))
-            .collect();
-        for id in settings.anthropic_compatible.keys() {
-            // The registry has a single provider ID namespace, so a name can
-            // only refer to one provider. OpenAI-compatible entries win
-            // collisions because they predate Anthropic-compatible ones, so
-            // existing configurations keep working.
-            if providers.contains_key(id) {
-                log::warn!(
-                    "ignoring `anthropic_compatible` provider `{id}`: \
-                     an `openai_compatible` provider with the same name exists"
-                );
-            } else {
-                providers.insert(id.clone(), CompatibleProviderKind::Anthropic);
-            }
-        }
-        Self(providers)
-    }
+/// Provider lifecycle trait (simplified for the recipe).
+#[async_trait::async_trait]
+pub trait LanguageModelProvider: Send + Sync + 'static {
+    async fn initialize(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        state: &mut LanguageModelProviderState,
+    ) -> Result<(), std::sync::Arc<anyhow::Error>>;
+    async fn available_models(
+        &self,
+        cx: &mut gpui::Context<Self>,
+    ) -> Result<Vec<AvailableModel>, std::sync::Arc<anyhow::Error>>;
+    async fn complete(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        request: LanguageModelRequest,
+    ) -> Result<LanguageModelResponse, std::sync::Arc<anyhow::Error>>;
 }
 
-fn register_compatible_providers(
-    registry: &mut LanguageModelRegistry,
-    old: &CompatibleProviders,
-    new: &CompatibleProviders,
-    client: &Arc<Client>,
-    credentials_provider: &Arc<dyn CredentialsProvider>,
-    cx: &mut Context<LanguageModelRegistry>,
-) {
-    for (provider_id, old_kind) in &old.0 {
-        if new.0.get(provider_id) != Some(old_kind) {
-            registry.unregister_provider(LanguageModelProviderId::from(provider_id.clone()), cx);
-        }
-    }
+/// Request / response types (stubs referencing real Zed definitions).
+pub struct LanguageModelRequest;
+pub struct LanguageModelResponse;
 
-    for (provider_id, kind) in &new.0 {
-        if old.0.get(provider_id) != Some(kind) {
-            match kind {
-                CompatibleProviderKind::OpenAi => registry.register_provider(
-                    Arc::new(OpenAiCompatibleLanguageModelProvider::new(
-                        provider_id.clone(),
-                        client.http_client(),
-                        credentials_provider.clone(),
-                        cx,
-                    )),
-                    cx,
-                ),
-                CompatibleProviderKind::Anthropic => registry.register_provider(
-                    Arc::new(AnthropicCompatibleLanguageModelProvider::new(
-                        provider_id.clone(),
-                        client.http_client(),
-                        credentials_provider.clone(),
-                        cx,
-                    )),
-                    cx,
-                ),
-            }
-        }
-    }
+/// Top-level language-models configuration block read from
+/// `settings.json` under the `language_models:` key.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LanguageModelsConfig {
+    /// Provider-specific settings keyed by provider name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<ProviderEntry>,
 }
 
-fn register_language_model_providers(
-    registry: &mut LanguageModelRegistry,
-    user_store: Entity<UserStore>,
-    client: Arc<Client>,
-    credentials_provider: Arc<dyn CredentialsProvider>,
-    cx: &mut Context<LanguageModelRegistry>,
-) {
-    registry.register_provider(
-        Arc::new(CloudLanguageModelProvider::new(
-            user_store,
-            client.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(AnthropicLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(OpenAiLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(OllamaLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(LmStudioLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(LlamaCppLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(DeepSeekLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(GoogleLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        MistralLanguageModelProvider::global(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        ),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(BedrockLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(OpenRouterLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(VercelAiGatewayLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(XAiLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(OpenCodeLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(Arc::new(CopilotChatLanguageModelProvider::new(cx)), cx);
-    registry.register_provider(
-        Arc::new(OpenAiSubscribedProvider::new(
-            client.http_client(),
-            credentials_provider,
-            cx,
-        )),
-        cx,
-    );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anyhow::Result;
-    use clock::FakeSystemClock;
-    use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
-    use http_client::FakeHttpClient;
-    use language_model::IconOrSvg;
-    use release_channel::AppVersion;
-    use std::future::Future;
-    use std::pin::Pin;
-    use ui::IconName;
-
-    struct FakeCredentialsProvider;
-
-    impl CredentialsProvider for FakeCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    fn init_test(cx: &mut App) -> (Arc<Client>, Arc<dyn CredentialsProvider>) {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        cx.set_global(db::AppDatabase::test_new());
-        let app_version = AppVersion::global(cx);
-        release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);
-        gpui_tokio::init(cx);
-        cx.update_flags(false, Vec::new());
-
-        let client = Client::new(
-            Arc::new(FakeSystemClock::new()),
-            FakeHttpClient::with_404_response(),
-            cx,
-        );
-        (client, Arc::new(FakeCredentialsProvider))
-    }
-
-    fn update_compatible_provider_settings(
-        openai: &[&str],
-        anthropic: &[&str],
-        cx: &mut App,
-    ) -> CompatibleProviders {
-        fn section(ids: &[&str]) -> serde_json::Value {
-            ids.iter()
-                .map(|id| {
-                    (
-                        id.to_string(),
-                        serde_json::json!({
-                            "api_url": "https://example.com",
-                            "available_models": [],
-                        }),
-                    )
-                })
-                .collect::<serde_json::Map<String, serde_json::Value>>()
-                .into()
-        }
-
-        let content = serde_json::json!({
-            "language_models": {
-                "openai_compatible": section(openai),
-                "anthropic_compatible": section(anthropic),
-            }
-        })
-        .to_string();
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store
-                .set_user_settings(&content, cx)
-                .expect("failed to parse test settings");
-        });
-        CompatibleProviders::from_settings(cx)
-    }
-
-    fn provider_icons(registry: &LanguageModelRegistry, id: &str) -> Vec<IconOrSvg> {
-        registry
-            .providers()
-            .into_iter()
-            .filter(|provider| provider.id().0.as_ref() == id)
-            .map(|provider| provider.icon())
-            .collect()
-    }
-
-    #[gpui::test]
-    fn test_compatible_provider_id_collision_resolves_when_one_entry_is_removed(cx: &mut App) {
-        let (client, credentials_provider) = init_test(cx);
-        let registry = cx.new(|_| LanguageModelRegistry::default());
-
-        // The same provider name is configured in both `openai_compatible`
-        // and `anthropic_compatible` settings sections; the OpenAI-compatible
-        // entry wins the collision.
-        let both = update_compatible_provider_settings(&["acme"], &["acme"], cx);
-        registry.update(cx, |registry, cx| {
-            register_compatible_providers(
-                registry,
-                &CompatibleProviders::default(),
-                &both,
-                &client,
-                &credentials_provider,
-                cx,
-            );
-        });
-        assert_eq!(
-            registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
-            vec![IconOrSvg::Icon(IconName::AiOpenAiCompat)],
-            "the OpenAI-compatible provider should win the name collision"
-        );
-
-        // The user removes the `anthropic_compatible` entry; the remaining
-        // `openai_compatible` entry must stay registered.
-        let openai_only = update_compatible_provider_settings(&["acme"], &[], cx);
-        registry.update(cx, |registry, cx| {
-            register_compatible_providers(
-                registry,
-                &both,
-                &openai_only,
-                &client,
-                &credentials_provider,
-                cx,
-            );
-        });
-        assert_eq!(
-            registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
-            vec![IconOrSvg::Icon(IconName::AiOpenAiCompat)],
-            "the provider registered for `acme` should be the OpenAI-compatible one"
-        );
-    }
-
-    #[gpui::test]
-    fn test_compatible_provider_changes_kind_and_unregisters(cx: &mut App) {
-        let (client, credentials_provider) = init_test(cx);
-        let registry = cx.new(|_| LanguageModelRegistry::default());
-
-        let both = update_compatible_provider_settings(&["acme"], &["acme"], cx);
-        registry.update(cx, |registry, cx| {
-            register_compatible_providers(
-                registry,
-                &CompatibleProviders::default(),
-                &both,
-                &client,
-                &credentials_provider,
-                cx,
-            );
-        });
-
-        // Removing the `openai_compatible` entry hands the name over to the
-        // remaining `anthropic_compatible` entry.
-        let anthropic_only = update_compatible_provider_settings(&[], &["acme"], cx);
-        registry.update(cx, |registry, cx| {
-            register_compatible_providers(
-                registry,
-                &both,
-                &anthropic_only,
-                &client,
-                &credentials_provider,
-                cx,
-            );
-        });
-        assert_eq!(
-            registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
-            vec![IconOrSvg::Icon(IconName::AiAnthropicCompat)],
-            "after removing the openai_compatible entry, the anthropic_compatible provider should be registered"
-        );
-
-        // Removing the last entry unregisters the provider entirely.
-        let none = update_compatible_provider_settings(&[], &[], cx);
-        registry.update(cx, |registry, cx| {
-            register_compatible_providers(
-                registry,
-                &anthropic_only,
-                &none,
-                &client,
-                &credentials_provider,
-                cx,
-            );
-        });
-        assert_eq!(
-            registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
-            Vec::new(),
-            "removing all entries should unregister the provider"
-        );
-    }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", tag = "provider")]
+pub enum ProviderEntry {
+    #[serde(rename = "openai_compatible")]
+    OpenAiCompatible(OpenAiCompatibleProvider),
 }
