@@ -21,10 +21,13 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 /// On other platforms it is a plain canonical path (see the constructors for the
 /// per-platform rationale).
 ///
-/// Invariant: [`path`](Self::path) is the fd's symlink-free realpath; on Linux
-/// this is *proven* at construction (`resolve` reads it back from
+/// Invariant: [`path`](Self::path) is an **absolute**, symlink-free realpath; on
+/// Linux this is *proven* at construction (`resolve` reads it back from
 /// `/proc/self/fd`, `from_canonical` re-verifies a claimed value against the
-/// reopened fd).
+/// reopened fd). Both constructors reject a non-absolute input on the platforms
+/// that resolve paths themselves (Linux/macOS): a relative path would otherwise
+/// be resolved against Zed's *own* process working directory, silently pinning
+/// an unpredictable location.
 #[derive(Clone)]
 pub(crate) struct CanonicalPathBuf {
     path: PathBuf,
@@ -45,6 +48,12 @@ impl CanonicalPathBuf {
     /// [`Self::from_canonical`], which verifies it.
     pub(crate) fn resolve(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
+        // A relative path would be resolved against Zed's own process working
+        // directory by the `open`/`canonicalize` below, silently pinning an
+        // unpredictable location. Every grant flows through this constructor, so
+        // rejecting here fails closed for all of them at once.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        require_absolute(path)?;
 
         #[cfg(target_os = "macos")]
         {
@@ -98,6 +107,13 @@ impl CanonicalPathBuf {
     /// (so a later swap is denied, not redirected), and WSL/other resolve
     /// elsewhere.
     pub(crate) fn from_canonical(path: PathBuf) -> io::Result<Self> {
+        // Same absolute-path requirement as `resolve`: a persisted or
+        // hand-authored relative grant must never be resolved against Zed's own
+        // working directory (Linux) or emitted as a relative Seatbelt literal
+        // (macOS).
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        require_absolute(&path)?;
+
         #[cfg(target_os = "macos")]
         {
             Ok(Self { path })
@@ -182,6 +198,22 @@ impl CanonicalPathBuf {
     }
 }
 
+/// Reject a non-absolute grant path. Gated to the platforms whose constructors
+/// resolve paths against the process working directory; on WSL/other the path is
+/// a namespace-specific form that `Path::is_absolute` would misjudge, and its
+/// real resolution happens WSL-side (see `crate::windows_wsl`).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_absolute(path: &Path) -> io::Result<()> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("sandbox grant path {} is not absolute", path.display()),
+        ))
+    }
+}
+
 impl PartialEq for CanonicalPathBuf {
     /// Two values are equal when they refer to the **same filesystem object**:
     /// the inode behind the `O_PATH` fd on Linux, the canonical path on
@@ -226,4 +258,26 @@ impl Eq for CanonicalPathBuf {}
 pub(crate) fn linux_fd_identity(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
     let stat = nix::sys::stat::fstat(fd).ok()?;
     Some((stat.st_dev as u64, stat.st_ino as u64))
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::CanonicalPathBuf;
+    use std::path::PathBuf;
+
+    #[test]
+    fn constructors_reject_relative_paths() {
+        // A relative grant would otherwise be resolved against Zed's own working
+        // directory; both constructors must fail closed before touching the fs.
+        // (`CanonicalPathBuf` is deliberately not `Debug`, so match rather than
+        // `expect_err`.)
+        match CanonicalPathBuf::resolve("relative/dir") {
+            Ok(_) => panic!("resolve must reject a relative path"),
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput),
+        }
+        match CanonicalPathBuf::from_canonical(PathBuf::from("relative/dir")) {
+            Ok(_) => panic!("from_canonical must reject a relative path"),
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput),
+        }
+    }
 }
