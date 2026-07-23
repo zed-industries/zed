@@ -897,6 +897,7 @@ features = [
     "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
+    "Networking_Connectivity",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",

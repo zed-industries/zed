@@ -3,10 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    NetworkAvailability, Pixels, Platform, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -396,6 +396,12 @@ impl TestAppContext {
     pub fn simulate_system_notification_response(&self, response: SystemNotificationResponse) {
         self.test_platform
             .simulate_system_notification_response(response);
+    }
+
+    /// Simulates the OS reporting a change in network availability.
+    pub fn simulate_network_availability_change(&self, availability: NetworkAvailability) {
+        self.test_platform
+            .simulate_network_availability_change(availability);
     }
 
     /// Simulates the user resizing the window to the new size.
@@ -1143,7 +1149,7 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod tests {
     use crate::{
-        PathPromptOptions, SystemNotification, SystemNotificationAction,
+        NetworkAvailability, PathPromptOptions, SystemNotification, SystemNotificationAction,
         SystemNotificationResponse, TestAppContext,
     };
     use std::cell::RefCell;
@@ -1288,6 +1294,55 @@ mod tests {
 
         assert!(cx.delivered_system_notifications().is_empty());
         assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
+    }
+
+    #[gpui::test]
+    async fn test_network_availability(cx: &mut TestAppContext) {
+        assert_eq!(
+            cx.update(|cx| cx.network_availability()),
+            NetworkAvailability::Unknown
+        );
+
+        let first_changes = Rc::new(RefCell::new(Vec::new()));
+        let second_changes = Rc::new(RefCell::new(Vec::new()));
+        let (first_subscription, second_subscription) = cx.update(|cx| {
+            let first_subscription = cx.on_network_availability_change({
+                let first_changes = first_changes.clone();
+                move |availability, _cx| first_changes.borrow_mut().push(availability)
+            });
+            let second_subscription = cx.on_network_availability_change({
+                let second_changes = second_changes.clone();
+                move |availability, _cx| second_changes.borrow_mut().push(availability)
+            });
+            (first_subscription, second_subscription)
+        });
+
+        cx.simulate_network_availability_change(NetworkAvailability::Offline);
+        assert_eq!(
+            cx.update(|cx| cx.network_availability()),
+            NetworkAvailability::Offline
+        );
+        cx.simulate_network_availability_change(NetworkAvailability::Offline);
+        assert_eq!(
+            first_changes.borrow().as_slice(),
+            &[NetworkAvailability::Offline]
+        );
+        assert_eq!(
+            second_changes.borrow().as_slice(),
+            &[NetworkAvailability::Offline]
+        );
+
+        drop(first_subscription);
+        cx.simulate_network_availability_change(NetworkAvailability::Online);
+        assert_eq!(
+            first_changes.borrow().as_slice(),
+            &[NetworkAvailability::Offline]
+        );
+        assert_eq!(
+            second_changes.borrow().as_slice(),
+            &[NetworkAvailability::Offline, NetworkAvailability::Online]
+        );
+        drop(second_subscription);
     }
 
     #[gpui::test]

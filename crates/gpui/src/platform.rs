@@ -279,6 +279,21 @@ pub trait Platform: 'static {
         _ = callback;
     }
 
+    /// The last network availability reported by the OS.
+    ///
+    /// Returns [`NetworkAvailability::Unknown`] until the platform's monitor
+    /// has delivered its first report; monitoring starts lazily on the first
+    /// call to this method or to [`Platform::on_network_availability_change`].
+    fn network_availability(&self) -> NetworkAvailability {
+        NetworkAvailability::Unknown
+    }
+
+    /// Registers the callback invoked whenever the OS reports a change in
+    /// network availability.
+    ///
+    /// Implementations must invoke the callback on the main thread.
+    fn on_network_availability_change(&self, _callback: Box<dyn FnMut(NetworkAvailability)>) {}
+
     fn compositor_name(&self) -> &'static str {
         ""
     }
@@ -384,6 +399,20 @@ pub struct SystemNotificationResponse {
     /// The pressed action button's [`SystemNotificationAction::id`], or
     /// `None` when the user activated the notification body itself.
     pub action_id: Option<SharedString>,
+}
+
+/// Whether the system currently has a usable network path, as reported by the
+/// operating system's connectivity monitor.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum NetworkAvailability {
+    /// The platform has no monitor, or it hasn't delivered a report yet.
+    #[default]
+    Unknown,
+    /// The OS reports no usable network path.
+    Offline,
+    /// The OS reports a usable network path, including constrained
+    /// (metered/low-data) paths.
+    Online,
 }
 
 /// Thermal state of the system
