@@ -1520,7 +1520,9 @@
   //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 3. Soft wrap lines at the preferred line length, regardless of the editor width.
+  //      "soft_wrap": "preferred_line_length",
+  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap

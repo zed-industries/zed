@@ -412,8 +412,10 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
+    /// Soft wrap lines at the preferred line length, regardless of the editor
+    /// width; a narrower editor scrolls horizontally instead of re-wrapping.
+    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
-    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
