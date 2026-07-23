@@ -101,6 +101,7 @@ source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
+> Note: Zed allows you change the current `toolchain` and select current virtual enviroment in case of mismatch with {#action toolchain::Select} or read more about [toolchain selector for python](./languages/python?highlight=toolchain#selecting-a-toolchain)
 
 ### R (Ark Kernel) {#r-ark}
 
