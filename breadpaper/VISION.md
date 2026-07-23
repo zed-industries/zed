@@ -185,7 +185,7 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - [ ] **Invisible git — checkpoint service** — background snapshots to hidden `.breadpaper/history` git-dir. _(in progress)_
 
 ### Milestone 1 — The core loop (thinnest thing that proves it)
-- [x] **Daily & Weekly Area** — first packaged Area, shipped as the installable **Timeline Area** (scaffolded folders + weekly dashboard + Week Review skill; page-aware context view still pending). _(shipped)_
+- [x] **Daily & Weekly Area** — first packaged Area, shipped as the installable **Timeline Area** (scaffolded folders + weekly dashboard + Week Review skill; the daily note's page-aware context view shipped later as the Milestone 3 Day Planner rail). _(shipped)_
 - [ ] **Daily Closure skill** — reads tasks + commits, appends a review to the day's note. _(planned)_
 - [ ] **Invisible git — restore UI** — human "history / restore this version" surface; no git vocabulary. _(planned)_
 - [ ] **Checkpoint triggers** — autosave / idle / pre-AI-write commit points. _(planned)_
@@ -198,7 +198,7 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - [ ] **Skill contract & write sandbox** — enforce inputs/outputs so writes are previewable and scoped. Scopes are now _declared_ in the manifest but not yet enforced. _(planned)_
 
 ### Milestone 3 — Context rail & connectors
-- [ ] **Page-aware Context right rail** — day-planner / week calendar / finance dashboard per open doc. _(planned)_
+- [x] **Page-aware Context right rail — day planner** — first page-aware panel (spec `specs/v4-day-planner-panel.md`): a right-dock Day Planner that follows the active editor item and renders a daily note's checklist as a time-block day grid — timed tasks as duration-scaled blocks in Google-Calendar-style overlap columns, time-less tasks as unscheduled chips, done tasks struck through. Read-only with reveal-on-click into the editor, live re-parse on edit, and a `[day_planner]` config section. Week-calendar and finance-dashboard context views still pending. _(shipped)_
 - [ ] **MCP connector onboarding** — Monarch, GitHub/GitLab, calendar as a guided step, not hand-edited JSON. _(planned)_
 - [x] **Week Review skill** — ships with the Timeline Area: aggregate daily/weekly notes + GitHub PRs (`gh`) / GitLab MRs (`glab`), append an AI review to the weekly note, and feed the dashboard. Rides the `gh`/`glab` CLIs; guided MCP connectors still pending. _(shipped)_
 - [ ] **Friday Finance skill** — live Monarch pull, credit-card sweep + LoC residual, action list, log outcome. _(planned)_
