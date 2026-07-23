@@ -405,17 +405,23 @@ struct ExtensionCardButtons {
 }
 
 #[derive(Clone, PartialEq)]
+enum InstalledExtensionMetadata {
+    Unknown,
+    NoLongerPublished,
+    Available(Arc<ExtensionMetadata>),
+}
+
+#[derive(Clone, PartialEq)]
 enum ExtensionEntry {
     Installed {
         manifest: Arc<ExtensionManifest>,
-        metadata: Option<Arc<ExtensionMetadata>>,
+        metadata: InstalledExtensionMetadata,
     },
     NotInstalled {
         metadata: Arc<ExtensionMetadata>,
         overridden_by_dev: bool,
     },
     Dev(Arc<ExtensionManifest>),
-    Unpublished(Arc<ExtensionManifest>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -445,9 +451,7 @@ impl ExtensionFetchState {
 impl ExtensionEntry {
     fn id(&self) -> &Arc<str> {
         match self {
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => &manifest.id,
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.id,
             Self::NotInstalled { metadata, .. } => &metadata.id,
         }
     }
@@ -455,94 +459,91 @@ impl ExtensionEntry {
     fn name(&self) -> &str {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => &metadata.manifest.name,
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => &manifest.name,
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.name,
         }
     }
 
     fn metadata(&self) -> Option<&Arc<ExtensionMetadata>> {
         match self {
-            Self::Installed { metadata, .. } => metadata.as_ref(),
-            Self::NotInstalled { metadata, .. } => Some(metadata),
-            Self::Dev(_) | Self::Unpublished(_) => None,
+            Self::Installed {
+                metadata: InstalledExtensionMetadata::Available(metadata),
+                ..
+            }
+            | Self::NotInstalled { metadata, .. } => Some(metadata),
+            Self::Installed { .. } | Self::Dev(_) => None,
         }
     }
 
     fn version(&self) -> &Arc<str> {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => &metadata.manifest.version,
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => &manifest.version,
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.version,
         }
     }
 
     fn description(&self) -> Option<&str> {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => metadata.manifest.description.as_deref(),
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => manifest.description.as_deref(),
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
+                manifest.description.as_deref()
+            }
         }
     }
 
     fn authors(&self) -> &[String] {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => &metadata.manifest.authors,
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => &manifest.authors,
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.authors,
         }
     }
 
     fn repository(&self) -> Option<&str> {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => Some(&metadata.manifest.repository),
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => manifest.repository.as_deref(),
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
+                manifest.repository.as_deref()
+            }
         }
     }
 
     fn provided_features(&self) -> Cow<'_, BTreeSet<ExtensionProvides>> {
         match self {
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled { metadata, .. } => Cow::Borrowed(&metadata.manifest.provides),
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => Cow::Owned(manifest.provides()),
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
+                Cow::Owned(manifest.provides())
+            }
         }
     }
 
     fn provides(&self, provides: ExtensionProvides) -> bool {
         match self {
-            Self::Installed { manifest, .. }
-            | Self::Dev(manifest)
-            | Self::Unpublished(manifest) => manifest.provides().contains(&provides),
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
+                manifest.provides().contains(&provides)
+            }
             Self::NotInstalled { metadata, .. } => metadata.manifest.provides.contains(&provides),
         }
     }
@@ -551,12 +552,9 @@ impl ExtensionEntry {
         match self {
             Self::Installed {
                 manifest,
-                metadata: Some(_),
+                metadata: InstalledExtensionMetadata::Available(_),
             } => Some(&manifest.version),
-            Self::Installed { metadata: None, .. }
-            | Self::NotInstalled { .. }
-            | Self::Dev(_)
-            | Self::Unpublished(_) => None,
+            Self::Installed { .. } | Self::NotInstalled { .. } | Self::Dev(_) => None,
         }
     }
 
@@ -565,10 +563,7 @@ impl ExtensionEntry {
     }
 
     fn is_installed(&self) -> bool {
-        matches!(
-            self,
-            Self::Installed { .. } | Self::Dev(_) | Self::Unpublished(_)
-        )
+        matches!(self, Self::Installed { .. } | Self::Dev(_))
     }
 
     fn is_dev(&self) -> bool {
@@ -588,11 +583,14 @@ impl ExtensionEntry {
     fn sort_group(&self) -> ExtensionSortGroup {
         match self {
             Self::Dev(_) => ExtensionSortGroup::Dev,
-            Self::Unpublished(_) | Self::Installed { metadata: None, .. } => {
-                ExtensionSortGroup::Local
-            }
             Self::Installed {
-                metadata: Some(_), ..
+                metadata:
+                    InstalledExtensionMetadata::Unknown | InstalledExtensionMetadata::NoLongerPublished,
+                ..
+            } => ExtensionSortGroup::Local,
+            Self::Installed {
+                metadata: InstalledExtensionMetadata::Available(_),
+                ..
             }
             | Self::NotInstalled { .. } => ExtensionSortGroup::Published,
         }
@@ -627,9 +625,9 @@ impl ExtensionEntry {
         match self {
             Self::Installed {
                 manifest,
-                metadata: None,
+                metadata:
+                    InstalledExtensionMetadata::Unknown | InstalledExtensionMetadata::NoLongerPublished,
             }
-            | Self::Unpublished(manifest)
             | Self::Dev(manifest) => {
                 let operation_in_progress = status == &ExtensionStatus::Installing
                     || status == &ExtensionStatus::Upgrading
@@ -647,7 +645,7 @@ impl ExtensionEntry {
                 }
             }
             Self::Installed {
-                metadata: Some(metadata),
+                metadata: InstalledExtensionMetadata::Available(metadata),
                 ..
             }
             | Self::NotInstalled {
@@ -1037,14 +1035,17 @@ impl ExtensionsPage {
     ) -> ExtensionEntry {
         if installed_extension.dev {
             ExtensionEntry::Dev(installed_extension.manifest.clone())
-        } else if published_extension_ids
-            .is_some_and(|published_extension_ids| !published_extension_ids.contains(extension_id))
-        {
-            ExtensionEntry::Unpublished(installed_extension.manifest.clone())
         } else {
+            let metadata = if published_extension_ids.is_some_and(|published_extension_ids| {
+                !published_extension_ids.contains(extension_id)
+            }) {
+                InstalledExtensionMetadata::NoLongerPublished
+            } else {
+                InstalledExtensionMetadata::Unknown
+            };
             ExtensionEntry::Installed {
                 manifest: installed_extension.manifest.clone(),
-                metadata: None,
+                metadata,
             }
         }
     }
@@ -1197,7 +1198,9 @@ impl ExtensionsPage {
                                 } else {
                                     extension_entries.push(ExtensionEntry::Installed {
                                         manifest: installed_extension.manifest.clone(),
-                                        metadata: Some(remote_extension),
+                                        metadata: InstalledExtensionMetadata::Available(
+                                            remote_extension,
+                                        ),
                                     });
                                 }
                             } else {
