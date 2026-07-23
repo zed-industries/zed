@@ -2804,7 +2804,7 @@ fn find_primary_service(
 
 /// The compose service list for `build` and `up`. Per the devcontainer spec
 /// `runServices` are *additional*, so the primary `service` is always prepended.
-/// `None` (no `runServices`) lets compose default to operating on every service.
+/// `None` (no `runServices`) lets compose operate every service.
 fn compose_service_list(
     main_service_name: &str,
     run_services: Option<&Vec<String>>,
