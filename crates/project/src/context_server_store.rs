@@ -1016,6 +1016,36 @@ impl ContextServerStore {
                 None
             };
 
+        let is_local_stdio = !is_remote_project
+            && matches!(
+                configuration.as_ref(),
+                ContextServerConfiguration::Custom { .. }
+                    | ContextServerConfiguration::Extension { .. }
+            );
+
+        let shell_environment = if is_local_stdio {
+            let project = this.update(cx, |this, _| {
+                this.project.as_ref().and_then(|project| project.upgrade())
+            })?;
+
+            match project {
+                Some(project) => {
+                    let environment_task = project.update(cx, |project, cx| {
+                        project.environment().update(cx, |environment, cx| {
+                            match root_path.clone() {
+                                Some(path) => environment.directory_environment(path, cx),
+                                None => environment.default_environment(cx),
+                            }
+                        })
+                    });
+                    environment_task.await
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
         let server: Arc<ContextServer> = this.update(cx, |this, cx| {
             let global_timeout = this.timeout_for_server(&id, cx);
 
@@ -1052,6 +1082,12 @@ impl ContextServerStore {
                             .unwrap_or(global_timeout)
                             .min(MAX_TIMEOUT_SECS),
                     );
+
+                    if let Some(shell_environment) = shell_environment {
+                        let mut env = shell_environment;
+                        env.extend(command.env.take().unwrap_or_default());
+                        command.env = Some(env);
+                    }
 
                     // Don't pass remote paths as working directory for locally-spawned processes
                     let working_directory = if is_remote_project { None } else { root_path };
